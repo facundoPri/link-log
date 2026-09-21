@@ -1,0 +1,34 @@
+{
+  "name": "linklog",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run build && bun scripts/dev.ts",
+    "build": "bun build ./src/index.html --outdir=dist --sourcemap --target=browser --minify --define:process.env.NODE_ENV='\"production\"' --env='BUN_PUBLIC_*'",
+    "dev:ui": "bun --hot src/index.ts",
+    "dev:api": "wrangler dev --ip 127.0.0.1 --port 8787",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "db:migrate": "wrangler d1 migrations apply linklog --local",
+    "preview": "bun run build && wrangler dev --ip 127.0.0.1 --port 8787"
+  },
+  "dependencies": {
+    "entities": "^8.1.0",
+    "ipaddr.js": "^2.5.0",
+    "lucide-react": "^1.47.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "react-markdown": "^10.1.0",
+    "youtube-transcript-plus": "^2.0.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260921.1",
+    "@types/bun": "latest",
+    "@types/react": "18",
+    "@types/react-dom": "18",
+    "prettier": "^3.9.8",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.136.1"
+  }
+}
