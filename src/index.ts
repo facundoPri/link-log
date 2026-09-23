@@ -14,7 +14,7 @@ const server = serve({
       const origin = headers.get("origin");
       if (origin && origin !== new URL(request.url).origin)
         return Response.json(
-          { error: "Origen no permitido." },
+          { error: "Origin not allowed." },
           { status: 403 },
         );
       headers.delete("origin");
@@ -34,7 +34,7 @@ const server = serve({
         });
       } catch {
         return Response.json(
-          { error: "La API local no está disponible. Ejecutá bun run dev." },
+          { error: "The local API is unavailable. Run bun run dev." },
           { status: 503 },
         );
       }

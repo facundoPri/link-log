@@ -1,16 +1,19 @@
-import type { Rates } from "../src/types";
-export const emptyRates: Rates = {
-  cloudflare_input: null,
-  cloudflare_output: null,
-  typesafe_input: null,
-  typesafe_output: null,
-  browser_hour: null,
-};
-export async function getRates(env: Env): Promise<Rates> {
-  const row = await env.DB.prepare(
-    "SELECT value FROM settings WHERE key='rates'",
-  ).first<{ value: string }>();
-  return { ...emptyRates, ...(row ? JSON.parse(row.value) : {}) };
+export const TYPESAFE_USD_PER_M_INPUT = 0.042;
+export const GEMMA_USD_PER_M_INPUT = 0.10;
+export const GEMMA_USD_PER_M_OUTPUT = 0.30;
+export function priceUsage(u: {
+  provider: string;
+  input_tokens: number | null;
+  output_tokens?: number | null;
+  model?: string | null;
+}): number | null {
+  if (u.provider === "cloudflare" && u.model === "@cf/google/gemma-4-26b-a4b-it")
+    return u.input_tokens !== null && u.output_tokens != null
+      ? (u.input_tokens * GEMMA_USD_PER_M_INPUT + u.output_tokens * GEMMA_USD_PER_M_OUTPUT) / 1e6
+      : null;
+  return u.provider === "typesafe" && u.input_tokens !== null
+    ? (u.input_tokens * TYPESAFE_USD_PER_M_INPUT) / 1e6
+    : null;
 }
 export type Meter = {
   input_tokens?: number;
@@ -28,7 +31,6 @@ export async function measured<T>(
 ): Promise<T> {
   const id = crypto.randomUUID(),
     started = Date.now(),
-    rates = await getRates(env),
     meter: Meter = {};
   await env.DB.prepare(
     "INSERT INTO usage_events(id,batch_id,job_id,link_id,provider,service,operation,status,rate_snapshot,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
@@ -42,7 +44,7 @@ export async function measured<T>(
       service,
       operation,
       "started",
-      JSON.stringify(rates),
+      service === "image-ocr" ? JSON.stringify({ input_usd_per_million: GEMMA_USD_PER_M_INPUT, output_usd_per_million: GEMMA_USD_PER_M_OUTPUT }) : "{}",
       new Date().toISOString(),
     )
     .run();
@@ -50,25 +52,15 @@ export async function measured<T>(
   try {
     return await fn(meter);
   } catch (e) {
-    error = e instanceof Error ? e.message : "Falló el proveedor";
+    error = e instanceof Error ? e.message : "Provider failed";
     throw e;
   } finally {
-    let cost: number | null = null;
-    if (meter.browser_ms !== undefined && rates.browser_hour !== null)
-      cost = (meter.browser_ms / 3600000) * rates.browser_hour;
-    const input =
-        provider === "typesafe" ? rates.typesafe_input : rates.cloudflare_input,
-      output =
-        provider === "typesafe"
-          ? rates.typesafe_output
-          : rates.cloudflare_output;
-    if (
-      meter.input_tokens !== undefined &&
-      meter.output_tokens !== undefined &&
-      input !== null &&
-      output !== null
-    )
-      cost = (meter.input_tokens * input + meter.output_tokens * output) / 1e6;
+    const cost = priceUsage({
+      provider,
+      input_tokens: meter.input_tokens ?? null,
+      output_tokens: meter.output_tokens ?? null,
+      model: meter.model ?? null,
+    });
     await env.DB.prepare(
       "UPDATE usage_events SET status=?,model=?,input_tokens=?,output_tokens=?,browser_ms=?,estimated_usd=?,duration_ms=?,error=? WHERE id=?",
     )

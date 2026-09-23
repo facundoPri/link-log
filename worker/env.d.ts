@@ -4,4 +4,7 @@ interface Env {
   CLOUDFLARE_API_TOKEN?: string;
   TYPESAFE_API_KEY?: string;
   JEV_PROVIDER?: "cloudflare" | "typesafe";
+  JEV_MODEL?: string;
+  BROWSER_CONCURRENCY?: string;
+  JEV_CONCURRENCY?: string;
 }

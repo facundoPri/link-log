@@ -15,6 +15,6 @@ export async function api<T = Library & { duplicate?: boolean; id?: string }>(
     error?: string;
   };
   if (!response.ok)
-    throw new Error(data.error || "No se pudo completar la acción.");
+    throw new Error(data.error || "Something went wrong.");
   return data as T;
 }

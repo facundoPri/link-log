@@ -1,7 +1,7 @@
 export function normalizeUrl(input: string): string {
   const text = input.trim();
   if (!text || text.length > 4096 || /\s/.test(text))
-    throw new Error("Pegá una URL válida.");
+    throw new Error("Paste a valid URL.");
   const url = new URL(
     /^[a-z][a-z\d+.-]*:/i.test(text) ? text : `https://${text}`,
   );
@@ -11,7 +11,7 @@ export function normalizeUrl(input: string): string {
     url.password ||
     !url.hostname.includes(".")
   )
-    throw new Error("Usá un link público http o https.");
+    throw new Error("Use a public http or https link.");
   for (const key of [...url.searchParams.keys()])
     if (/^utm_/i.test(key) || ["fbclid", "gclid"].includes(key))
       url.searchParams.delete(key);

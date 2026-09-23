@@ -1,144 +1,344 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  ArrowDown,
-  BookOpen,
-  Check,
-  Command,
-  Inbox,
-  Link2,
-  LoaderCircle,
-  Plus,
-  Search,
-  SlidersHorizontal,
-  Tag,
-  Upload,
-  X,
-} from "lucide-react";
+import { Link2 } from "lucide-react";
+import { toast } from "sonner";
 import { api } from "./api";
-import type { Library, Link } from "./types";
+import type { Job, Lens, LensResult, Library, Link, Tag } from "./types";
 import { pastedUrls } from "./url";
-import { LinkRow, tagColor } from "./components/LinkRow";
-import { LinkForm } from "./components/LinkForm";
-import { TagManager } from "./components/TagManager";
-import { ContextPanel } from "./components/ContextPanel";
-import { QueryPanel } from "./components/QueryPanel";
-import { BatchPanel } from "./components/BatchPanel";
-import { UsagePanel } from "./components/UsagePanel";
-import type { QueryConfig } from "./types";
+import { Sidebar, type View } from "./components/Sidebar";
+import { Toolbar, type ContextFilter } from "./components/Toolbar";
+import { LinkList } from "./components/LinkList";
+import { SelectionBar } from "./components/SelectionBar";
+import { Inspector } from "./components/Inspector";
+import { TagDialog } from "./components/TagDialog";
+import { AddLinkDialog } from "./components/AddLinkDialog";
+import { LensDialog, type LensDraft } from "./components/LensDialog";
+import { lensBucket, lensSelectedKeys } from "./components/LensVerdict";
+import { LensHeader } from "./components/LensHeader";
+import { ActivitySheet } from "./components/ActivitySheet";
+import { usd, tokens } from "./lib/format";
+import { Toaster } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { Button } from "@/components/ui/button";
+
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import "./index.css";
+
+function useMedia(query: string) {
+  const [matches, setMatches] = useState(() =>
+    typeof window === "undefined" ? false : window.matchMedia(query).matches,
+  );
+  useEffect(() => {
+    const mql = window.matchMedia(query);
+    const fn = () => setMatches(mql.matches);
+    fn();
+    mql.addEventListener("change", fn);
+    return () => mql.removeEventListener("change", fn);
+  }, [query]);
+  return matches;
+}
+
+function isInput(target: EventTarget | null) {
+  return (
+    target instanceof HTMLElement &&
+    !!target.closest('input,textarea,select,[contenteditable="true"]')
+  );
+}
+
 export function App() {
   const [library, setLibrary] = useState<Library>({
     links: [],
     tags: [],
+    lenses: [],
     batches: [],
     capabilities: { markdown: false, jev: false, provider: "typesafe" },
   });
-  const [picked, setPicked] = useState<string[]>([]);
-  const [contextId, setContextId] = useState("");
-  const [showQuery, setShowQuery] = useState(false);
-  const [showUsage, setShowUsage] = useState(false);
-  const [onlyContext, setOnlyContext] = useState(false);
-  const [running, setRunning] = useState(false);
   const [loaded, setLoaded] = useState(false);
-  const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [view, setView] = useState<View>("all");
   const [query, setQuery] = useState("");
-  const [domain, setDomain] = useState("");
-  const [selected, setSelected] = useState<string[]>([]);
-  const [untagged, setUntagged] = useState(false);
+  const [tagIds, setTagIds] = useState<string[]>([]);
+  const [domainFilter, setDomainFilter] = useState<string[]>([]);
+  const [context, setContext] = useState<ContextFilter>("any");
   const [ascending, setAscending] = useState(false);
-  const [modal, setModal] = useState<"add" | "tags" | Link | null>(null);
-  const [toast, setToast] = useState("");
-  const [dragging, setDragging] = useState(false);
-  const [saving, setSaving] = useState(0);
-  const dragDepth = useRef(0);
-  const search = useRef<HTMLInputElement>(null);
-  const refresh = useCallback(async () => {
-    try {
-      setLibrary(await api());
-      setLoaded(true);
-      setError("");
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }, []);
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-  useEffect(() => {
-    if (
-      !library.links.some((l) => l.status === "pending") &&
-      !library.batches.some((b) => b.active)
-    )
-      return;
-    const id = setInterval(() => void refresh(), 1800);
-    return () => clearInterval(id);
-  }, [library.links, library.batches, refresh]);
-  useEffect(() => {
-    if (!toast) return;
-    const id = setTimeout(() => setToast(""), 4500);
-    return () => clearTimeout(id);
-  }, [toast]);
-  const save = useCallback(async (url: string, tags: string[] = []) => {
-    setSaving((n) => n + 1);
-    try {
-      const data = await api("/links", "POST", { url, tags });
-      setLibrary(data);
-      setLoaded(true);
-      setToast(
-        data.duplicate
-          ? "Ese link ya estaba guardado."
-          : "Link guardado. Ya podés seguir.",
-      );
-    } finally {
-      setSaving((n) => n - 1);
-    }
-  }, []);
-  const capture = useCallback(
-    (text: string) => {
-      const urls = pastedUrls(text);
-      if (!urls.length) {
-        setError(
-          "Pegá links http o https, separados por espacios o saltos de línea.",
-        );
-        return;
-      }
-      void (async () => {
-        setSaving((n) => n + 1);
-        let done = 0;
-        try {
-          for (let offset = 0; offset < urls.length; offset += 100) {
-            const data = await api<
-              Library & { imported: number; duplicates: number }
-            >("/import", "POST", { urls: urls.slice(offset, offset + 100) });
-            setLibrary(data);
-            done += data.imported;
-          }
-          setToast(
-            `${done} links nuevos guardados. El contexto se obtiene en segundo plano.`,
-          );
-        } catch (e) {
-          setError(`${done} links guardados. ${(e as Error).message}`);
-        } finally {
-          setSaving((n) => n - 1);
-        }
-      })();
-    },
-    [save],
+  const [dialog, setDialog] = useState<
+    "add" | { tag: Tag | "new" } | { lens: Lens | "new" } | null
+  >(null);
+  const [lensFilter, setLensFilter] = useState<Set<string>>(new Set());
+  const [lensMinLevel, setLensMinLevel] = useState<number | null>(null);
+  const [lensScoreSort, setLensScoreSort] = useState(false);
+  const [activityOpen, setActivityOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(
+    () => localStorage.getItem("linklog.sidebar") !== "closed",
   );
+  const [deleteLink, setDeleteLink] = useState<Link | null>(null);
+  const [deleteTag, setDeleteTag] = useState<Tag | null>(null);
+  const [deleteLens, setDeleteLens] = useState<Lens | null>(null);
+  const [confirmAutoTag, setConfirmAutoTag] = useState(false);
+  const [confirmExtract, setConfirmExtract] = useState<string[] | null>(null);
+  const [running, setRunning] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [focusTags, setFocusTags] = useState(false);
+  const [jobsByLink, setJobsByLink] = useState<
+    Map<string, { kind: "extract" | "autotag" | "lens" | "query"; status: string }>
+  >(new Map());
+  const dragDepth = useRef(0);
+  const inspectorW = useRef(400);
+  const [inspectorWidth, setInspectorWidth] = useState(() => {
+    const v = Number(localStorage.getItem("linklog.inspector"));
+    inspectorW.current = v >= 320 && v <= 720 ? v : 400;
+    return inspectorW.current;
+  });
+  const search = useRef<HTMLInputElement>(null);
+  const sessionBatches = useRef(new Set<string>());
+  const narrow = useMedia("(max-width: 1099px)");
+  const mobile = useMedia("(max-width: 767px)");
+
+  useEffect(() => {
+    localStorage.setItem(
+      "linklog.sidebar",
+      sidebarOpen ? "open" : "closed",
+    );
+  }, [sidebarOpen]);
+
+  const refresh = useCallback(async () => {
+    const data = await api();
+    setLibrary(data);
+    setLoaded(true);
+    setLoadError("");
+    return data;
+  }, []);
+
+  useEffect(() => {
+    refresh().catch((e) => {
+      setLoaded(true);
+      setLoadError((e as Error).message);
+    });
+  }, [refresh]);
+
+  const busyPolling = library.links.some((l) => l.status === "pending") ||
+    library.batches.some((b) => b.active > 0);
+
+  // Poll library + per-batch jobs while work is in flight.
+  useEffect(() => {
+    if (!busyPolling) {
+      setJobsByLink(new Map());
+      return;
+    }
+    let alive = true;
+    const tick = async () => {
+      try {
+        const lib = await refresh();
+        const active = lib.batches.filter((b) => b.active > 0);
+        if (!alive) return;
+        const map = new Map<string, { kind: "extract" | "autotag" | "lens" | "query"; status: string }>();
+        for (const b of active) {
+          try {
+            const { jobs } = await api<{ jobs: Job[] }>(`/batches/${b.id}`);
+            for (const j of jobs) map.set(j.link_id, { kind: b.kind, status: j.status });
+          } catch {
+            /* batch may be gone */
+          }
+        }
+        if (alive) setJobsByLink(map);
+      } catch {
+        /* keep polling */
+      }
+    };
+    void tick();
+    const id = setInterval(() => void tick(), 1800);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, [busyPolling, refresh]);
+
+  // Batch progress toasts for batches this session created.
+  useEffect(() => {
+    for (const b of library.batches) {
+      if (!sessionBatches.current.has(b.id)) continue;
+      const n = b.total;
+      const verb =
+        b.kind === "autotag"
+          ? "Auto-tagging"
+          : b.kind === "extract"
+            ? "Extracting context for"
+            : "Applying lens to";
+      if (b.active > 0) {
+        toast.loading(`${verb} ${n} ${n === 1 ? "link" : "links"}…`, {
+          id: b.id,
+          description: `${b.done + b.failed} of ${n} done`,
+          action: { label: "Cancel", onClick: () => void cancelBatch(b.id) },
+        });
+      } else if (b.failed === 0) {
+        toast.success(
+          b.kind === "autotag"
+            ? `Auto-tagged ${n} ${n === 1 ? "link" : "links"}`
+            : b.kind === "extract"
+              ? `Extracted ${n} ${n === 1 ? "link" : "links"}`
+              : `Lens applied to ${n} ${n === 1 ? "link" : "links"}`,
+          {
+            id: b.id,
+            description:
+              b.usage?.usd != null
+                ? `${usd(b.usage.usd)} · ${tokens(b.usage.input_tokens + b.usage.output_tokens)} tokens`
+                : undefined,
+            action: { label: "Activity", onClick: () => setActivityOpen(true) },
+          },
+        );
+        sessionBatches.current.delete(b.id);
+      } else {
+        toast[b.failed === n ? "error" : "success"](
+          `${verb.replace("ing", "ed")} ${n} ${n === 1 ? "link" : "links"}`,
+          {
+            id: b.id,
+            description: `${b.failed} failed — see Activity`,
+            action: { label: "Activity", onClick: () => setActivityOpen(true) },
+          },
+        );
+        sessionBatches.current.delete(b.id);
+      }
+    }
+  }, [library.batches]);
+
+  const save = useCallback(async (url: string, tags: string[] = []) => {
+    const data = await api("/links", "POST", { url, tags });
+    setLibrary(data);
+    setLoaded(true);
+    if (data.duplicate) toast("Already in your library");
+    else toast.success("Link saved");
+  }, []);
+
+  const capture = useCallback((text: string) => {
+    const urls = pastedUrls(text);
+    if (!urls.length) {
+      toast.error("Paste http or https links, separated by spaces or new lines.");
+      return;
+    }
+    void (async () => {
+      let done = 0;
+      try {
+        for (let offset = 0; offset < urls.length; offset += 100) {
+          const data = await api<Library & { imported: number }>("/import", "POST", {
+            urls: urls.slice(offset, offset + 100),
+          });
+          setLibrary(data);
+          done += data.imported;
+        }
+        toast.success(`${done} links saved`, {
+          description: "Fetching titles and previews…",
+        });
+      } catch (e) {
+        toast.error(`${done} links saved. ${(e as Error).message}`);
+      }
+    })();
+  }, []);
+
+  const mutate = useCallback(async (path: string, method: string, body: unknown = {}) => {
+    setLibrary(await api(path, method, body));
+  }, []);
+
+  const runBatch = useCallback(
+    async (
+      kind: "autotag" | "extract" | "lens",
+      ids: string[],
+      lensId?: string,
+    ) => {
+      setRunning(true);
+      try {
+        for (let offset = 0; offset < ids.length; offset += 100) {
+          const data = await api<Library & { batchId?: string }>("/batches", "POST", {
+            kind,
+            ids: ids.slice(offset, offset + 100),
+            lensId,
+          });
+          setLibrary(data);
+          if (data.batchId) sessionBatches.current.add(data.batchId);
+        }
+        await refresh();
+      } catch (e) {
+        toast.error((e as Error).message);
+        throw e;
+      } finally {
+        setRunning(false);
+      }
+    },
+    [refresh],
+  );
+
+  // Keyboard: ⌘K add, / search, Esc close inspector, ↑/↓ navigate while inspector open.
+  const filteredRef = useRef<Link[]>([]);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
-        setModal("add");
+        setDialog("add");
+        return;
       }
-      if (e.key === "/" && !isInput(e.target) && !modal) {
+      if (e.key === "/" && !isInput(e.target) && !dialog) {
         e.preventDefault();
         search.current?.focus();
+        return;
+      }
+      if (
+        (e.metaKey || e.ctrlKey) &&
+        e.key === "\\" &&
+        !isInput(e.target) &&
+        !mobile
+      ) {
+        e.preventDefault();
+        setSidebarOpen((o) => !o);
+        return;
+      }
+      if (
+        (e.metaKey || e.ctrlKey) &&
+        e.key.toLowerCase() === "a" &&
+        !isInput(e.target) &&
+        !dialog
+      ) {
+        e.preventDefault();
+        setPicked(filteredRef.current.map((l) => l.id));
+        return;
+      }
+      if (e.key === "Escape" && !dialog) {
+        if (activeId) setActiveId(null);
+        else setPicked([]);
+        return;
+      }
+      if (
+        (e.key === "ArrowDown" || e.key === "ArrowUp") &&
+        activeId &&
+        !dialog &&
+        !isInput(e.target)
+      ) {
+        const list = filteredRef.current;
+        const i = list.findIndex((l) => l.id === activeId);
+        const next = list[i + (e.key === "ArrowDown" ? 1 : -1)];
+        if (next) {
+          e.preventDefault();
+          setActiveId(next.id);
+        }
       }
     };
     const paste = (e: ClipboardEvent) => {
-      if (isInput(e.target) || modal || contextId || showQuery || showUsage)
-        return;
+      if (isInput(e.target) || dialog || activityOpen) return;
       const text = e.clipboardData?.getData("text/plain") || "";
       if (pastedUrls(text).length) {
         e.preventDefault();
@@ -151,124 +351,306 @@ export function App() {
       window.removeEventListener("keydown", key);
       window.removeEventListener("paste", paste);
     };
-  }, [modal, contextId, showQuery, showUsage, capture]);
+  }, [dialog, activeId, activityOpen, capture]);
+
   useEffect(() => {
-    setSelected((current) =>
-      current.filter((id) => library.tags.some((tag) => tag.id === id)),
-    );
-  }, [library.tags]);
+    setTagIds((current) => current.filter((id) => library.tags.some((t) => t.id === id)));
+    setPicked((current) => current.filter((id) => library.links.some((l) => l.id === id)));
+    if (activeId && !library.links.some((l) => l.id === activeId)) setActiveId(null);
+  }, [library, activeId]);
+
+  const activeLens =
+    typeof view === "object"
+      ? (library.lenses.find((l) => l.id === view.id) ?? null)
+      : null;
+  const activeLensId = activeLens?.id ?? null;
+  useEffect(() => {
+    setLensFilter(new Set());
+    setLensMinLevel(null);
+    setLensScoreSort(activeLens?.type === "score");
+  }, [activeLensId]);
+
+  const activeLensResults = useMemo(
+    () =>
+      activeLens
+        ? library.links
+            .map((l) => l.lens_results.find((r) => r.lens_id === activeLens.id))
+            .filter((r): r is LensResult => !!r)
+        : [],
+    [library.links, activeLens],
+  );
+
   const filtered = useMemo(() => {
     const words = query.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
+    const resultOf = (l: Link) =>
+      activeLens
+        ? l.lens_results.find((r) => r.lens_id === activeLens.id)
+        : undefined;
     return library.links
       .filter(
         (l) =>
-          (!domain || l.domain === domain) &&
-          (!onlyContext || !!l.content_key) &&
-          (!untagged || !l.tags.length) &&
-          selected.every((id) => l.tags.some((t) => t.id === id)) &&
+          (!domainFilter.length || domainFilter.includes(l.domain)) &&
+          (context === "any" ||
+            (context === "with" ? !!l.content_key : !l.content_key)) &&
+          (view !== "untagged" || !l.tags.length) &&
+          (view !== "attention" ||
+            l.status === "failed" ||
+            l.content_state === "failed") &&
+          (!activeLens ||
+            (() => {
+              const r = resultOf(l);
+              if (!r) return false;
+              const a = r.answer;
+              if (activeLens.type === "noul")
+                return (
+                  !lensFilter.size ||
+                  lensFilter.has(lensBucket(activeLens, r))
+                );
+              if (activeLens.type === "choice")
+                return (
+                  !lensFilter.size ||
+                  (a.type === "choice" && lensFilter.has(a.choice))
+                );
+              if (activeLens.type === "multi") {
+                if (!lensFilter.size) return true;
+                const keys = lensSelectedKeys(activeLens, r);
+                return (
+                  (lensFilter.has("none") && !keys.length) ||
+                  keys.some((k) => lensFilter.has(k))
+                );
+              }
+              if (activeLens.type === "score" && lensMinLevel !== null)
+                return a.type === "score" && a.score >= lensMinLevel;
+              return true;
+            })()) &&
+          tagIds.every((id) => l.tags.some((t) => t.id === id)) &&
           words.every((word) =>
-            [
-              l.title,
-              l.description,
-              l.domain,
-              l.url,
-              l.original_url,
-              ...l.tags.map((t) => t.name),
-            ]
+            [l.title, l.description, l.domain, l.url, l.original_url, ...l.tags.map((t) => t.name)]
               .join(" ")
               .toLocaleLowerCase()
               .includes(word),
           ),
       )
-      .sort((a, b) =>
-        ascending
+      .sort((a, b) => {
+        if (activeLens?.type === "score" && lensScoreSort) {
+          const sa = resultOf(a)?.answer;
+          const sb = resultOf(b)?.answer;
+          const va = sa?.type === "score" ? sa.score : -1;
+          const vb = sb?.type === "score" ? sb.score : -1;
+          if (vb !== va) return vb - va;
+        }
+        return ascending
           ? a.created_at.localeCompare(b.created_at)
-          : b.created_at.localeCompare(a.created_at),
-      );
-  }, [
-    library.links,
-    query,
-    domain,
-    untagged,
-    selected,
-    ascending,
-    onlyContext,
-  ]);
-  const domains = [...new Set(library.links.map((l) => l.domain))].sort(
-    (a, b) =>
-      library.links.filter((l) => l.domain === b).length -
-      library.links.filter((l) => l.domain === a).length,
-  );
-  const toggleTag = (id: string) => {
-    setUntagged(false);
-    setSelected((current) =>
-      current.includes(id) ? current.filter((t) => t !== id) : [...current, id],
-    );
-  };
-  const clear = () => {
-    setOnlyContext(false);
-    setQuery("");
-    setDomain("");
-    setSelected([]);
-    setUntagged(false);
-  };
-  async function mutate(path: string, method: string, body: unknown = {}) {
-    setLibrary(await api(path, method, body));
-  }
-  async function runBatch(
-    kind: "autotag" | "extract" | "query",
-    query?: QueryConfig,
-  ) {
-    setRunning(true);
-    setError("");
-    try {
-      for (let offset = 0; offset < picked.length; offset += 100)
-        await api("/batches", "POST", {
-          kind,
-          ids: picked.slice(offset, offset + 100),
-          query,
-        });
-      await refresh();
-      setPicked([]);
-    } catch (e) {
-      setError((e as Error).message);
-      throw e;
-    } finally {
-      setRunning(false);
+          : b.created_at.localeCompare(a.created_at);
+      });
+  }, [library.links, query, domainFilter, context, view, tagIds, ascending, activeLens, lensFilter, lensMinLevel, lensScoreSort]);
+  filteredRef.current = filtered;
+
+  const domains = useMemo(() => {
+    const map = new Map<string, { count: number; favicon: string | null }>();
+    for (const l of library.links) {
+      const d = map.get(l.domain);
+      if (d) {
+        d.count++;
+        if (!d.favicon && l.favicon) d.favicon = l.favicon;
+      } else {
+        map.set(l.domain, { count: 1, favicon: l.favicon });
+      }
     }
-  }
-  const selectedLinks = library.links.filter((l) => picked.includes(l.id));
-  const hasContext =
-    selectedLinks.length > 0 &&
-    selectedLinks.every((l) => !!l.content_key && l.content_state !== "queued");
-  const contextLink = library.links.find((l) => l.id === contextId);
+    return [...map.entries()]
+      .map(([name, v]) => ({ name, count: v.count, favicon: v.favicon }))
+      .sort((a, b) => b.count - a.count);
+  }, [library.links]);
+
+  const tagCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const l of library.links)
+      for (const t of l.tags) counts[t.id] = (counts[t.id] ?? 0) + 1;
+    return counts;
+  }, [library.links]);
+
+  const activeLink = library.links.find((l) => l.id === activeId) ?? null;
+  const pickedLinks = library.links.filter((l) => picked.includes(l.id));
+  const activeBatch = library.batches.find((b) => b.active > 0);
   const isFiltered = !!(
     query ||
-    domain ||
-    selected.length ||
-    untagged ||
-    onlyContext
+    domainFilter.length ||
+    context !== "any" ||
+    tagIds.length ||
+    view !== "all"
   );
+
+  const clearFilters = () => {
+    setQuery("");
+    setDomainFilter([]);
+    setContext("any");
+    setTagIds([]);
+    setLensFilter(new Set());
+    setLensMinLevel(null);
+    setView("all");
+  };
+
+  const toggleTagFilter = (id: string) => {
+    if (view === "untagged" || view === "attention") setView("all");
+    setTagIds((c) => (c.includes(id) ? c.filter((t) => t !== id) : [...c, id]));
+  };
+
+  const toggleDomainFilter = (name: string) => {
+    setDomainFilter((c) =>
+      c.includes(name) ? c.filter((d) => d !== name) : [...c, name],
+    );
+  };
+
+  const pickMany = (ids: string[], checked: boolean) =>
+    setPicked((cur) =>
+      checked
+        ? [...new Set([...cur, ...ids])]
+        : cur.filter((id) => !ids.includes(id)),
+    );
+
+  const doAutoTag = async () => {
+    setConfirmAutoTag(false);
+    try {
+      await runBatch("autotag", picked);
+      setPicked([]);
+    } catch {
+      /* toasted */
+    }
+  };
+
+  const doExtract = async (ids: string[]) => {
+    setConfirmExtract(null);
+    try {
+      await runBatch("extract", ids);
+      setPicked((cur) => cur.filter((id) => !ids.includes(id)));
+    } catch {
+      /* toasted */
+    }
+  };
+
+  const requestExtract = (ids: string[]) => {
+    const targets = library.links.filter((l) => ids.includes(l.id));
+    if (targets.length === 1 && !targets[0]!.content_key) {
+      void doExtract(ids);
+      return;
+    }
+    setConfirmExtract(ids);
+  };
+
+  const cancelBatch = async (id: string) => {
+    try {
+      const data = await api<Library & { cancelled?: number }>(
+        `/batches/${id}`,
+        "DELETE",
+      );
+      setLibrary(data);
+      toast(
+        data.cancelled
+          ? `Cancelled ${data.cancelled} queued ${data.cancelled === 1 ? "job" : "jobs"}`
+          : "Nothing left to cancel",
+      );
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
+
+  const manualTagged = pickedLinks.filter((l) =>
+    l.tags.some((t) => t.origin === "manual"),
+  ).length;
+
+
+  const sidebar = (
+    <Sidebar
+      library={library}
+      view={view}
+      tagIds={tagIds}
+      activeBatch={
+        activeBatch
+          ? {
+              label:
+                activeBatch.kind === "autotag"
+                  ? "Auto-tagging"
+                  : activeBatch.kind === "extract"
+                    ? "Extracting"
+                    : "Applying lens",
+              done: activeBatch.done + activeBatch.failed,
+              total: activeBatch.total,
+            }
+          : null
+      }
+      onView={(v) => {
+        setView(v);
+        setTagIds([]);
+        setMenuOpen(false);
+      }}
+      onToggleTag={(id) => {
+        toggleTagFilter(id);
+        setMenuOpen(false);
+      }}
+      onNewTag={() => setDialog({ tag: "new" })}
+      onEditTag={(tag) => setDialog({ tag })}
+      onDeleteTag={setDeleteTag}
+      onOpenLens={(id) => {
+        setView({ kind: "lens", id });
+        setActiveId(null);
+        setMenuOpen(false);
+      }}
+      onNewLens={() => setDialog({ lens: "new" })}
+      onEditLens={(lens) => setDialog({ lens })}
+      onDeleteLens={setDeleteLens}
+      onActivity={() => {
+        setActivityOpen(true);
+        setMenuOpen(false);
+      }}
+    />
+  );
+
+  const inspector = activeLink && (
+    <Inspector
+      link={activeLink}
+      tags={library.tags}
+      lenses={library.lenses}
+      onClose={() => setActiveId(null)}
+      onChange={setLibrary}
+      onDeleted={() => {
+        void refresh();
+        setActiveId(null);
+      }}
+      onRunLens={(lens) => void runBatch("lens", [activeLink.id], lens.id)}
+      onOpenLens={(id) => setView({ kind: "lens", id })}
+      onToggleTag={toggleTagFilter}
+      onAutoTag={() => void runBatch("autotag", [activeLink.id])}
+      running={jobsByLink.get(activeLink.id)?.kind ?? null}
+      onExtract={() => requestExtract([activeLink.id])}
+      onSelectTrack={async (language) => {
+        try {
+          const data = await api<Library & { batchId?: string }>(`/links/${activeLink.id}/transcript`, "POST", { language });
+          setLibrary(data);
+          if (data.batchId) sessionBatches.current.add(data.batchId);
+        } catch (e) { toast.error((e as Error).message); }
+      }}
+      onRetry={() => {
+        void mutate(`/links/${activeLink.id}/retry`, "POST").catch((e) =>
+          toast.error(e.message),
+        );
+      }}
+      focusTags={focusTags}
+    />
+  );
+
   return (
+    <TooltipProvider delayDuration={400}>
     <div
-      className="app"
+      className="flex h-dvh overflow-hidden"
       onDragEnter={(e) => {
-        if (
-          e.dataTransfer.types.some((t) =>
-            ["text/uri-list", "text/plain"].includes(t),
-          )
-        ) {
+        if (e.dataTransfer.types.some((t) => ["text/uri-list", "text/plain"].includes(t))) {
           e.preventDefault();
           dragDepth.current++;
           setDragging(true);
         }
       }}
       onDragOver={(e) => {
-        if (
-          e.dataTransfer.types.some((t) =>
-            ["text/uri-list", "text/plain"].includes(t),
-          )
-        ) {
+        if (e.dataTransfer.types.some((t) => ["text/uri-list", "text/plain"].includes(t))) {
           e.preventDefault();
           e.dataTransfer.dropEffect = "copy";
         }
@@ -293,420 +675,428 @@ export function App() {
         if (text) capture(text);
       }}
     >
-      <aside className="sidebar">
-        <a href="/" className="brand">
-          <Link2 size={27} strokeWidth={2.4} />
-          <span>
-            Linklog<span className="brand-dot">.</span>
-          </span>
-        </a>
-        <nav aria-label="Biblioteca">
-          <button
-            className={`nav-item ${!untagged && !selected.length ? "active" : ""}`}
-            onClick={clear}
-          >
-            <Inbox size={18} />
-            <span>Todos los links</span>
-            <span className="count">{library.links.length}</span>
-          </button>
-          <button
-            className={`nav-item ${untagged ? "active" : ""}`}
-            onClick={() => {
-              setSelected([]);
-              setUntagged(true);
-            }}
-          >
-            <Tag size={18} />
-            <span>Sin etiquetas</span>
-            <span className="count">
-              {library.links.filter((l) => !l.tags.length).length}
-            </span>
-          </button>
-        </nav>
-        <div className="sidebar-divider" />
-        <div className="tag-heading">
-          <span>ETIQUETAS</span>
-          <button
-            className="icon-button"
-            aria-label="Administrar etiquetas"
-            onClick={() => setModal("tags")}
-          >
-            <Plus size={17} />
-          </button>
-        </div>
-        <div className="tag-nav">
-          {library.tags.map((t) => (
-            <button
-              key={t.id}
-              className={`nav-item ${selected.includes(t.id) ? "active" : ""}`}
-              onClick={() => toggleTag(t.id)}
-            >
-              <span className={`dot ${tagColor(t.name)}`} />
-              <span>{t.name}</span>
-              <span className="count">
-                {
-                  library.links.filter((l) =>
-                    l.tags.some((tag) => tag.id === t.id),
-                  ).length
+      {!mobile && sidebarOpen && (
+        <aside className="w-[216px] shrink-0 border-r bg-sidebar animate-in fade-in slide-in-from-left-2 duration-200">
+          {sidebar}
+        </aside>
+      )}
+      <Sheet open={mobile && menuOpen} onOpenChange={setMenuOpen}>
+        <SheetContent side="left" className="w-[280px] p-0 sm:max-w-[280px]">
+          <SheetHeader className="sr-only">
+            <SheetTitle>Menu</SheetTitle>
+          </SheetHeader>
+          {sidebar}
+        </SheetContent>
+      </Sheet>
+      <main className="@container flex min-w-0 flex-1 flex-col">
+        <Toolbar
+          view={view}
+          lens={activeLens}
+          count={filtered.length}
+          query={query}
+          tagIds={tagIds}
+          tags={library.tags}
+          domainFilter={domainFilter}
+          tagCounts={tagCounts}
+          context={context}
+          domains={domains}
+          ascending={ascending}
+          searchRef={search}
+          allPicked={
+            filtered.length > 0 &&
+            filtered.every((l) => picked.includes(l.id))
+          }
+          somePicked={filtered.some((l) => picked.includes(l.id))}
+          onToggleAll={() =>
+            filtered.every((l) => picked.includes(l.id))
+              ? pickMany(filtered.map((l) => l.id), false)
+              : pickMany(filtered.map((l) => l.id), true)
+          }
+          onQuery={setQuery}
+          onToggleDomain={toggleDomainFilter}
+          onClearDomains={() => {
+            setDomainFilter([]);
+            setLensFilter(new Set());
+            setLensMinLevel(null);
+          }}
+          onContext={setContext}
+          onToggleTag={toggleTagFilter}
+          onRemoveTag={toggleTagFilter}
+          onClear={clearFilters}
+          onToggleSort={() => setAscending(!ascending)}
+          onAdd={() => setDialog("add")}
+          onToggleSidebar={() =>
+            mobile ? setMenuOpen(true) : setSidebarOpen((o) => !o)
+          }
+        />
+        {activeLens && (
+          <LensHeader
+            lens={activeLens}
+            results={activeLensResults}
+            filter={lensFilter}
+            minLevel={lensMinLevel}
+            scoreSort={lensScoreSort}
+            onToggle={(key) =>
+              setLensFilter((f) => {
+                const next = new Set(f);
+                if (next.has(key)) next.delete(key);
+                else next.add(key);
+                return next;
+              })
+            }
+            onMinLevel={setLensMinLevel}
+            onScoreSort={setLensScoreSort}
+            onEdit={() => setDialog({ lens: activeLens })}
+          />
+        )}
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {loadError ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center">
+              <p className="text-sm font-medium">Couldn't load your library</p>
+              <p className="text-xs text-muted-foreground">{loadError}</p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  void refresh()
+                    .then(() => setLoadError(""))
+                    .catch((e) => setLoadError(e.message))
                 }
-              </span>
-            </button>
-          ))}
-          {!library.tags.length && (
-            <button className="empty-tags" onClick={() => setModal("tags")}>
-              Tus temas, a tu manera.
-              <br />
-              <span>
-                Creá tu primera etiqueta <Plus size={12} />
-              </span>
-            </button>
-          )}
-        </div>
-        <div className="sidebar-bottom">
-          <BookOpen size={18} />
-          <span>
-            Biblioteca personal
-            <small>Datos locales · extracción en Cloudflare</small>
-          </span>
-        </div>
-      </aside>
-      <main>
-        <div className="content">
-          <header className="page-header">
-            <div>
-              <h1>{untagged ? "Sin etiquetas" : "Tu biblioteca"}</h1>
-              <p>Un lugar para lo que querés volver a encontrar.</p>
+              >
+                Retry
+              </Button>
             </div>
-            <button
-              aria-label="Agregar link"
-              className="primary add-button"
-              onClick={() => setModal("add")}
-            >
-              <Plus size={17} />
-              <span>Agregar link</span>
-              <kbd>⌘ K</kbd>
-            </button>
-          </header>
-          <div className="search-field">
-            <Search size={19} />
-            <input
-              ref={search}
-              aria-label="Buscar links"
-              placeholder="Buscar por título, dominio o etiqueta…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
+          ) : (
+            <LinkList
+              links={filtered}
+              loaded={loaded}
+              filtered={isFiltered}
+              jobsByLink={jobsByLink}
+              lens={activeLens}
+              activeId={activeId}
+              picked={picked}
+              onActivate={(id) => {
+                setActiveId(id);
+                setFocusTags(false);
+              }}
+              onPicked={(id, c) => pickMany([id], c)}
+              onPickedMany={pickMany}
+              onAdd={() => setDialog("add")}
+              onClearFilters={clearFilters}
+              rowActions={{
+                onToggleTagFilter: toggleTagFilter,
+                onDomainFilter: toggleDomainFilter,
+                onEditTags: (link) => {
+                  setActiveId(link.id);
+                  setFocusTags(true);
+                },
+                onExtract: (link) => requestExtract([link.id]),
+                onRetry: (link) =>
+                  void mutate(`/links/${link.id}/retry`, "POST").catch((e) =>
+                    toast.error(e.message),
+                  ),
+                onDelete: setDeleteLink,
+                onCopyUrl: (link) => {
+                  void navigator.clipboard.writeText(link.url);
+                  toast("URL copied");
+                },
+              }}
             />
-            {query ? (
-              <button
-                className="icon-button"
-                aria-label="Limpiar búsqueda"
-                onClick={() => setQuery("")}
-              >
-                <X size={15} />
-              </button>
-            ) : (
-              <kbd>/</kbd>
-            )}
-          </div>
-          <div className="filters">
-            <button
-              className={`filter ${!domain ? "selected" : ""}`}
-              onClick={() => setDomain("")}
-            >
-              Todos
-            </button>
-            {domains.slice(0, 4).map((d) => (
-              <button
-                key={d}
-                className={`filter ${domain === d ? "selected" : ""}`}
-                onClick={() => setDomain(domain === d ? "" : d)}
-              >
-                {d}
-              </button>
-            ))}
-            {domains.length > 4 && (
-              <select
-                aria-label="Otros dominios"
-                value={domains.slice(4).includes(domain) ? domain : ""}
-                onChange={(e) => setDomain(e.target.value)}
-              >
-                <option value="">Otros dominios</option>
-                {domains.slice(4).map((d) => (
-                  <option key={d}>{d}</option>
-                ))}
-              </select>
-            )}
-            <button
-              className="mobile-tags ghost"
-              onClick={() => setModal("tags")}
-            >
-              <SlidersHorizontal size={16} /> Etiquetas
-            </button>
-          </div>
-          {!!selected.length && (
-            <div className="active-tags">
-              {selected.map((id) => {
-                const t = library.tags.find((t) => t.id === id);
-                return t ? (
-                  <button
-                    className={`tag ${tagColor(t.name)}`}
-                    key={id}
-                    onClick={() => toggleTag(id)}
-                  >
-                    {t.name}
-                    <X size={11} />
-                  </button>
-                ) : null;
-              })}
-              <span>Coinciden todas las etiquetas</span>
-            </div>
           )}
-          {error && (
-            <div className="error-banner" role="alert">
-              <span>{error}</span>
-              <button className="ghost" onClick={() => void refresh()}>
-                Reintentar
-              </button>
-              <button
-                className="icon-button"
-                aria-label="Cerrar error"
-                onClick={() => setError("")}
-              >
-                <X size={16} />
-              </button>
-            </div>
-          )}
-          <div className="context-filters">
-            <label>
-              <input
-                type="checkbox"
-                checked={onlyContext}
-                onChange={(e) => setOnlyContext(e.target.checked)}
-              />{" "}
-              Con contexto
-            </label>
-            <button className="ghost" onClick={() => setShowUsage(true)}>
-              Uso y costos
-            </button>
-          </div>
-          <BatchPanel batches={library.batches} />
-          {!!picked.length && (
-            <div className="selection-bar">
-              <span>{picked.length} seleccionados</span>
-              <button
-                className="primary"
-                disabled={running || !hasContext || !library.tags.length}
-                title="Reemplaza todas las etiquetas de los links seleccionados si la evaluación termina correctamente"
-                onClick={() => void runBatch("autotag").catch(() => {})}
-              >
-                Autoetiquetar
-              </button>
-              <button
-                className="ghost"
-                disabled={running || !hasContext}
-                onClick={() => setShowQuery(true)}
-              >
-                Consultar
-              </button>
-              <button
-                className="ghost"
-                disabled={running}
-                onClick={() => void runBatch("extract").catch(() => {})}
-              >
-                Extraer contexto
-              </button>
-              <button
-                className="icon-button"
-                aria-label="Limpiar selección"
-                onClick={() => setPicked([])}
-              >
-                <X size={16} />
-              </button>
-              <small>
-                {hasContext
-                  ? "Autotag reemplaza todas las etiquetas, incluidas las manuales."
-                  : "Para clasificar, todos los links deben tener contexto y haber terminado de procesarse."}
-              </small>
-            </div>
-          )}
-          <div className="list-toolbar">
-            <span>
-              <input
-                type="checkbox"
-                aria-label="Seleccionar links filtrados"
-                checked={
-                  filtered.length > 0 &&
-                  filtered.every((l) => picked.includes(l.id))
-                }
-                onChange={(e) =>
-                  setPicked(e.target.checked ? filtered.map((l) => l.id) : [])
-                }
-              />{" "}
-              {!loaded
-                ? "Tu biblioteca"
-                : `${filtered.length} ${filtered.length === 1 ? "link" : "links"}`}
-              {isFiltered && (
-                <button className="clear-filters" onClick={clear}>
-                  Limpiar filtros
-                </button>
-              )}
-            </span>
-            <button
-              className="sort-button"
-              onClick={() => setAscending(!ascending)}
-            >
-              {ascending ? "Más antiguos" : "Más recientes"}
-              <ArrowDown size={13} className={ascending ? "rotate" : ""} />
-            </button>
-          </div>
-          <section className="link-list" aria-label="Links guardados">
-            {!loaded && !error ? (
-              <div className="loading">
-                <LoaderCircle className="spin" size={22} /> Cargando tu
-                biblioteca…
-              </div>
-            ) : (
-              filtered.map((link) => (
-                <LinkRow
-                  key={`${link.id}-${link.image}`}
-                  link={link}
-                  checked={picked.includes(link.id)}
-                  onSelect={() =>
-                    setPicked((current) =>
-                      current.includes(link.id)
-                        ? current.filter((id) => id !== link.id)
-                        : [...current, link.id],
-                    )
-                  }
-                  onContent={() => setContextId(link.id)}
-                  onTag={toggleTag}
-                  onEdit={() => setModal(link)}
-                  onRetry={() =>
-                    void mutate(`/links/${link.id}/retry`, "POST").catch((e) =>
-                      setError(e.message),
-                    )
-                  }
-                />
-              ))
-            )}
-            {loaded && !filtered.length && (
-              <div className="empty-state">
-                <div className="empty-icon">
-                  {isFiltered ? <Search size={30} /> : <Link2 size={32} />}
-                </div>
-                <h2>
-                  {isFiltered
-                    ? "No encontramos esos links"
-                    : "Lo encontraste. Guardalo acá."}
-                </h2>
-                <p>
-                  {isFiltered
-                    ? "Probá con otro título, dominio o etiqueta."
-                    : "Ese artículo, ese video, esa idea. Un link ahora, una buena referencia después."}
-                </p>
-                <button
-                  className="primary"
-                  onClick={() => (isFiltered ? clear() : setModal("add"))}
-                >
-                  {isFiltered ? (
-                    "Limpiar filtros"
-                  ) : (
-                    <>
-                      <Plus size={16} /> Guardar mi primer link
-                    </>
-                  )}
-                </button>
-                {!isFiltered && (
-                  <span className="empty-shortcut">
-                    O simplemente pegá un link con <kbd>⌘ V</kbd>
-                  </span>
-                )}
-              </div>
-            )}
-          </section>
-          <button className="drop-zone" onClick={() => setModal("add")}>
-            <Link2 size={21} />
-            <span>Arrastrá un link o pegá una lista de URLs</span>
-            <kbd>⌘ V</kbd>
-          </button>
-          <footer className="page-footer">
-            <span>Menos pestañas abiertas. Más ideas a mano.</span>
-            <button className="ghost" onClick={() => setModal("add")}>
-              <Command size={12} /> K para guardar
-            </button>
-          </footer>
         </div>
       </main>
+      {activeLink && !narrow && (
+        <aside
+          className="relative shrink-0 border-l animate-in fade-in slide-in-from-right-2 duration-200"
+          style={{ width: inspectorWidth }}
+        >
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize inspector"
+            className="absolute inset-y-0 -left-1 z-20 w-1.5 cursor-col-resize hover:bg-brand/40 active:bg-brand/60"
+            onDoubleClick={() => {
+              inspectorW.current = 400;
+              setInspectorWidth(400);
+              localStorage.setItem("linklog.inspector", "400");
+            }}
+            onPointerDown={(e) => {
+              e.preventDefault();
+              const handle = e.currentTarget;
+              handle.setPointerCapture(e.pointerId);
+              document.body.style.cursor = "col-resize";
+              document.body.style.userSelect = "none";
+              const move = (ev: PointerEvent) => {
+                const w = Math.min(
+                  Math.max(window.innerWidth - ev.clientX, 320),
+                  Math.min(720, window.innerWidth * 0.6),
+                );
+                inspectorW.current = w;
+                setInspectorWidth(w);
+              };
+              const up = () => {
+                handle.removeEventListener("pointermove", move);
+                document.body.style.cursor = "";
+                document.body.style.userSelect = "";
+                localStorage.setItem(
+                  "linklog.inspector",
+                  String(inspectorW.current),
+                );
+              };
+              handle.addEventListener("pointermove", move);
+              handle.addEventListener("pointerup", up, { once: true });
+            }}
+          />
+          {inspector}
+        </aside>
+      )}
+      <Sheet
+        open={!!activeLink && narrow}
+        onOpenChange={(o) => !o && setActiveId(null)}
+      >
+        <SheetContent
+          side="right"
+          showCloseButton={false}
+          className="w-full p-0 sm:max-w-[400px]"
+        >
+          <SheetHeader className="sr-only">
+            <SheetTitle>{activeLink?.title}</SheetTitle>
+          </SheetHeader>
+          {inspector}
+        </SheetContent>
+      </Sheet>
+      {!!picked.length && (
+        <SelectionBar
+          links={pickedLinks}
+          total={filtered.length}
+          tags={library.tags}
+          lenses={library.lenses}
+          running={running}
+          onSelectAll={() => pickMany(filtered.map((l) => l.id), true)}
+          onAutoTag={() => {
+            if (manualTagged) setConfirmAutoTag(true);
+            else void doAutoTag();
+          }}
+          onLens={(lens) =>
+            void runBatch("lens", picked, lens.id).then(() => setPicked([]))
+          }
+          onNewLens={() => setDialog({ lens: "new" })}
+          onExtract={() => requestExtract(picked)}
+          onClear={() => setPicked([])}
+        />
+      )}
+      {dialog === "add" && (
+        <AddLinkDialog
+          tags={library.tags}
+          onClose={() => setDialog(null)}
+          onSave={save}
+          onImport={capture}
+        />
+      )}
+      {dialog && typeof dialog === "object" && "lens" in dialog && (
+        <LensDialog
+          lens={dialog.lens}
+          selectedCount={picked.length}
+          onClose={() => setDialog(null)}
+          onSave={async (draft: LensDraft) => {
+            const { runNow, ...body } = draft;
+            const lib =
+              dialog.lens === "new"
+                ? await api<Library>("/lenses", "POST", body)
+                : await api<Library>(
+                    `/lenses/${(dialog.lens as Lens).id}`,
+                    "PATCH",
+                    body,
+                  );
+            setLibrary(lib);
+            toast.success(
+              dialog.lens === "new" ? "Lens created" : "Lens updated",
+            );
+            if (runNow && picked.length) {
+              const lens = lib.lenses.find(
+                (l) => l.name.toLowerCase() === draft.name.toLowerCase(),
+              );
+              if (lens) await runBatch("lens", picked, lens.id);
+            }
+          }}
+        />
+      )}
+      {dialog && typeof dialog === "object" && "tag" in dialog && (
+        <TagDialog
+          tag={dialog.tag}
+          onClose={() => setDialog(null)}
+          onChange={setLibrary}
+          linkCount={(id) =>
+            library.links.filter((l) => l.tags.some((t) => t.id === id)).length
+          }
+        />
+      )}
+      <AlertDialog open={!!deleteLink} onOpenChange={(o) => !o && setDeleteLink(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this link?</AlertDialogTitle>
+            <AlertDialogDescription className="truncate">
+              {deleteLink?.title}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={async () => {
+                if (!deleteLink) return;
+                try {
+                  await mutate(`/links/${deleteLink.id}`, "DELETE");
+                  toast.success("Link deleted");
+                  if (activeId === deleteLink.id) setActiveId(null);
+                } catch (e) {
+                  toast.error((e as Error).message);
+                }
+                setDeleteLink(null);
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={!!deleteTag} onOpenChange={(o) => !o && setDeleteTag(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete “{deleteTag?.name}”?</AlertDialogTitle>
+            <AlertDialogDescription>
+              It will be removed from{" "}
+              {deleteTag
+                ? library.links.filter((l) => l.tags.some((t) => t.id === deleteTag.id)).length
+                : 0}{" "}
+              links. Scores are kept.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={async () => {
+                if (!deleteTag) return;
+                try {
+                  await mutate(`/tags/${deleteTag.id}`, "DELETE");
+                  toast.success("Tag deleted");
+                } catch (e) {
+                  toast.error((e as Error).message);
+                }
+                setDeleteTag(null);
+              }}
+            >
+              Delete tag
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={!!deleteLens} onOpenChange={(o) => !o && setDeleteLens(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete “{deleteLens?.name}”?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Its{" "}
+              {deleteLens
+                ? library.links.reduce(
+                    (n, l) =>
+                      n +
+                      l.lens_results.filter((r) => r.lens_id === deleteLens.id)
+                        .length,
+                    0,
+                  )
+                : 0}{" "}
+              results are removed too.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={async () => {
+                if (!deleteLens) return;
+                try {
+                  setLibrary(
+                    await api<Library>(`/lenses/${deleteLens.id}`, "DELETE"),
+                  );
+                  if (typeof view === "object" && view.id === deleteLens.id)
+                    setView("all");
+                  toast.success("Lens deleted");
+                } catch (e) {
+                  toast.error((e as Error).message);
+                }
+                setDeleteLens(null);
+              }}
+            >
+              Delete lens
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={confirmAutoTag} onOpenChange={setConfirmAutoTag}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Auto-tag replaces existing tags</AlertDialogTitle>
+            <AlertDialogDescription>
+              {manualTagged} {manualTagged === 1 ? "link has" : "links have"} manually added
+              tags. Auto-tagging replaces all tags on each link with the AI
+              result.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void doAutoTag()}>
+              Auto-tag {picked.length} {picked.length === 1 ? "link" : "links"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog
+        open={!!confirmExtract}
+        onOpenChange={(o) => !o && setConfirmExtract(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Extract context for {confirmExtract?.length}{" "}
+              {confirmExtract?.length === 1 ? "link" : "links"}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {(() => {
+                const withContent = (confirmExtract ?? []).filter(
+                  (id) =>
+                    library.links.find((l) => l.id === id)?.content_key,
+                ).length;
+                return withContent
+                  ? `${withContent} of ${confirmExtract?.length} already have context — extracting again replaces it and uses browser time.`
+                  : "This fetches each page in a headless browser.";
+              })()}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => confirmExtract && void doExtract(confirmExtract)}
+            >
+              Extract
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <ActivitySheet
+        open={activityOpen}
+        batches={library.batches}
+        onOpenChange={setActivityOpen}
+        onLibrary={setLibrary}
+      />
       {dragging && (
-        <div className="drop-overlay">
-          <div>
-            <Upload size={40} />
-            <h2>Soltalo. Ya lo guardamos.</h2>
-            <p>El título y la vista previa llegan después.</p>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed p-10 text-center">
+            <Link2 className="size-6 text-muted-foreground" />
+            <p className="text-sm font-medium">Drop to save</p>
           </div>
         </div>
       )}
-      {(toast || saving > 0) && (
-        <div className="toast" role="status">
-          {saving > 0 ? (
-            <LoaderCircle size={17} className="spin" />
-          ) : (
-            <Check size={17} />
-          )}
-          <span>{saving > 0 ? "Guardando link…" : toast}</span>
-        </div>
-      )}
-      {contextLink && (
-        <ContextPanel
-          link={contextLink}
-          tags={library.tags}
-          onClose={() => setContextId("")}
-          onChange={refresh}
-        />
-      )}
-      {showQuery && (
-        <QueryPanel
-          count={picked.length}
-          onClose={() => setShowQuery(false)}
-          onRun={(q) => runBatch("query", q)}
-        />
-      )}
-      {showUsage && <UsagePanel onClose={() => setShowUsage(false)} />}
-      {modal === "add" && (
-        <LinkForm
-          tags={library.tags}
-          onClose={() => setModal(null)}
-          onSave={save}
-        />
-      )}
-      {modal === "tags" && (
-        <TagManager
-          tags={library.tags}
-          onClose={() => setModal(null)}
-          onChange={mutate}
-        />
-      )}
-      {modal && typeof modal === "object" && (
-        <LinkForm
-          link={library.links.find((l) => l.id === modal.id) || modal}
-          tags={library.tags}
-          onClose={() => setModal(null)}
-          onSave={async (_url, tags) => {
-            await mutate(`/links/${modal.id}`, "PATCH", { tags });
-            setToast("Etiquetas actualizadas.");
-          }}
-          onDelete={async () => {
-            await mutate(`/links/${modal.id}`, "DELETE");
-            setToast("Link eliminado.");
-          }}
-        />
-      )}
+      <Toaster position="bottom-right" />
     </div>
-  );
-}
-function isInput(target: EventTarget | null) {
-  return (
-    target instanceof HTMLElement &&
-    !!target.closest('input,textarea,select,[contenteditable="true"]')
+    </TooltipProvider>
   );
 }

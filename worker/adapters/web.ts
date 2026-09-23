@@ -27,7 +27,7 @@ export const webAdapter: ContentAdapter = {
           );
         if (typeof data.result !== "string" || !data.result.trim())
           throw new Error(
-            "La página no devolvió contenido. Podés cargarlo manualmente.",
+            "The page returned no content. You can paste it manually.",
           );
         return { markdown: data.result, source: "web" };
       },

@@ -17,7 +17,7 @@ export function evaluationStatements(
   ];
   for (const tag of tags) {
     const answer = answers[tag.id]!;
-    if (answer.type !== "noul") throw new Error("Respuesta inválida.");
+    if (answer.type !== "noul") throw new Error("Invalid answer.");
     statements.push(
       db
         .prepare(

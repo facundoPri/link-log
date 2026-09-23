@@ -1,4 +1,13 @@
-import type { Link, Tag, Evaluation, Batch } from "../src/types";
+import type {
+  Link,
+  Tag,
+  Evaluation,
+  Batch,
+  Lens,
+  LensResult,
+  BatchUsage,
+  MediaItem,
+} from "../src/types";
 export const json = (body: unknown, status = 200) =>
   Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
 export function capabilities(env: Env) {
@@ -10,7 +19,8 @@ export function capabilities(env: Env) {
   };
 }
 export async function library(env: Env) {
-  const [links, tags, joins, evaluations, batches] = await Promise.all([
+  const [links, tags, joins, evaluations, batches, lensRows, lensResults, usageRows, mediaRows] =
+    await Promise.all([
     env.DB.prepare("SELECT * FROM links ORDER BY created_at DESC").all<
       Link & { metadata_started_at: string | null }
     >(),
@@ -28,7 +38,50 @@ export async function library(env: Env) {
     env.DB.prepare(
       "SELECT b.*,count(j.id) total,coalesce(sum(j.status='done'),0) done,coalesce(sum(j.status='failed'),0) failed,coalesce(sum(j.status IN ('queued','running')),0) active FROM batches b LEFT JOIN jobs j ON j.batch_id=b.id GROUP BY b.id HAVING count(j.id)>0 ORDER BY b.created_at DESC LIMIT 30",
     ).all<Batch>(),
+    env.DB.prepare("SELECT * FROM lenses ORDER BY name COLLATE NOCASE").all<
+      Omit<Lens, "options" | "levels"> & { options: string }
+    >(),
+    env.DB.prepare("SELECT * FROM lens_results").all<
+      Omit<LensResult, "answer"> & { link_id: string; answer: string }
+    >(),
+    env.DB.prepare(
+      "SELECT batch_id,sum(input_tokens) input_tokens,sum(output_tokens) output_tokens,sum(browser_ms) browser_ms,max(model) model,sum(estimated_usd) usd,sum(estimated_usd IS NULL) unknown_cost_calls FROM usage_events WHERE status IN ('done','failed') GROUP BY batch_id",
+    ).all<{
+      batch_id: string;
+      input_tokens: number | null;
+      output_tokens: number | null;
+      browser_ms: number | null;
+      model: string | null;
+      usd: number | null;
+      unknown_cost_calls: number;
+    }>(),
+    env.DB.prepare("SELECT link_id,media_key,position,kind,url,preview_url,ocr_state,ocr_text,ocr_error,ocr_model FROM media_items ORDER BY position").all<MediaItem & {link_id: string}>(),
   ]);
+  const mediaByLink = new Map<string, MediaItem[]>();
+  for (const { link_id, ...media } of mediaRows.results)
+    mediaByLink.set(link_id, [...(mediaByLink.get(link_id) || []), media]);
+  const usageByBatch = new Map<string, BatchUsage>();
+  for (const row of usageRows.results) {
+    let u = usageByBatch.get(row.batch_id);
+    if (!u)
+      usageByBatch.set(
+        row.batch_id,
+        (u = {
+          input_tokens: 0,
+          output_tokens: 0,
+          browser_ms: 0,
+          model: null,
+          usd: null,
+          unknown_cost_calls: 0,
+        }),
+      );
+    u.input_tokens += row.input_tokens ?? 0;
+    u.output_tokens += row.output_tokens ?? 0;
+    u.browser_ms += row.browser_ms ?? 0;
+    u.model ??= row.model;
+    if (row.usd !== null) u.usd = (u.usd ?? 0) + row.usd;
+    u.unknown_cost_calls += row.unknown_cost_calls;
+  }
   const tagsById = new Map(tags.results.map((t) => [t.id, t]));
   const membership = new Map<string, Tag[]>();
   for (const j of joins.results) {
@@ -42,6 +95,23 @@ export async function library(env: Env) {
   const scores = new Map<string, Evaluation[]>();
   for (const e of evaluations.results)
     scores.set(e.link_id, [...(scores.get(e.link_id) || []), e]);
+  const lenses: Lens[] = lensRows.results.map((row) => ({
+    ...row,
+    ...parseLensDefinition(row.type, row.options),
+  }));
+  const lensByLink = new Map<string, LensResult[]>();
+  for (const r of lensResults.results) {
+    let answer: LensResult["answer"] | null = null;
+    try {
+      answer = JSON.parse(r.answer);
+    } catch {}
+    if (!answer) continue;
+    const { link_id, answer: _raw, ...rest } = r;
+    lensByLink.set(link_id, [
+      ...(lensByLink.get(link_id) || []),
+      { ...rest, answer },
+    ]);
+  }
   return {
     links: links.results.map((l) => ({
       ...l,
@@ -52,15 +122,75 @@ export async function library(env: Env) {
           : l.status,
       tags: membership.get(l.id) || [],
       evaluations: scores.get(l.id) || [],
+      lens_results: lensByLink.get(l.id) || [],
+      media: mediaByLink.get(l.id) || [],
     })),
     tags: tags.results,
-    batches: batches.results,
+    lenses,
+    batches: batches.results.map((b) => ({
+      ...b,
+      usage: usageByBatch.get(b.id) ?? null,
+    })),
     capabilities: capabilities(env),
   };
 }
+export function parseLensDefinition(
+  _type: Lens["type"],
+  raw: string,
+): Pick<Lens, "options" | "levels" | "criteria"> {
+  const out: Pick<Lens, "options" | "levels" | "criteria"> = {
+    options: [],
+    levels: [],
+    criteria: { yes: "", no: "" },
+  };
+  let parsed: unknown = {};
+  try {
+    parsed = JSON.parse(raw);
+  } catch {}
+  if (Array.isArray(parsed)) {
+    // legacy score shape: ordered string[]
+    out.levels = parsed.map((l) => ({ label: String(l), description: "" }));
+    return out;
+  }
+  if (!parsed || typeof parsed !== "object") return out;
+  const o = parsed as Record<string, unknown>;
+  if (Array.isArray(o.options)) {
+    out.options = (o.options as Record<string, unknown>[]).map((p) => ({
+      key: String(p.key),
+      label: String(p.label ?? p.key),
+      description: typeof p.description === "string" ? p.description : "",
+    }));
+  } else {
+    // legacy choice shape: flat Record<key, label>
+    const entries = Object.entries(o).filter(
+      ([k, v]) =>
+        typeof v === "string" &&
+        !["options", "levels", "criteria"].includes(k),
+    );
+    if (entries.length)
+      out.options = entries.map(([key, label]) => ({
+        key,
+        label: key === "other" ? "Other" : String(label),
+        description: "",
+      }));
+  }
+  if (Array.isArray(o.levels))
+    out.levels = (o.levels as Record<string, unknown>[]).map((l) => ({
+      label: String(l.label ?? ""),
+      description: typeof l.description === "string" ? l.description : "",
+    }));
+  if (o.criteria && typeof o.criteria === "object") {
+    const c = o.criteria as Record<string, unknown>;
+    out.criteria = {
+      yes: typeof c.yes === "string" ? c.yes : "",
+      no: typeof c.no === "string" ? c.no : "",
+    };
+  }
+  return out;
+}
 export function text(value: unknown, max = 1000) {
   if (typeof value !== "string" || value.trim().length > max)
-    throw new Error("Texto inválido o demasiado largo.");
+    throw new Error("Invalid or too-long text.");
   return value.trim();
 }
 export function threshold(value: unknown) {
@@ -70,6 +200,6 @@ export function threshold(value: unknown) {
     value < 0 ||
     value > 1
   )
-    throw new Error("El umbral debe estar entre 0 y 100%.");
+    throw new Error("The threshold must be between 0 and 100%.");
   return value;
 }

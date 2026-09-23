@@ -1,10 +1,11 @@
 import { youtubeAdapter } from "./youtube";
 import { webAdapter } from "./web";
-import type { ContentAdapter, ExtractionJob } from "./types";
-// Specific adapters precede the web fallback. Each produces the same durable Markdown contract.
-const adapters: ContentAdapter[] = [youtubeAdapter, webAdapter];
-export async function extract(env: Env, url: string, job: ExtractionJob) {
+import { youtubePostAdapter, instagramAdapter, xAdapter } from "./social";
+import type { ContentAdapter } from "./types";
+// Specific adapters precede the web fallback.
+const adapters: ContentAdapter[] = [youtubePostAdapter, youtubeAdapter, instagramAdapter, xAdapter, webAdapter];
+export function adapterFor(url: string) {
   const adapter = adapters.find((a) => a.matches(url));
-  if (!adapter) throw new Error("No hay adaptador para este link.");
-  return adapter.extract(env, url, job);
+  if (!adapter) throw new Error("No adapter for this link.");
+  return adapter;
 }
