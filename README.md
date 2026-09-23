@@ -1,138 +1,149 @@
 # Linklog
 
-Biblioteca personal de links: capturar rápido, encontrar después. Creada con `bun init --react`, React **18.3.1**, Bun y Cloudflare Workers + D1.
+A personal link library: capture fast, find later. Built with `bun init --react`, React **19.x**, Bun and Cloudflare Workers + D1. The UI is Tailwind v4 + shadcn (`components.json`, `src/components/ui`).
 
-## Usar localmente
+## Run locally
 
 ```sh
 bun install
 bun run dev
 ```
 
-Abrir http://localhost:3000. El comando compila los assets, aplica las migraciones **locales**, inicia Wrangler en 127.0.0.1:8787 y Bun con HMR en 127.0.0.1:3000. Los datos persisten en `.wrangler/state`; no se guardan en localStorage ni se envían a una base remota.
+Open http://localhost:3000. The command builds the assets with `bun scripts/build.ts` (Bun.build + bun-plugin-tailwind), applies **local** migrations, starts Wrangler on 127.0.0.1:8787 and Bun with HMR on 127.0.0.1:3000. Data persists in `.wrangler/state`; nothing is stored in localStorage or sent to a remote database.
 
-- Botón **Agregar link** o `⌘/Ctrl K`: URL + etiquetas opcionales.
-- Pegar una URL o una lista fuera de un campo: guarda directamente.
-- Arrastrar un enlace del navegador a la página: guarda directamente.
-- `/`: enfoca búsqueda. Busca título, descripción, URL, dominio y etiquetas.
-- Filtros de dominio y múltiples etiquetas (AND).
-- Menú `…`: editar etiquetas o eliminar (segundo clic confirma).
-- `+` junto a Etiquetas: crear, renombrar o eliminar una etiqueta globalmente.
+- **Add link** button or `⌘/Ctrl K`: one URL or a list, with optional tags.
+- Paste a URL or a list outside of a field, or drag a link from the browser onto the page: saves directly.
+- `/`: focuses search. Searches title, description, URL, domain and tags.
+- **Filter** menu: domain and context filters; tags filter with AND semantics.
+- Click a row to open the inspector: preview, tags, AI confidence, content and details. `↑`/`↓` move between links and `Esc` closes it.
+- Hover `…` on a row for actions (open, copy URL, edit tags, extract, delete).
+- Row checkboxes open a floating selection bar: **Auto-tag**, **Ask**, **Extract context**.
+- In the sidebar, **Tags** `+` creates a tag and `…` edits it (name, description for the AI, confidence threshold) or deletes it. **Activity** and **Usage** live in the sidebar footer.
 
-## Metadata y URLs
+## Metadata and URLs
 
-Guarda inmediatamente en D1; el workflow de extracción enriquece título, descripción, Open Graph y favicon. Sigue hasta seis solicitudes HTTP con redirecciones manuales, timeout de 10s y lectura máxima de 1MiB. Valida protocolo, credenciales, puertos, host y direcciones DNS públicas por salto. La vista previa no ejecuta JavaScript remoto ni accede a páginas autenticadas; la extracción Markdown posterior usa un navegador de Cloudflare. Decodifica entidades HTML; renderiza todo como texto React.
+Saves immediately to D1; the extraction workflow enriches title, description, Open Graph and favicon. It follows up to six HTTP requests with manual redirects, a 10s timeout and a 1MiB read cap. It validates protocol, credentials, ports, host and public DNS addresses per hop. The preview does not execute remote JavaScript or access authenticated pages; the later Markdown extraction uses a Cloudflare browser. It decodes HTML entities; everything renders as React text.
 
-Los aliases `youtu.be`, `www.youtube.com`, `m.youtube.com` y `music.youtube.com` se agrupan como `youtube.com`. Se eliminan parámetros de tracking conocidos; se conservan parámetros funcionales y fragmentos. Duplicados normalizados exactos o contra un destino ya resuelto devuelven el existente y suman etiquetas, incluso con guardados simultáneos. Dos acortadores diferentes que llegan al mismo destino después del guardado aún pueden coexistir; no se fusionan automáticamente.
+The aliases `youtu.be`, `www.youtube.com`, `m.youtube.com` and `music.youtube.com` are grouped as `youtube.com`. Known tracking parameters are stripped; functional parameters and fragments are preserved. Exact-normalized duplicates or duplicates of an already-resolved destination return the existing link and merge tags, even with concurrent saves. Two different shorteners reaching the same destination after saving can still coexist; they are not merged automatically.
 
-Una página bloqueada, lenta o sin HTML conserva el link y permite reintentar. Si el Worker se reinicia durante una extracción, el estado pendiente caduca a los 30s para permitir recuperación. Imágenes remotas tienen fallback; su disponibilidad depende del sitio. No hay archivo de imágenes ni oEmbed. R2 guarda el Markdown y las transcripciones.
+A blocked, slow or HTML-less page keeps the link and allows a retry. If the Worker restarts mid-extraction, the pending state expires after 30s to allow recovery. Remote images have a fallback; their availability depends on the site. There is no image archive or oEmbed. R2 stores the Markdown and transcripts.
 
-## Cloudflare: frontera actual
+## Cloudflare: current boundary
 
-La API ya corre en el runtime de Workers y usa el binding D1 real emulado localmente. **No está desplegada ni conectada a una base remota.** Bun se usa para desarrollo/build; no es el runtime de producción de Workers.
+The API already runs on the Workers runtime and uses the real D1 binding emulated locally. **It is not deployed and not connected to a remote database.** Bun is used for development/build; it is not the Workers production runtime.
 
-`wrangler.jsonc` contiene un ID explícitamente local. La API rechaza hosts remotos mientras no haya autenticación. Para la siguiente etapa: decidir personal vs multiusuario, incorporar Cloudflare Access o sesiones verificadas, provisionar D1 remoto, reemplazar ese ID, aplicar migraciones remotas y desplegar los assets + Worker. No quitar la protección de hosts sin implementar el control de acceso. Para exposición remota también corresponde endurecer egress/DNS contra rebinding, limitar abuso y paginar la biblioteca.
+`wrangler.jsonc` contains an explicitly local ID. The API rejects remote hosts while there is no authentication. For the next stage: decide personal vs multi-user, add Cloudflare Access or verified sessions, provision remote D1, replace that ID, apply remote migrations and deploy the assets + Worker. Do not remove the host guard without implementing access control. Remote exposure also calls for hardening egress/DNS against rebinding, limiting abuse and paginating the library.
 
-Documentación consultada: [Bun React](https://bun.sh/guides/ecosystem/react), [Workers Static Assets](https://developers.cloudflare.com/workers/static-assets/), [D1 prepared statements](https://developers.cloudflare.com/d1/worker-api/prepared-statements/).
+Documentation consulted: [Bun React](https://bun.sh/guides/ecosystem/react), [Workers Static Assets](https://developers.cloudflare.com/workers/static-assets/), [D1 prepared statements](https://developers.cloudflare.com/d1/worker-api/prepared-statements/).
 
-## Verificar
+## Verify
 
 ```sh
 bun run typecheck
 bun test
-# Con dev en ejecución: integración contra D1 local; limpia solo sus propios registros.
+# With dev running: integration against local D1; cleans up only its own records.
 bun scripts/check-api.ts
-# Build y ejecución sin HMR en el runtime de Workers:
+# Build and run without HMR on the Workers runtime:
 bun run preview
 ```
 
-Diseño y decisiones en `docs/design/decisions.md`. Concepto generado: `docs/design/concept.png`. Comparación y pruebas de interfaz: `docs/design/verification.md`. Las capturas muestran links de prueba reales, retirados de la biblioteca al finalizar.
+## Context and classification
 
-## Contexto y clasificación
+`bun run dev` applies migrations and opens the library at `http://localhost:3000`.
+D1, R2, Queues and Workflows run **locally**. Browser Rendering and, if selected,
+Workers AI are **remote** bindings: their calls use real services. The library is
+not deployed and public access is not enabled.
 
-`bun run dev` aplica migraciones y abre la biblioteca en `http://localhost:3000`.
-D1, R2, Queues y Workflows funcionan **localmente**. Browser Rendering y, si se
-selecciona, Workers AI son bindings **remotos**: sus llamadas usan servicios reales.
-No se desplegó la biblioteca ni se habilitó acceso público.
+- Saving a link or pasting a list outside of a field creates an extraction batch.
+  Large lists are split into batches of 100, with deduplication by normalized URL.
+- The workflow resolves redirects and fetches metadata; the adapter registry in
+  `worker/adapters/index.ts` chooses source-specific adapters before the web fallback.
+- Web uses Browser Rendering → Markdown. YouTube uses public captions via
+  `youtube-transcript-plus`; video selection follows original language → English
+  with an explanation → manual track choice. It does not transcribe audio or
+  access private content. The inspector accepts pasted/uploaded `.txt`, `.md`,
+  `.srt` and `.vtt` when no public transcript is available.
+- YouTube posts, public Instagram posts/reels and X posts keep the author's text
+  and ordered attachments from the exact post. Images receive automatic OCR
+  from Gemma 4 in Workers AI. Accessible still previews of attached videos receive the same OCR,
+  labeled as text from the still preview; video motion and audio are not analyzed.
+  OCR and the author's text share the saved Markdown used by tags and lenses. The inspector
+  shows each image's result, partial failures and an explicit retry. Completed
+  OCR is reused on re-extraction.
+- The "With context" filter and "Untagged" view help narrow the selection before
+  paying for an evaluation. Select links and use **Auto-tag** or **Ask**.
+- Auto-tag groups one Noul per tag into one call per link. A complete, valid
+  response replaces all of its tags (including manual ones) and scores.
+  Failures preserve the previous state. The initial threshold is 80%, editable;
+  it is a starting configuration, not a guaranteed calibration.
+- Each score keeps the description, threshold, tag version and content version
+  of that run. Changing a tag does not re-evaluate previous links.
+  All scores are visible in the inspector's confidence list; discarded ones also
+  appear in the tag picker. Auto-tagged chips show the percentage on hover.
+- Ask offers Noul or Choice, with per-link results, without modifying tags.
+  Choice includes an "Other" option. Results and progress are stored per batch.
 
-- Guardar un link o pegar una lista fuera de un campo crea un lote de extracción.
-  Las listas grandes se dividen en lotes de 100, con deduplicación por URL normalizada.
-- El workflow resuelve redirecciones y obtiene metadata; el registro de adaptadores
-  en `worker/adapters/index.ts` elige YouTube o el adaptador web.
-- Web usa Browser Rendering → Markdown. YouTube usa subtítulos públicos mediante
-  `youtube-transcript-plus`; no transcribe audio ni accede a contenido privado.
-  YouTube puede bloquear o cambiar su API interna. El panel permite reintentar o
-  pegar/cargar `.txt`, `.md`, `.srt` y `.vtt` cuando no haya transcripción disponible.
-- «Con contexto» y «Sin etiquetas» ayudan a reducir la selección antes de pagar
-  una evaluación. Seleccioná links y usá **Autoetiquetar** o **Consultar**.
-- Autoetiquetar agrupa un Noul por etiqueta en una llamada por link. Una respuesta
-  completa y válida reemplaza todas sus etiquetas (también las manuales) y scores.
-  Los fallos conservan el estado anterior. El umbral inicial es 80%, editable;
-  es una configuración de partida, no una calibración garantizada.
-- Cada score conserva descripción, umbral, versión de etiqueta y versión del
-  contenido de esa ejecución. Cambiar una etiqueta no reevalúa links anteriores.
-  Todos los scores se ven en el contexto; los descartados también aparecen en
-  el selector de etiquetas. Las etiquetas muestran el porcentaje al pasar el mouse.
-- Consultar ofrece Noul o Choice, con resultados por link, sin modificar etiquetas.
-  Choice incorpora una opción «Otro». Los resultados y progreso se guardan por lote.
+### Credentials
 
-### Credenciales
+For Markdown, authenticate Wrangler with `browser:write`, in addition to its
+Worker and account permissions. `bunx wrangler login` opens the authorization
+flow.
 
-Para Markdown, autenticá Wrangler con `browser:write`, además de sus permisos de
-Worker y cuenta. `bunx wrangler login` abre el flujo de autorización. Esta cuenta
-ya fue reconectada durante la implementación.
-
-Para TypeSafe, completá **localmente** `.dev.vars` (ignorado por Git):
+For TypeSafe, fill in `.dev.vars` **locally** (ignored by Git):
 
 ```dotenv
 JEV_PROVIDER="typesafe"
-TYPESAFE_API_KEY="tu-clave"
+TYPESAFE_API_KEY="your-key"
 ```
 
-Guardá y reiniciá `bun run dev` si Wrangler no recarga las variables. Las claves no
-se envían al navegador. Para Cloudflare, usá `JEV_PROVIDER="cloudflare"`; requiere
-permiso `ai:write` y saldo para `typesafe/jev`. La prueba real de esta cuenta devolvió
-HTTP 402 por saldo insuficiente. No se cambia de proveedor automáticamente.
+Save and restart `bun run dev` if Wrangler does not reload the variables. Keys
+are never sent to the browser. For Cloudflare, use `JEV_PROVIDER="cloudflare"`;
+it requires the `ai:write` permission and balance for `typesafe/jev`. Insufficient
+balance is reported as an error; the provider is not switched automatically.
 
-### Costos, reintentos y límites actuales
+### Costs, retries and current limits
 
-«Uso y costos» registra cada intento de proveedor, tokens informados, modelo,
-latencia, tiempo de navegador, link, lote y estado. Las tarifas USD se configuran
-manualmente según el contrato del proveedor y se guardan con cada intento; sin
-medición o tarifa el costo queda **desconocido**, nunca supuesto cero. Las estimaciones
-no representan facturación final ni incluyen infraestructura de almacenamiento,
-Workflows, Queue, mínimos, descuentos o concurrencia de Browser Rendering. El panel
-muestra las últimas 1.000 operaciones. OCR/Instagram quedan para una etapa posterior.
+"Usage" records every provider attempt, reported tokens, model, latency, browser
+time, link, batch and status. USD rates are configured manually per the provider
+contract and stored with each attempt; without measurement or a rate the cost is
+**unknown**, never assumed zero. Estimates do not represent final billing and do
+not include storage infrastructure, Workflows, Queue, minimums, discounts or
+Browser Rendering concurrency. The panel shows the latest 1,000 operations.
+Gemma OCR estimates use configured input/output token rates when both counts are
+reported. Images are fetched temporarily from public platform CDNs with an 8 MB
+cap; media are not archived, and remote preview URLs can expire. Extraction uses
+public access without login or personal cookies. A blocked image remains visible
+as a partial result when useful text was obtained.
 
-D1 actúa como outbox, Queue entrega IDs y cada Workflow usa un ID estable para
-no duplicar trabajos ante redelivery. Los pasos pagados no se reintentan
-silenciosamente; el usuario puede crear un nuevo intento. Hay dos cupos de proveedor
-compartidos mediante leases D1 de cinco minutos; los pasos tienen timeout de dos
-minutos. El cron recupera trabajos pendientes; `scripts/dev.ts` simula este cron cada
-30 segundos porque Wrangler no ejecuta cron automáticamente en local.
+D1 acts as the outbox, Queue delivers IDs and each Workflow uses a stable ID so
+work is not duplicated on redelivery. Paid steps are not silently retried; the
+user can create a new attempt. There are two shared provider slots via five-minute
+D1 leases; steps have a two-minute timeout. Cron recovers pending jobs;
+`scripts/dev.ts` simulates this cron every 30 seconds because Wrangler does not
+run cron automatically in local dev.
 
-El contenido completo se guarda en R2 (máximo 2 MB; carga manual 500.000 caracteres).
-La clasificación envía el contenido completo y deja que el tokenizador del proveedor
-valide la ventana real, sin confundir bytes con tokens. TypeSafe documenta 32.000
-tokens para `state` más la pregunta más larga y 64.000 para la solicitud completa.
-Si el proveedor rechaza el tamaño, el trabajo falla con un mensaje claro y conserva
-contenido, etiquetas y scores anteriores. No se trunca ni se agregan probabilidades
-por fragmentos automáticamente; la estrategia para documentos que realmente superen
-la ventana queda pendiente.
-El procesamiento usa contexto completo por link, no embeddings ni un índice vectorial.
+The full content is stored in R2 (maximum 2 MB; manual upload 500,000 characters).
+Classification sends the full content and lets the provider's tokenizer validate
+the real window, without confusing bytes with tokens. TypeSafe documents 32,000
+tokens for `state` plus the longest question and 64,000 for the complete request.
+If the provider rejects the size, the job fails with a clear message and preserves
+content, tags and previous scores. It is not truncated and no per-fragment
+probabilities are added automatically; the strategy for documents that truly
+exceed the window is still pending.
+Processing uses full context per link, not embeddings or a vector index.
 
-### Verificación
+### Verification
 
-- `bun test`: URLs, respuestas Noul/Choice, probabilidades completas y transacciones
-  SQLite: reemplazo de etiquetas manuales, scores rechazados, snapshots de umbral y
-  rollback ante error. Los modelos usados en pruebas unitarias son fixtures explícitos.
-- `bun run typecheck` y `bun run build`.
-- `bun scripts/check-api.ts`: con el servidor levantado; usa registros propios,
-  verifica deduplicación concurrente, D1 y guardas de origen/URL, y limpia sus links.
-  Hace una extracción real de ejemplo (puede consumir Browser Rendering).
-- Se verificaron realmente Markdown, resolución `youtu.be` y transcripción pública,
-  visor móvil, editor de etiquetas, consultas Choice, panel de uso y pegado múltiple.
-  Jev por TypeSafe se verificó con llamadas reales a `jev-1.13.0`: autotag,
-  scores descartados, snapshot y cambio de umbral en una nueva ejecución, consultas
-  Noul/Choice sin modificar etiquetas, y registro de tokens. Las credenciales se
-  mantienen exclusivamente en `.dev.vars`.
+- `bun test`: URLs, Noul/Choice answers, complete probabilities and SQLite
+  transactions: manual-tag replacement, rejected scores, threshold snapshots and
+  rollback on error. Models used in unit tests are explicit fixtures.
+- `bun run typecheck` and `bun run build`.
+- `bun scripts/check-api.ts`: with the server up; uses its own records, verifies
+  concurrent deduplication, D1 and origin/URL guards, and cleans up its links.
+  It performs one real example extraction (may consume Browser Rendering).
+- Markdown, `youtu.be` resolution and public transcripts, mobile viewer, tag
+  editor, Choice queries, usage panel and multi-paste were verified for real.
+  Jev via TypeSafe was verified with real calls to `jev-1.13.0`: auto-tag,
+  discarded scores, snapshot and threshold change on a new run, Noul/Choice
+  queries without modifying tags, and token logging. Credentials live
+  exclusively in `.dev.vars`.
