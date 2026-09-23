@@ -53,7 +53,7 @@ test("full context above the former byte limit reaches the provider unchanged", 
     expect(
       new TextEncoder().encode(JSON.stringify(state)).length,
     ).toBeGreaterThan(28000);
-    expect(sent).toEqual({ model: "jev-latest", state, questions });
+    expect(sent).toEqual({ model: "jev-1.13.0", state, questions });
     expect(result.answers.topic).toEqual({ type: "noul", noul: 0.93 });
     expect(writes.at(-1)?.slice(0, 4)).toEqual([
       "done",
@@ -78,7 +78,7 @@ test("actual provider token limit is reported without silently truncating or ret
     const { env, writes } = environment();
     await expect(
       judge(env, { content: "a".repeat(140000) }, questions, job),
-    ).rejects.toThrow("ventana de tokens");
+    ).rejects.toThrow("token window");
     expect(calls).toBe(1);
     expect(writes.at(-1)?.[0]).toBe("failed");
   } finally {

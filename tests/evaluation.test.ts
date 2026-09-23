@@ -1,11 +1,26 @@
 import { describe, test, expect } from "bun:test";
 import {
   tagQuestions,
-  queryQuestions,
+  lensQuestions,
+  lensAnswer,
   validateAnswers,
 } from "../worker/ai/jev";
 import { pastedUrls } from "../src/url";
-import type { Tag } from "../src/types";
+import type { Lens, Tag } from "../src/types";
+
+const lens = (partial: Partial<Lens>): Lens => ({
+  id: "l1",
+  name: "Test",
+  type: "noul",
+  question: "Is this relevant?",
+  options: [],
+  levels: [],
+  criteria: { yes: "", no: "" },
+  threshold: 0.8,
+  version: 1,
+  created_at: "2024-01-01",
+  ...partial,
+});
 const tags: Tag[] = [
   {
     id: "ai",
@@ -26,7 +41,9 @@ describe("typed classification", () => {
   test("independent labels preserve both rejected and accepted probabilities", () => {
     const qs = tagQuestions(tags);
     expect(Object.values(qs).map((q) => q.type)).toEqual(["noul", "noul"]);
-    expect(qs.ai?.criteria.true).toBe(tags[0]!.description);
+    expect((qs.ai!.criteria as Record<string, string>).true).toBe(
+      tags[0]!.description,
+    );
     const answers = validateAnswers(
       { ai: { type: "noul", noul: 0.94 }, iot: { type: "noul", noul: 0.45 } },
       qs,
@@ -47,16 +64,21 @@ describe("typed classification", () => {
       expect(() => validateAnswers(raw, q)).toThrow();
   });
   test("Choice validates the complete competing distribution", () => {
-    const q = queryQuestions({
-      type: "choice",
-      question: "Topic?",
-      options: { a: "AI", b: "Cloud", other: "Other" },
-      threshold: 0.8,
-    });
+    const q = lensQuestions(
+      lens({
+        type: "choice",
+        question: "Topic?",
+        options: [
+          { key: "a", label: "AI", description: "" },
+          { key: "b", label: "Cloud", description: "" },
+          { key: "other", label: "Other", description: "" },
+        ],
+      }),
+    );
     expect(
       validateAnswers(
         {
-          query: {
+          lens: {
             type: "choice",
             choice: "a",
             confidence: 0.7,
@@ -64,12 +86,12 @@ describe("typed classification", () => {
           },
         },
         q,
-      ).query?.type,
+      ).lens?.type,
     ).toBe("choice");
     expect(() =>
       validateAnswers(
         {
-          query: {
+          lens: {
             type: "choice",
             choice: "a",
             confidence: 0.7,
@@ -79,6 +101,42 @@ describe("typed classification", () => {
         q,
       ),
     ).toThrow();
+  });
+  test("multi lens asks one noul per option and composes a multi answer", () => {
+    const multi = lens({
+      type: "multi",
+      question: "Which topics does this cover?",
+      options: [
+        { key: "ai", label: "AI", description: "Machine learning content" },
+        { key: "dev", label: "Developer tools", description: "" },
+      ],
+    });
+    const qs = lensQuestions(multi);
+    expect(Object.keys(qs).sort()).toEqual(["opt_ai", "opt_dev"]);
+    expect(qs.opt_ai!.type).toBe("noul");
+    expect(qs.opt_ai!.instructions).toContain('"AI"');
+    expect(
+      (qs.opt_ai!.criteria as Record<string, string>).true,
+    ).toBe('"AI" applies: Machine learning content');
+    expect(
+      (qs.opt_dev!.criteria as Record<string, string>).true,
+    ).toBe('"Developer tools" applies to this document.');
+    const answers = validateAnswers(
+      {
+        opt_ai: { type: "noul", noul: 0.9 },
+        opt_dev: { type: "noul", noul: 0.2 },
+      },
+      qs,
+    );
+    expect(lensAnswer(multi, answers)).toEqual({
+      type: "multi",
+      probabilities: { ai: 0.9, dev: 0.2 },
+    });
+    const noul = lens({ type: "noul" });
+    expect(
+      lensAnswer(noul, { lens: { type: "noul", noul: 0.7 } }),
+    ).toEqual({ type: "noul", noul: 0.7 });
+    expect(() => lensAnswer(multi, { opt_ai: { type: "noul", noul: 0.9 } })).toThrow();
   });
   test("multiple pasted URLs deduplicate normalized trackers and reject prose", () => {
     expect(
