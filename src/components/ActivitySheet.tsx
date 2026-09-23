@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { api } from "../api";
 import type { Library } from "../types";
-import type { Batch, Job, Lens, UsageTotals } from "../types";
+import type { Batch, Job, Lens, OcrUsage, UsageTotals } from "../types";
 import { LensVerdict } from "./LensVerdict";
 import { relativeTime } from "../lib/time";
 import { usd, tokens, duration } from "../lib/format";
@@ -37,6 +37,11 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+function ocrCost(ocr: OcrUsage) {
+  if (ocr.usd === null) return "cost unknown";
+  return `${usd(ocr.usd)}${ocr.unknown_cost_calls ? " known subtotal" : ""}`;
+}
+
 function batchUsageTip(b: Batch) {
   if (!b.usage) return null;
   const parts: string[] = [];
@@ -46,7 +51,11 @@ function batchUsageTip(b: Batch) {
     );
   if (b.usage.browser_ms)
     parts.push(`${duration(b.usage.browser_ms)} browser`);
-  if (b.usage.model) parts.push(b.usage.model);
+  if (b.usage.model && !b.usage.ocr) parts.push(b.usage.model);
+  if (b.usage.ocr) {
+    const ocr = b.usage.ocr;
+    parts.push(`OCR: ${ocr.images} ${ocr.images === 1 ? "image/preview" : "images/previews"} · ${tokens(ocr.input_tokens)} input · ${tokens(ocr.output_tokens)} output tokens · ${ocrCost(ocr)} · ${ocr.model ?? "model unknown"}`);
+  }
   if (b.usage.unknown_cost_calls) parts.push(`${b.usage.unknown_cost_calls} costs unknown; displayed USD is a known subtotal`);
   return parts.join(" · ") || null;
 }
@@ -111,7 +120,7 @@ function BatchJobs({ batch }: { batch: Batch }) {
               <span className="min-w-0 flex-1 truncate text-xs">
                 {j.title}
               </span>
-              {j.usage && (
+              {j.usage && !(batch.kind === "extract" && j.usage.ocr) && (
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <span className="shrink-0 text-2xs tabular text-muted-foreground">
@@ -165,6 +174,22 @@ function BatchJobs({ batch }: { batch: Batch }) {
                 <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
               )}
             </div>
+            {batch.kind === "extract" && j.usage?.ocr && (
+              <div className="mt-1 text-2xs text-muted-foreground">
+                <div className="flex flex-wrap items-baseline justify-between gap-x-2 tabular">
+                  <span>OCR · {j.usage.ocr.images} {j.usage.ocr.images === 1 ? "image/preview" : "images/previews"}</span>
+                  <span>{tokens(j.usage.ocr.input_tokens + j.usage.ocr.output_tokens)} tok · {ocrCost(j.usage.ocr)}</span>
+                </div>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <p className="truncate">Model: {j.usage.ocr.model ?? "unknown"}</p>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {`${j.usage.ocr.model ?? "Model unknown"} · ${tokens(j.usage.ocr.input_tokens)} input · ${tokens(j.usage.ocr.output_tokens)} output tokens${j.usage.ocr.unknown_cost_calls ? ` · ${j.usage.ocr.unknown_cost_calls} OCR costs unknown` : ""}`}
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+            )}
             {j.error && (
               <p
                 className={cn(
@@ -240,7 +265,7 @@ export function ActivitySheet({
   );
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="sm:max-w-md">
+      <SheetContent side="right" className="w-full sm:max-w-md">
         <SheetHeader>
           <SheetTitle>Activity</SheetTitle>
           <SheetDescription>

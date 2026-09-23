@@ -128,6 +128,15 @@ export type JobUsage = {
   model: string | null;
   usd: number | null;
   unknown_cost_calls: number;
+  ocr: OcrUsage | null;
+};
+export type OcrUsage = {
+  images: number;
+  input_tokens: number;
+  output_tokens: number;
+  model: string | null;
+  usd: number | null;
+  unknown_cost_calls: number;
 };
 export type BatchUsage = {
   input_tokens: number;
@@ -136,6 +145,7 @@ export type BatchUsage = {
   model: string | null;
   usd: number | null;
   unknown_cost_calls: number;
+  ocr: OcrUsage | null;
 };
 export type Batch = {
   id: string;

@@ -6,6 +6,7 @@ import { json, library, text, threshold } from "./store";
 import { enqueue, dispatch, recover, LinkWorkflow } from "./jobs";
 import { preservedContentStateSql } from "./content-state";
 import type { Job, JobUsage, UsageEvent } from "../src/types";
+import { OCR_USAGE_COLUMNS } from "./usage";
 export { LinkWorkflow };
 type JobUsageRow = {
   job_id: string;
@@ -17,6 +18,12 @@ type JobUsageRow = {
   model: string | null;
   usd: number | null;
   unknown_cost_calls: number;
+  ocr_images: number;
+  ocr_input_tokens: number | null;
+  ocr_output_tokens: number | null;
+  ocr_model: string | null;
+  ocr_usd: number | null;
+  ocr_unknown_cost_calls: number;
 };
 type UsageTotalsRow = {
   input_tokens: number | null;
@@ -352,7 +359,7 @@ export default {
             .bind(batchMatch[1])
             .all<Job>(),
           env.DB.prepare(
-            "SELECT job_id,sum(input_tokens) input_tokens,sum(output_tokens) output_tokens,sum(browser_ms) browser_ms,sum(duration_ms) duration_ms,max(model) model,sum(estimated_usd) usd,sum(estimated_usd IS NULL) unknown_cost_calls FROM usage_events WHERE batch_id=? AND status IN ('done','failed') GROUP BY job_id",
+            `SELECT job_id,sum(input_tokens) input_tokens,sum(output_tokens) output_tokens,sum(browser_ms) browser_ms,sum(duration_ms) duration_ms,max(model) model,sum(estimated_usd) usd,sum(estimated_usd IS NULL) unknown_cost_calls,${OCR_USAGE_COLUMNS} FROM usage_events WHERE batch_id=? AND status IN ('done','failed') GROUP BY job_id`,
           )
             .bind(batchMatch[1])
             .all<JobUsageRow>(),
@@ -371,6 +378,7 @@ export default {
                 model: row.model,
                 usd: null,
                 unknown_cost_calls: 0,
+                ocr: null,
               }),
             );
           u.input_tokens += row.input_tokens ?? 0;
@@ -380,6 +388,14 @@ export default {
           u.model ??= row.model;
           if (row.usd !== null) u.usd = (u.usd ?? 0) + row.usd;
           u.unknown_cost_calls += row.unknown_cost_calls;
+          if (row.ocr_images) u.ocr = {
+            images: row.ocr_images,
+            input_tokens: row.ocr_input_tokens ?? 0,
+            output_tokens: row.ocr_output_tokens ?? 0,
+            model: row.ocr_model,
+            usd: row.ocr_usd,
+            unknown_cost_calls: row.ocr_unknown_cost_calls,
+          };
         }
         return json({
           jobs: jobs.results.map((j) => ({

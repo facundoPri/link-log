@@ -8,6 +8,7 @@ import type {
   BatchUsage,
   MediaItem,
 } from "../src/types";
+import { OCR_USAGE_COLUMNS } from "./usage";
 export const json = (body: unknown, status = 200) =>
   Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
 export function capabilities(env: Env) {
@@ -45,7 +46,7 @@ export async function library(env: Env) {
       Omit<LensResult, "answer"> & { link_id: string; answer: string }
     >(),
     env.DB.prepare(
-      "SELECT batch_id,sum(input_tokens) input_tokens,sum(output_tokens) output_tokens,sum(browser_ms) browser_ms,max(model) model,sum(estimated_usd) usd,sum(estimated_usd IS NULL) unknown_cost_calls FROM usage_events WHERE status IN ('done','failed') GROUP BY batch_id",
+      `SELECT batch_id,sum(input_tokens) input_tokens,sum(output_tokens) output_tokens,sum(browser_ms) browser_ms,max(model) model,sum(estimated_usd) usd,sum(estimated_usd IS NULL) unknown_cost_calls,${OCR_USAGE_COLUMNS} FROM usage_events WHERE status IN ('done','failed') GROUP BY batch_id`,
     ).all<{
       batch_id: string;
       input_tokens: number | null;
@@ -54,6 +55,12 @@ export async function library(env: Env) {
       model: string | null;
       usd: number | null;
       unknown_cost_calls: number;
+      ocr_images: number;
+      ocr_input_tokens: number | null;
+      ocr_output_tokens: number | null;
+      ocr_model: string | null;
+      ocr_usd: number | null;
+      ocr_unknown_cost_calls: number;
     }>(),
     env.DB.prepare("SELECT link_id,media_key,position,kind,url,preview_url,ocr_state,ocr_text,ocr_error,ocr_model FROM media_items ORDER BY position").all<MediaItem & {link_id: string}>(),
     env.DB.prepare("SELECT link_id,url FROM hidden_related_links ORDER BY hidden_at").all<{link_id: string; url: string}>(),
@@ -77,6 +84,7 @@ export async function library(env: Env) {
           model: null,
           usd: null,
           unknown_cost_calls: 0,
+          ocr: null,
         }),
       );
     u.input_tokens += row.input_tokens ?? 0;
@@ -85,6 +93,14 @@ export async function library(env: Env) {
     u.model ??= row.model;
     if (row.usd !== null) u.usd = (u.usd ?? 0) + row.usd;
     u.unknown_cost_calls += row.unknown_cost_calls;
+    if (row.ocr_images) u.ocr = {
+      images: row.ocr_images,
+      input_tokens: row.ocr_input_tokens ?? 0,
+      output_tokens: row.ocr_output_tokens ?? 0,
+      model: row.ocr_model,
+      usd: row.ocr_usd,
+      unknown_cost_calls: row.ocr_unknown_cost_calls,
+    };
   }
   const tagsById = new Map(tags.results.map((t) => [t.id, t]));
   const membership = new Map<string, Tag[]>();
