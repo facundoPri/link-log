@@ -84,6 +84,7 @@ export type Link = {
   content_updated_at: string | null;
   content_details: string | null;
   media?: MediaItem[];
+  hidden_related_urls: string[];
   lens_results: LensResult[];
 };
 export type MediaItem = {

@@ -3,12 +3,16 @@ import Markdown from "react-markdown";
 import { toast } from "sonner";
 import {
   CircleAlert,
+  ChevronDown,
   Copy,
   Ellipsis,
+  Eye,
+  EyeOff,
   ExternalLink,
   FileText,
   Globe,
   Loader2,
+  Link2,
   Pencil,
   Plus,
   RotateCw,
@@ -22,6 +26,7 @@ import { cn } from "../lib/utils";
 import { captionMenuTracks, youtubeId } from "../lib/youtube";
 import { relativeTime } from "../lib/time";
 import { confidence, formatPct, isStale } from "../lib/tags";
+import { relatedLinks } from "../lib/related-links";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
@@ -50,6 +55,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Badge } from "@/components/ui/badge";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { TagChip, TagDot } from "./TagChip";
 import { TagPicker } from "./TagPicker";
 import { LensVerdict } from "./LensVerdict";
@@ -75,8 +81,9 @@ const sourceLabel: Record<string, string> = {
   "x-post": "X post",
 };
 
-function MediaPreview({ item, original }: { item: MediaItem; original: string }) {
+function MediaPreview({ item, original, onShowInContent }: { item: MediaItem; original: string; onShowInContent: () => void }) {
   const [failed, setFailed] = useState(false);
+  const ocrSnippet = item.ocr_text?.replace(/\s+/g, " ").trim() || "";
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-center justify-between text-xs">
@@ -91,7 +98,11 @@ function MediaPreview({ item, original }: { item: MediaItem; original: string })
         </a>
       ) : <a href={original} target="_blank" rel="noopener noreferrer" className="text-xs underline">Preview unavailable · open original</a>}
       {item.kind === "video" && <p className="text-xs text-muted-foreground">{item.ocr_state === "skipped" ? "Video preview only. Audio and frames were not analyzed." : "OCR reads this still preview only. Video motion and audio were not analyzed."}</p>}
-      {item.ocr_state === "done" && item.ocr_text && <div className="rounded-md bg-muted/50 p-2 text-xs whitespace-pre-wrap break-words">{item.kind === "video" && <p className="mb-1 font-medium">Text in preview</p>}{item.ocr_text}</div>}
+      {item.ocr_state === "done" && item.ocr_text && <div className="rounded-md bg-muted/50 p-2 text-xs">
+        <p className="font-medium">Text in preview</p>
+        <p className="mt-1 line-clamp-2 break-words text-muted-foreground">{ocrSnippet}</p>
+        <Button variant="link" size="xs" className="mt-1 h-auto p-0" onClick={onShowInContent}>See in content</Button>
+      </div>}
       {item.ocr_state === "failed" && <p className="text-xs text-destructive">{item.ocr_error || "OCR failed"}</p>}
     </div>
   );
@@ -111,6 +122,8 @@ export function Inspector({
   onExtract,
   onSelectTrack,
   onRetry,
+  onSaveRelated,
+  savedUrls,
   running,
   focusTags,
 }: {
@@ -127,6 +140,8 @@ export function Inspector({
   onExtract: () => void;
   onSelectTrack: (language: string) => void;
   onRetry: () => void;
+  onSaveRelated: (url: string) => Promise<void>;
+  savedUrls: string[];
   running?: "extract" | "autotag" | "lens" | "query" | null;
   focusTags?: boolean;
 }) {
@@ -134,6 +149,11 @@ export function Inspector({
   const [draft, setDraft] = useState("");
   const [editing, setEditing] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [titleExpanded, setTitleExpanded] = useState(false);
+  const [descriptionExpanded, setDescriptionExpanded] = useState(false);
+  const [activeTab, setActiveTab] = useState("content");
+  const [jumpToMedia, setJumpToMedia] = useState<string | null>(null);
+  const [hiddenOpen, setHiddenOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [contentMode, setContentMode] = useState<"preview" | "markdown">(() =>
     localStorage.getItem("linklog.contentMode") === "markdown"
@@ -147,12 +167,21 @@ export function Inspector({
   const [selectedMedia, setSelectedMedia] = useState(0);
   const fileInput = useRef<HTMLInputElement>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [savingUrl, setSavingUrl] = useState<string | null>(null);
+  const [hidingUrl, setHidingUrl] = useState<string | null>(null);
+  const scrollArea = useRef<HTMLDivElement>(null);
+  const contentBody = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let alive = true;
     setMarkdown("");
     setEditing(false);
     setSelectedMedia(0);
+    setExpanded(false);
+    setTitleExpanded(false);
+    setDescriptionExpanded(false);
+    setHiddenOpen(false);
+    setJumpToMedia(null);
     setError("");
     api<{ markdown: string }>(`/links/${link.id}/content`)
       .then((r) => {
@@ -168,6 +197,23 @@ export function Inspector({
   }, [link.id, link.content_version]);
 
   useEffect(() => {
+    if (!jumpToMedia || activeTab !== "content" || !expanded || contentMode !== "preview" || !markdown) return;
+    const frame = requestAnimationFrame(() => {
+      const body = contentBody.current;
+      const scroller = scrollArea.current;
+      if (!body || !scroller) return;
+      const heading = [...(body?.querySelectorAll("h2") || [])].find((node) => node.textContent?.trim() === jumpToMedia);
+      const target = heading || body;
+      scroller.scrollTo({
+        top: scroller.scrollTop + target.getBoundingClientRect().top - scroller.getBoundingClientRect().top - 56,
+        behavior: "smooth",
+      });
+      setJumpToMedia(null);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [jumpToMedia, activeTab, expanded, contentMode, markdown]);
+
+  useEffect(() => {
     if (focusTags) setPickerOpen(true);
   }, [focusTags]);
 
@@ -175,6 +221,45 @@ export function Inspector({
   let details: ContentDetails | null = null;
   try { details = link.content_details ? JSON.parse(link.content_details) as ContentDetails : null; } catch { /* older record */ }
   const selectableTracks = captionMenuTracks(details?.transcript?.tracks || []);
+  const related = relatedLinks(markdown, link.url);
+  const hidden = new Set(link.hidden_related_urls || []);
+  const visibleRelated = related.filter((item) => !hidden.has(item.url));
+  const hiddenRelated = related.filter((item) => hidden.has(item.url));
+  const saved = new Set(savedUrls);
+
+  async function setRelatedHidden(url: string, shouldHide: boolean) {
+    setHidingUrl(url);
+    try {
+      onChange(await api(`/links/${link.id}/related-links`, "PUT", { url, hidden: shouldHide }));
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setHidingUrl(null);
+    }
+  }
+
+  function relatedRow(item: (typeof related)[number], isHidden: boolean) {
+    const isSaved = saved.has(item.url);
+    return <div key={item.url} className="flex items-center gap-2 rounded-md border p-2.5">
+      <Link2 className="size-3.5 shrink-0 text-muted-foreground" />
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-xs font-medium" title={item.label}>{item.label}</p>
+        <p className="truncate text-2xs text-muted-foreground" title={item.url}>{item.url}</p>
+      </div>
+      <Button variant="ghost" size="icon-sm" disabled={hidingUrl === item.url} aria-label={`${isHidden ? "Show" : "Hide"} ${item.label}`} title={isHidden ? "Show link" : "Hide link"} onClick={() => void setRelatedHidden(item.url, !isHidden)}>
+        {isHidden ? <Eye className="size-3.5" /> : <EyeOff className="size-3.5" />}
+      </Button>
+      <Button variant="outline" size="icon-sm" asChild>
+        <a href={item.url} target="_blank" rel="noopener noreferrer" aria-label={`Open ${item.label}`}><ExternalLink className="size-3.5" /></a>
+      </Button>
+      {!isHidden && <Button size="sm" variant={isSaved ? "ghost" : "outline"} disabled={isSaved || savingUrl === item.url} onClick={async () => {
+        setSavingUrl(item.url);
+        try { await onSaveRelated(item.url); }
+        catch (e) { toast.error((e as Error).message); }
+        finally { setSavingUrl(null); }
+      }}>{savingUrl === item.url ? <Loader2 className="size-3.5 animate-spin" /> : isSaved ? "Saved" : "Save"}</Button>}
+    </div>;
+  }
 
   async function setLinkTags(names: string[]) {
     try {
@@ -296,7 +381,7 @@ export function Inspector({
           <TooltipContent>Close</TooltipContent>
         </Tooltip>
       </div>
-      <div className="flex-1 overflow-y-auto px-4">
+      <div ref={scrollArea} className="flex-1 overflow-y-auto px-4">
         <div className="space-y-4 pt-4">
         {yt ? (
           <div className="overflow-hidden rounded-lg bg-black ring-1 ring-black/10">
@@ -320,12 +405,26 @@ export function Inspector({
         ) : null}
         <div>
           <h2 className="text-base font-semibold leading-snug tracking-tight text-pretty">
-            {link.title}
+            <button
+              type="button"
+              className={cn("w-full cursor-pointer break-words text-left", !titleExpanded && "line-clamp-2")}
+              aria-expanded={titleExpanded}
+              title={titleExpanded ? "Collapse title" : "Show full title"}
+              onClick={() => setTitleExpanded((value) => !value)}
+            >
+              {link.title}
+            </button>
           </h2>
           {link.description && (
-            <p className="mt-1 text-[13px] text-muted-foreground text-pretty">
+            <button
+              type="button"
+              className={cn("mt-1 w-full cursor-pointer break-words text-left text-[13px] text-muted-foreground text-pretty", !descriptionExpanded && "line-clamp-2", descriptionExpanded && "whitespace-pre-wrap")}
+              aria-expanded={descriptionExpanded}
+              title={descriptionExpanded ? "Collapse description" : "Show full description"}
+              onClick={() => setDescriptionExpanded((value) => !value)}
+            >
               {link.description}
-            </p>
+            </button>
           )}
           <p className="mt-1.5 text-2xs text-muted-foreground">
             Saved {relativeTime(link.created_at)} ·{" "}
@@ -368,12 +467,31 @@ export function Inspector({
             />
           </div>
         </div>
-        <Tabs defaultValue="content" className="mt-4 pb-4">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="mt-4 pb-4">
           <TabsList className="sticky top-0 z-10 w-full bg-background">
             <TabsTrigger value="content">Content</TabsTrigger>
+            <TabsTrigger value="links">Links{related.length ? ` ${related.length}` : ""}</TabsTrigger>
             <TabsTrigger value="analysis">Analysis</TabsTrigger>
             <TabsTrigger value="details">Details</TabsTrigger>
           </TabsList>
+          <TabsContent value="links" className="mt-3">
+            {related.length ? (
+              <div className="space-y-1.5">
+                <p className="mb-3 text-xs text-muted-foreground">Links found in the saved content. Hide the ones you don't need.</p>
+                {visibleRelated.length ? visibleRelated.map((item) => relatedRow(item, false)) : <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">All found links are hidden.</p>}
+                {!!hiddenRelated.length && <Collapsible open={hiddenOpen} onOpenChange={setHiddenOpen} className="pt-3">
+                  <CollapsibleTrigger asChild>
+                    <Button variant="ghost" size="sm" className="w-full justify-between" aria-label={`${hiddenOpen ? "Collapse" : "Expand"} hidden links`}>
+                      Hidden links ({hiddenRelated.length}) <ChevronDown className={cn("size-3.5 transition-transform", hiddenOpen && "rotate-180")} />
+                    </Button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="space-y-1.5 pt-2">
+                    {hiddenRelated.map((item) => relatedRow(item, true))}
+                  </CollapsibleContent>
+                </Collapsible>}
+              </div>
+            ) : <div className="rounded-lg border border-dashed p-5 text-center text-xs text-muted-foreground">{link.content_key ? "No links found in the saved content." : "Extract the content to find links inside it."}</div>}
+          </TabsContent>
           <TabsContent value="content" className="mt-3">
             {details?.transcript && <div className="mb-3 flex flex-col gap-1.5 text-xs">
               <div className="flex items-center justify-between">
@@ -404,7 +522,15 @@ export function Inspector({
                   <span className="absolute bottom-0 inset-x-0 bg-background/85 px-1 text-[10px]">{item.kind === "video" ? "Video" : "Image"} {item.position + 1}</span>
                 </button>)}
               </div>}
-              <MediaPreview key={link.media[selectedMedia]?.media_key || link.media[0]!.media_key} item={link.media[selectedMedia] || link.media[0]!} original={link.url} />
+              <MediaPreview key={link.media[selectedMedia]?.media_key || link.media[0]!.media_key} item={link.media[selectedMedia] || link.media[0]!} original={link.url} onShowInContent={() => {
+                const item = link.media?.[selectedMedia] || link.media?.[0];
+                if (!item) return;
+                setEditing(false);
+                setActiveTab("content");
+                setContentMode("preview");
+                setExpanded(true);
+                setJumpToMedia(`${item.kind === "image" ? "Image" : "Video"} ${item.position + 1}`);
+              }} />
             </div>}
             {editing ? (
               <div className="space-y-2">
@@ -603,7 +729,7 @@ export function Inspector({
                       {markdown}
                     </pre>
                   ) : (
-                    <div className={markdownClasses}>
+                    <div ref={contentBody} className={markdownClasses}>
                       <Markdown
                         components={{
                           img: ({ alt }) => (

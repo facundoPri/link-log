@@ -2,6 +2,22 @@ import { Database } from "bun:sqlite";
 import { test, expect } from "bun:test";
 import { evaluationStatements } from "../worker/ai/persist";
 import type { Tag } from "../src/types";
+
+test("hidden related links survive content changes and disappear with their parent", async () => {
+  const db = new Database(":memory:");
+  db.exec("PRAGMA foreign_keys=ON");
+  db.exec(await Bun.file("migrations/0001_library.sql").text());
+  db.exec(await Bun.file("migrations/0009_hidden_related_links.sql").text());
+  db.exec("INSERT INTO links(id,original_url,url,domain,title,created_at) VALUES('source','https://example.com','https://example.com','example.com','Source','now')");
+  db.prepare("INSERT INTO hidden_related_links(link_id,url,hidden_at) VALUES(?,?,?)")
+    .run("source", "https://project.example/", "now");
+  db.exec("UPDATE links SET title='Updated' WHERE id='source'");
+  expect(db.query("SELECT url FROM hidden_related_links WHERE link_id='source'").all()).toEqual([{ url: "https://project.example/" }]);
+  db.exec("DELETE FROM links WHERE id='source'");
+  expect(db.query("SELECT url FROM hidden_related_links").all()).toEqual([]);
+  db.close();
+});
+
 test("successful autotag replaces manual assignments, retains rejected scores, and uses the run snapshot", async () => {
   const sqlite = new Database(":memory:");
   sqlite.exec("PRAGMA foreign_keys=ON");
