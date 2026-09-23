@@ -106,3 +106,16 @@
 
 @utility tabular { font-variant-numeric: tabular-nums; }
 @utility press { @apply transition-transform duration-150 ease-out-strong active:scale-[0.96]; }
+
+@layer components {
+  .selection-bar {
+    width: max-content;
+    max-width: calc(100vw - 2rem);
+  }
+
+  @media (max-width: 700px) {
+    .selection-bar {
+      width: min(500px, calc(100vw - 2rem));
+    }
+  }
+}

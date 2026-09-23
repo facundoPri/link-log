@@ -1,7 +1,14 @@
-import { FileText, Plus, Sparkles, Telescope, X } from "lucide-react";
+import { Copy, FileText, Plus, Sparkles, Telescope, X } from "lucide-react";
+import { toast } from "sonner";
 import type { Lens, Link, Tag } from "../types";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Popover,
   PopoverContent,
@@ -25,11 +32,9 @@ import { lensIcon } from "./Sidebar";
 
 export function SelectionBar({
   links,
-  total,
   tags,
   lenses,
   running,
-  onSelectAll,
   onAutoTag,
   onLens,
   onNewLens,
@@ -37,11 +42,9 @@ export function SelectionBar({
   onClear,
 }: {
   links: Link[];
-  total: number;
   tags: Tag[];
   lenses: Lens[];
   running: boolean;
-  onSelectAll: () => void;
   onAutoTag: () => void;
   onLens: (lens: Lens) => void;
   onNewLens: () => void;
@@ -68,101 +71,139 @@ export function SelectionBar({
     : running
       ? "Some links are still processing"
       : null;
+  const copy = async (withTitles: boolean) => {
+    const text = links
+      .map((link) =>
+        withTitles && link.title ? `${link.url} — ${link.title}` : link.url,
+      )
+      .join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(
+        `${links.length} ${links.length === 1 ? "link" : "links"} copied`,
+      );
+    } catch {
+      toast.error("Could not copy links");
+    }
+  };
   return (
-    <div className="fixed bottom-4 left-1/2 z-40 flex -translate-x-1/2 items-center gap-1 rounded-xl border bg-popover p-1.5 shadow-lg animate-in fade-in slide-in-from-bottom-2 duration-200">
-      <span className="px-2 text-[13px] font-medium tabular">
-        {links.length} selected
-      </span>
-      {total > links.length && (
-        <Button
-          variant="link"
-          size="sm"
-          className="h-auto px-1 text-[13px]"
-          onClick={onSelectAll}
-        >
-          Select all {total}
-        </Button>
-      )}
-      <Separator orientation="vertical" className="h-5" />
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span>
-            <Button size="sm" disabled={tagDisabled} onClick={onAutoTag}>
-              <Sparkles className="size-3.5" />
-              Auto-tag
-            </Button>
-          </span>
-        </TooltipTrigger>
-        {tagReason && <TooltipContent>{tagReason}</TooltipContent>}
-      </Tooltip>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span>
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={lensDisabled}
-                >
-                  <Telescope className="size-3.5" />
-                  Lens
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent align="center" className="w-64 p-0">
-                <Command>
-                  <CommandInput placeholder="Pick a lens…" />
-                  <CommandList>
-                    <CommandEmpty>No lenses yet</CommandEmpty>
-                    <CommandGroup heading="Lenses">
-                      {lenses.map((lens) => (
-                        <CommandItem
-                          key={lens.id}
-                          value={lens.name}
-                          onSelect={() => onLens(lens)}
-                        >
-                          {lensIcon(lens.type, "size-3.5")}
-                          <span className="min-w-0">
-                            <span className="block truncate">
-                              {lens.name}
+    <div aria-label="Selected link actions" className="selection-bar fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] left-1/2 z-40 flex -translate-x-1/2 items-center gap-1 rounded-xl border bg-popover p-1.5 shadow-lg animate-in fade-in slide-in-from-bottom-2 duration-200 max-[700px]:grid max-[700px]:grid-cols-[minmax(0,1fr)_auto] max-[700px]:gap-y-1">
+      <div className="flex shrink-0 items-center max-[700px]:col-start-1 max-[700px]:row-start-1">
+        <span className="shrink-0 whitespace-nowrap px-2 text-[13px] font-medium tabular">
+          {links.length} selected
+        </span>
+      </div>
+      <Separator orientation="vertical" className="h-5 max-[700px]:hidden" />
+      <div className="flex shrink-0 items-center gap-1 max-[700px]:col-span-2 max-[700px]:row-start-2 max-[700px]:grid max-[700px]:grid-cols-4">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="block min-w-0">
+              <Button
+                size="sm"
+                disabled={tagDisabled}
+                onClick={onAutoTag}
+                className="max-[700px]:h-auto max-[700px]:min-h-12 max-[700px]:w-full max-[700px]:flex-col max-[700px]:gap-0.5 max-[700px]:px-1 max-[700px]:py-1 max-[700px]:text-[11px]"
+              >
+                <Sparkles className="size-3.5" />
+                Auto-tag
+              </Button>
+            </span>
+          </TooltipTrigger>
+          {tagReason && <TooltipContent>{tagReason}</TooltipContent>}
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="block min-w-0">
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={lensDisabled}
+                    className="max-[700px]:h-auto max-[700px]:min-h-12 max-[700px]:w-full max-[700px]:flex-col max-[700px]:gap-0.5 max-[700px]:px-1 max-[700px]:py-1 max-[700px]:text-[11px]"
+                  >
+                    <Telescope className="size-3.5" />
+                    Lens
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="center" className="w-64 p-0">
+                  <Command>
+                    <CommandInput placeholder="Pick a lens…" />
+                    <CommandList>
+                      <CommandEmpty>No lenses yet</CommandEmpty>
+                      <CommandGroup heading="Lenses">
+                        {lenses.map((lens) => (
+                          <CommandItem
+                            key={lens.id}
+                            value={lens.name}
+                            onSelect={() => onLens(lens)}
+                          >
+                            {lensIcon(lens.type, "size-3.5")}
+                            <span className="min-w-0">
+                              <span className="block truncate">
+                                {lens.name}
+                              </span>
+                              <span className="block truncate text-2xs text-muted-foreground">
+                                {lens.question}
+                              </span>
                             </span>
-                            <span className="block truncate text-2xs text-muted-foreground">
-                              {lens.question}
-                            </span>
-                          </span>
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                      <CommandSeparator />
+                      <CommandGroup>
+                        <CommandItem value="new lens" onSelect={onNewLens}>
+                          <Plus className="size-3.5" />
+                          New lens…
                         </CommandItem>
-                      ))}
-                    </CommandGroup>
-                    <CommandSeparator />
-                    <CommandGroup>
-                      <CommandItem value="new lens" onSelect={onNewLens}>
-                        <Plus className="size-3.5" />
-                        New lens…
-                      </CommandItem>
-                    </CommandGroup>
-                  </CommandList>
-                </Command>
-              </PopoverContent>
-            </Popover>
-          </span>
-        </TooltipTrigger>
-        {lensReason && <TooltipContent>{lensReason}</TooltipContent>}
-      </Tooltip>
-      <Button
-        variant="ghost"
-        size="sm"
-        disabled={running}
-        onClick={onExtract}
-      >
-        <FileText className="size-3.5" />
-        Extract context
-      </Button>
-      <Separator orientation="vertical" className="h-5" />
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
+            </span>
+          </TooltipTrigger>
+          {lensReason && <TooltipContent>{lensReason}</TooltipContent>}
+        </Tooltip>
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={running}
+          onClick={onExtract}
+          className="max-[700px]:h-auto max-[700px]:min-h-12 max-[700px]:w-full max-[700px]:flex-col max-[700px]:gap-0.5 max-[700px]:px-1 max-[700px]:py-1 max-[700px]:text-[11px]"
+        >
+          <FileText className="size-3.5" />
+          <span className="max-[700px]:hidden">Extract context</span>
+          <span className="hidden max-[700px]:inline">Extract</span>
+        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="max-[700px]:h-auto max-[700px]:min-h-12 max-[700px]:w-full max-[700px]:flex-col max-[700px]:gap-0.5 max-[700px]:px-1 max-[700px]:py-1 max-[700px]:text-[11px]"
+            >
+              <Copy className="size-3.5" />
+              Copy
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => void copy(false)}>
+              Copy URLs
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => void copy(true)}>
+              Copy URLs + titles
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+      <Separator orientation="vertical" className="h-5 max-[700px]:hidden" />
       <Button
         variant="ghost"
         size="icon-sm"
         aria-label="Clear selection"
         onClick={onClear}
+        className="max-[700px]:col-start-2 max-[700px]:row-start-1"
       >
         <X className="size-3.5" />
       </Button>

@@ -470,7 +470,14 @@ export function App() {
   }, [library.links]);
 
   const activeLink = library.links.find((l) => l.id === activeId) ?? null;
-  const pickedLinks = library.links.filter((l) => picked.includes(l.id));
+  const visibleOrder = new Map(filtered.map((link, index) => [link.id, index]));
+  const pickedLinks = library.links
+    .filter((link) => picked.includes(link.id))
+    .sort(
+      (a, b) =>
+        (visibleOrder.get(a.id) ?? library.links.length) -
+        (visibleOrder.get(b.id) ?? library.links.length),
+    );
   const activeBatch = library.batches.find((b) => b.active > 0);
   const isFiltered = !!(
     query ||
@@ -751,7 +758,7 @@ export function App() {
             onEdit={() => setDialog({ lens: activeLens })}
           />
         )}
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className={`min-h-0 flex-1 overflow-y-auto ${picked.length ? "pb-24 max-[700px]:pb-32" : ""}`}>
           {loadError ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center">
               <p className="text-sm font-medium">Couldn't load your library</p>
@@ -870,11 +877,9 @@ export function App() {
       {!!picked.length && (
         <SelectionBar
           links={pickedLinks}
-          total={filtered.length}
           tags={library.tags}
           lenses={library.lenses}
           running={running}
-          onSelectAll={() => pickMany(filtered.map((l) => l.id), true)}
           onAutoTag={() => {
             if (manualTagged) setConfirmAutoTag(true);
             else void doAutoTag();
