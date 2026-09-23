@@ -19,7 +19,7 @@ export function capabilities(env: Env) {
   };
 }
 export async function library(env: Env) {
-  const [links, tags, joins, evaluations, batches, lensRows, lensResults, usageRows, mediaRows] =
+  const [links, tags, joins, evaluations, batches, lensRows, lensResults, usageRows, mediaRows, hiddenRows] =
     await Promise.all([
     env.DB.prepare("SELECT * FROM links ORDER BY created_at DESC").all<
       Link & { metadata_started_at: string | null }
@@ -56,7 +56,11 @@ export async function library(env: Env) {
       unknown_cost_calls: number;
     }>(),
     env.DB.prepare("SELECT link_id,media_key,position,kind,url,preview_url,ocr_state,ocr_text,ocr_error,ocr_model FROM media_items ORDER BY position").all<MediaItem & {link_id: string}>(),
+    env.DB.prepare("SELECT link_id,url FROM hidden_related_links ORDER BY hidden_at").all<{link_id: string; url: string}>(),
   ]);
+  const hiddenByLink = new Map<string, string[]>();
+  for (const row of hiddenRows.results)
+    hiddenByLink.set(row.link_id, [...(hiddenByLink.get(row.link_id) || []), row.url]);
   const mediaByLink = new Map<string, MediaItem[]>();
   for (const { link_id, ...media } of mediaRows.results)
     mediaByLink.set(link_id, [...(mediaByLink.get(link_id) || []), media]);
@@ -124,6 +128,7 @@ export async function library(env: Env) {
       evaluations: scores.get(l.id) || [],
       lens_results: lensByLink.get(l.id) || [],
       media: mediaByLink.get(l.id) || [],
+      hidden_related_urls: hiddenByLink.get(l.id) || [],
     })),
     tags: tags.results,
     lenses,

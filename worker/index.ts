@@ -421,6 +421,24 @@ export default {
           totals,
         });
       }
+      const relatedMatch = path.match(/^\/api\/links\/([^/]+)\/related-links$/);
+      if (relatedMatch) {
+        if (request.method !== "PUT") return json({ error: "Method not allowed." }, 405);
+        const link = await env.DB.prepare("SELECT id FROM links WHERE id=?")
+          .bind(relatedMatch[1]).first<{ id: string }>();
+        if (!link) return json({ error: "The link no longer exists." }, 404);
+        if (typeof body.url !== "string" || !/^https?:\/\//i.test(body.url) || typeof body.hidden !== "boolean")
+          return json({ error: "Invalid related link." }, 400);
+        const url = normalizeUrl(body.url);
+        if (body.hidden) {
+          await env.DB.prepare("INSERT OR IGNORE INTO hidden_related_links(link_id,url,hidden_at) VALUES(?,?,?)")
+            .bind(link.id, url, new Date().toISOString()).run();
+        } else {
+          await env.DB.prepare("DELETE FROM hidden_related_links WHERE link_id=? AND url=?")
+            .bind(link.id, url).run();
+        }
+        return json(await library(env));
+      }
       const contentMatch = path.match(/^\/api\/links\/([^/]+)\/content$/);
       if (contentMatch) {
         const link = await env.DB.prepare("SELECT * FROM links WHERE id=?")

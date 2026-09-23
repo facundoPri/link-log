@@ -103,6 +103,47 @@ describe("social post isolation and order", () => {
     const html = `{__id:"${key}",media_entities2:$R[1]={__refs:$R[2]=[]}} {__id:"client:${key}:details",noise:${JSON.stringify(misleading)},quoted:{full_text:"Nested"},full_text:${JSON.stringify(own)}}`;
     expect(parseXPost(html, "2101459900169892038").text).toBe(own);
   });
+
+  test("X reads the full Note Tweet and expands links below the short post", () => {
+    const key = btoa("Tweet:2101459900169892038");
+    const noteId = "NoteTweet:full";
+    const html = [
+      `{__id:"${key}",note_tweet:$R[1]={__ref:"client:${key}:note_tweet"},media_entities2:$R[2]={__refs:$R[3]=[]}}`,
+      `{__id:"client:${key}:details",full_text:"Short preview…"}`,
+      `{__id:"client:${key}:note_tweet",note_tweet_results:$R[4]={__ref:"NoteTweetResults:full"}}`,
+      `{__id:"NoteTweetResults:full",result:$R[5]={__ref:"${noteId}"}}`,
+      `{__id:"${noteId}",__typename:"NoteTweet",text:"First paragraph\\nLater: https://t.co/abc",id:"${noteId}"}`,
+      `{__id:"client:${noteId}:entity_set:urls:0",url:"https://t.co/abc",expanded_url:"https://project.example/app"}`,
+    ].join(" ");
+    const result = parseXPost(html, "2101459900169892038");
+    expect(result.text).toContain("First paragraph\nLater: [project.example](https://project.example/app)");
+    expect(result.details.completeness).toBe("verified");
+  });
+
+  test("X reads article body instead of its short card URL", () => {
+    const key = btoa("Tweet:2101459900169892038");
+    const html = [
+      `{__id:"${key}",article:$R[1]={__ref:"client:${key}:article"},media_entities2:$R[2]={__refs:$R[3]=[]}}`,
+      `{__id:"client:${key}:details",full_text:"https://t.co/card"}`,
+      `{__id:"client:${key}:article",article_results:$R[4]={__ref:"ArticleResults:full"}}`,
+      `{__id:"ArticleResults:full",result:$R[5]={__ref:"ArticleEntity:full"}}`,
+      `{__id:"ArticleEntity:full",__typename:"ArticleEntity",id:"ArticleEntity:full",title:"Projects to try",plain_text:"Intro\\nProject near the end"}`,
+      `{__id:"client:ArticleEntity:full:content_state:entity_map:0:value:data",__typename:"DraftJsEntityData",url:"https://project.example/repo"}`,
+    ].join(" ");
+    const result = parseXPost(html, "2101459900169892038");
+    expect(result.title).toBe("Projects to try");
+    expect(result.text).toContain("Intro\nProject near the end");
+    expect(result.text).toContain("[project.example](https://project.example/repo)");
+    expect(result.details.completeness).toBe("verified");
+  });
+
+  test("X marks a missing long-form body as incomplete", () => {
+    const key = btoa("Tweet:2101459900169892038");
+    const html = `{__id:"${key}",note_tweet:$R[1]={__ref:"client:${key}:note_tweet"},media_entities2:$R[2]={__refs:$R[3]=[]}} {__id:"client:${key}:details",full_text:"Short preview…"}`;
+    expect(parseXPost(html, "2101459900169892038").details).toMatchObject({
+      completeness: "unverified", issues: ["The long-form post text was unavailable."],
+    });
+  });
 });
 
 describe("caption selection", () => {

@@ -634,6 +634,8 @@ export function App() {
           toast.error(e.message),
         );
       }}
+      onSaveRelated={(url) => save(url)}
+      savedUrls={library.links.flatMap((item) => [item.original_url, item.url])}
       focusTags={focusTags}
     />
   );

@@ -208,7 +208,7 @@ function jsRecord(source: string, marker: string): string | null {
   let depth = 0;
   let quoted = false;
   let escaped = false;
-  for (let i = at - 1; i < source.length && i < at + 100_000; i++) {
+  for (let i = at - 1; i < source.length && i < at + 1_000_000; i++) {
     const ch = source[i];
     if (quoted) {
       if (escaped) escaped = false;
@@ -250,19 +250,90 @@ function topLevelStringField(record: string, field: string): string | null {
   }
   return null;
 }
+function referencedRecord(html: string, start: string, fields: string[]): string | null {
+  let id = start;
+  for (const field of fields) {
+    const record = jsRecord(html, `__id:"${id}"`);
+    if (!record) return null;
+    const ref = record.match(new RegExp(`${field}:\\$R\\[\\d+\\]=\\{__ref:"([^"]+)"`));
+    if (!ref) return null;
+    id = ref[1]!;
+  }
+  return jsRecord(html, `__id:"${id}"`);
+}
+
+function expandXUrls(html: string, prefixes: string[], text: string): string {
+  for (const prefix of prefixes) {
+    const marker = `__id:"${prefix}`;
+    let at = 0;
+    while ((at = html.indexOf(marker, at)) !== -1) {
+      const record = jsRecord(html.slice(at - 1), marker);
+      at += marker.length;
+      if (!record) continue;
+      const short = topLevelStringField(record, "url");
+      const expanded = topLevelStringField(record, "expanded_url");
+      if (!short || !expanded || !text.includes(short)) continue;
+      try {
+        const destination = new URL(expanded);
+        if (!["https:", "http:"].includes(destination.protocol) || destination.username || destination.password) continue;
+        text = text.replaceAll(short, `[${destination.hostname.replace(/^www\./, "")}](${destination.href})`);
+      } catch { /* malformed URL entity */ }
+    }
+  }
+  return text;
+}
+function articleLinks(html: string, articleId: string): string[] {
+  const prefix = `__id:"client:${articleId}:content_state:entity_map:`;
+  const urls = new Set<string>();
+  let at = 0;
+  while ((at = html.indexOf(prefix, at)) !== -1) {
+    const record = jsRecord(html.slice(at - 1), prefix);
+    at += prefix.length;
+    if (!record?.startsWith(prefix) || !/^\d+:value:data"/.test(record.slice(prefix.length))) continue;
+    const raw = topLevelStringField(record, "url");
+    if (!raw) continue;
+    try {
+      const url = new URL(raw);
+      if (["https:", "http:"].includes(url.protocol) && !url.username && !url.password) urls.add(url.href);
+    } catch { /* malformed article link */ }
+  }
+  return [...urls];
+}
 export function parseXPost(html: string, id: string): Discovered {
   const key = btoa(`Tweet:${id}`);
+  const root = jsRecord(html, `__id:"${key}"`);
   const details = jsRecord(html, `__id:"client:${key}:details"`);
   if (!details) throw new Error("The exact X post was not available in the public page.");
-  const text = topLevelStringField(details, "full_text");
+  let text = topLevelStringField(details, "full_text");
   if (text === null) throw new Error("The exact X post text was unavailable.");
-  const root = jsRecord(html, `__id:"${key}"`);
+  let title = "X post";
+  const issues: string[] = [];
+  const note = referencedRecord(html, `client:${key}:note_tweet`, ["note_tweet_results", "result"]);
+  if (!note && root?.includes("note_tweet:$R")) issues.push("The long-form post text was unavailable.");
+  if (note?.includes('__typename:"NoteTweet"')) {
+    const full = topLevelStringField(note, "text");
+    if (full) text = full;
+    else issues.push("The long-form post text was unavailable.");
+  }
+  const article = referencedRecord(html, `client:${key}:article`, ["article_results", "result"]);
+  if (!article && root?.includes("article:$R")) issues.push("The article body was unavailable.");
+  if (article?.includes('__typename:"ArticleEntity"')) {
+    const full = topLevelStringField(article, "plain_text");
+    if (full) {
+      text = full;
+      title = topLevelStringField(article, "title") || title;
+      const articleId = topLevelStringField(article, "id");
+      const links = articleId ? articleLinks(html, articleId) : [];
+      if (links.length) text += `\n\n## Links in article\n\n${links.map((url) => `- [${new URL(url).hostname}](${url})`).join("\n")}`;
+    } else issues.push("The article body was unavailable.");
+  }
+  const noteId = note ? topLevelStringField(note, "id") : null;
+  text = expandXUrls(html, [`client:${key}:url_entities:`, ...(noteId ? [`client:${noteId}:entity_set:urls:`] : [])], text);
   const list = root?.match(/media_entities2:\$R\[\d+\]=\{__refs:\$R\[\d+\]=\[([^\]]*)\]/);
   const expected = new Set<string>();
   for (const match of (list?.[1] || "").matchAll(new RegExp(`"client:${key.replace(/[+/=]/g, "\\$&")}:media_entities2:(\\d+)"`, "g"))) expected.add(match[1]!);
   const media: RawMedia[] = [];
   const seen = new Set<string>();
-  const issues: string[] = [];
   if (!list) issues.push("The post's attachment list could not be verified.");
   const pattern = new RegExp(`__id:"client:${key.replace(/[+/=]/g, "\\$&")}:media_entities2:(\\d+)"`, "g");
   for (const match of html.matchAll(pattern)) {
@@ -280,14 +351,23 @@ export function parseXPost(html: string, id: string): Discovered {
     media.push({ media_key: mediaKey, position: Number(mediaKey), kind: isVideo ? "video" : "image", url: isVideo ? url : url.replace(/\.(?:jpg|jpeg|png|webp)$/i, "?format=jpg&name=large"), preview_url: url });
   }
   for (const mediaKey of expected) if (!seen.has(mediaKey)) issues.push(`Attachment ${mediaKey} was listed but unavailable.`);
-  return { source: "x-post", title: "X post", text, media: media.sort((a,b) => a.position-b.position), details: { type: "x-post", completeness: issues.length ? "unverified" : "verified", issues } };
+  return { source: "x-post", title, text, media: media.sort((a,b) => a.position-b.position), details: { type: "x-post", completeness: issues.length ? "unverified" : "verified", issues } };
 }
 
-async function discoverWithFallback(env: Env, url: string, job: ExtractionJob, parse: (html: string) => Discovered): Promise<Discovered> {
+async function discoverWithFallback(env: Env, url: string, job: ExtractionJob, parse: (html: string) => Discovered, retryWhen: (found: Discovered) => boolean = () => false): Promise<Discovered> {
+  let first: Discovered | undefined;
   let firstError: unknown;
-  try { return parse(await publicHtml(url)); } catch (error) { firstError = error; }
-  try { return parse(await renderedHtml(env, url, job)); }
-  catch (error) { throw new Error(`${firstError instanceof Error ? firstError.message : "Public post unavailable"} Rendered retry: ${error instanceof Error ? error.message : "failed"}`); }
+  try {
+    first = parse(await publicHtml(url));
+    if (!retryWhen(first)) return first;
+  } catch (error) { firstError = error; }
+  try {
+    const rendered = parse(await renderedHtml(env, url, job));
+    return first && rendered.text.length <= first.text.length && rendered.details.issues.length >= first.details.issues.length ? first : rendered;
+  } catch (error) {
+    if (first) return first;
+    throw new Error(`${firstError instanceof Error ? firstError.message : "Public post unavailable"} Rendered retry: ${error instanceof Error ? error.message : "failed"}`);
+  }
 }
 
 export const youtubePostAdapter: ContentAdapter = {
@@ -313,6 +393,7 @@ export const xAdapter: ContentAdapter = {
   async discover(env, url, job) {
     const id = new URL(url).pathname.match(/\/status\/(\d+)/)?.[1];
     if (!id) throw new Error("Missing X post ID.");
-    return discoverWithFallback(env, url, job, (html) => parseXPost(html, id));
+    return discoverWithFallback(env, url, job, (html) => parseXPost(html, id),
+      (found) => found.details.issues.some((issue) => issue.includes("long-form post text") || issue.includes("article body")));
   },
 };
