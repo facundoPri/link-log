@@ -1,6 +1,7 @@
 export const TYPESAFE_USD_PER_M_INPUT = 0.042;
 export const GEMMA_USD_PER_M_INPUT = 0.10;
 export const GEMMA_USD_PER_M_OUTPUT = 0.30;
+export const OCR_USAGE_COLUMNS = "sum(service='image-ocr') ocr_images,sum(CASE WHEN service='image-ocr' THEN input_tokens ELSE 0 END) ocr_input_tokens,sum(CASE WHEN service='image-ocr' THEN output_tokens ELSE 0 END) ocr_output_tokens,max(CASE WHEN service='image-ocr' THEN model END) ocr_model,sum(CASE WHEN service='image-ocr' THEN estimated_usd END) ocr_usd,sum(service='image-ocr' AND estimated_usd IS NULL) ocr_unknown_cost_calls";
 export function priceUsage(u: {
   provider: string;
   input_tokens: number | null;
