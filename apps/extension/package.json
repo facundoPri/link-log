@@ -1,0 +1,18 @@
+{
+  "name": "@linklog/extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun scripts/build.ts",
+    "watch": "bun scripts/build.ts --watch",
+    "package": "bun scripts/build.ts --package",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@linklog/browser-protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.1.0"
+  }
+}

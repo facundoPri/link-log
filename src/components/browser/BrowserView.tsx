@@ -1,0 +1,443 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  CircleAlert,
+  Globe,
+  Lock,
+  PanelLeft,
+  PlugZap,
+  RefreshCw,
+  Search,
+  Unplug,
+  X,
+} from "lucide-react";
+import {
+  matchesAllLensFilters,
+  type BrowserTab,
+  type LensFilter,
+} from "@linklog/browser-protocol";
+import type { Lens, Library, Link } from "../../types";
+import { normalizeUrl } from "../../url";
+import type { BrowserWorkspace } from "../../browser/useBrowserWorkspace";
+import type { useBrowserActions } from "../../browser/useBrowserActions";
+import { cn } from "../../lib/utils";
+import { GROUP_STYLE, groupTitle } from "./groups";
+import { TabRow } from "./TabRow";
+import { LensFilterBar } from "./LensFilterBar";
+import { BrowserSelectionBar } from "./BrowserSelectionBar";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Kbd } from "@/components/ui/kbd";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+
+type Actions = ReturnType<typeof useBrowserActions>["actions"];
+
+function Banner({ icon, children, action }: { icon: React.ReactNode; children: React.ReactNode; action?: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-2 border-b bg-warning-soft/60 px-4 py-2 text-xs">
+      <span className="text-amber-700 dark:text-amber-400">{icon}</span>
+      <span className="min-w-0 flex-1">{children}</span>
+      {action}
+    </div>
+  );
+}
+
+function Connect({ ws }: { ws: BrowserWorkspace }) {
+  const { connection, backendError, retry } = ws.browser;
+  if (connection === "checking" && !backendError)
+    return (
+      <div className="divide-y">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div key={i} className="flex items-center gap-3 px-4 py-3">
+            <Skeleton className="size-8" />
+            <div className="flex-1 space-y-2">
+              <Skeleton className="h-4 w-1/2" />
+              <Skeleton className="h-3 w-1/3" />
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  const content =
+    backendError && !ws.browser.catalog
+      ? {
+          icon: <CircleAlert className="size-5" />,
+          title: "The local API is unavailable",
+          body: `${backendError} Start it with bun run dev.`,
+          steps: null,
+        }
+      : connection === "unsupported"
+        ? {
+            icon: <Globe className="size-5" />,
+            title: "Browser view needs desktop Chrome",
+            body: "It reads tabs through the Linklog extension, which runs in Chrome or another Chromium browser on desktop.",
+            steps: null,
+          }
+        : connection === "reload"
+          ? {
+              icon: <RefreshCw className="size-5" />,
+              title: "The extension was updated",
+              body: "Reload this page to reconnect. Results cached before the extension reloaded are gone; Linklog evaluates again only what you turn on.",
+              steps: null,
+            }
+          : connection === "outdated"
+            ? {
+                icon: <CircleAlert className="size-5" />,
+                title: "The extension is out of date",
+                body: "Rebuild it with bun run extension:build, then reload it in chrome://extensions.",
+                steps: null,
+              }
+            : {
+                icon: <PlugZap className="size-5" />,
+                title: "Connect the Linklog extension",
+                body: "Browser view shows the tabs and groups of this Chrome window. It needs the Linklog extension.",
+                steps: [
+                  <>
+                    Build it: <Kbd>bun run extension:build</Kbd>
+                  </>,
+                  <>
+                    Open <Kbd>chrome://extensions</Kbd> and turn on Developer mode.
+                  </>,
+                  <>
+                    Click Load unpacked and choose <Kbd>apps/extension/dist</Kbd>.
+                  </>,
+                  <>Come back here — Linklog connects on its own.</>,
+                ],
+              };
+  return (
+    <div className="flex flex-1 items-center justify-center p-8">
+      <div className="flex max-w-md flex-col items-center gap-2 text-center">
+        <div className="flex size-10 items-center justify-center rounded-lg bg-muted text-muted-foreground">{content.icon}</div>
+        <h2 className="text-sm font-medium">{content.title}</h2>
+        <p className="text-[13px] text-muted-foreground">{content.body}</p>
+        {content.steps && (
+          <ol className="mt-2 w-full space-y-1.5 rounded-lg border bg-card p-3 text-left text-[13px]">
+            {content.steps.map((s, i) => (
+              <li key={i} className="flex gap-2">
+                <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-2xs font-medium tabular">{i + 1}</span>
+                <span className="min-w-0">{s}</span>
+              </li>
+            ))}
+          </ol>
+        )}
+        {connection === "reload" ? (
+          <Button size="sm" onClick={() => location.reload()}>
+            Reload page
+          </Button>
+        ) : (
+          connection !== "unsupported" && (
+            <Button variant="ghost" size="sm" onClick={retry}>
+              Try again
+            </Button>
+          )
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function BrowserView({
+  ws,
+  library,
+  actions,
+  picked,
+  setPicked,
+  onToggleSidebar,
+  onEditLens,
+}: {
+  ws: BrowserWorkspace;
+  library: Library;
+  actions: Actions;
+  picked: string[];
+  setPicked: (fn: (ids: string[]) => string[]) => void;
+  onToggleSidebar: () => void;
+  onEditLens: (lens: Lens) => void;
+}) {
+  const { browser, runner, tabs, groups, activeLenses } = ws;
+  const [query, setQuery] = useState("");
+  const [filters, setFilters] = useState<Record<string, LensFilter>>({});
+  const [sortLensId, setSortLensId] = useState<string | null>(null);
+  const search = useRef<HTMLInputElement>(null);
+  const lastIndex = useRef<number | null>(null);
+
+  // Filters of lenses that were turned off disappear with them.
+  useEffect(() => {
+    setFilters((f) => Object.fromEntries(Object.entries(f).filter(([id]) => ws.activeIds.includes(id))));
+    if (sortLensId && !ws.activeIds.includes(sortLensId)) setSortLensId(null);
+  }, [ws.activeIds]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A new window scope (Linklog moved) or closed tabs invalidate the selection.
+  useEffect(() => {
+    setPicked((ids) => {
+      const next = ids.filter((id) => tabs.some((t) => t.tabInstanceId === id));
+      return next.length === ids.length ? ids : next;
+    });
+  }, [tabs, setPicked]);
+
+  const savedByUrl = useMemo(() => {
+    const map = new Map<string, Link>();
+    for (const l of library.links) {
+      map.set(l.original_url, l);
+      map.set(l.url, l);
+    }
+    return map;
+  }, [library.links]);
+  const savedOf = (tab: BrowserTab) => {
+    try {
+      return savedByUrl.get(normalizeUrl(tab.url));
+    } catch {
+      return undefined;
+    }
+  };
+
+  const visible = useMemo(() => {
+    const words = query.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
+    const groupsById = new Map(groups.map((g) => [g.groupId, g]));
+    const list = tabs.filter((t) => {
+      if (ws.groupFilter.length && !ws.groupFilter.includes(t.groupId ?? "none")) return false;
+      const answers = (lensId: string) => {
+        const r = runner.results[t.tabInstanceId]?.[lensId];
+        return r?.state === "done" ? r.answer : null;
+      };
+      if (!matchesAllLensFilters(activeLenses, answers, Object.values(filters))) return false;
+      const hay = [t.title, t.url, t.groupId !== null ? groupsById.get(t.groupId)?.title ?? "" : ""].join(" ").toLocaleLowerCase();
+      return words.every((w) => hay.includes(w));
+    });
+    if (sortLensId)
+      list.sort((a, b) => {
+        const score = (t: BrowserTab) => {
+          const ans = runner.results[t.tabInstanceId]?.[sortLensId]?.answer;
+          return ans?.type === "score" ? ans.score : -1;
+        };
+        return score(b) - score(a) || a.index - b.index;
+      });
+    return list;
+  }, [tabs, groups, query, ws.groupFilter, filters, activeLenses, runner.results, sortLensId]);
+
+  const pickedTabs = tabs.filter((t) => picked.includes(t.tabInstanceId));
+  const allPicked = visible.length > 0 && visible.every((t) => picked.includes(t.tabInstanceId));
+  const somePicked = visible.some((t) => picked.includes(t.tabInstanceId));
+  const pickMany = (ids: string[], checked: boolean) =>
+    setPicked((cur) => (checked ? [...new Set([...cur, ...ids])] : cur.filter((id) => !ids.includes(id))));
+
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      const typing = e.target instanceof HTMLElement && !!e.target.closest("input,textarea,select,[contenteditable='true']");
+      if (e.key === "/" && !typing) {
+        e.preventDefault();
+        search.current?.focus();
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "a" && !typing) {
+        e.preventDefault();
+        pickMany(visible.map((t) => t.tabInstanceId), true);
+      } else if (e.key === "Escape" && !typing) setPicked(() => []);
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  });
+
+  const snapshot = browser.snapshot;
+  const filtered = !!(query || ws.groupFilter.length || Object.values(filters).some((f) => f.keys.length || f.minLevel !== null));
+
+  return (
+    <>
+      <div className="shrink-0">
+        <div className="flex h-12 items-center gap-2 border-b px-4">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon-sm" aria-label="Toggle sidebar" onClick={onToggleSidebar}>
+                <PanelLeft className="size-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              Toggle sidebar <Kbd className="ml-1">⌘\</Kbd>
+            </TooltipContent>
+          </Tooltip>
+          {visible.length > 0 && (
+            <Checkbox
+              aria-label={allPicked ? "Deselect all" : `Select all ${visible.length} tabs`}
+              checked={allPicked ? true : somePicked ? "indeterminate" : false}
+              onCheckedChange={() => pickMany(visible.map((t) => t.tabInstanceId), !allPicked)}
+            />
+          )}
+          <h1 className="flex min-w-0 items-center gap-2 truncate text-sm font-medium">
+            Browser
+            <span className="font-normal tabular text-muted-foreground">
+              · {filtered ? `${visible.length} of ${tabs.length}` : tabs.length} {tabs.length === 1 ? "tab" : "tabs"}
+            </span>
+          </h1>
+          <div className="hidden min-w-0 items-center gap-1.5 overflow-hidden md:flex">
+            {ws.groupFilter.map((g) => {
+              const group = groups.find((x) => x.groupId === g);
+              return (
+                <span
+                  key={String(g)}
+                  className="inline-flex h-5 items-center gap-1 rounded-md px-1.5 text-2xs font-medium"
+                  style={group ? { background: GROUP_STYLE[group.color].bg, color: GROUP_STYLE[group.color].fg } : undefined}
+                >
+                  {group ? groupTitle(group.title) : "Ungrouped"}
+                  <button aria-label="Remove group filter" onClick={() => ws.toggleGroupFilter(g)}>
+                    <X className="size-3" />
+                  </button>
+                </span>
+              );
+            })}
+            {filtered && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setQuery("");
+                  ws.setGroupFilter([]);
+                  setFilters({});
+                }}
+              >
+                Clear
+              </Button>
+            )}
+          </div>
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                ref={search}
+                aria-label="Search tabs"
+                placeholder="Search tabs"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                className="h-8 w-32 min-w-24 pl-8 pr-7 @2xl:w-56"
+              />
+              {query ? (
+                <button aria-label="Clear search" className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" onClick={() => setQuery("")}>
+                  <X className="size-3.5" />
+                </button>
+              ) : (
+                <Kbd className="pointer-events-none absolute right-2 top-1/2 hidden -translate-y-1/2 sm:inline-flex">/</Kbd>
+              )}
+            </div>
+          </div>
+        </div>
+        {snapshot && browser.connection !== "connected" && (
+          <Banner icon={<Unplug className="size-3.5" />}>
+            Reconnecting to the extension… showing the last tabs it reported.
+          </Banner>
+        )}
+        {snapshot && browser.hello && !browser.hello.contentAccess && (
+          <Banner
+            icon={<Lock className="size-3.5" />}
+            action={
+              <Button size="sm" variant="outline" className="h-7" onClick={() => void browser.request("openPermissions", {}).catch(() => {})}>
+                Allow access
+              </Button>
+            }
+          >
+            Lenses need to read the pages you have open. Linklog reads only loaded text, only while a lens is on or you save a tab.
+          </Banner>
+        )}
+        {(runner.offline || (browser.backendError && browser.catalog)) && (
+          <Banner icon={<CircleAlert className="size-3.5" />}>
+            The local API is unavailable. Stored answers stay; new evaluations wait until it's back.
+          </Banner>
+        )}
+        {runner.notice && (
+          <Banner
+            icon={<CircleAlert className="size-3.5" />}
+            action={
+              <Button size="sm" variant="ghost" className="h-7" onClick={() => location.reload()}>
+                Reload
+              </Button>
+            }
+          >
+            {runner.notice}
+          </Banner>
+        )}
+        {snapshot && activeLenses.length > 0 && (
+          <LensFilterBar
+            lenses={activeLenses}
+            tabs={tabs}
+            results={runner.results}
+            filters={filters}
+            sortLensId={sortLensId}
+            onFilter={(f) => setFilters((cur) => ({ ...cur, [f.lensId]: f }))}
+            onSort={setSortLensId}
+            onRetryFailed={(lens) =>
+              actions.reevaluate(
+                lens,
+                tabs.filter((t) => ["failed", "expired", "unavailable"].includes(runner.results[t.tabInstanceId]?.[lens.id]?.state ?? "")),
+              )
+            }
+            onReevaluate={(lens) => actions.reevaluate(lens)}
+            onClean={actions.requestClean}
+            onEdit={onEditLens}
+            onDeactivate={(lens) => ws.deactivate([lens.id])}
+          />
+        )}
+      </div>
+      <div className={cn("flex min-h-0 flex-1 flex-col overflow-y-auto", picked.length && "pb-24 max-[700px]:pb-32")}>
+        {!snapshot ? (
+          <Connect ws={ws} />
+        ) : !visible.length ? (
+          <div className="flex flex-1 items-center justify-center p-8">
+            <div className="flex max-w-sm flex-col items-center gap-2 text-center">
+              <div className="flex size-10 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                {filtered ? <Search className="size-5" /> : <Globe className="size-5" />}
+              </div>
+              <h2 className="text-sm font-medium">{filtered ? "No tabs match" : "No other tabs in this window"}</h2>
+              <p className="text-[13px] text-muted-foreground">
+                {filtered
+                  ? "Filters only change what you see; active lenses still cover every tab."
+                  : "Open pages in this window and they appear here. Linklog's own tabs are not listed."}
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div className="divide-y" role="list">
+            {visible.map((tab, index) => (
+              <TabRow
+                key={tab.tabInstanceId}
+                tab={tab}
+                group={groups.find((g) => g.groupId === tab.groupId)}
+                saved={savedOf(tab)}
+                lenses={activeLenses}
+                records={runner.results[tab.tabInstanceId]}
+                picked={picked.includes(tab.tabInstanceId)}
+                stale={browser.connection !== "connected"}
+                onPicked={(checked, shift) => {
+                  if (shift && lastIndex.current !== null) {
+                    const a = Math.min(lastIndex.current, index);
+                    const b = Math.max(lastIndex.current, index);
+                    pickMany(visible.slice(a, b + 1).map((t) => t.tabInstanceId), checked);
+                  } else pickMany([tab.tabInstanceId], checked);
+                  lastIndex.current = index;
+                }}
+                onFocus={() => actions.focus(tab)}
+                onToggleGroup={ws.toggleGroupFilter}
+                onRetry={(lens) => actions.reevaluate(lens, [tab])}
+                onMetadata={(lens) => actions.evaluateMetadata(lens, tab)}
+                onSave={() => void actions.save([tab])}
+                onClose={() => actions.requestClose([tab])}
+                onMove={() => actions.chooseMove([tab])}
+                onUngroup={() => void actions.ungroup([tab])}
+                onCopy={() => actions.copy(tab)}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+      {!!pickedTabs.length && (
+        <BrowserSelectionBar
+          tabs={pickedTabs}
+          destinations={ws.destinations}
+          busy={actions.busy}
+          onSave={() => void actions.save(pickedTabs)}
+          onMove={(d) => void actions.move(pickedTabs, d)}
+          onNewGroup={() => actions.newGroup(pickedTabs)}
+          onUngroup={() => void actions.ungroup(pickedTabs)}
+          onAutogroup={() => actions.autogroup(pickedTabs)}
+          onClose={() => actions.requestClose(pickedTabs)}
+          onClear={() => setPicked(() => [])}
+        />
+      )}
+    </>
+  );
+}

@@ -1,6 +1,6 @@
 import { extractMetadata } from "../metadata";
 import { adapterFor } from "../adapters";
-import type { Discovered, ExtractionJob } from "../adapters/types";
+import type { Discovered } from "../adapters/types";
 import { transcribeImage, OCR_MODEL } from "../ocr";
 import type { MediaItem, ContentDetails } from "../../src/types";
 import type { JobHandler } from "./index";
@@ -44,6 +44,7 @@ export const extractHandler: JobHandler = {
   // The saved URL may redirect to a social source, so reserve discovery capacity up front.
   pool: () => "browser",
   async run({ env, step, job, link, config }) {
+    const linkJob = { id: job.id, batch_id: job.batch_id, link_id: link.id };
     const metadata = await step.do("resolve-and-preview", { retries: { limit: 1, delay: "2 seconds", backoff: "constant" } }, () => extractMetadata(link.original_url));
     await step.do("save-preview", async () => {
       await env.DB.prepare("UPDATE links SET url=?,domain=?,title=?,description=?,image=?,favicon=?,status=? WHERE id=?")
@@ -53,7 +54,7 @@ export const extractHandler: JobHandler = {
     const adapter = adapterFor(metadata.url);
     if (!adapter.discover) {
       const content = await step.do("extract-content", { retries: { limit: 0, delay: "1 second" }, timeout: "2 minutes" }, async () => {
-        const result = await adapter.extract(env, metadata.url, job);
+        const result = await adapter.extract(env, metadata.url, linkJob);
         if (new TextEncoder().encode(result.markdown).length > 2_000_000) throw new Error("The content exceeds 2 MB. You can upload a manual version.");
         const key = `links/${link.id}/${job.id}.md`;
         await env.CONTENT.put(key, result.markdown, { httpMetadata: { contentType: "text/markdown; charset=utf-8" } });
@@ -75,7 +76,7 @@ export const extractHandler: JobHandler = {
     } catch { /* old content has no details */ }
     const chosenTrack = config.track === "auto" ? undefined : config.track || previousManual;
     const discovered = await step.do("discover-content", { retries: { limit: 0, delay: "1 second" }, timeout: "2 minutes" },
-      () => adapter.discover!(env, metadata.url, job, chosenTrack));
+      () => adapter.discover!(env, metadata.url, linkJob, chosenTrack));
     await step.do("save-discovered-media", async () => {
       const now = new Date().toISOString();
       const oldRows = await env.DB.prepare("SELECT media_key,url FROM media_items WHERE link_id=?").bind(link.id).all<{media_key:string;url:string}>();
@@ -98,7 +99,7 @@ export const extractHandler: JobHandler = {
         .bind(link.id, item.media_key).first<{ ocr_state: string }>());
       if (existing?.ocr_state === "done" || existing?.ocr_state === "no_text") continue;
       const result = await step.do(`ocr-image-${item.position}`, { retries: { limit: 0, delay: "1 second" }, timeout: "2 minutes" }, async () => {
-        try { return await transcribeImage(env, job as ExtractionJob, item.media_key, item.url, item.preview_url || undefined); }
+        try { return await transcribeImage(env, linkJob, item.media_key, item.url, item.preview_url || undefined); }
         catch (error) { return { state: "failed" as const, text: "", error: error instanceof Error ? error.message : "OCR failed" }; }
       });
       await step.do(`save-ocr-image-${item.position}`, async () => {

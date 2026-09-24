@@ -7,6 +7,7 @@ import { enqueue, dispatch, recover, LinkWorkflow } from "./jobs";
 import { preservedContentStateSql } from "./content-state";
 import type { Job, JobUsage, UsageEvent } from "../src/types";
 import { OCR_USAGE_COLUMNS } from "./usage";
+import { browserRoute, cleanupBrowser } from "./browser";
 export { LinkWorkflow };
 type JobUsageRow = {
   job_id: string;
@@ -172,6 +173,7 @@ export default {
   queue: dispatch,
   async scheduled(_event, env, ctx) {
     ctx.waitUntil(recover(env));
+    ctx.waitUntil(cleanupBrowser(env));
   },
   async fetch(request, env, ctx) {
     const path = new URL(request.url).pathname;
@@ -209,6 +211,10 @@ export default {
         body = raw ? JSON.parse(raw) : {};
         if (!body || Array.isArray(body) || typeof body !== "object")
           throw new Error("Invalid request.");
+      }
+      if (path.startsWith("/api/browser/")) {
+        const response = await browserRoute(env, path, request.method, body);
+        if (response) return response;
       }
       if (path === "/api/import" && request.method === "POST") {
         if (
@@ -354,7 +360,7 @@ export default {
       if (batchMatch && request.method === "GET") {
         const [jobs, usage] = await Promise.all([
           env.DB.prepare(
-            "SELECT j.*,l.title FROM jobs j JOIN links l ON l.id=j.link_id WHERE batch_id=? ORDER BY j.created_at",
+            "SELECT j.*,coalesce(l.title,bt.title) title FROM jobs j LEFT JOIN links l ON l.id=j.link_id LEFT JOIN browser_targets bt ON bt.id=j.target_id WHERE batch_id=? ORDER BY j.created_at",
           )
             .bind(batchMatch[1])
             .all<Job>(),
@@ -407,7 +413,7 @@ export default {
       if (path === "/api/usage" && request.method === "GET") {
         const [events, grouped] = await Promise.all([
           env.DB.prepare(
-            "SELECT u.*,l.title FROM usage_events u LEFT JOIN links l ON l.id=u.link_id ORDER BY u.created_at DESC LIMIT 1000",
+            "SELECT u.*,coalesce(l.title,bt.title) title FROM usage_events u LEFT JOIN links l ON l.id=u.link_id LEFT JOIN jobs j ON j.id=u.job_id LEFT JOIN browser_targets bt ON bt.id=j.target_id ORDER BY u.created_at DESC LIMIT 1000",
           ).all<UsageEvent>(),
           env.DB.prepare(
             "SELECT sum(input_tokens) input_tokens,sum(output_tokens) output_tokens,sum(browser_ms) browser_ms,count(*) calls,sum(estimated_usd) usd,sum(estimated_usd IS NULL) unknown_cost_calls FROM usage_events WHERE status IN ('done','failed')",
@@ -510,8 +516,11 @@ export default {
             { error: "A lens with that name already exists." },
             409,
           );
+        const scope = body.scope === undefined ? "library" : String(body.scope);
+        if (scope !== "library" && scope !== "browser")
+          throw new Error("Invalid lens scope.");
         await env.DB.prepare(
-          "INSERT INTO lenses(id,name,type,question,options,threshold,created_at) VALUES(?,?,?,?,?,?,?)",
+          "INSERT INTO lenses(id,name,type,question,options,threshold,created_at,scope) VALUES(?,?,?,?,?,?,?,?)",
         )
           .bind(
             crypto.randomUUID(),
@@ -521,6 +530,7 @@ export default {
             JSON.stringify({ options: f.options, levels: f.levels, criteria: f.criteria }),
             f.threshold,
             new Date().toISOString(),
+            scope,
           )
           .run();
         return json(await library(env));

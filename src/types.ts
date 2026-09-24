@@ -18,51 +18,17 @@ export type Evaluation = {
   batch_id: string;
   chunks: number;
 };
-export type Question = {
-  type: "noul" | "choice" | "score";
-  instructions: string;
-  criteria: Record<string, string> | string[];
-};
-export type Answer =
-  | { type: "noul"; noul: number }
-  | {
-      type: "choice";
-      choice: string;
-      probabilities: Record<string, number>;
-      confidence: number;
-    }
-  | {
-      type: "score";
-      score: number;
-      confidence: number;
-      probabilities: Record<string, number>;
-      legend: Record<string, string>;
-    }
-  | { type: "multi"; probabilities: Record<string, number> }; // key → p(yes)
-export type LensType = "noul" | "choice" | "multi" | "score";
-export type LensOption = { key: string; label: string; description: string };
-export type LensLevel = { label: string; description: string };
-export type Lens = {
-  id: string;
-  name: string;
-  type: LensType;
-  question: string;
-  options: LensOption[]; // choice + multi (choice includes auto "other")
-  levels: LensLevel[]; // score, low → high, 2–10
-  criteria: { yes: string; no: string }; // noul only
-  threshold: number;
-  version: number;
-  created_at: string;
-};
-export type LensResult = {
-  lens_id: string;
-  answer: Answer;
-  lens_version: number;
-  content_version: number;
-  model: string;
-  evaluated_at: string;
-  batch_id: string;
-};
+export type {
+  Question,
+  Answer,
+  LensType,
+  LensScope,
+  LensOption,
+  LensLevel,
+  Lens,
+  LensResult,
+} from "@linklog/browser-protocol";
+import type { Lens, LensResult } from "@linklog/browser-protocol";
 export type Link = {
   id: string;
   original_url: string;
@@ -112,7 +78,7 @@ export type ContentDetails = {
 export type Job = {
   id: string;
   batch_id: string;
-  link_id: string;
+  link_id: string | null;
   title: string;
   status: "queued" | "running" | "done" | "failed";
   step: string;
@@ -149,7 +115,7 @@ export type BatchUsage = {
 };
 export type Batch = {
   id: string;
-  kind: "extract" | "autotag" | "lens" | "query";
+  kind: "extract" | "autotag" | "lens" | "query" | "browser-lens" | "browser-autogroup";
   config: string;
   created_at: string;
   total: number;

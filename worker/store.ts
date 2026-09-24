@@ -16,7 +16,12 @@ export function capabilities(env: Env) {
   return {
     provider,
     markdown: !!env.BROWSER,
-    jev: provider === "typesafe" ? !!env.TYPESAFE_API_KEY : !!env.AI,
+    jev:
+      provider === "typesafe"
+        ? !!env.TYPESAFE_API_KEY
+        : provider === "fixture"
+          ? env.ALLOW_FIXTURE_JEV === "1"
+          : !!env.AI,
   };
 }
 export async function library(env: Env) {
