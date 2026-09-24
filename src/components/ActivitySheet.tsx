@@ -4,6 +4,7 @@ import {
   ChevronRight,
   CircleAlert,
   FileText,
+  Globe,
   Loader2,
   Sparkles,
   Telescope,
@@ -63,8 +64,10 @@ function batchUsageTip(b: Batch) {
 function kindIcon(kind: Batch["kind"] | "query") {
   return kind === "extract" ? (
     <FileText className="size-4 text-muted-foreground" />
-  ) : kind === "autotag" ? (
+  ) : kind === "autotag" || kind === "browser-autogroup" ? (
     <Sparkles className="size-4 text-muted-foreground" />
+  ) : kind === "browser-lens" ? (
+    <Globe className="size-4 text-muted-foreground" />
   ) : (
     <Telescope className="size-4 text-muted-foreground" />
   );
@@ -82,6 +85,8 @@ function label(b: Batch) {
   if (b.kind === "extract") return "Extract context";
   if (b.kind === "autotag") return "Auto-tag";
   if ((b.kind as string) === "query") return "Ask (legacy)";
+  if (b.kind === "browser-autogroup") return "Autogroup · open tabs";
+  if (b.kind === "browser-lens") return `Browser lens: ${configLens(b)?.name ?? ""}`;
   const name = configLens(b)?.name ?? "";
   return `Lens: ${name}`;
 }
@@ -269,7 +274,7 @@ export function ActivitySheet({
         <SheetHeader>
           <SheetTitle>Activity</SheetTitle>
           <SheetDescription>
-            Extraction, auto-tagging and lenses.
+            Extraction, auto-tagging, lenses and browser evaluations.
           </SheetDescription>
         </SheetHeader>
         {totals && (

@@ -173,7 +173,10 @@ export function TabRow({
   const lastShift = useRef(false);
   const { host, rest } = pathOf(tab.url);
   const access = tab.content === "available" ? null : ACCESS_LABEL[tab.content];
-  const facts = Object.values(records ?? {}).find((r) => r.capture?.facts.length)?.capture?.facts ?? [];
+  // Only unambiguous states (e.g. a PR's "Merged") earn a badge; other facts stay evidence.
+  const facts = (Object.values(records ?? {}).find((r) => r.capture?.facts.length)?.capture?.facts ?? []).filter((f) =>
+    f.key.endsWith(".state"),
+  );
   return (
     <article
       className={cn("group flex cursor-default items-start gap-3 px-4 py-2.5 hover:bg-accent/60", stale && "opacity-60")}
@@ -257,9 +260,14 @@ export function TabRow({
             </Tooltip>
           )}
           {facts.map((f) => (
-            <Badge key={f.key} variant="secondary" className="font-normal">
-              {f.value}
-            </Badge>
+            <Tooltip key={f.key}>
+              <TooltipTrigger asChild>
+                <Badge variant="secondary" className="font-normal">
+                  {f.value}
+                </Badge>
+              </TooltipTrigger>
+              <TooltipContent>{f.label}, read from the page</TooltipContent>
+            </Tooltip>
           ))}
           {lenses.map((lens) => (
             <LensCell

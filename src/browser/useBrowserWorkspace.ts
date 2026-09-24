@@ -23,7 +23,7 @@ function readActive(): string[] {
 
 export type BrowserWorkspace = ReturnType<typeof useBrowserWorkspace>;
 
-export function useBrowserWorkspace(library: Library, inBrowser: boolean) {
+export function useBrowserWorkspace(library: Library, inBrowser: boolean, loaded: boolean) {
   const browser = useBrowser();
   const browserLenses = useMemo(() => library.lenses.filter((l) => l.scope === "browser"), [library.lenses]);
   const [activeIds, setActiveIds] = useState<string[]>(readActive);
@@ -39,14 +39,15 @@ export function useBrowserWorkspace(library: Library, inBrowser: boolean) {
       /* per-viewer convenience only */
     }
   }, [activeIds]);
-  // Deleted lenses drop out of the active set.
+  // Deleted lenses drop out of the active set — only once the library has loaded,
+  // otherwise the empty initial list would switch off every restored lens.
   useEffect(() => {
-    if (!library.lenses.length && !activeIds.length) return;
+    if (!loaded) return;
     setActiveIds((ids) => {
       const next = ids.filter((id) => browserLenses.some((l) => l.id === id));
       return next.length === ids.length ? ids : next;
     });
-  }, [browserLenses]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [browserLenses, loaded]);
 
   const runner = useLensRunner(browser, activeLenses, browserLenses, inBrowser);
   const tabs: BrowserTab[] = browser.snapshot?.tabs ?? [];

@@ -4,6 +4,7 @@ import { CAPTURE_BUDGET, ResultCache, type Candidate } from "../src/background/c
 import { memoryKV, Mutex, QuotaError } from "../src/background/kv";
 import { TabRegistry } from "../src/background/registry";
 import { isBridgeSender, isExtensionPage } from "../src/background/sender";
+import { contentAccess } from "../src/background/hub";
 
 const scope = "local:lib";
 const session = "s1";
@@ -176,5 +177,21 @@ describe("bridge sender validation", () => {
   test("status channel is for extension pages only", () => {
     expect(isExtensionPage({ id: "ext", url: "chrome-extension://ext/popup.html" }, "ext", "chrome-extension://ext/")).toBe(true);
     expect(isExtensionPage({ id: "ext", url: "http://127.0.0.1:3000/" }, "ext", "chrome-extension://ext/")).toBe(false);
+  });
+});
+
+describe("content access states", () => {
+  const tab = (p: Partial<chrome.tabs.Tab>) => ({ url: "https://a.dev/x", status: "complete", discarded: false, ...p }) as chrome.tabs.Tab;
+  const inst = { tabInstanceId: "i", documentRevision: 0, docKey: "", openedAt: 0, changedAt: 0 };
+  const grants = ["https://*/*"];
+  test("each unreadable case has its own state, never an answer", () => {
+    expect(contentAccess(tab({}), inst, grants, 10_000)).toBe("available");
+    expect(contentAccess(tab({ discarded: true, status: "unloaded" }), inst, grants, 10_000)).toBe("discarded");
+    expect(contentAccess(tab({ frozen: true } as Partial<chrome.tabs.Tab>), inst, grants, 10_000)).toBe("frozen");
+    expect(contentAccess(tab({ url: "chrome://settings" }), inst, grants, 10_000)).toBe("restricted");
+    expect(contentAccess(tab({ url: "http://a.dev/" }), inst, grants, 10_000)).toBe("no-permission");
+    expect(contentAccess(tab({ status: "loading" }), inst, grants, 10_000)).toBe("loading");
+    // a navigation that just happened (SPA) settles before it is read
+    expect(contentAccess(tab({}), { ...inst, changedAt: 9_500 }, grants, 10_000)).toBe("loading");
   });
 });

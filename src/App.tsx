@@ -118,7 +118,7 @@ export function App() {
   const sessionBatches = useRef(new Set<string>());
   const narrow = useMedia("(max-width: 1099px)");
   const mobile = useMedia("(max-width: 767px)");
-  const ws = useBrowserWorkspace(library, view === "browser");
+  const ws = useBrowserWorkspace(library, view === "browser", loaded && !loadError);
   const { actions: browserActions, dialogs: browserDialogs } = useBrowserActions(
     ws,
     setLibrary,

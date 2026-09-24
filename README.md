@@ -20,6 +20,31 @@ Open http://localhost:3000. The command builds the assets with `bun scripts/buil
 - Row checkboxes open a floating selection bar: **Auto-tag**, **Ask**, **Extract context**.
 - In the sidebar, **Tags** `+` creates a tag and `…` edits it (name, description for the AI, confidence threshold) or deletes it. **Activity** and **Usage** live in the sidebar footer.
 
+## Browser view (Chrome extension)
+
+The repo is a Bun workspace: the app/Worker stay at the root, plus
+`packages/browser-protocol` (shared contract) and `apps/extension` (MV3 extension).
+Browser shows the tabs and groups of **the Chrome window that holds the Linklog page**:
+groups replace tags in the sidebar, lenses become toggles you can combine as filters,
+and the selection bar saves, groups, autogroups and closes tabs.
+
+```sh
+bun run dev               # app + API as before (ports: LINKLOG_UI_PORT / LINKLOG_API_PORT)
+bun run extension:build   # unpacked extension in apps/extension/dist
+bun run extension:chrome  # Chromium with an isolated profile and the extension loaded
+```
+
+In Chrome stable: `chrome://extensions` → Developer mode → **Load unpacked** →
+`apps/extension/dist`. The extension asks for page-content access from its own Connect page;
+without it, tabs and groups still work and lenses show "No access".
+
+Lens results live in the extension's session storage: they survive closing Linklog and the
+service worker sleeping, but not a Chrome restart or reloading the extension. Evaluating a tab
+never saves it; **Save** stores the locally read page without a remote extraction.
+Details: [plan](docs/browser-feature-plan.md) · [implementation](docs/browser-implementation-handoff.md) ·
+[validation](docs/browser-validation.md). Other commands: `extension:dev`, `extension:package`,
+`build:all`, `test:browser` (real Chromium, isolated ports/DB, fixture Jev provider).
+
 ## Metadata and URLs
 
 Saves immediately to D1; the extraction workflow enriches title, description, Open Graph and favicon. It follows up to six HTTP requests with manual redirects, a 10s timeout and a 1MiB read cap. It validates protocol, credentials, ports, host and public DNS addresses per hop. The preview does not execute remote JavaScript or access authenticated pages; the later Markdown extraction uses a Cloudflare browser. It decodes HTML entities; everything renders as React text.
