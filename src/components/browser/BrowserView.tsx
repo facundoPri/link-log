@@ -331,7 +331,7 @@ export function BrowserView({
               </Button>
             }
           >
-            Lenses need to read the pages you have open. Linklog reads only loaded text, only while a lens is on or you save a tab.
+            Allow access so lenses can read your open tabs. Only loaded text is read, and only while a lens is on or when you save.
           </Banner>
         )}
         {(runner.offline || (browser.backendError && browser.catalog)) && (

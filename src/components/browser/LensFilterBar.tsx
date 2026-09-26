@@ -1,4 +1,4 @@
-import { ArrowDownWideNarrow, Ellipsis, RotateCw } from "lucide-react";
+import { ArrowDownWideNarrow, Ellipsis, Loader2, RotateCw } from "lucide-react";
 import {
   IN_FLIGHT,
   lensBucket,
@@ -83,7 +83,7 @@ export function LensFilterBar({
   onDeactivate: (lens: Lens) => void;
 }) {
   return (
-    <div className="divide-y border-b bg-muted/30">
+    <div className="divide-y border-b">
       {lenses.map((lens) => {
         const filter = filters[lens.id] ?? { lensId: lens.id, keys: [], minLevel: null };
         const counts = new Map<string, number>();
@@ -116,22 +116,20 @@ export function LensFilterBar({
           <div key={lens.id} className="flex flex-wrap items-center gap-x-2 gap-y-1.5 px-4 py-2" data-lens-filter={lens.id}>
             <div className="flex min-w-0 items-center gap-1.5">
               {lensIcon(lens.type, "size-3.5 text-brand")}
-              <span className="max-w-40 truncate text-[13px] font-medium" title={lens.question}>
-                {lens.name}
-              </span>
-              <span className="text-2xs tabular text-muted-foreground">
+              <span className="max-w-40 truncate text-[13px] font-medium">{lens.name}</span>
+              <span className="inline-flex items-center gap-1 text-2xs tabular text-muted-foreground">
+                {progress.pending > 0 && <Loader2 className="size-3 animate-spin" />}
                 {progress.done}/{progress.total}
-                {progress.pending ? ` · ${progress.pending} pending` : ""}
-                {progress.unreadable ? ` · ${progress.unreadable} unreadable` : ""}
+                {progress.unreadable > 0 && <span className="opacity-80">· {progress.unreadable} unreadable</span>}
               </span>
               {progress.failed > 0 && (
                 <button
                   type="button"
                   onClick={() => onRetryFailed(lens)}
-                  className="inline-flex items-center gap-1 text-2xs text-destructive hover:underline"
+                  className="inline-flex h-5 items-center gap-1 rounded-md bg-destructive/10 px-1.5 text-2xs text-destructive hover:bg-destructive/15"
                 >
-                  {progress.failed} failed · Retry
                   <RotateCw className="size-3" />
+                  Retry {progress.failed} failed
                 </button>
               )}
             </div>

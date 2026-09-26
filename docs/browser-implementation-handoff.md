@@ -49,7 +49,7 @@ se abre la página **Connect**, donde se concede (o no) el acceso a contenido.
 - `documentRevision` sube cuando cambia la URL **sin fragmento** (navegación completa o
   `pushState`). Recargar la misma URL o cambiar sólo el `#hash` no la cambia; por eso una
   actualización del mismo PR no reevalúa sola: hay **Re-evaluate** explícito y la fecha de
-  captura se ve en el tooltip.
+  captura se ve en el menú ⋯ de la fila.
 - Tras una navegación hay 1,5 s de asentamiento (`SETTLE_MS`) antes de leer el DOM: los cambios
   de título durante la carga no disparan evaluaciones.
 - La ventana siempre se resuelve desde la pestaña emisora (`sender.tab`) en cada comando.

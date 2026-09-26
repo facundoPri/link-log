@@ -92,23 +92,30 @@ export function BrowserSelectionBar({
             />
           </PopoverContent>
         </Popover>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span className="block min-w-0">
-              <Button variant="ghost" size="sm" disabled={busy || !ungrouped || !destinations.length} onClick={onAutogroup} className={mobile}>
-                <Sparkles className="size-3.5" />
-                Autogroup
-              </Button>
-            </span>
-          </TooltipTrigger>
-          <TooltipContent>
-            {!destinations.length
-              ? "Create or pin a group with a description first"
-              : !ungrouped
-                ? "Autogroup only places tabs that have no group"
-                : `Suggest groups for ${ungrouped} ungrouped ${ungrouped === 1 ? "tab" : "tabs"}`}
-          </TooltipContent>
-        </Tooltip>
+        {(() => {
+          const blocked = !destinations.length
+            ? "Create or pin a group with a description first"
+            : !ungrouped
+              ? "Autogroup only places tabs that have no group"
+              : null;
+          const button = (
+            <Button variant="ghost" size="sm" disabled={busy || !!blocked} onClick={onAutogroup} className={mobile}>
+              <Sparkles className="size-3.5" />
+              Autogroup
+            </Button>
+          );
+          // Explain only why it's unavailable; the enabled action speaks for itself.
+          return blocked ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="block min-w-0">{button}</span>
+              </TooltipTrigger>
+              <TooltipContent>{blocked}</TooltipContent>
+            </Tooltip>
+          ) : (
+            button
+          );
+        })()}
         <Button variant="ghost" size="sm" disabled={busy} onClick={onClose} className={mobile}>
           <XCircle className="size-3.5" />
           Close

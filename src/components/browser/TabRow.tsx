@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import {
+  BookmarkCheck,
   Ellipsis,
   FileWarning,
   Globe,
@@ -25,6 +26,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -51,48 +53,51 @@ function LensCell({
   lens,
   record,
   tab,
+  named,
   onRetry,
   onMetadata,
 }: {
   lens: Lens;
   record: LensRecord | undefined;
   tab: BrowserTab;
+  named: boolean;
   onRetry: () => void;
   onMetadata: () => void;
 }) {
-  const label = <span className="max-w-24 truncate text-muted-foreground">{lens.name}</span>;
-  const shell = (children: React.ReactNode, tip?: React.ReactNode) => {
-    const body = (
-      <span className="inline-flex h-5 items-center gap-1 rounded-md border px-1.5 text-2xs" onClick={(e) => e.stopPropagation()}>
-        {lensIcon(lens.type, "size-3 text-muted-foreground")}
-        {label}
-        {children}
-      </span>
-    );
-    return tip ? (
-      <Tooltip>
-        <TooltipTrigger asChild>{body}</TooltipTrigger>
-        <TooltipContent className="max-w-72">{tip}</TooltipContent>
-      </Tooltip>
-    ) : (
-      body
-    );
-  };
+  // Flat, borderless cell: the lens icon (and its name when several lenses are on) + the verdict.
+  const shell = (children: React.ReactNode) => (
+    <span
+      className="inline-flex h-5 items-center gap-1 text-2xs"
+      aria-label={lens.name}
+      data-lens-cell={lens.id}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {lensIcon(lens.type, "size-3 shrink-0 text-muted-foreground")}
+      {named && <span className="max-w-24 truncate text-muted-foreground">{lens.name}</span>}
+      {children}
+    </span>
+  );
+  const quiet = (text: string, spin = false) => (
+    <span className="inline-flex items-center gap-1 text-muted-foreground">
+      {spin && <Loader2 className="size-3 animate-spin" />}
+      {text}
+    </span>
+  );
   if (!record || record.state === "missing") {
     if (tab.content !== "available" && tab.content !== "loading")
       return shell(
-        <button type="button" className="text-muted-foreground underline-offset-2 hover:underline" onClick={onMetadata}>
+        <button type="button" className="text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground" onClick={onMetadata}>
           Use title
         </button>,
-        `${ACCESS_LABEL[tab.content].hint} You can evaluate with the title and URL only.`,
       );
-    return shell(<Loader2 className="size-3 animate-spin text-muted-foreground" />, "Waiting to evaluate");
+    return shell(quiet("Waiting", true));
   }
   if (record.state === "submitting" || record.state === "queued" || record.state === "running")
-    return shell(<Loader2 className="size-3 animate-spin text-muted-foreground" />, record.state === "running" ? "Evaluating with Jev" : "Queued");
+    return shell(quiet(record.state === "running" ? "Evaluating" : "Queued", true));
   if (record.state === "done" && record.answer) {
     const partial = record.capture?.completeness === "partial";
     const metadata = record.capture?.source === "metadata";
+    const reasons = record.capture?.reasons.filter((r) => !/^Only content already loaded/.test(r)) ?? [];
     return shell(
       <>
         <LensVerdict
@@ -108,26 +113,47 @@ function LensCell({
           }}
           size="sm"
         />
-        {(partial || metadata) && <span className="text-amber-600 dark:text-amber-400">{metadata ? "title only" : "partial"}</span>}
-      </>,
-      <>
-        {record.capture
-          ? `Page read ${relativeTime(record.capture.capturedAt)}${metadata ? " · title and URL only" : partial ? " · partial" : ""}`
-          : null}
-        {record.capture?.reasons.filter((r) => !/^Only content already loaded/.test(r)).map((r) => <div key={r}>{r}</div>)}
-        {record.model && <div className="text-muted-foreground">{record.model}</div>}
+        {(partial || metadata) && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="cursor-default text-amber-600 dark:text-amber-400">{metadata ? "title only" : "partial"}</span>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-64 text-left">
+              {metadata ? "Evaluated with the title and URL only." : "Only part of the page could be read."}
+              {reasons.map((r) => (
+                <div key={r} className="opacity-80">
+                  {r}
+                </div>
+              ))}
+            </TooltipContent>
+          </Tooltip>
+        )}
       </>,
     );
   }
+  const failed = record.state === "failed";
   const text = record.state === "expired" ? "Expired" : record.state === "unavailable" ? "Unreadable" : "Failed";
+  const status = <span className={failed ? "cursor-default text-destructive" : "text-muted-foreground"}>{text}</span>;
   return shell(
     <>
-      <span className={record.state === "failed" ? "text-destructive" : "text-muted-foreground"}>{text}</span>
-      <button type="button" aria-label={`Retry ${lens.name}`} className="text-muted-foreground hover:text-foreground" onClick={onRetry}>
+      {failed && record.error ? (
+        <Tooltip>
+          <TooltipTrigger asChild>{status}</TooltipTrigger>
+          <TooltipContent className="max-w-64 text-left">{record.error}</TooltipContent>
+        </Tooltip>
+      ) : (
+        status
+      )}
+      <button
+        type="button"
+        aria-label={`Retry ${lens.name}`}
+        className="inline-flex items-center gap-0.5 rounded px-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+        onClick={onRetry}
+      >
         <RotateCw className="size-3" />
+        Retry
       </button>
     </>,
-    record.error ?? "Retry explicitly to evaluate again.",
   );
 }
 
@@ -173,6 +199,11 @@ export function TabRow({
   const lastShift = useRef(false);
   const { host, rest } = pathOf(tab.url);
   const access = tab.content === "available" ? null : ACCESS_LABEL[tab.content];
+  const readAt = Object.values(records ?? {})
+    .map((r) => r.capture?.capturedAt)
+    .filter((t): t is string => !!t)
+    .sort()
+    .at(-1);
   // Only unambiguous states (e.g. a PR's "Merged") earn a badge; other facts stay evidence.
   const facts = (Object.values(records ?? {}).find((r) => r.capture?.facts.length)?.capture?.facts ?? []).filter((f) =>
     f.key.endsWith(".state"),
@@ -230,14 +261,10 @@ export function TabRow({
             </button>
           )}
           {saved && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Badge variant="outline" className="gap-1 font-normal">
-                  Saved
-                </Badge>
-              </TooltipTrigger>
-              <TooltipContent>In your library since {relativeTime(saved.created_at)}. Tags belong to the saved link, not to this tab.</TooltipContent>
-            </Tooltip>
+            <Badge variant="outline" className="gap-1 font-normal text-muted-foreground">
+              <BookmarkCheck className="size-3" />
+              Saved
+            </Badge>
           )}
           {saved?.tags.map((tag: Tag) => <TagChip key={tag.id} tag={tag} />)}
           {access && (
@@ -260,14 +287,9 @@ export function TabRow({
             </Tooltip>
           )}
           {facts.map((f) => (
-            <Tooltip key={f.key}>
-              <TooltipTrigger asChild>
-                <Badge variant="secondary" className="font-normal">
-                  {f.value}
-                </Badge>
-              </TooltipTrigger>
-              <TooltipContent>{f.label}, read from the page</TooltipContent>
-            </Tooltip>
+            <Badge key={f.key} variant="secondary" className="font-normal" aria-label={`${f.label}: ${f.value}`}>
+              {f.value}
+            </Badge>
           ))}
           {lenses.map((lens) => (
             <LensCell
@@ -275,6 +297,7 @@ export function TabRow({
               lens={lens}
               record={records?.[lens.id]}
               tab={tab}
+              named={lenses.length > 1}
               onRetry={() => onRetry(lens)}
               onMetadata={() => onMetadata(lens)}
             />
@@ -300,7 +323,13 @@ export function TabRow({
               <Ellipsis className="size-4" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
+          <DropdownMenuContent align="end" className="min-w-44">
+            {readAt && (
+              <>
+                <DropdownMenuLabel className="text-2xs font-normal text-muted-foreground">Page read {relativeTime(readAt)}</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+              </>
+            )}
             <DropdownMenuItem onClick={onFocus}>Go to tab</DropdownMenuItem>
             <DropdownMenuItem onClick={onCopy}>Copy URL</DropdownMenuItem>
             <DropdownMenuItem onClick={onSave} disabled={!!saved}>

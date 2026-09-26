@@ -74,30 +74,25 @@ export function BrowserSidebar({
         const active = d.kind === "group" && ws.groupFilter.includes(d.group.groupId);
         return (
           <div key={d.key} className="group relative">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  className={cn(item, "pr-8", d.kind === "pinned" && "text-muted-foreground")}
-                  data-active={active}
-                  onClick={() => (d.kind === "group" ? ws.toggleGroupFilter(d.group.groupId) : onEditDestination(d))}
-                >
-                  <span
-                    aria-hidden
-                    className={cn("size-2 shrink-0 rounded-full", d.kind === "pinned" && "ring-1 ring-inset ring-black/10")}
-                    style={{ background: d.kind === "pinned" ? "transparent" : GROUP_STYLE[color].dot, boxShadow: d.kind === "pinned" ? `inset 0 0 0 1.5px ${GROUP_STYLE[color].dot}` : undefined }}
-                  />
-                  <span className="truncate">{name}</span>
-                  {pinned && <Pin className="size-3 shrink-0 text-muted-foreground" aria-label="Pinned" />}
-                  <span className={count}>{d.kind === "group" ? tabsIn(d.group.groupId) : ""}</span>
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="right" className="max-w-64">
-                {d.kind === "pinned"
-                  ? "Pinned group — not open in this window yet. Move tabs here to create it."
-                  : (d.group.description || d.pinned?.description) || "Filter by this group"}
-              </TooltipContent>
-            </Tooltip>
+            <Button
+              variant="ghost"
+              className={cn(item, "pr-8", d.kind === "pinned" && "text-muted-foreground")}
+              data-active={active}
+              onClick={() => (d.kind === "group" ? ws.toggleGroupFilter(d.group.groupId) : onEditDestination(d))}
+            >
+              <span
+                aria-hidden
+                className="size-2 shrink-0 rounded-full"
+                style={
+                  d.kind === "pinned"
+                    ? { boxShadow: `inset 0 0 0 1.5px ${GROUP_STYLE[color].dot}` }
+                    : { background: GROUP_STYLE[color].dot }
+                }
+              />
+              <span className="truncate">{name}</span>
+              {pinned && <Pin className="size-3 shrink-0 text-muted-foreground" aria-label="Pinned" />}
+              <span className={count}>{d.kind === "group" ? tabsIn(d.group.groupId) : "not open"}</span>
+            </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon-xs" aria-label={`Group options for ${name}`} className={more}>
