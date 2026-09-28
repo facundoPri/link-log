@@ -35,12 +35,18 @@ bun run extension:chrome  # Chromium with an isolated profile and the extension 
 ```
 
 In Chrome stable: `chrome://extensions` → Developer mode → **Load unpacked** →
-`apps/extension/dist`. The extension asks for page-content access from its own Connect page;
-without it, tabs and groups still work and lenses show "No access".
+`apps/extension/dist`. The extension finds Linklog on `http://localhost` / `http://127.0.0.1`
+on **any port** (the page identifies itself with `<meta name="linklog-app">`; other local apps
+get no bridge). For another origin, e.g. a deployed Linklog, build with
+`LINKLOG_ORIGINS=https://linklog.example bun run extension:build`. The extension asks for
+page-content access from its own Connect page; without it, tabs and groups still work and
+lenses show "No access". With it, row previews (description and image) are read locally for
+every accessible tab, and those images load from each site's own servers.
 
 Lens results live in the extension's session storage: they survive closing Linklog and the
 service worker sleeping, but not a Chrome restart or reloading the extension. Evaluating a tab
-never saves it; **Save** stores the locally read page without a remote extraction.
+never saves it; **Save** adds the tabs' URLs exactly like adding links in All links (the server
+fetches metadata and content, then autotags).
 Details: [plan](docs/browser-feature-plan.md) · [implementation](docs/browser-implementation-handoff.md) ·
 [validation](docs/browser-validation.md). Other commands: `extension:dev`, `extension:package`,
 `build:all`, `test:browser` (real Chromium, isolated ports/DB, fixture Jev provider).

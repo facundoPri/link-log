@@ -5,7 +5,7 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { BrowserContext, Page, Worker } from "playwright-core";
-import { api, API_PORT, buildAll, EXTENSION, launch, OUT, ROOT, SITE, startApi, startSite, UI, waitFor } from "./env";
+import { api, API_PORT, buildAll, EXTENSION, launch, OTHER_APP_PORT, OUT, ROOT, SITE, startApi, startMarkedApp, startSite, UI, UI_PORT, waitFor } from "./env";
 
 const EVIDENCE = resolve(ROOT, "docs/browser-validation");
 type Check = { area: string; name: string; ok: boolean; detail: string; ms: number };
@@ -133,6 +133,7 @@ await mkdir(EVIDENCE, { recursive: true });
 section("Setup");
 await buildAll();
 const site = startSite();
+const markedApp = startMarkedApp();
 
 // D1 migration on existing data: apply 0001–0009, seed through the old schema, then 0010.
 await check("0010 applies on a real local D1 with existing rows", async () => {
@@ -347,7 +348,15 @@ try {
     assert(batchesAfter - batchesBefore === 2, `expected 2 new batches, got ${batchesAfter - batchesBefore}`);
     return "2 responses dropped; reconciled by GET; 2 batches, 2 calls";
   });
-  await check("queue redelivery / recovery sweeps don't repeat evaluations", async () => {
+  await check("queue redelivery / recovery sweeps don't repeat evaluations; polling stays calm", async () => {
+    // Status polls while jobs are queued/running: one per pending request every ~1.5 s,
+    // not a tight loop driven by "results changed" echoes.
+    let polls = 0;
+    const count = (r: { method: () => string; url: () => string }) => {
+      if (r.method() === "GET" && /\/api\/browser\/evaluations\/[^/]+$/.test(r.url())) polls++;
+    };
+    L.on("request", count);
+    const started = Date.now();
     await createTabs(ctx, W1, [art(32, "jev:slow=2500 jev:yes"), art(33, "jev:slow=2500 jev:no")]);
     for (let i = 0; i < 4; i++) {
       await fetch(`http://127.0.0.1:${API_PORT}/cdn-cgi/local/scheduled`).catch(() => {});
@@ -355,9 +364,13 @@ try {
     }
     await settle(ctx, lensA.id, 28, 60000);
     await settle(ctx, lensB.id, 28, 60000);
+    L.off("request", count);
+    const seconds = (Date.now() - started) / 1000;
     const n = await calls();
     assert(n === 56, `expected 56, got ${n}`);
-    return "4 recovery sweeps during running jobs; 4 calls for 2 tabs × 2 lenses";
+    // At most 2 requests (one per lens) polled every 1.5 s, plus the immediate polls after each submit.
+    assert(polls / seconds < 4, `${polls} status polls in ${seconds.toFixed(1)} s`);
+    return `4 recovery sweeps during running jobs; 4 calls for 2 tabs × 2 lenses; ${polls} status polls in ${seconds.toFixed(1)} s`;
   });
 
   section("Identity and invalidation");
@@ -407,6 +420,23 @@ try {
     const tabs = await rowCount(L);
     await waitFor("re-evaluated", async () => (await calls()) === 62 + tabs, 60000);
     return `threshold: 0 calls; question: ${tabs} calls (one per tab)`;
+  });
+  await check("Re-evaluate this window runs every readable tab exactly once", async () => {
+    // Tabs with a current answer for lens A (the cache also keeps answers of its old question).
+    const answered = () => L.locator(`[data-lens-cell="${lensA.id}"]`, { hasText: /Yes|No|Unsure/ }).count();
+    // Results reload after the question edit: wait until every lens-A cell settled.
+    const pending = () => L.locator(`[data-lens-cell="${lensA.id}"]`, { hasText: /Waiting|Queued|Evaluating/ }).count();
+    await waitFor("lens A settled", async () => (await pending()) === 0 && (await answered()) > 0, 30000);
+    const readable = await answered();
+    const n = await calls();
+    await L.locator(`[data-lens-filter="${lensA.id}"]`).getByRole("button", { name: /options/ }).click();
+    await L.getByRole("menuitem", { name: "Re-evaluate this window" }).click();
+    await waitFor("re-evaluated", async () => (await calls()) >= n + readable, 60000);
+    await waitFor("answers back", async () => (await answered()) === readable, 30000);
+    await Bun.sleep(3000);
+    const added = (await calls()) - n;
+    assert(added === readable, `expected ${readable} calls (one per tab), got ${added}`);
+    return `${readable} tabs → ${added} calls, even across claim rounds of 20`;
   });
   await check("Clean drops results, turns the lens off and doesn't re-evaluate", async () => {
     await L.locator(`[data-lens-filter="${lensA.id}"]`).getByRole("button", { name: /options/ }).click();
@@ -545,6 +575,34 @@ try {
     assert(res.bridge === null && res.reply === "no answer" && res.connect !== "connected?", JSON.stringify(res));
     return JSON.stringify(res);
   });
+  await check(`bridge finds Linklog on a non-default port (${UI_PORT}) with no configured origin`, async () => {
+    const matches: string[] = manifest.content_scripts[0].matches;
+    assert(!matches.some((m) => m.includes(String(UI_PORT))), `manifest names the port: ${matches.join(", ")}`);
+    assert(await L.evaluate(() => document.documentElement.dataset.linklogBridge === "1"), "no bridge on Linklog");
+    return `content script matches ${matches.join(", ")}; Linklog connected on :${UI_PORT}`;
+  });
+  await check("a local page with the marker gets the bridge, but nothing before a handshake", async () => {
+    const page = await ctx.newPage();
+    try {
+      await page.goto(`http://127.0.0.1:${OTHER_APP_PORT}/`);
+      const res = await page.evaluate(async () => {
+        await new Promise((r) => setTimeout(r, 500));
+        const bridge = document.documentElement.dataset.linklogBridge ?? null;
+        const reply = await new Promise((r) => {
+          addEventListener("message", (e) => e.data?.from === "extension" && e.data.response?.id === "s1" && r(e.data.response));
+          postMessage({ channel: "linklog-bridge", from: "page", request: { id: "s1", command: "snapshot", args: {} } }, location.origin);
+          setTimeout(() => r("no answer"), 3000);
+        });
+        return { bridge, reply };
+      });
+      assert(res.bridge === "1", `bridge missing: ${JSON.stringify(res)}`);
+      assert(JSON.stringify(res.reply).includes("Connect first"), `snapshot without hello: ${JSON.stringify(res.reply)}`);
+      return "bridge attached; snapshot before hello → “Connect first.”";
+    } finally {
+      await page.close();
+      await L.bringToFront();
+    }
+  });
   await check("bridge rejects malformed commands and ids from another window", async () => {
     const other = (await tabOf(ctx, "/w2/0"))!;
     const inst = await inSw(ctx, async () => (await chrome.storage.session.get("instances")).instances as Record<string, any>, 0);
@@ -572,19 +630,30 @@ try {
   });
 
   section("Save and Close");
-  await check("Save creates links from the local capture without remote extraction", async () => {
+  await check("Save adds links through the normal library pipeline (extraction queued)", async () => {
     const ids = [(await tabOf(ctx, "/a/3?"))!.id!, (await tabOf(ctx, "/a/4?"))!.id!];
     const before = await api<{ links: any[]; batches: any[] }>("/library");
+    let saveBody = "";
+    const spy = (r: { method: () => string; url: () => string; postData: () => string | null }) => {
+      if (r.method() === "POST" && r.url().endsWith("/api/browser/save")) saveBody = r.postData() ?? "";
+    };
+    L.on("request", spy);
     await selectTabs(L, ids);
     await L.getByRole("button", { name: "Save", exact: true }).click();
     await waitFor("2 links", async () => (await api<{ links: any[] }>("/library")).links.length === before.links.length + 2, 20000);
+    L.off("request", spy);
     const after = await api<{ links: any[]; batches: any[] }>("/library");
     const saved = after.links.filter((l) => !before.links.some((b) => b.id === l.id));
-    assert(saved.every((l) => l.content_source === "browser" && l.content_key), "content not stored from capture");
-    assert(after.batches.filter((b) => b.kind === "extract").length === before.batches.filter((b) => b.kind === "extract").length, "extraction batch created");
+    // Only URLs travel; the server fetches them like any added link. The fixture host is
+    // 127.0.0.1 (SSRF-blocked) and there are no remote bindings, so extraction won't succeed
+    // here — what matters is that the normal extract batch was queued for both links.
+    assert(saveBody && !saveBody.includes("markdown") && JSON.parse(saveBody).urls?.length === 2, `save body: ${saveBody.slice(0, 200)}`);
+    assert(saved.every((l) => l.content_source !== "browser"), "content stored from the local capture");
+    const extract = after.batches.filter((b) => b.kind === "extract").length - before.batches.filter((b) => b.kind === "extract").length;
+    assert(extract === 1, `expected 1 new extract batch, got ${extract}`);
     await waitFor("Saved badge", async () => (await L.locator("[data-tab-id]", { hasText: "Saved" }).count()) === 2);
-    // Tag one, save again: duplicate, tags untouched.
-    await api(`/links/${saved[0].id}`, "PATCH", { tags: ["keep-me"] });
+    // Tag one (once its extraction job ends, as in All links), save again: duplicate, tags untouched.
+    await waitFor("tagged", async () => !(await api(`/links/${saved[0].id}`, "PATCH", { tags: ["keep-me"] })).error, 30000);
     await L.getByRole("button", { name: "Save", exact: true }).click();
     await Bun.sleep(1500);
     const again = await api<{ links: any[] }>("/library");
@@ -592,7 +661,7 @@ try {
     assert(again.links.find((l) => l.id === saved[0].id).tags.map((t: any) => t.name).includes("keep-me"), "tags changed");
     await shot(L, "08-saved");
     await L.getByRole("button", { name: "Clear selection" }).click();
-    return "2 links, content_source=browser, 0 extract batches; re-save = duplicate, tags kept";
+    return "2 links from URLs only; 1 normal extract batch queued; re-save = duplicate, tags kept";
   });
   await check("Close closes only the selected tabs, after revalidation", async () => {
     const ids = [(await tabOf(ctx, "/a/5?"))!.id!, (await tabOf(ctx, "/a/6?"))!.id!];
@@ -678,8 +747,17 @@ try {
     await waitFor("rows", async () => (await L.locator(`[data-tab-id="${a[1]}"]`).count()) === 1);
     await L.getByRole("button", { name: "Clear selection" }).click({ timeout: 2000 }).catch(() => {});
     await selectTabs(L, a);
+    const batches = async () => (await api<{ batches: { id: string; kind: string }[] }>("/library")).batches.filter((b) => b.kind === "browser-autogroup").map((b) => b.id);
+    const batchesBefore = await batches();
     await L.getByRole("button", { name: "Autogroup" }).click();
     await waitFor("suggestions", async () => (await L.getByRole("button", { name: /^Apply/ }).isEnabled().catch(() => false)), 40000);
+    await Bun.sleep(1500);
+    // One click = one run: one Activity batch and one Jev call per tab (dev StrictMode included).
+    const runs = (await batches()).filter((id) => !batchesBefore.includes(id));
+    assert(runs.length === 1, `expected 1 Autogroup batch in Activity, got ${runs.length}`);
+    const usage = await api<{ events: { batch_id: string; provider: string }[] }>("/usage");
+    const autogroupCalls = usage.events.filter((e) => e.batch_id === runs[0] && e.provider === "fixture").length;
+    assert(autogroupCalls === 2, `expected 2 calls in the Autogroup batch, got ${autogroupCalls}`);
     await shot(L, "11-autogroup-review");
     // The user groups one tab while the suggestion is on screen.
     await inSw(ctx, async ([id, w]: [number, number]) => {
@@ -695,7 +773,7 @@ try {
     }, 20000);
     const manual = (await inSw(ctx, async (id: number) => chrome.tabGroups.get(id), g0!)).title;
     assert(manual === "Manual", "grouped-meanwhile tab was moved");
-    return `tab kept in “Manual”; other moved to pinned Research (${g1} = ${research})`;
+    return `1 Activity batch, 2 calls; tab kept in “Manual”; other moved to pinned Research (${g1} = ${research})`;
   });
   await check("Move to group changes a grouped tab; Ungroup keeps it open", async () => {
     const t = (await tabOf(ctx, "/a/7?"))!;
@@ -831,6 +909,7 @@ try {
   await ctx.close().catch(() => {});
   dev.kill();
   site.stop();
+  markedApp.stop();
   const failed = checks.filter((c) => !c.ok);
   console.log(`\n${checks.length - failed.length}/${checks.length} checks passed. Evidence: docs/browser-validation/`);
   process.exit(failed.length ? 1 : 0);

@@ -9,8 +9,8 @@ Evidencia de la entrega del [plan](browser-feature-plan.md) ·
 | --- | --- |
 | Navegador | Chromium 141.0.7390.37 (Playwright, `/opt/pw-browsers/chromium`), headless nuevo, perfiles aislados en `.cache/browser-test/profile-*` |
 | Extensión | Linklog 0.1.0, MV3. ID de la build de test: `ahholiofnhckbdnahdbncdmcehflobaf` (`.cache/browser-test/extension`); ID de `apps/extension/dist`: `glkilbcpbncckcbnbcpnejjibfghcehd` (Chrome lo deriva de la ruta) |
-| Manifest de test | el de `bun run extension:build` + hosts de fixtures (`http://127.0.0.1:3099/*`, `https://github.com/*`) concedidos al instalar. Esa variante no se puede empaquetar. Ver `run.json` → `meta.manifest` |
-| Backend | Wrangler local con config propia (`.cache/browser-test/wrangler.jsonc`), D1/R2 nuevos por corrida, UI 3010 / API 8790, **sin bindings remotos** |
+| Manifest de test | el de `bun run extension:build` **sin `LINKLOG_ORIGINS`** (el bridge encuentra Linklog en el puerto 3010 por sí solo) + hosts de fixtures (`http://127.0.0.1:3099/*`, `https://github.com/*`) concedidos al instalar. Esa variante no se puede empaquetar. Ver `run.json` → `meta.manifest` |
+| Backend | Wrangler local con config propia (`.cache/browser-test/wrangler.jsonc`), D1/R2 nuevos por corrida, UI 3010 / API 8790, **sin bindings remotos**; una app local "marcada" en 3098 para el bridge |
 | Jev | proveedor `fixture` (determinista, sin costo; requiere `JEV_PROVIDER=fixture` + `ALLOW_FIXTURE_JEV=1`) |
 
 ## Comandos ejecutados
@@ -18,7 +18,7 @@ Evidencia de la entrega del [plan](browser-feature-plan.md) ·
 ```sh
 bun install                 # workspaces, linker hoisted (sin cambio de layout)
 bun run typecheck           # app + packages/browser-protocol + apps/extension: OK
-bun test                    # 72 tests en 12 archivos: OK (45 previos + 27 nuevos)
+bun test                    # 102 tests en 17 archivos: OK
 bun run build               # OK
 bun run extension:build     # OK, manifest generado
 bun run extension:package   # apps/extension/linklog-extension-0.1.0.zip, 13 archivos (sólo dist)
@@ -31,8 +31,8 @@ Baseline antes de empezar: `typecheck` OK, `bun test` 45/45, `build` OK.
 
 ## Integración con Chromium real (`bun run test:browser`)
 
-Última corrida: **41/41 checks pasan** en ~5 minutos —
-[`browser-validation/run.md`](browser-validation/run.md) (detalle en `run.json`, 130+ llamadas
+Última corrida: **44/44 checks pasan** en ~4 minutos —
+[`browser-validation/run.md`](browser-validation/run.md) (detalle en `run.json`, 160 llamadas
 del proveedor fixture en total). Cada fila es un check automatizado contra la extensión cargada; los
 contadores de llamadas son del proveedor **fixture** (prueban la deduplicación del flujo, no
 facturación real).
@@ -48,10 +48,11 @@ facturación real).
 | Suspensión real del service worker | `Target.closeTarget` del worker; un marcador en memoria prueba que reinició; `browserSessionId` igual; 0 llamadas | |
 | API caído | rutas `/api` abortadas: banner, resultados visibles; al volver se reconcilia por request ID | [05](browser-validation/05-api-offline.png) |
 | Respuesta perdida tras POST aceptado | 2 respuestas descartadas después de llegar al backend → mismo job, 2 batches, 2 llamadas | |
-| Redelivery / recovery | 4 barridos de recuperación durante jobs lentos → sin llamadas extra | |
+| Redelivery / recovery / sondeo | 4 barridos de recuperación durante jobs lentos → sin llamadas extra; se cuentan los `GET /api/browser/evaluations/:id` de la página: < 4 por segundo (antes del arreglo, un bucle sin pausa) | |
 | Misma URL reabierta | nuevo `tabInstanceId`, se evalúa de nuevo | |
 | Navegación / SPA / hash | hash: 0 llamadas; `pushState`: reevalúa; navegación completa: reevalúa | |
 | Editar lens | umbral: 0 llamadas; pregunta: una por pestaña | |
+| Re-evaluate | "Re-evaluate this window": exactamente una llamada por pestaña legible, aunque haga varias rondas de 20 | |
 | Clean | 0 resultados, lens apagada, definición intacta, 0 llamadas | |
 | Fallo de Jev | *Failed* con Retry, sin reintento automático; Retry = 1 llamada; nunca cuenta como "No" | [06](browser-validation/06-failed-retry.png) |
 | Sin permiso / página interna | *No access* y *Can't read*, no se envían a Jev | [07](browser-validation/07-access-states.png) |
@@ -60,12 +61,12 @@ facturación real).
 | Inspector de pestaña | clic en la fila → panel con contenido en Markdown (tabla GFM, código con lenguaje, links absolutos), pestaña Links y Details | [15](browser-validation/15-inspector.png) |
 | Filtro por dominio | uno, varios (OR), quitar un chip, limpiar | [16](browser-validation/16-domain-filter.png) |
 | Captura sin datos sensibles | los valores de `<input>` y password del fixture no aparecen en la caché | |
-| Bridge | página ajena: sin bridge, sin `chrome.runtime`, sin respuesta; comando inválido descartado; pestaña de otra ventana rechazada y sigue abierta | |
-| Save | 2 links con `content_source=browser`, 0 batches de extracción; re-Save = duplicado y tags intactos | [08](browser-validation/08-saved.png) |
+| Bridge | Linklog en 3010 sin origen configurado (el manifest no nombra el puerto); página local sin marcador (fixture en 127.0.0.1:3099): sin bridge, sin `chrome.runtime`, sin respuesta; app local con `<meta name="linklog-app">` en 3098: bridge presente pero `snapshot` antes de `hello` → "Connect first."; comando inválido descartado; pestaña de otra ventana rechazada y sigue abierta | |
+| Save | la página manda sólo URLs; 2 links creados por el pipeline normal y **1 batch `extract` encolado** (el fixture es 127.0.0.1, bloqueado por SSRF, y no hay bindings remotos: la extracción no puede completar aquí, se verifica que se encoló); re-Save = duplicado y tags intactos | [08](browser-validation/08-saved.png) |
 | Close | cierra sólo las seleccionadas; links guardados intactos | |
 | Grupo pineado | creado desde la selección; en la otra ventana aparece sin crear grupo vacío y se materializa al usarlo, con binding | [09](browser-validation/09-groups.png), [10](browser-validation/10-pinned-other-window.png) |
 | Nombres duplicados | dos grupos "Research" nativos, una definición pineada | |
-| Autogroup | revisión con sugerencias; una pestaña agrupada mientras corría Jev se conserva; la otra va al pineado | [11](browser-validation/11-autogroup-review.png) |
+| Autogroup | un clic = **una** corrida: 1 batch en Activity y 2 llamadas para 2 pestañas (UI en dev con StrictMode); revisión con sugerencias; una pestaña agrupada mientras corría Jev se conserva; la otra va al pineado | [11](browser-validation/11-autogroup-review.png) |
 | Move / Ungroup | Move cambia un grupo existente; Ungroup deja la pestaña abierta | |
 | Filtros de grupo | uno, varios (unión) y "Ungrouped" | [12](browser-validation/12-group-filters.png) |
 | Dos páginas Linklog | activación concurrente desde ambas: llamadas = pestañas legibles | |
@@ -86,9 +87,22 @@ facturación real).
   No, AND/OR, score), claves, patrones de permisos, validación de mensajes, diff/patch.
 - `apps/extension/tests`: 20+3, activaciones concurrentes, recuperación por request ID,
   respuestas tardías tras cierre/navegación/Clean, retry explícito, versión de lens, presupuesto
-  de capturas y error de cuota, registro de pestañas (hash/SPA/reapertura/reemplazo), validación
-  del emisor del bridge, estados de acceso (descartada, congelada, restringida, sin permiso,
-  cargando, asentando).
+  de capturas y error de cuota (índice consistente tras `QuotaError`), `deposit` que sólo reporta
+  cambios reales y respeta el `libraryScope`, Clean que devuelve los `targetKeys` exactos,
+  registro de pestañas (hash/SPA/reapertura/reemplazo), validación del emisor del bridge
+  (cualquier puerto local, orígenes configurados), estados de acceso, re-vinculación de grupos
+  pineados tras reinicio/recarga (`groups.test.ts`) y comandos con un `chrome` falso
+  (`commands.test.ts`): `hello` obligatorio, presupuesto de `claim` en bytes con contenido no
+  ASCII, `attempted`, reanudación con el mismo request ID, `capture` con/sin `fresh`, pestaña que
+  navegó, páginas de Linklog y de otra ventana.
+- `packages/browser-protocol/tests/transport.test.ts`: `jsonBytes`/`chunkByBytes` (no ASCII, límite
+  de ítems, ítem sobredimensionado), la captura más ancha posible cabe en un request, claves de
+  prototipo (`constructor`, `toString`, `hasOwnProperty`…) rechazadas, límites de `clean`/`deposit`,
+  orígenes del bridge.
+- `tests/browser-routes.test.ts`: `DELETE` con `targetKeys`, lentes de biblioteca rechazadas,
+  `ack` sólo de respondidos, fallo de R2 → targets `failed` sin despacho, Save por el pipeline
+  normal (dedupe, un batch `extract`, sin contenido local), catálogo sin escrituras.
+- `tests/claim-rounds.test.ts`: Re-evaluate evalúa cada pestaña una vez aunque haga varias rondas.
 
 ## Lo que no se pudo verificar aquí
 
@@ -97,6 +111,11 @@ facturación real).
   `jev-1.13.0`; sólo cambia el `state` enviado (URL, título, procedencia, completitud, hechos,
   contenido). Recomendado: `JEV_PROVIDER=typesafe` en `.dev.vars` y activar una lente sobre 2–3
   pestañas.
+- **Extractor en un DOM de unit test**: no hay DOM (happy-dom/jsdom) en las dependencias; la
+  invariante de privacidad (sin valores de `<input>`/password) se verifica end-to-end en la
+  integración ("page capture excludes form values and passwords").
+- **Reinicio real de Chrome con grupos restaurados**: Playwright no restaura sesiones; la
+  re-vinculación está cubierta por `groups.test.ts`.
 - **Pestañas descartadas/congeladas en integración**: `chrome.tabs.discard()` (y abrir
   `chrome://…` desde la extensión) cierra el contexto de Playwright en Chromium headless,
   reproducido con una extensión vacía. Cubierto por tests unitarios de `contentAccess`; conviene

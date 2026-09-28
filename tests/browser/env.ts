@@ -9,6 +9,8 @@ export const OUT = resolve(ROOT, ".cache/browser-test");
 export const UI_PORT = Number(process.env.TEST_UI_PORT) || 3010;
 export const API_PORT = Number(process.env.TEST_API_PORT) || 8790;
 export const SITE_PORT = Number(process.env.TEST_SITE_PORT) || 3099;
+/** Another local app that looks like Linklog to nothing but its own marker (bridge checks). */
+export const OTHER_APP_PORT = Number(process.env.TEST_OTHER_APP_PORT) || 3098;
 export const UI = `http://127.0.0.1:${UI_PORT}`;
 export const API = `http://127.0.0.1:${API_PORT}/api`;
 export const SITE = `http://127.0.0.1:${SITE_PORT}`;
@@ -42,6 +44,18 @@ export function startSite() {
 <a href="https://example.com/related">Related reading</a></main></body></html>`;
       return new Response(body, { headers: { "content-type": "text/html; charset=utf-8" } });
     },
+  });
+}
+
+/** A local page with the Linklog marker, on a port Linklog never used: the bridge must attach. */
+export function startMarkedApp() {
+  return Bun.serve({
+    port: OTHER_APP_PORT,
+    hostname: "127.0.0.1",
+    fetch: () =>
+      new Response(`<!doctype html><html><head><meta name="linklog-app" content="1"><title>Marked</title></head><body>marked</body></html>`, {
+        headers: { "content-type": "text/html; charset=utf-8" },
+      }),
   });
 }
 
@@ -91,8 +105,9 @@ export async function startApi() {
 
 export async function buildAll() {
   await run(["bun", "scripts/build.ts"]);
+  // No LINKLOG_ORIGINS: the bridge must find Linklog on this non-default port by itself.
   await run(["bun", "apps/extension/scripts/build.ts"], {
-    LINKLOG_ORIGINS: `http://127.0.0.1:${UI_PORT},http://localhost:${UI_PORT}`,
+    LINKLOG_UI_PORT: String(UI_PORT),
     LINKLOG_EXTENSION_OUT: EXTENSION,
     // Test-only: content access for fixture hosts is granted at install.
     LINKLOG_EXTRA_HOSTS: `http://127.0.0.1:${SITE_PORT}/*,https://github.com/*`,
