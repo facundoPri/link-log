@@ -1,13 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Check,
   CircleAlert,
   Globe,
-  ListFilter,
   Lock,
   PanelLeft,
-  PlugZap,
-  RefreshCw,
   Search,
   Unplug,
   X,
@@ -23,187 +19,18 @@ import { useSavedLookup } from "../../browser/saved";
 import type { useBrowserActions } from "../../browser/useBrowserActions";
 import { cn } from "../../lib/utils";
 import { GROUP_STYLE, groupTitle } from "./groups";
+import { Banner, Connect } from "./BrowserConnect";
+import { DomainChip, DomainFilter } from "../DomainFilter";
 import { TabRow } from "./TabRow";
 import { LensFilterBar } from "./LensFilterBar";
 import { BrowserSelectionBar } from "./BrowserSelectionBar";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Kbd } from "@/components/ui/kbd";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 type Actions = ReturnType<typeof useBrowserActions>["actions"];
-
-function DomainIcon({ favicon }: { favicon: string | null }) {
-  const [failed, setFailed] = useState(false);
-  return favicon && !failed ? (
-    <img src={favicon} alt="" className="size-3.5 rounded-sm" referrerPolicy="no-referrer" onError={() => setFailed(true)} />
-  ) : (
-    <Globe className="size-3.5 text-muted-foreground" />
-  );
-}
-
-/** Same interaction as All links' domain filter: pick several, OR between them. */
-function DomainFilter({
-  domains,
-  selected,
-  onToggle,
-  onClear,
-}: {
-  domains: { name: string; count: number; favicon: string | null }[];
-  selected: string[];
-  onToggle: (name: string) => void;
-  onClear: () => void;
-}) {
-  return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <Button variant="outline" size="sm" className="gap-1.5" aria-label="Filter">
-          <ListFilter className="size-3.5" />
-          <span className="hidden sm:inline">Filter</span>
-          {selected.length > 0 && (
-            <span className="ml-0.5 rounded-sm bg-brand px-1 text-2xs font-medium tabular text-brand-foreground">{selected.length}</span>
-          )}
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="end" className="w-64 p-0">
-        <Command>
-          <CommandInput placeholder="Filter by domain…" />
-          <CommandList>
-            <CommandEmpty>No domains match</CommandEmpty>
-            <CommandGroup heading="Domains">
-              {domains.map((d) => (
-                <CommandItem key={d.name} value={d.name} onSelect={() => onToggle(d.name)}>
-                  <DomainIcon favicon={d.favicon} />
-                  <span className="truncate">{d.name}</span>
-                  <span className="ml-auto flex items-center gap-1">
-                    <span className="text-2xs text-muted-foreground tabular">{d.count}</span>
-                    {selected.includes(d.name) && <Check className="size-3.5" />}
-                  </span>
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </CommandList>
-          {selected.length > 0 && (
-            <div className="border-t p-1">
-              <Button variant="ghost" size="sm" className="w-full justify-start" onClick={onClear}>
-                Clear domains
-              </Button>
-            </div>
-          )}
-        </Command>
-      </PopoverContent>
-    </Popover>
-  );
-}
-
-function Banner({ icon, children, action }: { icon: React.ReactNode; children: React.ReactNode; action?: React.ReactNode }) {
-  return (
-    <div className="flex items-center gap-2 border-b bg-warning-soft/60 px-4 py-2 text-xs">
-      <span className="text-amber-700 dark:text-amber-400">{icon}</span>
-      <span className="min-w-0 flex-1">{children}</span>
-      {action}
-    </div>
-  );
-}
-
-function Connect({ ws }: { ws: BrowserWorkspace }) {
-  const { connection, backendError, retry } = ws.browser;
-  if (connection === "checking" && !backendError)
-    return (
-      <div className="divide-y">
-        {Array.from({ length: 5 }).map((_, i) => (
-          <div key={i} className="flex items-center gap-3 px-4 py-3">
-            <Skeleton className="size-8" />
-            <div className="flex-1 space-y-2">
-              <Skeleton className="h-4 w-1/2" />
-              <Skeleton className="h-3 w-1/3" />
-            </div>
-          </div>
-        ))}
-      </div>
-    );
-  const content =
-    backendError && !ws.browser.catalog
-      ? {
-          icon: <CircleAlert className="size-5" />,
-          title: "The local API is unavailable",
-          body: `${backendError} Start it with bun run dev.`,
-          steps: null,
-        }
-      : connection === "unsupported"
-        ? {
-            icon: <Globe className="size-5" />,
-            title: "Browser view needs desktop Chrome",
-            body: "It reads tabs through the Linklog extension, which runs in Chrome or another Chromium browser on desktop.",
-            steps: null,
-          }
-        : connection === "reload"
-          ? {
-              icon: <RefreshCw className="size-5" />,
-              title: "The extension was updated",
-              body: "Reload this page to reconnect. Results cached before the extension reloaded are gone; Linklog evaluates again only what you turn on.",
-              steps: null,
-            }
-          : connection === "outdated"
-            ? {
-                icon: <CircleAlert className="size-5" />,
-                title: "The extension is out of date",
-                body: "Rebuild it with bun run extension:build, then reload it in chrome://extensions.",
-                steps: null,
-              }
-            : {
-                icon: <PlugZap className="size-5" />,
-                title: "Connect the Linklog extension",
-                body: "Browser view shows the tabs and groups of this Chrome window. It needs the Linklog extension.",
-                steps: [
-                  <>
-                    Build it: <Kbd>bun run extension:build</Kbd>
-                  </>,
-                  <>
-                    Open <Kbd>chrome://extensions</Kbd> and turn on Developer mode.
-                  </>,
-                  <>
-                    Click Load unpacked and choose <Kbd>apps/extension/dist</Kbd>.
-                  </>,
-                  <>Come back here — Linklog connects on its own.</>,
-                ],
-              };
-  return (
-    <div className="flex flex-1 items-center justify-center p-8">
-      <div className="flex max-w-md flex-col items-center gap-2 text-center">
-        <div className="flex size-10 items-center justify-center rounded-lg bg-muted text-muted-foreground">{content.icon}</div>
-        <h2 className="text-sm font-medium">{content.title}</h2>
-        <p className="text-[13px] text-muted-foreground">{content.body}</p>
-        {content.steps && (
-          <ol className="mt-2 w-full space-y-1.5 rounded-lg border bg-card p-3 text-left text-[13px]">
-            {content.steps.map((s, i) => (
-              <li key={i} className="flex gap-2">
-                <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-2xs font-medium tabular">{i + 1}</span>
-                <span className="min-w-0">{s}</span>
-              </li>
-            ))}
-          </ol>
-        )}
-        {connection === "reload" ? (
-          <Button size="sm" onClick={() => location.reload()}>
-            Reload page
-          </Button>
-        ) : (
-          connection !== "unsupported" && (
-            <Button variant="ghost" size="sm" onClick={retry}>
-              Try again
-            </Button>
-          )
-        )}
-      </div>
-    </div>
-  );
-}
 
 export function BrowserView({
   ws,
@@ -232,8 +59,8 @@ export function BrowserView({
   // Filters of lenses that were turned off disappear with them.
   useEffect(() => {
     setFilters((f) => Object.fromEntries(Object.entries(f).filter(([id]) => ws.activeIds.includes(id))));
-    if (sortLensId && !ws.activeIds.includes(sortLensId)) setSortLensId(null);
-  }, [ws.activeIds]); // eslint-disable-line react-hooks/exhaustive-deps
+    setSortLensId((id) => (id && !ws.activeIds.includes(id) ? null : id));
+  }, [ws.activeIds]);
 
   // A new window scope (Linklog moved) or closed tabs invalidate the selection.
   useEffect(() => {
@@ -289,31 +116,34 @@ export function BrowserView({
   const pickMany = (ids: string[], checked: boolean) =>
     setPicked((cur) => (checked ? [...new Set([...cur, ...ids])] : cur.filter((id) => !ids.includes(id))));
 
-  useEffect(() => {
-    const key = (e: KeyboardEvent) => {
-      const typing = e.target instanceof HTMLElement && !!e.target.closest("input,textarea,select,[contenteditable='true']");
-      if (e.key === "/" && !typing) {
+  // One listener for the view's lifetime; it reads the latest state through a ref.
+  const onKey = useRef<(e: KeyboardEvent) => void>(() => {});
+  onKey.current = (e: KeyboardEvent) => {
+    const typing = e.target instanceof HTMLElement && !!e.target.closest("input,textarea,select,[contenteditable='true']");
+    if (e.key === "/" && !typing) {
+      e.preventDefault();
+      search.current?.focus();
+    } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "a" && !typing) {
+      e.preventDefault();
+      pickMany(visible.map((t) => t.tabInstanceId), true);
+    } else if (e.key === "Escape" && !typing && !document.querySelector("[role=dialog],[role=menu],[role=alertdialog]")) {
+      if (ws.activeTabId) ws.setActiveTabId(null);
+      else setPicked(() => []);
+    } else if ((e.key === "ArrowDown" || e.key === "ArrowUp") && ws.activeTabId && !typing) {
+      const i = visible.findIndex((t) => t.tabInstanceId === ws.activeTabId);
+      const next = visible[i + (e.key === "ArrowDown" ? 1 : -1)];
+      if (next) {
         e.preventDefault();
-        search.current?.focus();
-      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "a" && !typing) {
-        e.preventDefault();
-        pickMany(visible.map((t) => t.tabInstanceId), true);
-      } else if (e.key === "Escape" && !typing && !document.querySelector("[role=dialog],[role=menu],[role=alertdialog]")) {
-        if (ws.activeTabId) ws.setActiveTabId(null);
-        else setPicked(() => []);
-      } else if ((e.key === "ArrowDown" || e.key === "ArrowUp") && ws.activeTabId && !typing) {
-        const i = visible.findIndex((t) => t.tabInstanceId === ws.activeTabId);
-        const next = visible[i + (e.key === "ArrowDown" ? 1 : -1)];
-        if (next) {
-          e.preventDefault();
-          ws.setActiveTabId(next.tabInstanceId);
-          document.querySelector(`[data-tab-id="${next.tabId}"]`)?.scrollIntoView({ block: "nearest" });
-        }
+        ws.setActiveTabId(next.tabInstanceId);
+        document.querySelector(`[data-tab-id="${next.tabId}"]`)?.scrollIntoView({ block: "nearest" });
       }
-    };
+    }
+  };
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => onKey.current(e);
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  });
+  }, []);
 
   const snapshot = browser.snapshot;
   const filtered = !!(query || ws.groupFilter.length || ws.domainFilter.length || Object.values(filters).some((f) => f.keys.length || f.minLevel !== null));
@@ -361,22 +191,13 @@ export function BrowserView({
                 </span>
               );
             })}
-            {ws.domainFilter.map((name) => {
-              const d = domains.find((x) => x.name === name);
-              return (
-                <Badge key={name} variant="secondary" className="gap-1 pr-1 font-normal">
-                  <DomainIcon favicon={d?.favicon ?? null} />
-                  {name}
-                  <button
-                    aria-label={`Remove domain filter ${name}`}
-                    className="rounded-sm text-muted-foreground hover:text-foreground"
-                    onClick={() => ws.toggleDomain(name)}
-                  >
-                    <X className="size-3" />
-                  </button>
-                </Badge>
-              );
-            })}
+            {ws.domainFilter.map((name) => (
+              <DomainChip
+                key={name}
+                domain={domains.find((x) => x.name === name) ?? { name, favicon: null }}
+                onRemove={() => ws.toggleDomain(name)}
+              />
+            ))}
             {filtered && (
               <Button
                 variant="ghost"
@@ -433,7 +254,7 @@ export function BrowserView({
               </Button>
             }
           >
-            Allow access to see previews and content of your open tabs, and let lenses read them. Everything is read locally; content is sent only when a lens runs or you save.
+            Allow access to see previews and content of your open tabs, and let lenses read them. Previews (description and image) are read locally for every tab Linklog may access, and their images load from each site's servers. Page text is sent to your library only when a lens evaluates a tab.
           </Banner>
         )}
         {(runner.offline || (browser.backendError && browser.catalog)) && (
@@ -465,7 +286,8 @@ export function BrowserView({
             onRetryFailed={(lens) =>
               actions.reevaluate(
                 lens,
-                tabs.filter((t) => ["failed", "expired", "unavailable"].includes(runner.results[t.tabInstanceId]?.[lens.id]?.state ?? "")),
+                // Same set the button counts: failed and expired (unreadable tabs have "Use title").
+                tabs.filter((t) => ["failed", "expired"].includes(runner.results[t.tabInstanceId]?.[lens.id]?.state ?? "")),
               )
             }
             onReevaluate={(lens) => actions.reevaluate(lens)}

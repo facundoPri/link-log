@@ -16,6 +16,8 @@ export class BridgeClient {
   private pending = new Map<string, Pending>();
   private events = new Set<(e: ExtensionEvent) => void>();
   private lifecycle = new Set<(kind: "ready" | "disconnected") => void>();
+  /** The bridge announced itself (or left its marker on <html>): the extension is there. */
+  private ready = typeof document !== "undefined" && !!document.documentElement.dataset.linklogBridge;
 
   constructor() {
     window.addEventListener("message", this.onMessage);
@@ -34,7 +36,10 @@ export class BridgeClient {
     if (event.source !== window || event.origin !== location.origin) return;
     const data = event.data as Record<string, unknown> | null;
     if (!data || data.channel !== BRIDGE_CHANNEL || data.from !== "extension") return;
-    if (data.ready) for (const fn of this.lifecycle) fn("ready");
+    if (data.ready) {
+      this.ready = true;
+      for (const fn of this.lifecycle) fn("ready");
+    }
     if (data.disconnected) {
       for (const fn of this.lifecycle) fn("disconnected");
       for (const [id, p] of this.pending) {
@@ -55,6 +60,27 @@ export class BridgeClient {
     if (isExtensionEvent(data.event)) for (const fn of this.events) fn(data.event);
   };
 
+  /**
+   * Resolves true once the bridge is active on this page, false after `timeout`. The
+   * bridge activates at DOMContentLoaded, so this separates "no extension" (fast) from
+   * a service worker that is slow to wake (handled by the longer hello timeout).
+   */
+  whenReady(timeout: number): Promise<boolean> {
+    if (this.ready || document.documentElement.dataset.linklogBridge) return Promise.resolve((this.ready = true));
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        off();
+        resolve(false);
+      }, timeout);
+      const off = this.onLifecycle((kind) => {
+        if (kind !== "ready") return;
+        clearTimeout(timer);
+        off();
+        resolve(true);
+      });
+    });
+  }
+
   onEvent(fn: (e: ExtensionEvent) => void) {
     this.events.add(fn);
     return () => this.events.delete(fn);
@@ -62,7 +88,7 @@ export class BridgeClient {
 
   onLifecycle(fn: (kind: "ready" | "disconnected") => void) {
     this.lifecycle.add(fn);
-    return () => this.lifecycle.delete(fn);
+    return () => void this.lifecycle.delete(fn);
   }
 
   request<K extends CommandName>(command: K, args: Commands[K]["args"], timeout = 20_000): Promise<Commands[K]["result"]> {

@@ -20,6 +20,7 @@ import { BrowserSidebar } from "./components/browser/BrowserSidebar";
 import { tabDomain, useBrowserWorkspace } from "./browser/useBrowserWorkspace";
 import { useSavedLookup } from "./browser/saved";
 import { BrowserInspector } from "./components/browser/BrowserInspector";
+import { BrowserDialogs } from "./components/browser/BrowserDialogs";
 import { useBrowserActions } from "./browser/useBrowserActions";
 import { usd, tokens } from "./lib/format";
 import { Toaster } from "@/components/ui/sonner";
@@ -121,7 +122,7 @@ export function App() {
   const narrow = useMedia("(max-width: 1099px)");
   const mobile = useMedia("(max-width: 767px)");
   const ws = useBrowserWorkspace(library, view === "browser", loaded && !loadError);
-  const { actions: browserActions, dialogs: browserDialogs } = useBrowserActions(
+  const browserController = useBrowserActions(
     ws,
     setLibrary,
     (tabIds) =>
@@ -131,6 +132,7 @@ export function App() {
           : [],
       ),
   );
+  const browserActions = browserController.actions;
   const libraryLenses = useMemo(
     () => library.lenses.filter((l) => l.scope !== "browser"),
     [library.lenses],
@@ -686,7 +688,8 @@ export function App() {
       read={async (fresh) => {
         const { captures } = await ws.browser.request(
           "capture",
-          { tabs: [{ tabId: activeTab.tabId, tabInstanceId: activeTab.tabInstanceId }], fresh },
+          // With the revision: a tab that navigated meanwhile is refused, never shown with another page's content.
+          { tabs: [{ tabId: activeTab.tabId, tabInstanceId: activeTab.tabInstanceId, documentRevision: activeTab.documentRevision }], fresh },
           60_000,
         );
         const c = captures[0];
@@ -701,6 +704,7 @@ export function App() {
       onUngroup={() => void browserActions.ungroup([activeTab])}
       onCloseTab={() => browserActions.requestClose([activeTab])}
       onRetry={(lens) => browserActions.reevaluate(lens, [activeTab])}
+      onMetadata={(lens) => browserActions.evaluateMetadata(lens, activeTab)}
       onAllowAccess={() => void ws.browser.request("openPermissions", {}).catch(() => {})}
       onToggleGroup={ws.toggleGroupFilter}
       onDomainFilter={ws.toggleDomain}
@@ -1226,7 +1230,7 @@ export function App() {
           </div>
         </div>
       )}
-      {browserDialogs}
+      <BrowserDialogs ws={ws} controller={browserController} />
       <Toaster position="bottom-right" />
     </div>
     </TooltipProvider>

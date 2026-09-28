@@ -7,7 +7,6 @@ import {
   Loader2,
   Lock,
   Moon,
-  RotateCw,
   SquareArrowOutUpRight,
   Volume2,
 } from "lucide-react";
@@ -17,9 +16,9 @@ import { cn } from "../../lib/utils";
 import { relativeTime } from "../../lib/time";
 import { youtubeId } from "../../lib/youtube";
 import { lensIcon } from "../Sidebar";
-import { LensVerdict } from "../LensVerdict";
 import { TagChip } from "../TagChip";
 import { GROUP_STYLE, groupTitle } from "./groups";
+import { ACCESS_LABEL, BrowserLensStatus } from "./BrowserLensStatus";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -32,14 +31,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-
-export const ACCESS_LABEL: Record<Exclude<BrowserTab["content"], "available">, { label: string; hint: string }> = {
-  loading: { label: "Loading", hint: "Lenses run once the page finishes loading." },
-  restricted: { label: "Can't read", hint: "Chrome doesn't let extensions read this page (browser, extension or store page)." },
-  "no-permission": { label: "No access", hint: "Allow page content access so lenses can read this tab." },
-  discarded: { label: "Not loaded", hint: "Chrome unloaded this tab to save memory. Open it to load its content." },
-  frozen: { label: "Frozen", hint: "Chrome froze this background tab. Open it to read its content." },
-};
 
 function pathOf(url: string) {
   try {
@@ -65,8 +56,8 @@ function LensCell({
   onRetry: () => void;
   onMetadata: () => void;
 }) {
-  // Flat, borderless cell: the lens icon (and its name when several lenses are on) + the verdict.
-  const shell = (children: React.ReactNode) => (
+  // Flat, borderless cell: the lens icon (and its name when several lenses are on) + its state.
+  return (
     <span
       className="inline-flex h-5 items-center gap-1 text-2xs"
       aria-label={lens.name}
@@ -75,86 +66,8 @@ function LensCell({
     >
       {lensIcon(lens.type, "size-3 shrink-0 text-muted-foreground")}
       {named && <span className="max-w-24 truncate text-muted-foreground">{lens.name}</span>}
-      {children}
+      <BrowserLensStatus lens={lens} record={record} tab={tab} size="sm" onRetry={onRetry} onMetadata={onMetadata} />
     </span>
-  );
-  const quiet = (text: string, spin = false) => (
-    <span className="inline-flex items-center gap-1 text-muted-foreground">
-      {spin && <Loader2 className="size-3 animate-spin" />}
-      {text}
-    </span>
-  );
-  if (!record || record.state === "missing") {
-    if (tab.content !== "available" && tab.content !== "loading")
-      return shell(
-        <button type="button" className="text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground" onClick={onMetadata}>
-          Use title
-        </button>,
-      );
-    return shell(quiet("Waiting", true));
-  }
-  if (record.state === "submitting" || record.state === "queued" || record.state === "running")
-    return shell(quiet(record.state === "running" ? "Evaluating" : "Queued", true));
-  if (record.state === "done" && record.answer) {
-    const partial = record.capture?.completeness === "partial";
-    const metadata = record.capture?.source === "metadata";
-    const reasons = record.capture?.reasons.filter((r) => !/^Only content already loaded/.test(r)) ?? [];
-    return shell(
-      <>
-        <LensVerdict
-          lens={lens}
-          result={{
-            lens_id: lens.id,
-            answer: record.answer,
-            lens_version: lens.version,
-            content_version: 0,
-            model: record.model ?? "",
-            evaluated_at: record.evaluatedAt ?? "",
-            batch_id: record.batchId ?? "",
-          }}
-          size="sm"
-        />
-        {(partial || metadata) && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span className="cursor-default text-amber-600 dark:text-amber-400">{metadata ? "title only" : "partial"}</span>
-            </TooltipTrigger>
-            <TooltipContent className="max-w-64 text-left">
-              {metadata ? "Evaluated with the title and URL only." : "Only part of the page could be read."}
-              {reasons.map((r) => (
-                <div key={r} className="opacity-80">
-                  {r}
-                </div>
-              ))}
-            </TooltipContent>
-          </Tooltip>
-        )}
-      </>,
-    );
-  }
-  const failed = record.state === "failed";
-  const text = record.state === "expired" ? "Expired" : record.state === "unavailable" ? "Unreadable" : "Failed";
-  const status = <span className={failed ? "cursor-default text-destructive" : "text-muted-foreground"}>{text}</span>;
-  return shell(
-    <>
-      {failed && record.error ? (
-        <Tooltip>
-          <TooltipTrigger asChild>{status}</TooltipTrigger>
-          <TooltipContent className="max-w-64 text-left">{record.error}</TooltipContent>
-        </Tooltip>
-      ) : (
-        status
-      )}
-      <button
-        type="button"
-        aria-label={`Retry ${lens.name}`}
-        className="inline-flex items-center gap-0.5 rounded px-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-        onClick={onRetry}
-      >
-        <RotateCw className="size-3" />
-        Retry
-      </button>
-    </>,
   );
 }
 

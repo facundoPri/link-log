@@ -1,8 +1,9 @@
-import type {
-  BrowserCatalog,
-  ClaimTarget,
-  EvaluationRequest,
-  EvaluationStatus,
+import {
+  toEvaluationTarget,
+  type BrowserCatalog,
+  type ClaimTarget,
+  type EvaluationRequest,
+  type EvaluationStatus,
 } from "@linklog/browser-protocol";
 
 export class OfflineError extends Error {}
@@ -31,21 +32,7 @@ export async function fetchCatalog(): Promise<BrowserCatalog> {
 }
 
 export function evaluationTargets(targets: ClaimTarget[]): EvaluationRequest["targets"] {
-  return targets.map((t) => ({
-    targetKey: t.targetKey,
-    url: t.url.slice(0, 4096),
-    title: (t.title || t.url).slice(0, 1000),
-    capture: {
-      source: t.capture.source,
-      capturedAt: t.capture.capturedAt,
-      completeness: t.capture.completeness,
-      reasons: t.capture.reasons,
-      facts: t.capture.facts,
-      description: t.capture.description.slice(0, 2000),
-      siteName: t.capture.siteName.slice(0, 200),
-      markdown: t.capture.markdown,
-    },
-  }));
+  return targets.map(toEvaluationTarget);
 }
 
 export async function postEvaluation(body: EvaluationRequest) {
@@ -54,4 +41,10 @@ export async function postEvaluation(body: EvaluationRequest) {
 
 export async function evaluationStatus(requestId: string) {
   return call<EvaluationStatus>(`/browser/evaluations/${requestId}`);
+}
+
+/** Cancels queued work for exactly these targets (never the rest of the request). */
+export async function cancelTargets(requestId: string, targetKeys: string[]) {
+  for (let i = 0; i < targetKeys.length; i += 100)
+    await call(`/browser/evaluations/${requestId}`, "DELETE", { targetKeys: targetKeys.slice(i, i + 100) });
 }

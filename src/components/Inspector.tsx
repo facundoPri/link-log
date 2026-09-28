@@ -1,6 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
 import {
   CircleAlert,
@@ -61,16 +59,7 @@ import { TagChip, TagDot } from "./TagChip";
 import { TagPicker } from "./TagPicker";
 import { LensVerdict } from "./LensVerdict";
 import { lensIcon } from "./Sidebar";
-
-export const markdownClasses = cn(
-  "text-[13px] leading-6",
-  "[&_h1]:text-sm [&_h1]:font-semibold [&_h2]:text-sm [&_h2]:font-semibold [&_h3]:font-medium",
-  "[&_p]:my-2 [&_a]:underline [&_a]:underline-offset-2",
-  "[&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4",
-  "[&_code]:rounded [&_code]:bg-muted [&_code]:px-1",
-  "[&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:bg-muted [&_pre]:p-3",
-  "[&_blockquote]:border-l-2 [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground",
-);
+import { MarkdownView } from "./MarkdownView";
 
 const sourceLabel: Record<string, string> = {
   web: "Page text",
@@ -730,25 +719,10 @@ export function Inspector({
                       {markdown}
                     </pre>
                   ) : (
-                    <div ref={contentBody} className={markdownClasses}>
-                      <Markdown
-                        remarkPlugins={[remarkGfm]}
-                        components={{
-                          img: ({ alt }) => (
-                            <span className="text-muted-foreground">
-                              Image: {alt || "no description"}
-                            </span>
-                          ),
-                          a: ({ href, children }) => (
-                            <a href={href} target="_blank" rel="noreferrer">
-                              {children}
-                            </a>
-                          ),
-                        }}
-                      >
-                        {markdown.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, "")}
-                      </Markdown>
-                    </div>
+                    <MarkdownView
+                      ref={contentBody}
+                      markdown={markdown.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, "")}
+                    />
                   )}
                   {!expanded && (
                     <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-background to-transparent" />

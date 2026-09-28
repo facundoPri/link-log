@@ -10,6 +10,7 @@ import {
 import type { Lens } from "../../types";
 import { cn } from "../../lib/utils";
 import { lensIcon } from "../Sidebar";
+import { isUnreadable } from "./BrowserLensStatus";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -45,7 +46,7 @@ export function lensProgress(lens: Lens, tabs: BrowserTab[], results: Record<str
     if (r?.state === "done") p.done++;
     else if (r && IN_FLIGHT.includes(r.state)) p.pending++;
     else if (r?.state === "failed" || r?.state === "expired") p.failed++;
-    else if (r?.state === "unavailable" || (tab.content !== "available" && tab.content !== "loading")) p.unreadable++;
+    else if (isUnreadable(tab, r)) p.unreadable++; // shown as "Unreadable" in the rows too
     else p.pending++;
   }
   return p;

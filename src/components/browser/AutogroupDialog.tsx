@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ChevronsUpDown, CircleAlert, Loader2, Sparkles } from "lucide-react";
 import type { BrowserTab } from "@linklog/browser-protocol";
 import type { Destination } from "../../browser/useBrowserWorkspace";
+import type { AutogroupResult, Suggestion } from "../../browser/useBrowserActions";
 import { cn } from "../../lib/utils";
 import { GROUP_STYLE, groupTitle } from "./groups";
 import { Button } from "@/components/ui/button";
@@ -21,8 +22,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-
-export type Suggestion = { key: string | null; confidence: number | null; error?: string };
 
 function destName(d: Destination) {
   return d.kind === "group" ? groupTitle(d.group.title) : d.pinned.name;
@@ -89,17 +88,21 @@ function DestinationSelect({
   );
 }
 
-/** Review step: suggestions are proposals; nothing moves until Apply. */
+/**
+ * Review step: suggestions are proposals; nothing moves until Apply. The run was
+ * started by the click that opened this dialog; the dialog only shows its outcome,
+ * so re-mounting it (React StrictMode in dev) never asks Jev twice.
+ */
 export function AutogroupDialog({
   tabs,
   destinations,
-  suggest,
+  run,
   onApply,
   onClose,
 }: {
   tabs: BrowserTab[];
   destinations: Destination[];
-  suggest: () => Promise<{ suggestions: Map<number, Suggestion>; catalogVersion: string }>;
+  run: Promise<AutogroupResult>;
   onApply: (assignments: { tab: BrowserTab; key: string }[], catalogVersion: string) => Promise<void>;
   onClose: () => void;
 }) {
@@ -110,7 +113,7 @@ export function AutogroupDialog({
   const [version, setVersion] = useState("");
   useEffect(() => {
     let alive = true;
-    suggest()
+    run
       .then(({ suggestions, catalogVersion }) => {
         if (!alive) return;
         setSuggestions(suggestions);
@@ -126,7 +129,7 @@ export function AutogroupDialog({
     return () => {
       alive = false;
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [run]);
   const assignments = tabs
     .map((tab) => ({ tab, key: choice.get(tab.tabId) ?? "none" }))
     .filter((a) => a.key !== "none" && destinations.some((d) => d.key === a.key));

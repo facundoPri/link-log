@@ -12,6 +12,8 @@ export type Destination =
   | { kind: "pinned"; key: string; pinned: PinnedGroup };
 
 const ACTIVE_KEY = "linklog.browser.activeLenses";
+/** Tabs per `previews` command (its limit is 200). */
+const PREVIEW_CHUNK = 100;
 
 function readActive(): string[] {
   try {
@@ -103,12 +105,32 @@ export function useBrowserWorkspace(library: Library, inBrowser: boolean, loaded
     (d: string) => setDomainFilter((f) => (f.includes(d) ? f.filter((x) => x !== d) : [...f, d])),
     [],
   );
+  // A domain whose last tab closed can't be filtered on any more.
+  useEffect(() => {
+    if (!browser.snapshot) return;
+    setDomainFilter((f) => {
+      const next = f.filter((d) => tabs.some((t) => tabDomain(t) === d));
+      return next.length === f.length ? f : next;
+    });
+  }, [tabs, browser.snapshot]);
 
   // Row previews (description + image) come from the page's own metadata, read locally by the
   // extension for tabs it may read. Nothing here is sent to the backend.
   const [previews, setPreviews] = useState<Record<string, TabPreview>>({});
   const previewing = useRef(false);
   const { request, connection } = browser;
+  // Previews of closed tabs are forgotten.
+  useEffect(() => {
+    if (!browser.snapshot) return;
+    setPreviews((cur) => {
+      const live = new Set(tabs.map((t) => t.tabInstanceId));
+      const stale = Object.keys(cur).filter((id) => !live.has(id));
+      if (!stale.length) return cur;
+      const next = { ...cur };
+      for (const id of stale) delete next[id];
+      return next;
+    });
+  }, [tabs, browser.snapshot]);
   useEffect(() => {
     if (!inBrowser || connection !== "connected") return;
     const missing = tabs.filter(
@@ -117,13 +139,15 @@ export function useBrowserWorkspace(library: Library, inBrowser: boolean, loaded
     if (!missing.length || previewing.current) return;
     const timer = setTimeout(() => {
       previewing.current = true;
-      request("previews", { tabs: missing.slice(0, 200).map((t) => ({ tabId: t.tabId, tabInstanceId: t.tabInstanceId })) }, 30_000)
+      // One chunk per round (the command takes up to 200 tabs); the next round picks up the rest.
+      const attempted = missing.slice(0, PREVIEW_CHUNK);
+      request("previews", { tabs: attempted.map((t) => ({ tabId: t.tabId, tabInstanceId: t.tabInstanceId })) }, 30_000)
         .then(({ previews: got }) =>
           setPreviews((cur) => {
             const next = { ...cur };
             for (const p of got) next[p.tabInstanceId] = p;
-            // Tabs that couldn't be read are remembered as empty so they aren't retried in a loop.
-            for (const t of missing)
+            // Attempted tabs that couldn't be read are remembered as empty so they aren't retried in a loop.
+            for (const t of attempted)
               if (!got.some((p) => p.tabInstanceId === t.tabInstanceId))
                 next[t.tabInstanceId] = { tabInstanceId: t.tabInstanceId, documentRevision: t.documentRevision, description: "", siteName: "", image: "" };
             return next;

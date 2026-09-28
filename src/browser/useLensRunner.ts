@@ -2,15 +2,23 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BROWSER_LIMITS,
   lensFingerprint,
+  type Commands,
   type DepositItem,
   type Lens,
   type LensRecord,
   type LensRef,
 } from "@linklog/browser-protocol";
-import { call, evaluationStatus, evaluationTargets, OfflineError, postEvaluation } from "./api";
+import { call, cancelTargets, evaluationStatus, evaluationTargets, OfflineError, postEvaluation } from "./api";
 import type { BrowserState } from "./useBrowser";
+import { claimRounds } from "./claimRounds";
 
 export const lensRef = (lens: Lens): LensRef => ({ id: lens.id, fingerprint: lensFingerprint(lens) });
+
+type ClaimArgs = Commands["claim"]["args"];
+type ClaimResult = Commands["claim"]["result"];
+
+const POLL_BUSY_MS = 1500;
+const POLL_IDLE_MS = 5000;
 
 /**
  * Drives lens evaluation for the connected window: claims missing tabs in the
@@ -24,10 +32,22 @@ export function useLensRunner(browser: BrowserState, active: Lens[], allLenses: 
   const [offline, setOffline] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const connected = connection === "connected" && !!catalog && !!hello;
-  const refs = useMemo(() => active.map(lensRef), [active]);
-  const refsKey = refs.map((r) => `${r.id}:${r.fingerprint}`).join(",");
-  const allRefs = useRef(new Map<string, LensRef>());
-  allRefs.current = new Map(allLenses.map((l) => [l.id, lensRef(l)]));
+  // Fingerprints are computed when the lenses change, not on every render; `refs` stays
+  // stable while the active lenses' identities don't change.
+  const refsKey = useMemo(() => active.map((l) => `${l.id}:${lensFingerprint(l)}`).join(","), [active]);
+  const refs = useMemo<LensRef[]>(
+    () =>
+      refsKey
+        ? refsKey.split(",").map((k) => {
+            const [id, fingerprint] = k.split(":") as [string, string];
+            return { id, fingerprint };
+          })
+        : [],
+    [refsKey],
+  );
+  const allRefs = useMemo(() => new Map(allLenses.map((l) => [l.id, lensRef(l)])), [allLenses]);
+  const allRefsRef = useRef(allRefs);
+  allRefsRef.current = allRefs;
 
   const loadResults = useCallback(async () => {
     if (!connected || !refs.length) {
@@ -39,7 +59,7 @@ export function useLensRunner(browser: BrowserState, active: Lens[], allLenses: 
     } catch {
       /* stale results stay visible */
     }
-  }, [connected, refsKey, request]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [connected, refs, request]);
 
   useEffect(() => {
     void loadResults();
@@ -47,7 +67,7 @@ export function useLensRunner(browser: BrowserState, active: Lens[], allLenses: 
 
   /** POSTs one claim; on a lost response the request id stays in the extension for recovery. */
   const submit = useCallback(
-    async (ref: LensRef, claim: Awaited<ReturnType<typeof request<"claim">>>) => {
+    async (ref: LensRef, claim: ClaimResult) => {
       if (!claim.requestId || !claim.targets.length || !catalog || !hello) return;
       const body = {
         kind: "lens" as const,
@@ -85,15 +105,14 @@ export function useLensRunner(browser: BrowserState, active: Lens[], allLenses: 
     [catalog, hello, request],
   );
 
+  /** Claims and POSTs in rounds; an explicit set of tabs is evaluated exactly once per call. */
   const claimAndSubmit = useCallback(
-    async (ref: LensRef, extra: Partial<Parameters<typeof request<"claim">>[1]> = {}) => {
-      // Stays under the Worker's request cap and the backend's per-request target limit.
-      for (let round = 0; round < 50; round++) {
-        const claim = await request("claim", { lens: ref, limit: 20, ...extra }, 120_000);
-        if (claim.requestId) await submit(ref, claim);
-        if (!claim.skipped) return;
-      }
-    },
+    (ref: LensRef, extra: Omit<ClaimArgs, "lens" | "limit" | "tabInstanceIds"> & { tabInstanceIds?: string[] } = {}) =>
+      claimRounds(
+        (tabInstanceIds) => request("claim", { ...extra, lens: ref, limit: 20, tabInstanceIds }, 120_000),
+        (claim) => submit(ref, claim),
+        extra.tabInstanceIds,
+      ),
     [request, submit],
   );
 
@@ -117,7 +136,7 @@ export function useLensRunner(browser: BrowserState, active: Lens[], allLenses: 
     } finally {
       running.current = false;
     }
-  }, [enabled, connected, refsKey, claimAndSubmit]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [enabled, connected, refs, claimAndSubmit]);
 
   useEffect(() => {
     const timer = setTimeout(() => void fill(), 350);
@@ -125,67 +144,91 @@ export function useLensRunner(browser: BrowserState, active: Lens[], allLenses: 
   }, [fill, snapshot?.revision, hello?.contentAccess]);
 
   // Recovery + polling of every request in flight, whichever page started it.
+  const polling = useRef(false);
   const poll = useCallback(async () => {
-    if (!connected) return;
-    let pending;
+    if (!connected || polling.current) return;
+    polling.current = true;
     try {
-      pending = (await request("pending", {})).requests;
-    } catch {
-      return;
+      await pollOnce();
+    } finally {
+      polling.current = false;
     }
-    setPendingCount(pending.reduce((n, r) => n + r.targets.length, 0));
-    for (const req of pending) {
-      let res;
+
+    async function pollOnce() {
+      let pending;
       try {
-        res = await evaluationStatus(req.requestId);
-        setOffline(null);
-      } catch (error) {
-        if (error instanceof OfflineError) setOffline(error.message);
+        pending = (await request("pending", {})).requests;
+      } catch {
         return;
       }
-      if (res.status === 404) {
-        // Never accepted. Wait out a POST that may still be in flight, then resend
-        // the same request id with a fresh capture of the same targets.
-        if (Date.now() - req.createdAt < 15_000) continue;
-        const ref = allRefs.current.get(req.lensId);
-        if (!ref || ref.fingerprint !== req.fingerprint) {
-          await request("release", { requestId: req.requestId, error: "The lens changed before this evaluation was sent.", state: "missing" });
+      setPendingCount(pending.reduce((n, r) => n + r.targets.length, 0));
+      for (const req of pending) {
+        let res;
+        try {
+          res = await evaluationStatus(req.requestId);
+          setOffline(null);
+        } catch (error) {
+          if (error instanceof OfflineError) setOffline(error.message);
+          return;
+        }
+        if (res.status === 404) {
+          // Never accepted. Wait out a POST that may still be in flight, then resend
+          // the same request id with a fresh capture of the same targets.
+          if (Date.now() - req.createdAt < 15_000) continue;
+          const ref = allRefsRef.current.get(req.lensId);
+          if (!ref || ref.fingerprint !== req.fingerprint) {
+            await request("release", { requestId: req.requestId, error: "The lens changed before this evaluation was sent.", state: "missing" });
+            continue;
+          }
+          const claim = await request("claim", { lens: ref, resumeRequestId: req.requestId }, 120_000).catch(() => null);
+          if (claim?.requestId && claim.targets.length) await submit(ref, claim);
+          else await request("release", { requestId: req.requestId, error: "The tabs changed before this evaluation was sent.", state: "missing" });
           continue;
         }
-        const claim = await request("claim", { lens: ref, resumeRequestId: req.requestId }, 120_000).catch(() => null);
-        if (claim?.requestId && claim.targets.length) await submit(ref, claim);
-        else await request("release", { requestId: req.requestId, error: "The tabs changed before this evaluation was sent.", state: "missing" });
-        continue;
+        if (res.status !== 200) continue;
+        const status = res.data;
+        if (!req.batchId)
+          await request("accepted", { requestId: req.requestId, batchId: status.batchId, jobs: status.targets.map((t) => ({ targetKey: t.targetKey, jobId: t.jobId })) });
+        const items: DepositItem[] = status.targets
+          .filter((t) => t.state !== "acked")
+          .map((t) => ({
+            targetKey: t.targetKey,
+            state: t.state as DepositItem["state"],
+            answer: t.answer,
+            model: t.model,
+            evaluatedAt: t.evaluatedAt,
+            error: t.error,
+            jobId: t.jobId,
+          }));
+        if (!items.length) continue;
+        // The extension reports (and announces) only real changes, so "still queued" is quiet.
+        await request("deposit", { requestId: req.requestId, batchId: status.batchId, items });
+        // Stored locally (or no longer wanted): the backend may purge the payload.
+        const done = items.filter((i) => i.state === "done").map((i) => i.targetKey);
+        if (done.length) await call(`/browser/evaluations/${req.requestId}/ack`, "POST", { targetKeys: done }).catch(() => {});
       }
-      if (res.status !== 200) continue;
-      const status = res.data;
-      if (!req.batchId)
-        await request("accepted", { requestId: req.requestId, batchId: status.batchId, jobs: status.targets.map((t) => ({ targetKey: t.targetKey, jobId: t.jobId })) });
-      const items: DepositItem[] = status.targets
-        .filter((t) => t.state !== "acked")
-        .map((t) => ({
-          targetKey: t.targetKey,
-          state: t.state as DepositItem["state"],
-          answer: t.answer,
-          model: t.model,
-          evaluatedAt: t.evaluatedAt,
-          error: t.error,
-          jobId: t.jobId,
-        }));
-      if (!items.length) continue;
-      await request("deposit", { requestId: req.requestId, batchId: status.batchId, items });
-      // Stored locally (or no longer wanted): the backend may purge the payload.
-      const done = items.filter((i) => i.state === "done").map((i) => i.targetKey);
-      if (done.length) await call(`/browser/evaluations/${req.requestId}/ack`, "POST", { targetKeys: done }).catch(() => {});
     }
   }, [connected, request, submit]);
 
+  // One self-scheduling loop: faster while work is pending. Result events don't restart it.
+  const pollRef = useRef(poll);
+  pollRef.current = poll;
+  const pendingRef = useRef(pendingCount);
+  pendingRef.current = pendingCount;
   useEffect(() => {
     if (!connected) return;
-    void poll();
-    const timer = setInterval(() => void poll(), pendingCount ? 1500 : 5000);
-    return () => clearInterval(timer);
-  }, [connected, poll, pendingCount, resultsVersion]);
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let stopped = false;
+    const tick = async () => {
+      await pollRef.current().catch(() => {});
+      if (!stopped) timer = setTimeout(() => void tick(), pendingRef.current ? POLL_BUSY_MS : POLL_IDLE_MS);
+    };
+    void tick();
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [connected]);
 
   return {
     results,
@@ -193,15 +236,18 @@ export function useLensRunner(browser: BrowserState, active: Lens[], allLenses: 
     offline,
     notice,
     dismissNotice: () => setNotice(null),
-    /** Explicit retry / re-evaluation of specific tabs (never automatic). */
+    /**
+     * Explicit retry / re-evaluation (never automatic). Every listed tab is evaluated
+     * exactly once per call, including ones that already have an answer.
+     */
     evaluate: async (lens: Lens, tabInstanceIds: string[], source: "dom" | "metadata" = "dom") => {
       await claimAndSubmit(lensRef(lens), { tabInstanceIds, force: true, source });
       await poll();
     },
-    /** Clean: drop results, bump generation, cancel queued backend work. */
+    /** Clean: drop results, bump generation, cancel exactly the cleaned targets' queued work. */
     clean: async (lensIds: string[], tabInstanceIds?: string[]) => {
-      const { removed, requestIds } = await request("clean", { lensIds, tabInstanceIds });
-      await Promise.all(requestIds.map((id) => call(`/browser/evaluations/${id}`, "DELETE", {}).catch(() => {})));
+      const { removed, requests } = await request("clean", { lensIds, tabInstanceIds });
+      await Promise.all(requests.map((r) => cancelTargets(r.requestId, r.targetKeys).catch(() => {})));
       return removed;
     },
     maxTargets: BROWSER_LIMITS.maxTargets,

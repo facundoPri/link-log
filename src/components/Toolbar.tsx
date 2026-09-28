@@ -2,63 +2,31 @@ import {
   ArrowDownWideNarrow,
   ArrowUpNarrowWide,
   Check,
-  Globe,
-  ListFilter,
   PanelLeft,
   Plus,
   Search,
   X,
 } from "lucide-react";
 import type { Tag } from "../types";
-import { cn } from "../lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Kbd } from "@/components/ui/kbd";
 import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-  CommandSeparator,
-} from "@/components/ui/command";
+import { CommandGroup, CommandItem, CommandSeparator } from "@/components/ui/command";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { TagChip, TagDot } from "./TagChip";
+import { DomainChip, DomainFilter, type DomainEntry } from "./DomainFilter";
 import type { Lens } from "../types";
 import type { View } from "./Sidebar";
 
 export type ContextFilter = "any" | "with" | "without";
 
-export type DomainEntry = {
-  name: string;
-  count: number;
-  favicon: string | null;
-};
-
-function DomainIcon({ favicon }: { favicon: string | null }) {
-  return favicon ? (
-    <img
-      src={favicon}
-      alt=""
-      className="size-3.5 rounded-sm"
-      referrerPolicy="no-referrer"
-    />
-  ) : (
-    <Globe className="size-3.5 text-muted-foreground" />
-  );
-}
+export type { DomainEntry };
 
 export function Toolbar({
   view,
@@ -128,21 +96,13 @@ export function Toolbar({
     domainFilter.length + (context !== "any" ? 1 : 0) + tagIds.length;
   const chips = (
     <>
-      {domainFilter.map((name) => {
-        const d = domains.find((d) => d.name === name);
-        return (
-          <Badge key={name} variant="secondary" className="gap-1">
-            <DomainIcon favicon={d?.favicon ?? null} />
-            {name}
-            <button
-              aria-label={`Remove domain filter ${name}`}
-              onClick={() => onToggleDomain(name)}
-            >
-              <X className="size-3" />
-            </button>
-          </Badge>
-        );
-      })}
+      {domainFilter.map((name) => (
+        <DomainChip
+          key={name}
+          domain={domains.find((d) => d.name === name) ?? { name, favicon: null }}
+          onRemove={() => onToggleDomain(name)}
+        />
+      ))}
       {context !== "any" && (
         <Badge variant="secondary" className="gap-1">
           {context === "with" ? "With context" : "Without context"}
@@ -234,114 +194,48 @@ export function Toolbar({
               </Kbd>
             )}
           </div>
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5"
-                aria-label="Filter"
+          <DomainFilter
+            domains={domains}
+            selected={domainFilter}
+            onToggle={onToggleDomain}
+            activeCount={activeFilters}
+            clearLabel="Clear filters"
+            onClear={() => {
+              onContext("any");
+              onClearDomains();
+              tagIds.forEach(onRemoveTag);
+            }}
+          >
+            <CommandGroup heading="Context">
+              <CommandItem
+                value="context with"
+                onSelect={() => onContext(context === "with" ? "any" : "with")}
               >
-                <ListFilter className="size-3.5" />
-                <span className="hidden sm:inline">Filter</span>
-                {activeFilters > 0 && (
-                  <span className="ml-0.5 rounded-sm bg-brand px-1 text-2xs font-medium tabular text-brand-foreground">
-                    {activeFilters}
+                With context
+                {context === "with" && <Check className="ml-auto size-3.5" />}
+              </CommandItem>
+              <CommandItem
+                value="context without"
+                onSelect={() => onContext(context === "without" ? "any" : "without")}
+              >
+                Without context
+                {context === "without" && <Check className="ml-auto size-3.5" />}
+              </CommandItem>
+            </CommandGroup>
+            <CommandSeparator />
+            <CommandGroup heading="Tags">
+              {tags.map((t) => (
+                <CommandItem key={t.id} value={`tag ${t.name}`} onSelect={() => onToggleTag(t.id)}>
+                  <TagDot name={t.name} />
+                  <span className="truncate">{t.name}</span>
+                  <span className="ml-auto flex items-center gap-1">
+                    <span className="text-2xs text-muted-foreground tabular">{tagCounts?.[t.id] ?? ""}</span>
+                    {tagIds.includes(t.id) && <Check className="size-3.5" />}
                   </span>
-                )}
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent align="end" className="w-64 p-0">
-              <Command>
-                <CommandInput placeholder="Filter by domain…" />
-                <CommandList>
-                  <CommandEmpty>No domains match</CommandEmpty>
-                  <CommandGroup heading="Context">
-                    <CommandItem
-                      value="context with"
-                      onSelect={() =>
-                        onContext(context === "with" ? "any" : "with")
-                      }
-                    >
-                      With context
-                      {context === "with" && (
-                        <Check className="ml-auto size-3.5" />
-                      )}
-                    </CommandItem>
-                    <CommandItem
-                      value="context without"
-                      onSelect={() =>
-                        onContext(context === "without" ? "any" : "without")
-                      }
-                    >
-                      Without context
-                      {context === "without" && (
-                        <Check className="ml-auto size-3.5" />
-                      )}
-                    </CommandItem>
-                  </CommandGroup>
-                  <CommandSeparator />
-                  <CommandGroup heading="Tags">
-                    {tags.map((t) => (
-                      <CommandItem
-                        key={t.id}
-                        value={`tag ${t.name}`}
-                        onSelect={() => onToggleTag(t.id)}
-                      >
-                        <TagDot name={t.name} />
-                        <span className="truncate">{t.name}</span>
-                        <span className="ml-auto flex items-center gap-1">
-                          <span className="text-2xs text-muted-foreground tabular">
-                            {tagCounts?.[t.id] ?? ""}
-                          </span>
-                          {tagIds.includes(t.id) && (
-                            <Check className="size-3.5" />
-                          )}
-                        </span>
-                      </CommandItem>
-                    ))}
-                  </CommandGroup>
-                  <CommandSeparator />
-                  <CommandGroup heading="Domains">
-                    {domains.map((d) => (
-                      <CommandItem
-                        key={d.name}
-                        value={d.name}
-                        onSelect={() => onToggleDomain(d.name)}
-                      >
-                        <DomainIcon favicon={d.favicon} />
-                        <span className="truncate">{d.name}</span>
-                        <span className="ml-auto flex items-center gap-1">
-                          <span className="text-2xs text-muted-foreground tabular">
-                            {d.count}
-                          </span>
-                          {domainFilter.includes(d.name) && (
-                            <Check className="size-3.5" />
-                          )}
-                        </span>
-                      </CommandItem>
-                    ))}
-                  </CommandGroup>
-                </CommandList>
-                {activeFilters > 0 && (
-                  <div className="border-t p-1">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="w-full justify-start"
-                      onClick={() => {
-                        onContext("any");
-                        onClearDomains();
-                        tagIds.forEach(onRemoveTag);
-                      }}
-                    >
-                      Clear filters
-                    </Button>
-                  </div>
-                )}
-              </Command>
-            </PopoverContent>
-          </Popover>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </DomainFilter>
           <Tooltip>
             <TooltipTrigger asChild>
               <Button

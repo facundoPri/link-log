@@ -23,6 +23,11 @@ export type Connection =
 
 export type BrowserState = ReturnType<typeof useBrowser>;
 
+/** How long to wait for the bridge content script to announce itself. */
+const BRIDGE_READY_MS = 2500;
+/** The handshake can wake a suspended service worker. */
+const HELLO_TIMEOUT_MS = 5000;
+
 /**
  * Connection to the extension for this page's Chrome window. A lost connection
  * keeps the last snapshot (marked stale) — it never reads as an empty window.
@@ -77,7 +82,13 @@ export function useBrowser() {
         setConnection("unsupported");
         return;
       }
-      const ack = await request("hello", { libraryScope: libraryScope(cat.libraryId) }, 1500);
+      // No bridge on the page: the extension is missing (or disabled for this site).
+      if (!(await client.current!.whenReady(BRIDGE_READY_MS))) {
+        setConnection((c) => (c === "reconnecting" ? c : "missing"));
+        return;
+      }
+      // The bridge is there; a cold service worker may take a few seconds to answer.
+      const ack = await request("hello", { libraryScope: libraryScope(cat.libraryId) }, HELLO_TIMEOUT_MS);
       if (ack.protocol !== PROTOCOL_VERSION) {
         setConnection("outdated");
         return;
@@ -87,7 +98,7 @@ export function useBrowser() {
       setSnapshot(await request("snapshot", {}));
       setResultsVersion((v) => v + 1);
     } catch (error) {
-      if (error instanceof BridgeTimeout) setConnection((c) => (c === "reconnecting" ? "reconnecting" : "missing"));
+      if (error instanceof BridgeTimeout) setConnection("reconnecting");
       else if (/reloaded/.test((error as Error).message)) setConnection("reload");
       else setConnection((c) => (c === "connected" ? "reconnecting" : "missing"));
     } finally {

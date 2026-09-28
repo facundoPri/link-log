@@ -1,38 +1,17 @@
-import { useEffect, useMemo, useState } from "react";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import { toast } from "sonner";
-import {
-  BookmarkCheck,
-  Copy,
-  Ellipsis,
-  ExternalLink,
-  FileWarning,
-  Globe,
-  Link2,
-  Loader2,
-  Lock,
-  Moon,
-  RotateCw,
-  SquareArrowOutUpRight,
-  X,
-} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { BookmarkCheck, Ellipsis, Globe, RotateCw, SquareArrowOutUpRight, X } from "lucide-react";
 import type { BrowserGroup, BrowserTab, Capture, LensRecord, TabPreview } from "@linklog/browser-protocol";
 import type { Lens, Link } from "../../types";
-import { cn } from "../../lib/utils";
 import { relativeTime } from "../../lib/time";
 import { relatedLinks } from "../../lib/related-links";
 import { lensIcon } from "../Sidebar";
-import { LensVerdict } from "../LensVerdict";
 import { TagChip } from "../TagChip";
-import { markdownClasses } from "../Inspector";
-import { ACCESS_LABEL } from "./TabRow";
+import { BrowserLensStatus } from "./BrowserLensStatus";
+import { ContentPanel, LinksPanel, type Read } from "./BrowserTabContent";
 import { GROUP_STYLE, groupTitle } from "./groups";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -41,22 +20,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-
-type Read =
-  | { status: "idle" }
-  | { status: "loading" }
-  | { status: "ready"; capture: Capture }
-  | { status: "error"; error: string };
-
-const CONTENT_MODE = "linklog.contentMode";
-
-function readMode(): "preview" | "markdown" {
-  try {
-    return localStorage.getItem(CONTENT_MODE) === "markdown" ? "markdown" : "preview";
-  } catch {
-    return "preview";
-  }
-}
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -91,6 +54,7 @@ export function BrowserInspector({
   onUngroup,
   onCloseTab,
   onRetry,
+  onMetadata,
   onAllowAccess,
   onToggleGroup,
   onDomainFilter,
@@ -113,85 +77,72 @@ export function BrowserInspector({
   onUngroup: () => void;
   onCloseTab: () => void;
   onRetry: (lens: Lens) => void;
+  onMetadata: (lens: Lens) => void;
   onAllowAccess: () => void;
   onToggleGroup: (groupId: number) => void;
   onDomainFilter: (domain: string) => void;
   onSaveRelated: (url: string) => Promise<unknown>;
 }) {
   const [state, setState] = useState<Read>({ status: "idle" });
-  const [mode, setMode] = useState(readMode);
-  const [expanded, setExpanded] = useState(false);
   const [imgFailed, setImgFailed] = useState(false);
   const [faviconFailed, setFaviconFailed] = useState(false);
-  const [savingUrl, setSavingUrl] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("content");
   const readable = tab.content === "available";
 
-  const load = (fresh: boolean) => {
+  // Only the latest read may land: an older one (previous document, earlier "Read
+  // again") finishing late must not overwrite it.
+  const readRef = useRef(read);
+  readRef.current = read;
+  const seq = useRef(0);
+  const load = useCallback((fresh: boolean) => {
+    const mine = ++seq.current;
     setState({ status: "loading" });
-    read(fresh)
-      .then((capture) => setState({ status: "ready", capture }))
-      .catch((e) => setState({ status: "error", error: (e as Error).message }));
-  };
+    readRef
+      .current(fresh)
+      .then((capture) => mine === seq.current && setState({ status: "ready", capture }))
+      .catch((e) => mine === seq.current && setState({ status: "error", error: (e as Error).message }));
+  }, []);
   // A new tab or a new document in the same tab is read again; hash changes are not.
   useEffect(() => {
-    setExpanded(false);
     setImgFailed(false);
     if (!readable) {
+      seq.current++;
       setState({ status: "idle" });
       return;
     }
     load(false);
-  }, [tab.tabInstanceId, tab.documentRevision, readable]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tab.tabInstanceId, tab.documentRevision, readable, load]);
 
   const capture = state.status === "ready" ? state.capture : null;
   const markdown = capture?.markdown ?? "";
   const related = useMemo(() => (markdown ? relatedLinks(markdown, tab.url) : []), [markdown, tab.url]);
   const image = (preview?.image || capture?.image || "") && !imgFailed ? preview?.image || capture?.image : "";
   const description = preview?.description || capture?.description || "";
-  const access = readable ? null : ACCESS_LABEL[tab.content as Exclude<BrowserTab["content"], "available">];
   const facts = capture?.facts ?? [];
+  const firstSeen = relativeTime(new Date(tab.firstSeenAt).toISOString());
 
   const lensSection = lenses.length > 0 && (
     <section className="space-y-1.5">
       <h3 className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">Lenses</h3>
-      {lenses.map((lens) => {
-        const r = records?.[lens.id];
-        return (
-          <div key={lens.id} className="flex items-center gap-2 rounded-md border px-2.5 py-2 text-xs">
-            {lensIcon(lens.type, "size-3.5 shrink-0 text-muted-foreground")}
-            <span className="min-w-0 flex-1 truncate font-medium">{lens.name}</span>
-            {r?.state === "done" && r.answer ? (
-              <LensVerdict
-                lens={lens}
-                result={{
-                  lens_id: lens.id,
-                  answer: r.answer,
-                  lens_version: lens.version,
-                  content_version: 0,
-                  model: r.model ?? "",
-                  evaluated_at: r.evaluatedAt ?? "",
-                  batch_id: r.batchId ?? "",
-                }}
-              />
-            ) : r && ["submitting", "queued", "running"].includes(r.state) ? (
-              <span className="inline-flex items-center gap-1 text-muted-foreground">
-                <Loader2 className="size-3 animate-spin" />
-                {r.state === "running" ? "Evaluating" : "Queued"}
-              </span>
-            ) : r?.state === "failed" || r?.state === "expired" || r?.state === "unavailable" ? (
-              <span className={r.state === "failed" ? "text-destructive" : "text-muted-foreground"}>
-                {r.state === "failed" ? "Failed" : r.state === "expired" ? "Expired" : "Unreadable"}
-              </span>
-            ) : (
-              <span className="text-muted-foreground">Not evaluated</span>
-            )}
-            <Button variant="ghost" size="icon-xs" aria-label={`Re-evaluate ${lens.name}`} onClick={() => onRetry(lens)}>
-              <RotateCw className="size-3" />
-            </Button>
-          </div>
-        );
-      })}
+      {lenses.map((lens) => (
+        <div key={lens.id} className="flex items-center gap-2 rounded-md border px-2.5 py-2 text-xs" data-lens-status={lens.id}>
+          {lensIcon(lens.type, "size-3.5 shrink-0 text-muted-foreground")}
+          <span className="min-w-0 flex-1 truncate font-medium">{lens.name}</span>
+          <span className="inline-flex items-center gap-1.5">
+            <BrowserLensStatus
+              lens={lens}
+              record={records?.[lens.id]}
+              tab={tab}
+              size="md"
+              onRetry={() => onRetry(lens)}
+              onMetadata={() => onMetadata(lens)}
+            />
+          </span>
+          <Button variant="ghost" size="icon-xs" aria-label={`Re-evaluate ${lens.name}`} onClick={() => onRetry(lens)}>
+            <RotateCw className="size-3" />
+          </Button>
+        </div>
+      ))}
     </section>
   );
 
@@ -253,7 +204,7 @@ export function BrowserInspector({
             <h2 className="text-base font-semibold leading-snug tracking-tight text-pretty break-words">{tab.title || tab.url}</h2>
             {description && <p className="mt-1 line-clamp-3 text-[13px] text-muted-foreground text-pretty">{description}</p>}
             <p className="mt-1.5 text-2xs text-muted-foreground">
-              Opened {relativeTime(new Date(tab.openedAt).toISOString())}
+              <span title="When the extension first saw this tab (since Chrome or the extension last started)">First seen {firstSeen}</span>
               {capture && (
                 <>
                   {" · "}
@@ -318,192 +269,17 @@ export function BrowserInspector({
             <TabsTrigger value="details">Details</TabsTrigger>
           </TabsList>
           <TabsContent value="content" className="mt-3">
-            {access ? (
-              <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed p-5 text-center">
-                <span className="flex size-8 items-center justify-center rounded-md bg-muted text-muted-foreground">
-                  {tab.content === "no-permission" ? (
-                    <Lock className="size-4" />
-                  ) : tab.content === "discarded" || tab.content === "frozen" ? (
-                    <Moon className="size-4" />
-                  ) : tab.content === "loading" ? (
-                    <Loader2 className="size-4 animate-spin" />
-                  ) : (
-                    <FileWarning className="size-4" />
-                  )}
-                </span>
-                <p className="text-xs font-medium">{access.label}</p>
-                <p className="max-w-64 text-xs text-muted-foreground">{access.hint}</p>
-                {tab.content === "no-permission" ? (
-                  <Button size="sm" variant="outline" onClick={onAllowAccess}>
-                    Allow access
-                  </Button>
-                ) : tab.content === "discarded" || tab.content === "frozen" ? (
-                  <Button size="sm" variant="outline" onClick={onFocus}>
-                    Go to tab
-                  </Button>
-                ) : null}
-              </div>
-            ) : state.status === "loading" || state.status === "idle" ? (
-              <div className="space-y-2" aria-label="Reading page">
-                <Skeleton className="h-4 w-2/3" />
-                <Skeleton className="h-3 w-full" />
-                <Skeleton className="h-3 w-full" />
-                <Skeleton className="h-3 w-5/6" />
-              </div>
-            ) : state.status === "error" ? (
-              <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed p-5 text-center">
-                <p className="text-xs text-destructive">{state.error}</p>
-                <Button size="sm" variant="outline" onClick={() => load(true)}>
-                  Try again
-                </Button>
-              </div>
-            ) : (
-              <div>
-                {capture!.completeness === "partial" && (
-                  <div role="status" className="mb-3 flex flex-col gap-1 rounded-md bg-muted/50 p-2 text-xs">
-                    <span className="font-medium">Read partially</span>
-                    {capture!.reasons
-                      .filter((r) => !/^Only content already loaded/.test(r))
-                      .map((r) => (
-                        <span key={r} className="text-muted-foreground">
-                          {r}
-                        </span>
-                      ))}
-                  </div>
-                )}
-                <div className="flex items-center gap-1">
-                  <ToggleGroup
-                    type="single"
-                    variant="outline"
-                    size="sm"
-                    value={mode}
-                    onValueChange={(v) => {
-                      if (!v) return;
-                      setMode(v as "preview" | "markdown");
-                      try {
-                        localStorage.setItem(CONTENT_MODE, v);
-                      } catch {
-                        /* per-viewer convenience only */
-                      }
-                    }}
-                  >
-                    <ToggleGroupItem value="preview" aria-label="Preview">
-                      Preview
-                    </ToggleGroupItem>
-                    <ToggleGroupItem value="markdown" aria-label="Markdown">
-                      Markdown
-                    </ToggleGroupItem>
-                  </ToggleGroup>
-                  <span className="ml-2 text-2xs text-muted-foreground tabular">
-                    {capture!.chars.toLocaleString("en")} chars · read {relativeTime(capture!.capturedAt)}
-                  </span>
-                  <div className="ml-auto flex items-center gap-0.5">
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          aria-label="Copy markdown"
-                          onClick={() => void navigator.clipboard.writeText(markdown).then(() => toast("Markdown copied"))}
-                        >
-                          <Copy className="size-3.5" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>Copy markdown</TooltipContent>
-                    </Tooltip>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button variant="ghost" size="icon-sm" aria-label="Read page again" onClick={() => load(true)}>
-                          <RotateCw className="size-3.5" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>Read again</TooltipContent>
-                    </Tooltip>
-                  </div>
-                </div>
-                <div className={cn("relative mt-2", !expanded && "max-h-96 overflow-hidden")} data-capture-markdown>
-                  {mode === "markdown" ? (
-                    <pre className="whitespace-pre-wrap break-words rounded-md bg-muted/50 p-3 font-mono text-xs leading-5">{markdown}</pre>
-                  ) : (
-                    <div className={markdownClasses}>
-                      <Markdown
-                        remarkPlugins={[remarkGfm]}
-                        components={{
-                          img: ({ alt }) => <span className="text-muted-foreground">Image: {alt || "no description"}</span>,
-                          a: ({ href, children }) => (
-                            <a href={href} target="_blank" rel="noreferrer">
-                              {children}
-                            </a>
-                          ),
-                          table: ({ children }) => (
-                            <div className="my-2 overflow-x-auto">
-                              <table className="w-full text-xs [&_td]:border [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:bg-muted/50 [&_th]:px-2 [&_th]:py-1 [&_th]:text-left">
-                                {children}
-                              </table>
-                            </div>
-                          ),
-                        }}
-                      >
-                        {markdown}
-                      </Markdown>
-                    </div>
-                  )}
-                  {!expanded && markdown.length > 1200 && (
-                    <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-background to-transparent" />
-                  )}
-                </div>
-                {!expanded && markdown.length > 1200 && (
-                  <Button variant="ghost" size="sm" className="mt-1" onClick={() => setExpanded(true)}>
-                    Show more
-                  </Button>
-                )}
-              </div>
-            )}
+            <ContentPanel
+              key={tab.documentRevision}
+              tab={tab}
+              state={state}
+              onReload={() => load(true)}
+              onAllowAccess={onAllowAccess}
+              onFocus={onFocus}
+            />
           </TabsContent>
           <TabsContent value="links" className="mt-3">
-            {related.length ? (
-              <div className="space-y-1.5">
-                <p className="mb-3 text-xs text-muted-foreground">Links found in the page content.</p>
-                {related.map((item) => {
-                  const isSaved = savedUrls.has(item.url);
-                  return (
-                    <div key={item.url} className="flex items-center gap-2 rounded-md border p-2.5">
-                      <Link2 className="size-3.5 shrink-0 text-muted-foreground" />
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-xs font-medium">{item.label}</p>
-                        <p className="truncate text-2xs text-muted-foreground">{item.url}</p>
-                      </div>
-                      <Button variant="outline" size="icon-sm" asChild>
-                        <a href={item.url} target="_blank" rel="noopener noreferrer" aria-label={`Open ${item.label}`}>
-                          <ExternalLink className="size-3.5" />
-                        </a>
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant={isSaved ? "ghost" : "outline"}
-                        disabled={isSaved || savingUrl === item.url}
-                        onClick={async () => {
-                          setSavingUrl(item.url);
-                          try {
-                            await onSaveRelated(item.url);
-                          } catch (e) {
-                            toast.error((e as Error).message);
-                          } finally {
-                            setSavingUrl(null);
-                          }
-                        }}
-                      >
-                        {savingUrl === item.url ? <Loader2 className="size-3.5 animate-spin" /> : isSaved ? "Saved" : "Save"}
-                      </Button>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="rounded-lg border border-dashed p-5 text-center text-xs text-muted-foreground">
-                {capture ? "No links found in the page content." : "Links appear once the page has been read."}
-              </div>
-            )}
+            <LinksPanel related={related} read={!!capture} savedUrls={savedUrls} onSave={onSaveRelated} />
           </TabsContent>
           <TabsContent value="details" className="mt-3">
             <dl className="divide-y">
@@ -513,7 +289,7 @@ export function BrowserInspector({
               {(preview?.siteName || capture?.siteName) && <Row label="Site">{preview?.siteName || capture?.siteName}</Row>}
               {capture?.byline && <Row label="Author">{capture.byline}</Row>}
               {capture?.lang && <Row label="Language">{capture.lang}</Row>}
-              <Row label="Opened">{relativeTime(new Date(tab.openedAt).toISOString())}</Row>
+              <Row label="First seen">{firstSeen}</Row>
               <Row label="Status">
                 {tab.active ? "Active tab" : tab.discarded ? "Unloaded" : tab.status === "loading" ? "Loading" : "Loaded"}
                 {tab.pinned ? " · pinned" : ""}
