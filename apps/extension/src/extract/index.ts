@@ -111,13 +111,11 @@ function sanitizedCopy() {
   base.href = document.baseURI;
   doc.head.append(base);
   let elements = 0;
-  let frames = 0;
   let truncated = false;
   const copy = (node: Node, depth: number): Node | null => {
     if (node.nodeType === Node.TEXT_NODE) return doc.createTextNode(node.textContent ?? "");
     if (node.nodeType !== Node.ELEMENT_NODE) return null;
     const el = node as Element;
-    if (el.tagName === "IFRAME" || el.tagName === "FRAME") frames++;
     if (el.namespaceURI === "http://www.w3.org/2000/svg") return null;
     if (SKIP.has(el.tagName) || (el as HTMLElement).isContentEditable || hidden(el)) return null;
     if (++elements > MAX_ELEMENTS || depth > MAX_DEPTH) {
@@ -149,7 +147,7 @@ function sanitizedCopy() {
   };
   const body = document.body ? copy(document.body, 0) : null;
   if (body) doc.body.replaceWith(body);
-  return { doc, elements, frames, truncated };
+  return { doc, elements, truncated };
 }
 
 function turndown() {
@@ -217,7 +215,7 @@ function extract(maxChars: number): Extracted | Unavailable {
     return { ok: false, reason: `This tab shows ${type}, which can't be read as text.` };
   if (!document.body) return { ok: false, reason: "The page has no content yet." };
   const reasons: string[] = [];
-  const { doc, frames, truncated } = sanitizedCopy();
+  const { doc, truncated } = sanitizedCopy();
   const main =
     doc.querySelector("main, [role='main']") ??
     (doc.querySelectorAll("article").length === 1 ? doc.querySelector("article") : null) ??
@@ -265,7 +263,6 @@ function extract(maxChars: number): Extracted | Unavailable {
   let markdown = parts.join("\n").trim();
 
   if (truncated) reasons.push(`The page is very large; reading stopped after ${MAX_ELEMENTS.toLocaleString("en")} elements.`);
-  if (frames) reasons.push(`${frames} embedded frame${frames === 1 ? " was" : "s were"} not read.`);
   if (text.length < 200)
     reasons.push("Very little text was loaded; the page may render content lazily or need you to open it.");
   if (markdown.length > maxChars) {

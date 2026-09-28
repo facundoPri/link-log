@@ -155,8 +155,9 @@ se abre la página **Connect**, donde se concede (o no) el acceso a contenido.
 
 ## Límites conocidos / siguientes pasos
 - La caché no sobrevive a reinicio de Chrome ni a recarga de la extensión (acordado).
-- La extracción lee el DOM cargado: contenido virtualizado, iframes de otros orígenes y PDFs
-  quedan marcados como parciales o no disponibles.
+- La extracción lee el DOM cargado de la página principal: el contenido de iframes no se lee (ni se
+  avisa, porque casi siempre son marcos técnicos invisibles); contenido virtualizado queda fuera y
+  los PDFs se marcan como no disponibles.
 - No se hizo un smoke con Jev real en esta sesión (no hay credenciales en el entorno); ver
   validación.
 - La cancelación sólo alcanza jobs aún en cola; una evaluación en curso termina y su resultado
