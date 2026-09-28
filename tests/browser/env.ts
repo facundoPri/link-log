@@ -29,11 +29,15 @@ export function startSite() {
     hostname: "127.0.0.1",
     fetch(req) {
       const url = new URL(req.url);
+      if (url.pathname.startsWith("/img/"))
+        return new Response(`<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><rect width="320" height="180" fill="#0f766e"/><text x="24" y="100" font-size="28" fill="#fff" font-family="sans-serif">${url.pathname.slice(5)}</text></svg>`, { headers: { "content-type": "image/svg+xml" } });
       const marker = url.searchParams.get("m") ?? "";
       const title = url.searchParams.get("t") ?? `Fixture ${url.pathname}`;
-      const body = `<!doctype html><html><head><title>${title}</title><meta name="description" content="Fixture page ${url.pathname}"></head>
+      const body = `<!doctype html><html><head><title>${title}</title><meta name="description" content="Fixture page ${url.pathname}"><meta property="og:image" content="/img/cover${url.pathname.replaceAll("/", "-")}.svg"><meta property="og:site_name" content="Fixture site"></head>
 <body><main><h1>${title}</h1><p>This fixture article talks about ${url.pathname.replaceAll("/", " ")} in enough detail to be read as a normal page by the extension extractor. ${marker}</p>
 <p>Second paragraph with more words so the capture is not considered nearly empty. It mentions testing, browsers, tabs and groups.</p>
+<h2>Numbers</h2><table><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody><tr><td>tabs</td><td>20</td></tr></tbody></table>
+<pre><code class="language-ts">const answer = 42;</code></pre>
 <form><input name="secret" value="do-not-read-me"><input type="password" value="hunter2"></form>
 <a href="https://example.com/related">Related reading</a></main></body></html>`;
       return new Response(body, { headers: { "content-type": "text/html; charset=utf-8" } });

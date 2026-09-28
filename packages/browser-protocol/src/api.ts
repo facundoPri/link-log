@@ -79,6 +79,8 @@ export type SaveItem = {
   url: string;
   title: string;
   favicon: string | null;
+  /** Preview image read from the page (og:image), http(s) only. */
+  image?: string | null;
   capture?: EvaluationCapture;
 };
 

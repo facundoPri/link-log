@@ -134,6 +134,21 @@ export type Capture = CaptureSummary & {
   description: string;
   siteName: string;
   markdown: string;
+  /** og:image / twitter:image, absolute http(s). */
+  image?: string;
+  byline?: string;
+  lang?: string;
+  /** "article": Readability picked the main content; "page": the main region was kept whole. */
+  extractor?: "article" | "page";
+};
+
+/** Page metadata read locally for list rows; never sent anywhere. */
+export type TabPreview = {
+  tabInstanceId: string;
+  documentRevision: number;
+  description: string;
+  siteName: string;
+  image: string;
 };
 
 export type LensRef = { id: string; fingerprint: string };
@@ -237,10 +252,15 @@ export type Commands = {
     result: { removed: number; requestIds: string[] };
   };
   capture: {
-    args: { tabs: TabRef[]; source?: "dom" | "metadata" };
+    /** `fresh` re-reads the page instead of reusing this revision's cached capture. */
+    args: { tabs: TabRef[]; source?: "dom" | "metadata"; fresh?: boolean };
     result: {
       captures: { tabId: number; capture?: Capture; error?: string }[];
     };
+  };
+  previews: {
+    args: { tabs: TabRef[] };
+    result: { previews: TabPreview[] };
   };
   closeTabs: { args: { tabs: (TabRef & { url: string })[] }; result: { items: ItemResult[] } };
   moveToGroup: {

@@ -110,6 +110,7 @@ export function useBrowserActions(ws: BrowserWorkspace, setLibrary: (l: Library)
           url: t.url,
           title: t.title,
           favicon: t.favIconUrl && /^https?:/.test(t.favIconUrl) ? t.favIconUrl : null,
+          image: byTab.get(t.tabId)?.image || null,
           capture: byTab.get(t.tabId) ? captureBody(byTab.get(t.tabId)!) : undefined,
         }));
         const results: SaveResult[] = [];

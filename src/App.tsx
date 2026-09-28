@@ -17,7 +17,9 @@ import { LensHeader } from "./components/LensHeader";
 import { ActivitySheet } from "./components/ActivitySheet";
 import { BrowserView } from "./components/browser/BrowserView";
 import { BrowserSidebar } from "./components/browser/BrowserSidebar";
-import { useBrowserWorkspace } from "./browser/useBrowserWorkspace";
+import { tabDomain, useBrowserWorkspace } from "./browser/useBrowserWorkspace";
+import { useSavedLookup } from "./browser/saved";
+import { BrowserInspector } from "./components/browser/BrowserInspector";
 import { useBrowserActions } from "./browser/useBrowserActions";
 import { usd, tokens } from "./lib/format";
 import { Toaster } from "@/components/ui/sonner";
@@ -663,7 +665,52 @@ export function App() {
     />
   );
 
-  const inspector = activeLink && (
+  const savedTab = useSavedLookup(library);
+  const savedUrlSet = useMemo(
+    () => new Set(library.links.flatMap((l) => [l.original_url, l.url])),
+    [library.links],
+  );
+  const activeTab =
+    view === "browser" ? ws.tabs.find((t) => t.tabInstanceId === ws.activeTabId) ?? null : null;
+  const browserInspector = activeTab && (
+    <BrowserInspector
+      key={activeTab.tabInstanceId}
+      tab={activeTab}
+      group={ws.groups.find((g) => g.groupId === activeTab.groupId)}
+      saved={savedTab(activeTab)}
+      preview={ws.previews[activeTab.tabInstanceId]}
+      domain={tabDomain(activeTab)}
+      lenses={ws.activeLenses}
+      records={ws.runner.results[activeTab.tabInstanceId]}
+      savedUrls={savedUrlSet}
+      read={async (fresh) => {
+        const { captures } = await ws.browser.request(
+          "capture",
+          { tabs: [{ tabId: activeTab.tabId, tabInstanceId: activeTab.tabInstanceId }], fresh },
+          60_000,
+        );
+        const c = captures[0];
+        if (!c?.capture) throw new Error(c?.error || "The page could not be read.");
+        return c.capture;
+      }}
+      onClose={() => ws.setActiveTabId(null)}
+      onFocus={() => browserActions.focus(activeTab)}
+      onCopy={() => browserActions.copy(activeTab)}
+      onSave={() => void browserActions.save([activeTab])}
+      onMove={() => browserActions.chooseMove([activeTab])}
+      onUngroup={() => void browserActions.ungroup([activeTab])}
+      onCloseTab={() => browserActions.requestClose([activeTab])}
+      onRetry={(lens) => browserActions.reevaluate(lens, [activeTab])}
+      onAllowAccess={() => void ws.browser.request("openPermissions", {}).catch(() => {})}
+      onToggleGroup={ws.toggleGroupFilter}
+      onDomainFilter={ws.toggleDomain}
+      onSaveRelated={(url) => save(url)}
+    />
+  );
+  const showInspector = view === "browser" ? !!activeTab : !!activeLink;
+  const closeInspector = () => (view === "browser" ? ws.setActiveTabId(null) : setActiveId(null));
+
+  const libraryInspector = activeLink && (
     <Inspector
       link={activeLink}
       tags={library.tags}
@@ -697,6 +744,7 @@ export function App() {
       focusTags={focusTags}
     />
   );
+  const inspector = view === "browser" ? browserInspector : libraryInspector;
 
   return (
     <TooltipProvider delayDuration={400}>
@@ -881,7 +929,7 @@ export function App() {
         </>
         )}
       </main>
-      {activeLink && !narrow && (
+      {showInspector && !narrow && (
         <aside
           className="relative shrink-0 border-l animate-in fade-in slide-in-from-right-2 duration-200"
           style={{ width: inspectorWidth }}
@@ -927,8 +975,8 @@ export function App() {
         </aside>
       )}
       <Sheet
-        open={!!activeLink && narrow}
-        onOpenChange={(o) => !o && setActiveId(null)}
+        open={showInspector && narrow}
+        onOpenChange={(o) => !o && closeInspector()}
       >
         <SheetContent
           side="right"
@@ -936,7 +984,7 @@ export function App() {
           className="w-full p-0 sm:max-w-[400px]"
         >
           <SheetHeader className="sr-only">
-            <SheetTitle>{activeLink?.title}</SheetTitle>
+            <SheetTitle>{view === "browser" ? activeTab?.title : activeLink?.title}</SheetTitle>
           </SheetHeader>
           {inspector}
         </SheetContent>

@@ -108,6 +108,11 @@ describe("messages", () => {
   test("validates commands and rejects unknown or malformed ones", () => {
     expect(parsePageRequest({ id: "r1", command: "snapshot", args: {} })?.command).toBe("snapshot");
     expect(parsePageRequest({ id: "r1", command: "eval", args: {} })).toBeNull();
+    const ref = { tabId: 1, tabInstanceId: "i1" };
+    expect(parsePageRequest({ id: "r1", command: "previews", args: { tabs: [ref] } })?.command).toBe("previews");
+    expect(parsePageRequest({ id: "r1", command: "previews", args: { tabs: [{ tabId: 1 }] } })).toBeNull();
+    expect(parsePageRequest({ id: "r1", command: "capture", args: { tabs: [ref], fresh: true } })?.command).toBe("capture");
+    expect(parsePageRequest({ id: "r1", command: "capture", args: { tabs: [ref], fresh: "yes" } })).toBeNull();
     expect(parsePageRequest({ id: "r1", command: "closeTabs", args: { tabs: [{ tabId: "1" }] } })).toBeNull();
     expect(parsePageRequest({ id: "r1", command: "moveToGroup", args: { tabs: [], target: { kind: "new", title: "x", color: "neon", description: "" } } })).toBeNull();
     expect(parsePageRequest({ id: "<script>", command: "snapshot", args: {} })).toBeNull();

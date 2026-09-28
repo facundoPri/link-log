@@ -64,10 +64,30 @@ export async function captureTab(tabId: number): Promise<Capture> {
       title: str(raw.title, 1000),
       description: str(raw.description, 2000),
       siteName: str(raw.siteName, 200),
+      image: /^https?:\/\//.test(str(raw.image, 2000)) ? str(raw.image, 2000) : "",
+      byline: str(raw.byline, 200),
+      lang: str(raw.lang, 20),
+      extractor: raw.extractor === "article" ? "article" : "page",
       markdown,
     };
   } catch (error) {
     if (error instanceof CaptureError) throw error;
     throw new CaptureError(explain(error));
   }
+}
+
+/** Reads only the page's metadata (description, site name, preview image). */
+export async function previewTab(tabId: number): Promise<{ description: string; siteName: string; image: string }> {
+  await chrome.scripting.executeScript({ target: { tabId }, files: ["extract.js"] });
+  const [injection] = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => (globalThis as { __linklogPreview?: () => unknown }).__linklogPreview?.(),
+  });
+  const raw = (injection?.result ?? {}) as Record<string, unknown>;
+  const image = str(raw.image, 2000);
+  return {
+    description: str(raw.description, 400),
+    siteName: str(raw.siteName, 200),
+    image: /^https?:\/\//.test(image) ? image : "",
+  };
 }

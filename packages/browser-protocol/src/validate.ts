@@ -97,7 +97,9 @@ const validators: { [K in CommandName]: (a: Obj) => boolean } = {
       (Array.isArray(a.tabInstanceIds) && a.tabInstanceIds.every(id))),
   capture: (a) =>
     tabRefs(a.tabs, 100) &&
-    (a.source === undefined || a.source === "dom" || a.source === "metadata"),
+    (a.source === undefined || a.source === "dom" || a.source === "metadata") &&
+    (a.fresh === undefined || typeof a.fresh === "boolean"),
+  previews: (a) => tabRefs(a.tabs, 200),
   closeTabs: (a) =>
     Array.isArray(a.tabs) && a.tabs.length <= 500 && a.tabs.every((t) => tabRef(t) && str((t as Obj).url)),
   moveToGroup: (a) =>

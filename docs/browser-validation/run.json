@@ -1,6 +1,6 @@
 {
   "meta": {
-    "startedAt": "2026-09-26T14:46:54.304Z",
+    "startedAt": "2026-09-28T16:17:27.776Z",
     "browser": "141.0.7390.37",
     "extensionId": "ahholiofnhckbdnahdbncdmcehflobaf",
     "extensionVersion": "0.1.0",
@@ -63,7 +63,7 @@
     },
     "ui": "http://127.0.0.1:3010",
     "site": "http://127.0.0.1:3099",
-    "finishedAt": "2026-09-26T14:50:18.315Z",
+    "finishedAt": "2026-09-28T16:20:48.386Z",
     "providerCalls": 134
   },
   "checks": [
@@ -72,266 +72,287 @@
       "name": "0010 applies on a real local D1 with existing rows",
       "ok": true,
       "detail": "links 1, jobs 2, usage_events.job_id kept (j1), leases 1",
-      "ms": 20222
+      "ms": 13076
     },
     {
       "area": "Connection",
       "name": "without the extension Browser shows connect/install steps",
       "ok": true,
       "detail": "",
-      "ms": 4243
+      "ms": 3622
     },
     {
       "area": "Connection",
       "name": "lists only the tabs of Linklog's window (20 here, 3 in the other window)",
       "ok": true,
-      "detail": "window 381080924: 20 rows; window 381080930 tabs hidden",
-      "ms": 927
+      "detail": "window 85578353: 20 rows; window 85578359 tabs hidden",
+      "ms": 850
     },
     {
       "area": "Lenses and cache",
       "name": "activating lens A evaluates all 20 tabs once",
       "ok": true,
       "detail": "20 Jev calls (fixture provider)",
-      "ms": 4211
+      "ms": 4169
     },
     {
       "area": "Lenses and cache",
       "name": "toggling lens A off and on reuses results (0 new calls)",
       "ok": true,
       "detail": "",
-      "ms": 4542
+      "ms": 4535
     },
     {
       "area": "Lenses and cache",
       "name": "3 new tabs with A active: only the 3 missing are evaluated; inactive B waits",
       "ok": true,
       "detail": "20 reused + 3 new = 23 calls",
-      "ms": 5117
+      "ms": 5404
     },
     {
       "area": "Lenses and cache",
       "name": "filters narrow the list, never the evaluation scope",
       "ok": true,
       "detail": "Yes → 12 rows; new No tab still evaluated (24 done); inverse No filter → 12",
-      "ms": 4345
+      "ms": 4657
     },
     {
       "area": "Lenses and cache",
       "name": "two active lenses: AND across lenses, OR within a lens",
       "ok": true,
-      "detail": "Yes∧Article = 3; Yes∧(Article∨Reference) = 6; Yes∧(any option) = 12",
-      "ms": 5328
+      "detail": "Yes∧Article = 3; Yes∧(Article∨Reference) = 9; Yes∧(any option) = 12",
+      "ms": 4726
     },
     {
       "area": "Lenses and cache",
       "name": "classifying tabs never creates saved links",
       "ok": true,
       "detail": "0 links before and after 48 evaluations",
-      "ms": 22
+      "ms": 20
     },
     {
       "area": "Lifecycle and recovery",
       "name": "closing and reopening Linklog keeps done results (0 new calls)",
       "ok": true,
       "detail": "",
-      "ms": 1044
+      "ms": 1633
     },
     {
       "area": "Lifecycle and recovery",
       "name": "real service-worker suspension keeps session and results",
       "ok": true,
-      "detail": "worker stopped and restarted; session 34e55936… unchanged; 0 new calls",
-      "ms": 2439
+      "detail": "worker stopped and restarted; session e2e2b16b… unchanged; 0 new calls",
+      "ms": 2645
     },
     {
       "area": "Lifecycle and recovery",
       "name": "API outage: stored answers stay visible, nothing is emptied",
       "ok": true,
       "detail": "banner shown; recovered by request id; 2 new calls (A, B) for the new tab",
-      "ms": 19256
+      "ms": 19297
     },
     {
       "area": "Lifecycle and recovery",
       "name": "response lost after the POST was accepted: same job, no duplicate",
       "ok": true,
       "detail": "2 responses dropped; reconciled by GET; 2 batches, 2 calls",
-      "ms": 3953
+      "ms": 4570
     },
     {
       "area": "Lifecycle and recovery",
       "name": "queue redelivery / recovery sweeps don't repeat evaluations",
       "ok": true,
       "detail": "4 recovery sweeps during running jobs; 4 calls for 2 tabs × 2 lenses",
-      "ms": 6271
+      "ms": 6620
     },
     {
       "area": "Identity and invalidation",
       "name": "closing and reopening the same URL is a new tab instance",
       "ok": true,
       "detail": "new tabInstanceId; re-evaluated (2 calls)",
-      "ms": 3780
+      "ms": 4010
     },
     {
       "area": "Identity and invalidation",
       "name": "navigation invalidates; hash change doesn't; SPA pushState does",
       "ok": true,
       "detail": "hash: 0 calls; pushState: 2; full navigation: 2",
-      "ms": 10273
+      "ms": 10230
     },
     {
       "area": "Identity and invalidation",
       "name": "editing a lens: threshold reuses answers, a new question re-evaluates",
       "ok": true,
       "detail": "threshold: 0 calls; question: 28 calls (one per tab)",
-      "ms": 9455
+      "ms": 9338
     },
     {
       "area": "Identity and invalidation",
       "name": "Clean drops results, turns the lens off and doesn't re-evaluate",
       "ok": true,
       "detail": "0 results for A, A off, lens definition kept",
-      "ms": 4902
+      "ms": 5246
     },
     {
       "area": "States that are not answers",
       "name": "provider failure is Failed with explicit retry, never No",
       "ok": true,
       "detail": "no automatic retry; explicit retry = 1 call",
-      "ms": 8669
+      "ms": 9050
     },
     {
       "area": "States that are not answers",
       "name": "no permission and internal pages stay manageable with honest states",
       "ok": true,
       "detail": "No access / Can't read shown; neither evaluated nor activated",
-      "ms": 3294
+      "ms": 3233
     },
     {
       "area": "States that are not answers",
       "name": "application pages keep deterministic evidence (GitHub PR state)",
       "ok": true,
       "detail": "facts: state Merged, 2 comments; sent to Jev as evidence and shown as a badge",
-      "ms": 5482
+      "ms": 5214
     },
     {
       "area": "States that are not answers",
       "name": "page capture excludes form values and passwords",
       "ok": true,
       "detail": "",
-      "ms": 10
+      "ms": 7
+    },
+    {
+      "area": "Content, previews and domains",
+      "name": "rows show the page's own preview (description and image), read locally",
+      "ok": true,
+      "detail": "description and og:image from the page's metadata; nothing sent to the API",
+      "ms": 12
+    },
+    {
+      "area": "Content, previews and domains",
+      "name": "clicking a tab opens the inspector with the page as Markdown and its links",
+      "ok": true,
+      "detail": "Markdown with GFM table, fenced code and absolute links (399 chars)",
+      "ms": 1367
+    },
+    {
+      "area": "Content, previews and domains",
+      "name": "domain filter: pick several (OR), remove one, clear",
+      "ok": true,
+      "detail": "32 tabs → 1 (github.com) → 30 (+127.0.0.1) → cleared",
+      "ms": 1678
     },
     {
       "area": "Bridge security",
       "name": "non-Linklog pages get no bridge and can't reach the extension",
       "ok": true,
       "detail": "{\"bridge\":null,\"connect\":\"no chrome.runtime on the page\",\"reply\":\"no answer\"}",
-      "ms": 1509
+      "ms": 1511
     },
     {
       "area": "Bridge security",
       "name": "bridge rejects malformed commands and ids from another window",
       "ok": true,
       "detail": "unknown command dropped by the bridge; other-window tab refused and still open",
-      "ms": 3025
+      "ms": 3027
     },
     {
       "area": "Save and Close",
       "name": "Save creates links from the local capture without remote extraction",
       "ok": true,
       "detail": "2 links, content_source=browser, 0 extract batches; re-save = duplicate, tags kept",
-      "ms": 3583
+      "ms": 3735
     },
     {
       "area": "Save and Close",
       "name": "Close closes only the selected tabs, after revalidation",
       "ok": true,
       "detail": "2 closed; 2 saved links untouched",
-      "ms": 1367
+      "ms": 1558
     },
     {
       "area": "Groups",
       "name": "create a pinned group from the selection",
       "ok": true,
-      "detail": "native group 1071796785 bound to pinned ca8e22a1…",
-      "ms": 2212
+      "detail": "native group 430864415 bound to pinned c25dfec4…",
+      "ms": 2172
     },
     {
       "area": "Groups",
       "name": "pinned group appears in another window without tabs and materializes on use",
       "ok": true,
-      "detail": "created group 1560469202 in window 381080930 bound to the same definition",
-      "ms": 13746
+      "detail": "created group 1659110466 in window 85578359 bound to the same definition",
+      "ms": 11792
     },
     {
       "area": "Groups",
       "name": "same name never merges groups",
       "ok": true,
       "detail": "two native 'Research' groups in window 1, one pinned definition",
-      "ms": 57
+      "ms": 66
     },
     {
       "area": "Groups",
       "name": "Autogroup keeps tabs grouped meanwhile and moves the rest after review",
       "ok": true,
-      "detail": "tab kept in “Manual”; other moved to pinned Research (1071796785 = 1071796785)",
-      "ms": 7285
+      "detail": "tab kept in “Manual”; other moved to pinned Research (430864415 = 430864415)",
+      "ms": 7493
     },
     {
       "area": "Groups",
       "name": "Move to group changes a grouped tab; Ungroup keeps it open",
       "ok": true,
-      "detail": "tab 381080941 open and ungrouped",
-      "ms": 4165
+      "detail": "tab 85578370 open and ungrouped",
+      "ms": 4555
     },
     {
       "area": "Groups",
       "name": "group filters: one group, several groups (union), ungrouped",
       "ok": true,
       "detail": "Ungrouped = 29 rows; Ungrouped ∪ Manual shown together",
-      "ms": 929
+      "ms": 1107
     },
     {
       "area": "Two pages, moves and a second profile",
       "name": "two Linklog pages in one window share results without duplicate jobs",
       "ok": true,
       "detail": "31 tabs, 31 calls from two concurrent activations",
-      "ms": 16031
+      "ms": 16291
     },
     {
       "area": "Two pages, moves and a second profile",
       "name": "moving a tab to another window keeps its cached result",
       "ok": true,
       "detail": "row left window 1, appeared in window 2, cache unchanged",
-      "ms": 562
+      "ms": 596
     },
     {
       "area": "Two pages, moves and a second profile",
       "name": "moving the Linklog page switches its scope to the new window",
       "ok": true,
       "detail": "patch stream re-scoped after onAttached",
-      "ms": 415
+      "ms": 445
     },
     {
       "area": "Two pages, moves and a second profile",
       "name": "second profile shares pinned definitions, not tabs",
       "ok": true,
-      "detail": "installation ec5325a6… vs 028d5c83…",
-      "ms": 3614
+      "detail": "installation e80d4624… vs 3b7d3658…",
+      "ms": 3775
     },
     {
       "area": "Two pages, moves and a second profile",
       "name": "Unpin keeps real groups and their metadata",
       "ok": true,
       "detail": "3 native “Research” groups still open; definition removed",
-      "ms": 2655
+      "ms": 3072
     },
     {
       "area": "Activity",
       "name": "browser evaluations appear in Activity with their usage",
       "ok": true,
       "detail": "",
-      "ms": 1653
+      "ms": 1756
     }
   ]
 }

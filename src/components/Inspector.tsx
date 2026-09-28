@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
 import {
   CircleAlert,
@@ -61,7 +62,7 @@ import { TagPicker } from "./TagPicker";
 import { LensVerdict } from "./LensVerdict";
 import { lensIcon } from "./Sidebar";
 
-const markdownClasses = cn(
+export const markdownClasses = cn(
   "text-[13px] leading-6",
   "[&_h1]:text-sm [&_h1]:font-semibold [&_h2]:text-sm [&_h2]:font-semibold [&_h3]:font-medium",
   "[&_p]:my-2 [&_a]:underline [&_a]:underline-offset-2",
@@ -731,6 +732,7 @@ export function Inspector({
                   ) : (
                     <div ref={contentBody} className={markdownClasses}>
                       <Markdown
+                        remarkPlugins={[remarkGfm]}
                         components={{
                           img: ({ alt }) => (
                             <span className="text-muted-foreground">

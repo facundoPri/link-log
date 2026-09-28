@@ -478,6 +478,49 @@ try {
     assert(!all.includes("hunter2") && !all.includes("do-not-read-me"), "form values captured");
   });
 
+  section("Content, previews and domains");
+  await check("rows show the page's own preview (description and image), read locally", async () => {
+    const id = (await tabOf(ctx, "/a/3?"))!.id!;
+    const row = L.locator(`[data-tab-id="${id}"]`);
+    await waitFor("preview", async () => (await row.getByText("Fixture page /a/3").count()) === 1 && (await row.locator("img[src*='/img/cover-a-3']").count()) === 1, 20000);
+    return "description and og:image from the page's metadata; nothing sent to the API";
+  });
+  await check("clicking a tab opens the inspector with the page as Markdown and its links", async () => {
+    const id = (await tabOf(ctx, "/a/3?"))!.id!;
+    await L.locator(`[data-tab-id="${id}"] p`).first().click();
+    const panel = L.locator(`[data-browser-inspector="${id}"]`);
+    await waitFor("content", async () => (await panel.locator("[data-capture-markdown]", { hasText: "Second paragraph" }).count()) === 1, 20000);
+    await panel.getByRole("radio", { name: "Markdown" }).click();
+    const md = (await panel.locator("[data-capture-markdown] pre").textContent()) ?? "";
+    assert(md.includes("| Metric | Value |") && md.includes("```ts") && md.includes("[Related reading](https://example.com/related)"), `markdown lacks table/code/link: ${md.slice(0, 400)}`);
+    assert(!md.includes("hunter2") && !md.includes("do-not-read-me"), "form values in content");
+    await panel.getByRole("radio", { name: "Preview" }).click();
+    await shot(L, "15-inspector");
+    await panel.getByRole("tab", { name: /^Links/ }).click();
+    await waitFor("links tab", async () => (await panel.getByText("Related reading").count()) > 0);
+    await panel.getByRole("button", { name: "Close inspector" }).click();
+    return `Markdown with GFM table, fenced code and absolute links (${md.length} chars)`;
+  });
+  await check("domain filter: pick several (OR), remove one, clear", async () => {
+    const gh = (await tabOf(ctx, "github.com/acme/app/pull/7"))!.id!;
+    const total = await rowCount(L);
+    await L.getByRole("button", { name: "Filter", exact: true }).click();
+    await L.getByRole("option", { name: /^github\.com/ }).click();
+    await waitFor("only github", async () => (await rowCount(L)) === 1 && (await L.locator(`[data-tab-id="${gh}"]`).count()) === 1);
+    await L.getByRole("option", { name: /^127\.0\.0\.1/ }).click();
+    const both = await waitFor("github + 127.0.0.1", async () => {
+      const n = await rowCount(L);
+      return n > 1 && n < total ? n : null;
+    });
+    await shot(L, "16-domain-filter");
+    await L.keyboard.press("Escape");
+    await L.getByRole("button", { name: "Remove domain filter github.com" }).click();
+    await waitFor("github removed", async () => (await L.locator(`[data-tab-id="${gh}"]`).count()) === 0);
+    await L.getByRole("button", { name: "Clear", exact: true }).click();
+    await waitFor("cleared", async () => (await rowCount(L)) === total);
+    return `${total} tabs → 1 (github.com) → ${both} (+127.0.0.1) → cleared`;
+  });
+
   section("Bridge security");
   await check("non-Linklog pages get no bridge and can't reach the extension", async () => {
     const page = ctx.pages().find((p) => p.url().startsWith(SITE))!;

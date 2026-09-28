@@ -293,6 +293,7 @@ async function saveCaptures(env: Env, body: Obj): Promise<SaveResult[]> {
         url: text(raw.url, 4096),
         title: text(raw.title, 1000),
         favicon: faviconOf(raw.favicon),
+        image: faviconOf(raw.image),
         capture: raw.capture === undefined ? undefined : capture(raw.capture),
       };
       // Same normalization, URL rules and dedupe as saving from All links.
@@ -307,9 +308,9 @@ async function saveCaptures(env: Env, body: Obj): Promise<SaveResult[]> {
       const id = crypto.randomUUID();
       const now = new Date().toISOString();
       const inserted = await env.DB.prepare(
-        "INSERT OR IGNORE INTO links(id,original_url,url,domain,title,description,favicon,status,created_at) SELECT ?,?,?,?,?,?,?,'ready',? WHERE NOT EXISTS(SELECT 1 FROM links WHERE original_url=? OR url=?)",
+        "INSERT OR IGNORE INTO links(id,original_url,url,domain,title,description,image,favicon,status,created_at) SELECT ?,?,?,?,?,?,?,?,'ready',? WHERE NOT EXISTS(SELECT 1 FROM links WHERE original_url=? OR url=?)",
       )
-        .bind(id, url, url, domainOf(url), item.title || domainOf(url), item.capture?.description ?? "", item.favicon, now, url, url)
+        .bind(id, url, url, domainOf(url), item.title || domainOf(url), item.capture?.description ?? "", item.image ?? null, item.favicon, now, url, url)
         .run();
       if (!inserted.meta.changes) {
         const winner = await env.DB.prepare("SELECT id FROM links WHERE original_url=? OR url=?").bind(url, url).first<{ id: string }>();

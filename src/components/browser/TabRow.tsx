@@ -11,10 +11,11 @@ import {
   SquareArrowOutUpRight,
   Volume2,
 } from "lucide-react";
-import type { BrowserGroup, BrowserTab, LensRecord } from "@linklog/browser-protocol";
+import type { BrowserGroup, BrowserTab, LensRecord, TabPreview } from "@linklog/browser-protocol";
 import type { Lens, Link, Tag } from "../../types";
 import { cn } from "../../lib/utils";
 import { relativeTime } from "../../lib/time";
+import { youtubeId } from "../../lib/youtube";
 import { lensIcon } from "../Sidebar";
 import { LensVerdict } from "../LensVerdict";
 import { TagChip } from "../TagChip";
@@ -32,7 +33,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
-const ACCESS_LABEL: Record<Exclude<BrowserTab["content"], "available">, { label: string; hint: string }> = {
+export const ACCESS_LABEL: Record<Exclude<BrowserTab["content"], "available">, { label: string; hint: string }> = {
   loading: { label: "Loading", hint: "Lenses run once the page finishes loading." },
   restricted: { label: "Can't read", hint: "Chrome doesn't let extensions read this page (browser, extension or store page)." },
   "no-permission": { label: "No access", hint: "Allow page content access so lenses can read this tab." },
@@ -161,13 +162,18 @@ export function TabRow({
   tab,
   group,
   saved,
+  preview,
+  domain,
   lenses,
   records,
   picked,
+  active,
   stale,
+  onActivate,
   onPicked,
   onFocus,
   onToggleGroup,
+  onDomainFilter,
   onRetry,
   onMetadata,
   onSave,
@@ -179,13 +185,18 @@ export function TabRow({
   tab: BrowserTab;
   group: BrowserGroup | undefined;
   saved: Link | undefined;
+  preview: TabPreview | undefined;
+  domain: string;
   lenses: Lens[];
   records: Record<string, LensRecord> | undefined;
   picked: boolean;
+  active: boolean;
   stale: boolean;
+  onActivate: () => void;
   onPicked: (checked: boolean, shift: boolean) => void;
   onFocus: () => void;
   onToggleGroup: (groupId: number) => void;
+  onDomainFilter: (domain: string) => void;
   onRetry: (lens: Lens) => void;
   onMetadata: (lens: Lens) => void;
   onSave: () => void;
@@ -195,6 +206,7 @@ export function TabRow({
   onCopy: () => void;
 }) {
   const [faviconFailed, setFaviconFailed] = useState(false);
+  const [imgFailed, setImgFailed] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const lastShift = useRef(false);
   const { host, rest } = pathOf(tab.url);
@@ -208,12 +220,20 @@ export function TabRow({
   const facts = (Object.values(records ?? {}).find((r) => r.capture?.facts.length)?.capture?.facts ?? []).filter((f) =>
     f.key.endsWith(".state"),
   );
+  const yt = youtubeId(tab.url);
+  const image = preview?.image && !imgFailed ? preview.image : yt ? `https://i.ytimg.com/vi/${yt}/mqdefault.jpg` : null;
+  const favicon = tab.favIconUrl && !faviconFailed ? (
+    <img src={tab.favIconUrl} alt="" className="size-5" referrerPolicy="no-referrer" onError={() => setFaviconFailed(true)} />
+  ) : (
+    <Globe className="size-5" />
+  );
   return (
     <article
-      className={cn("group flex cursor-default items-start gap-3 px-4 py-2.5 hover:bg-accent/60", stale && "opacity-60")}
+      className={cn("group flex cursor-default items-start gap-3 px-4 py-3 hover:bg-accent/60", active && "bg-accent", stale && "opacity-60")}
       data-tab-id={tab.tabId}
+      aria-current={active || undefined}
+      onClick={onActivate}
       onDoubleClick={onFocus}
-      onClick={(e) => onPicked(!picked, e.shiftKey)}
     >
       <Checkbox
         aria-label={`Select ${tab.title}`}
@@ -224,28 +244,52 @@ export function TabRow({
         }}
         onClick={(e) => e.stopPropagation()}
         className={cn(
-          "mt-2 transition-opacity",
+          "mt-1 transition-opacity",
           !picked && "opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100",
         )}
       />
-      <div className="relative mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md bg-muted ring-1 ring-black/10">
-        {tab.favIconUrl && !faviconFailed ? (
-          <img src={tab.favIconUrl} alt="" className="size-4" referrerPolicy="no-referrer" onError={() => setFaviconFailed(true)} />
-        ) : (
-          <Globe className="size-4 text-muted-foreground" />
-        )}
-        {tab.active && <span className="absolute -right-0.5 -top-0.5 size-2 rounded-full bg-brand ring-2 ring-background" aria-label="Active tab" />}
+      <div className="relative h-12 w-[72px] shrink-0 rounded-md bg-muted ring-1 ring-black/10">
+        <div className="h-full w-full overflow-hidden rounded-md">
+          {image ? (
+            <img src={image} alt="" loading="lazy" referrerPolicy="no-referrer" className="h-full w-full object-cover" onError={() => setImgFailed(true)} />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center text-muted-foreground">{favicon}</div>
+          )}
+        </div>
+        {tab.active && <span className="absolute -right-1 -top-1 size-2.5 rounded-full bg-brand ring-2 ring-background" aria-label="Active tab" />}
       </div>
       <div className="min-w-0 flex-1">
-        <p className="flex items-center gap-1.5 truncate text-sm font-medium leading-5">
+        <p className="flex items-center gap-1.5 text-sm font-medium leading-5">
           <span className="truncate">{tab.title || tab.url}</span>
           {tab.audible && <Volume2 className="size-3.5 shrink-0 text-muted-foreground" aria-label="Playing audio" />}
         </p>
         <p className="truncate text-xs text-muted-foreground">
-          {host}
-          <span className="opacity-70">{rest}</span>
+          {preview?.description || (
+            <>
+              {host}
+              <span className="opacity-70">{rest}</span>
+            </>
+          )}
         </p>
         <div className="mt-1 flex flex-wrap items-center gap-1.5">
+          {domain && (
+            <button
+              type="button"
+              aria-label={`Filter by ${domain}`}
+              className="flex items-center gap-1 text-2xs text-muted-foreground hover:text-foreground"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDomainFilter(domain);
+              }}
+            >
+              {tab.favIconUrl && !faviconFailed ? (
+                <img src={tab.favIconUrl} alt="" className="size-3" referrerPolicy="no-referrer" onError={() => setFaviconFailed(true)} />
+              ) : (
+                <Globe className="size-3" />
+              )}
+              {domain}
+            </button>
+          )}
           {group && (
             <button
               type="button"
@@ -330,6 +374,7 @@ export function TabRow({
                 <DropdownMenuSeparator />
               </>
             )}
+            <DropdownMenuItem onClick={onActivate}>Show details</DropdownMenuItem>
             <DropdownMenuItem onClick={onFocus}>Go to tab</DropdownMenuItem>
             <DropdownMenuItem onClick={onCopy}>Copy URL</DropdownMenuItem>
             <DropdownMenuItem onClick={onSave} disabled={!!saved}>

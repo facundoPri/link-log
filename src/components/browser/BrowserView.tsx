@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Check,
   CircleAlert,
   Globe,
+  ListFilter,
   Lock,
   PanelLeft,
   PlugZap,
@@ -15,16 +17,19 @@ import {
   type BrowserTab,
   type LensFilter,
 } from "@linklog/browser-protocol";
-import type { Lens, Library, Link } from "../../types";
-import { normalizeUrl } from "../../url";
-import type { BrowserWorkspace } from "../../browser/useBrowserWorkspace";
+import type { Lens, Library } from "../../types";
+import { tabDomain, type BrowserWorkspace } from "../../browser/useBrowserWorkspace";
+import { useSavedLookup } from "../../browser/saved";
 import type { useBrowserActions } from "../../browser/useBrowserActions";
 import { cn } from "../../lib/utils";
 import { GROUP_STYLE, groupTitle } from "./groups";
 import { TabRow } from "./TabRow";
 import { LensFilterBar } from "./LensFilterBar";
 import { BrowserSelectionBar } from "./BrowserSelectionBar";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Kbd } from "@/components/ui/kbd";
@@ -32,6 +37,69 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 type Actions = ReturnType<typeof useBrowserActions>["actions"];
+
+function DomainIcon({ favicon }: { favicon: string | null }) {
+  const [failed, setFailed] = useState(false);
+  return favicon && !failed ? (
+    <img src={favicon} alt="" className="size-3.5 rounded-sm" referrerPolicy="no-referrer" onError={() => setFailed(true)} />
+  ) : (
+    <Globe className="size-3.5 text-muted-foreground" />
+  );
+}
+
+/** Same interaction as All links' domain filter: pick several, OR between them. */
+function DomainFilter({
+  domains,
+  selected,
+  onToggle,
+  onClear,
+}: {
+  domains: { name: string; count: number; favicon: string | null }[];
+  selected: string[];
+  onToggle: (name: string) => void;
+  onClear: () => void;
+}) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="outline" size="sm" className="gap-1.5" aria-label="Filter">
+          <ListFilter className="size-3.5" />
+          <span className="hidden sm:inline">Filter</span>
+          {selected.length > 0 && (
+            <span className="ml-0.5 rounded-sm bg-brand px-1 text-2xs font-medium tabular text-brand-foreground">{selected.length}</span>
+          )}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-64 p-0">
+        <Command>
+          <CommandInput placeholder="Filter by domain…" />
+          <CommandList>
+            <CommandEmpty>No domains match</CommandEmpty>
+            <CommandGroup heading="Domains">
+              {domains.map((d) => (
+                <CommandItem key={d.name} value={d.name} onSelect={() => onToggle(d.name)}>
+                  <DomainIcon favicon={d.favicon} />
+                  <span className="truncate">{d.name}</span>
+                  <span className="ml-auto flex items-center gap-1">
+                    <span className="text-2xs text-muted-foreground tabular">{d.count}</span>
+                    {selected.includes(d.name) && <Check className="size-3.5" />}
+                  </span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+          {selected.length > 0 && (
+            <div className="border-t p-1">
+              <Button variant="ghost" size="sm" className="w-full justify-start" onClick={onClear}>
+                Clear domains
+              </Button>
+            </div>
+          )}
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 function Banner({ icon, children, action }: { icon: React.ReactNode; children: React.ReactNode; action?: React.ReactNode }) {
   return (
@@ -175,33 +243,33 @@ export function BrowserView({
     });
   }, [tabs, setPicked]);
 
-  const savedByUrl = useMemo(() => {
-    const map = new Map<string, Link>();
-    for (const l of library.links) {
-      map.set(l.original_url, l);
-      map.set(l.url, l);
+  const savedOf = useSavedLookup(library);
+  const domains = useMemo(() => {
+    const map = new Map<string, { name: string; count: number; favicon: string | null }>();
+    for (const t of tabs) {
+      const name = tabDomain(t);
+      if (!name) continue;
+      const d = map.get(name);
+      if (d) {
+        d.count++;
+        d.favicon ??= t.favIconUrl;
+      } else map.set(name, { name, count: 1, favicon: t.favIconUrl });
     }
-    return map;
-  }, [library.links]);
-  const savedOf = (tab: BrowserTab) => {
-    try {
-      return savedByUrl.get(normalizeUrl(tab.url));
-    } catch {
-      return undefined;
-    }
-  };
+    return [...map.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  }, [tabs]);
 
   const visible = useMemo(() => {
     const words = query.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
     const groupsById = new Map(groups.map((g) => [g.groupId, g]));
     const list = tabs.filter((t) => {
       if (ws.groupFilter.length && !ws.groupFilter.includes(t.groupId ?? "none")) return false;
+      if (ws.domainFilter.length && !ws.domainFilter.includes(tabDomain(t))) return false;
       const answers = (lensId: string) => {
         const r = runner.results[t.tabInstanceId]?.[lensId];
         return r?.state === "done" ? r.answer : null;
       };
       if (!matchesAllLensFilters(activeLenses, answers, Object.values(filters))) return false;
-      const hay = [t.title, t.url, t.groupId !== null ? groupsById.get(t.groupId)?.title ?? "" : ""].join(" ").toLocaleLowerCase();
+      const hay = [t.title, t.url, ws.previews[t.tabInstanceId]?.description ?? "", t.groupId !== null ? groupsById.get(t.groupId)?.title ?? "" : ""].join(" ").toLocaleLowerCase();
       return words.every((w) => hay.includes(w));
     });
     if (sortLensId)
@@ -213,7 +281,7 @@ export function BrowserView({
         return score(b) - score(a) || a.index - b.index;
       });
     return list;
-  }, [tabs, groups, query, ws.groupFilter, filters, activeLenses, runner.results, sortLensId]);
+  }, [tabs, groups, query, ws.groupFilter, ws.domainFilter, ws.previews, filters, activeLenses, runner.results, sortLensId]);
 
   const pickedTabs = tabs.filter((t) => picked.includes(t.tabInstanceId));
   const allPicked = visible.length > 0 && visible.every((t) => picked.includes(t.tabInstanceId));
@@ -230,14 +298,25 @@ export function BrowserView({
       } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "a" && !typing) {
         e.preventDefault();
         pickMany(visible.map((t) => t.tabInstanceId), true);
-      } else if (e.key === "Escape" && !typing) setPicked(() => []);
+      } else if (e.key === "Escape" && !typing && !document.querySelector("[role=dialog],[role=menu],[role=alertdialog]")) {
+        if (ws.activeTabId) ws.setActiveTabId(null);
+        else setPicked(() => []);
+      } else if ((e.key === "ArrowDown" || e.key === "ArrowUp") && ws.activeTabId && !typing) {
+        const i = visible.findIndex((t) => t.tabInstanceId === ws.activeTabId);
+        const next = visible[i + (e.key === "ArrowDown" ? 1 : -1)];
+        if (next) {
+          e.preventDefault();
+          ws.setActiveTabId(next.tabInstanceId);
+          document.querySelector(`[data-tab-id="${next.tabId}"]`)?.scrollIntoView({ block: "nearest" });
+        }
+      }
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   });
 
   const snapshot = browser.snapshot;
-  const filtered = !!(query || ws.groupFilter.length || Object.values(filters).some((f) => f.keys.length || f.minLevel !== null));
+  const filtered = !!(query || ws.groupFilter.length || ws.domainFilter.length || Object.values(filters).some((f) => f.keys.length || f.minLevel !== null));
 
   return (
     <>
@@ -282,6 +361,22 @@ export function BrowserView({
                 </span>
               );
             })}
+            {ws.domainFilter.map((name) => {
+              const d = domains.find((x) => x.name === name);
+              return (
+                <Badge key={name} variant="secondary" className="gap-1 pr-1 font-normal">
+                  <DomainIcon favicon={d?.favicon ?? null} />
+                  {name}
+                  <button
+                    aria-label={`Remove domain filter ${name}`}
+                    className="rounded-sm text-muted-foreground hover:text-foreground"
+                    onClick={() => ws.toggleDomain(name)}
+                  >
+                    <X className="size-3" />
+                  </button>
+                </Badge>
+              );
+            })}
             {filtered && (
               <Button
                 variant="ghost"
@@ -289,6 +384,7 @@ export function BrowserView({
                 onClick={() => {
                   setQuery("");
                   ws.setGroupFilter([]);
+                  ws.setDomainFilter([]);
                   setFilters({});
                 }}
               >
@@ -315,6 +411,12 @@ export function BrowserView({
                 <Kbd className="pointer-events-none absolute right-2 top-1/2 hidden -translate-y-1/2 sm:inline-flex">/</Kbd>
               )}
             </div>
+            <DomainFilter
+              domains={domains}
+              selected={ws.domainFilter}
+              onToggle={ws.toggleDomain}
+              onClear={() => ws.setDomainFilter([])}
+            />
           </div>
         </div>
         {snapshot && browser.connection !== "connected" && (
@@ -331,7 +433,7 @@ export function BrowserView({
               </Button>
             }
           >
-            Allow access so lenses can read your open tabs. Only loaded text is read, and only while a lens is on or when you save.
+            Allow access to see previews and content of your open tabs, and let lenses read them. Everything is read locally; content is sent only when a lens runs or you save.
           </Banner>
         )}
         {(runner.offline || (browser.backendError && browser.catalog)) && (
@@ -398,6 +500,11 @@ export function BrowserView({
                 tab={tab}
                 group={groups.find((g) => g.groupId === tab.groupId)}
                 saved={savedOf(tab)}
+                preview={ws.previews[tab.tabInstanceId]}
+                domain={tabDomain(tab)}
+                active={ws.activeTabId === tab.tabInstanceId}
+                onActivate={() => ws.setActiveTabId(tab.tabInstanceId)}
+                onDomainFilter={ws.toggleDomain}
                 lenses={activeLenses}
                 records={runner.results[tab.tabInstanceId]}
                 picked={picked.includes(tab.tabInstanceId)}

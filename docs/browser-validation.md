@@ -31,7 +31,7 @@ Baseline antes de empezar: `typecheck` OK, `bun test` 45/45, `build` OK.
 
 ## Integración con Chromium real (`bun run test:browser`)
 
-Última corrida: **38/38 checks pasan** en ~5 minutos —
+Última corrida: **41/41 checks pasan** en ~5 minutos —
 [`browser-validation/run.md`](browser-validation/run.md) (detalle en `run.json`, 130+ llamadas
 del proveedor fixture en total). Cada fila es un check automatizado contra la extensión cargada; los
 contadores de llamadas son del proveedor **fixture** (prueban la deduplicación del flujo, no
@@ -56,6 +56,9 @@ facturación real).
 | Fallo de Jev | *Failed* con Retry, sin reintento automático; Retry = 1 llamada; nunca cuenta como "No" | [06](browser-validation/06-failed-retry.png) |
 | Sin permiso / página interna | *No access* y *Can't read*, no se envían a Jev | [07](browser-validation/07-access-states.png) |
 | Página de aplicación | PR de GitHub (fixture): hecho determinista "Merged" + 2 comentarios en la captura y badge | [07b](browser-validation/07b-github-pr-facts.png) |
+| Preview en filas | descripción y `og:image` de la propia página, leídas localmente (comando `previews`) | [15](browser-validation/15-inspector.png) |
+| Inspector de pestaña | clic en la fila → panel con contenido en Markdown (tabla GFM, código con lenguaje, links absolutos), pestaña Links y Details | [15](browser-validation/15-inspector.png) |
+| Filtro por dominio | uno, varios (OR), quitar un chip, limpiar | [16](browser-validation/16-domain-filter.png) |
 | Captura sin datos sensibles | los valores de `<input>` y password del fixture no aparecen en la caché | |
 | Bridge | página ajena: sin bridge, sin `chrome.runtime`, sin respuesta; comando inválido descartado; pestaña de otra ventana rechazada y sigue abierta | |
 | Save | 2 links con `content_source=browser`, 0 batches de extracción; re-Save = duplicado y tags intactos | [08](browser-validation/08-saved.png) |

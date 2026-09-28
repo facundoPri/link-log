@@ -6,11 +6,12 @@ import {
   type Commands,
   type ItemResult,
   type PageRequest,
+  type TabPreview,
   type TabRef,
 } from "@linklog/browser-protocol";
 import { EXTENSION_VERSION } from "../config";
 import type { ResultCache } from "./cache";
-import { captureTab, CaptureError, metadataCapture } from "./capture";
+import { captureTab, CaptureError, metadataCapture, previewTab } from "./capture";
 import type { GroupMetaStore } from "./groups";
 import type { Connection, Hub } from "./hub";
 import type { TabRegistry } from "./registry";
@@ -76,6 +77,10 @@ async function groupInWindow(groupId: number, windowId: number) {
   if (!group || group.windowId !== windowId) fail("The group is not in this window any more.");
   return group!;
 }
+
+// Metadata previews are tiny and cheap to re-read; memory is enough (lost when the worker sleeps).
+const previewCache = new Map<string, TabPreview>();
+const PREVIEW_CACHE_MAX = 500;
 
 const handlers: { [K in keyof Commands]: Handler<K> } = {
   async hello(args, { c, windowId, s }) {
@@ -219,7 +224,7 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
         const tab = await ownTab(ref, windowId, s);
         const instance = s.registry.get(ref.tabId)!;
         const source = args.source ?? "dom";
-        let capture = await s.cache.getCapture(ref.tabInstanceId, instance.documentRevision, source);
+        let capture = args.fresh ? null : await s.cache.getCapture(ref.tabInstanceId, instance.documentRevision, source);
         if (!capture) {
           if (source === "dom" && (tab.discarded || tab.status !== "complete"))
             fail(tab.discarded ? "The tab is not loaded." : "The tab is still loading.");
@@ -232,6 +237,34 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
       }
     }
     return { captures };
+  },
+  async previews(args, { windowId, s }) {
+    // Only tabs the extension may read and that finished loading; the rest keep title + favicon.
+    const snap = await s.hub.snapshot(windowId);
+    const readable = new Map(snap.tabs.filter((t) => t.content === "available").map((t) => [t.tabInstanceId, t]));
+    const wanted = args.tabs.filter((r) => readable.get(r.tabInstanceId)?.tabId === r.tabId);
+    const previews: TabPreview[] = [];
+    let next = 0;
+    const worker = async () => {
+      while (next < wanted.length) {
+        const ref = wanted[next++]!;
+        const tab = readable.get(ref.tabInstanceId)!;
+        const key = `${tab.tabInstanceId}~${tab.documentRevision}`;
+        let preview = previewCache.get(key);
+        if (!preview) {
+          try {
+            preview = { tabInstanceId: tab.tabInstanceId, documentRevision: tab.documentRevision, ...(await previewTab(tab.tabId)) };
+          } catch {
+            continue;
+          }
+          if (previewCache.size >= PREVIEW_CACHE_MAX) previewCache.delete(previewCache.keys().next().value!);
+          previewCache.set(key, preview);
+        }
+        previews.push(preview);
+      }
+    };
+    await Promise.all(Array.from({ length: 6 }, worker));
+    return { previews };
   },
   async closeTabs(args, { windowId, s }) {
     // Close exactly what was selected, and only if it is still the same page.

@@ -136,6 +136,23 @@ se abre la página **Connect**, donde se concede (o no) el acceso a contenido.
   *Not loaded* (descartada), *Frozen*. Nunca se activa, recarga ni desplaza una pestaña para leerla.
   Para esas pestañas existe la opción explícita **Use title** (sólo título y URL, marcada como tal).
 
+### Contenido, previews e inspector
+- **Extractor** (`apps/extension/src/extract`): copia saneada del DOM visible (sin scripts, formularios,
+  inputs, contenteditable ni nodos ocultos; shadow roots abiertos incluidos; URLs absolutas) →
+  **Readability** si la página es un artículo y conserva ≥40 % del texto principal (si no, se usa la
+  región `main` sin navegación/footers, para no perder hilos de PR o listas) → **Turndown + GFM**
+  (tablas, código con lenguaje, listas, imágenes, links). Todo local; además devuelve `image`,
+  `byline`, `lang` y `extractor` (`article`/`page`). Lentes, Autogroup y Save usan este Markdown.
+- **Previews** (`previews`): sólo metadatos de la página (descripción, `og:image`, sitio) para las
+  filas, leídos localmente en pestañas con acceso; caché en memoria del worker; nunca van al backend.
+- **Inspector** (`src/components/browser/BrowserInspector.tsx`): clic en una fila abre el panel
+  lateral (mismo ancho redimensionable que All links). Muestra imagen, descripción, grupo, estado de
+  guardado, resultados de las lentes activas y las pestañas Content (Preview/Markdown, copiar, volver a
+  leer con `capture { fresh: true }`), Links (links del contenido, guardables) y Details.
+  ↑/↓ navega, Esc cierra; doble clic va a la pestaña.
+- **Filtro por dominio**: mismo popover que All links (varios dominios, OR; chips con ×; Clear).
+- Save guarda también la `og:image` como imagen del link.
+
 ## Límites conocidos / siguientes pasos
 - La caché no sobrevive a reinicio de Chrome ni a recarga de la extensión (acordado).
 - La extracción lee el DOM cargado: contenido virtualizado, iframes de otros orígenes y PDFs
