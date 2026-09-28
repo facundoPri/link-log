@@ -1,7 +1,9 @@
 import {
   BROWSER_LIMITS,
   documentKey,
+  jsonBytes,
   PROTOCOL_VERSION,
+  toEvaluationTarget,
   type ClaimTarget,
   type Commands,
   type ItemResult,
@@ -39,8 +41,11 @@ async function ownTab(ref: TabRef, windowId: number, s: Services): Promise<chrom
   const tab = await chrome.tabs.get(ref.tabId).catch(() => null);
   if (!tab) return fail("The tab is already closed.");
   if (tab.windowId !== windowId) return fail("The tab is no longer in this window.");
-  if (s.registry.get(ref.tabId)?.tabInstanceId !== ref.tabInstanceId) return fail("The tab was replaced.");
-  if (s.hub.isLinklog(tab.url)) return fail("Linklog pages are not managed from Browser.");
+  const instance = s.registry.get(ref.tabId);
+  if (instance?.tabInstanceId !== ref.tabInstanceId) return fail("The tab was replaced.");
+  if (ref.documentRevision !== undefined && instance.documentRevision !== ref.documentRevision)
+    return fail("The tab navigated to another page.");
+  if (s.hub.isLinklog(tab)) return fail("Linklog pages are not managed from Browser.");
   return tab;
 }
 
@@ -70,6 +75,12 @@ async function each<T extends TabRef>(
 
 function requireScope(c: Connection): string {
   return c.scope ?? fail("Connect first.");
+}
+
+/** A capture belongs to the document the caller expected; a navigation in between is an error. */
+function sameDocument(capture: { url: string }, expectedUrl: string) {
+  if (capture.url && documentKey(capture.url) !== documentKey(expectedUrl))
+    fail("The tab navigated while it was being read.");
 }
 
 async function groupInWindow(groupId: number, windowId: number) {
@@ -135,15 +146,18 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
       limit: args.limit ?? 20,
       resumeRequestId: args.resumeRequestId,
     });
-    if (!requestId) return { requestId: null, targets: [], skipped };
+    if (!requestId) return { requestId: null, targets: [], skipped, attempted: [] };
     const targets: ClaimTarget[] = [];
     const summaries = new Map<string, ClaimTarget["capture"]>();
     const failures = new Map<string, string>();
     const overflow = new Set<string>();
-    let chars = 0;
+    // Budget in UTF-8 bytes of exactly what the page will POST for these targets.
+    const budget = BROWSER_LIMITS.maxRequestBytes - BROWSER_LIMITS.requestOverheadBytes;
+    let bytes = 0;
+    let full = false;
     for (const claim of claimed) {
       const tab = snap.tabs.find((t) => t.tabInstanceId === claim.tabInstanceId)!;
-      if (chars >= BROWSER_LIMITS.maxRequestChars) {
+      if (full) {
         overflow.add(claim.targetKey);
         continue;
       }
@@ -152,17 +166,20 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
         let capture = await s.cache.getCapture(claim.tabInstanceId, claim.documentRevision, source);
         if (!capture) {
           capture = source === "metadata" ? metadataCapture(tab) : await captureTab(tab.tabId);
+          sameDocument(capture, tab.url);
           await s.cache.putCapture(claim.tabInstanceId, claim.documentRevision, source, capture);
         }
-        if (targets.length && chars + capture.markdown.length > BROWSER_LIMITS.maxRequestChars) {
-          // Keeps each POST under the Worker's request cap; the page claims the rest next.
+        const target: ClaimTarget = { ...claim, tabId: tab.tabId, url: tab.url, title: tab.title, capture };
+        const size = jsonBytes(toEvaluationTarget(target)) + 1;
+        if (targets.length && bytes + size > budget) {
+          // Keeps each POST under the Worker's body cap; the page claims the rest next.
           overflow.add(claim.targetKey);
-          chars = BROWSER_LIMITS.maxRequestChars;
+          full = true;
           continue;
         }
-        chars += capture.markdown.length;
+        bytes += size;
         summaries.set(claim.targetKey, capture);
-        targets.push({ ...claim, tabId: tab.tabId, url: tab.url, title: tab.title, capture });
+        targets.push(target);
       } catch (error) {
         failures.set(claim.targetKey, error instanceof CaptureError ? error.message : "The page could not be read.");
       }
@@ -186,26 +203,33 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
     );
     if (overflow.size) await s.cache.unclaim(requestId, overflow);
     s.hub.broadcast({ event: "results-changed", windowId }, windowId);
-    return { requestId: targets.length ? requestId : null, targets, skipped: skipped + overflow.size };
+    const attempted = claimed.filter((c) => !overflow.has(c.targetKey)).map((c) => c.tabInstanceId);
+    return { requestId: targets.length ? requestId : null, targets, skipped: skipped + overflow.size, attempted };
   },
-  async accepted(args, { windowId, s }) {
-    await s.cache.accepted(args.requestId, args.batchId, args.jobs);
+  async accepted(args, { c, windowId, s }) {
+    await s.cache.accepted(args.requestId, args.batchId, args.jobs, requireScope(c));
     s.hub.broadcast({ event: "results-changed", windowId });
     return {};
   },
-  async release(args, { windowId, s }) {
-    await s.cache.release(args.requestId, args.error, args.state);
+  async release(args, { c, windowId, s }) {
+    await s.cache.release(args.requestId, args.error, args.state, requireScope(c));
     s.hub.broadcast({ event: "results-changed", windowId });
     return {};
   },
   async pending(_args, { c, s }) {
     return { requests: await s.cache.pending(requireScope(c)) };
   },
-  async deposit(args, { windowId, s }) {
-    const result = await s.cache.deposit(args.requestId, args.batchId, args.items, (id) => {
-      const tabId = s.registry.tabIdOf(id);
-      return tabId === undefined ? undefined : s.registry.get(tabId)?.documentRevision;
-    });
+  async deposit(args, { c, windowId, s }) {
+    const result = await s.cache.deposit(
+      args.requestId,
+      args.batchId,
+      args.items,
+      (id) => {
+        const tabId = s.registry.tabIdOf(id);
+        return tabId === undefined ? undefined : s.registry.get(tabId)?.documentRevision;
+      },
+      requireScope(c),
+    );
     if (result.stored.length) s.hub.broadcast({ event: "results-changed", windowId });
     return result;
   },
@@ -229,6 +253,10 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
           if (source === "dom" && (tab.discarded || tab.status !== "complete"))
             fail(tab.discarded ? "The tab is not loaded." : "The tab is still loading.");
           capture = source === "metadata" ? metadataCapture(tab) : await captureTab(ref.tabId);
+          sameDocument(capture, tab.url || "");
+          // Navigated while it was read: the capture belongs to another document.
+          if (s.registry.get(ref.tabId)?.documentRevision !== instance.documentRevision)
+            fail("The tab navigated while it was being read.");
           await s.cache.putCapture(ref.tabInstanceId, instance.documentRevision, source, capture);
         }
         captures.push({ tabId: ref.tabId, capture });
@@ -365,6 +393,8 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
 };
 
 export async function handle(request: PageRequest, c: Connection, s: Services) {
+  // Nothing but the handshake is accepted before a successful hello on this connection.
+  if (request.command !== "hello") requireScope(c);
   // The window is always the sender tab's current window, resolved from Chrome.
   const tab = await chrome.tabs.get(c.tabId);
   const handler = handlers[request.command] as Handler<typeof request.command>;

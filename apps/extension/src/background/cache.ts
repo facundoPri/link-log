@@ -37,6 +37,17 @@ export const CAPTURE_BUDGET = 3 * 1024 * 1024;
 const CAPTURE_MAX = 1024 * 1024;
 const FINAL = new Set(["done", "failed", "unavailable", "expired"]);
 
+const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+/** Whether a backend status differs from what is stored (state, answer, error, job). */
+export function changed(rec: LensRecord, item: DepositItem): boolean {
+  return (
+    rec.state !== item.state ||
+    !same(rec.answer, item.answer) ||
+    (rec.error ?? null) !== (item.error ?? null) ||
+    (item.jobId !== undefined && item.jobId !== rec.jobId)
+  );
+}
+
 /**
  * Lens results per tab opening in chrome.storage.session. Logical key:
  * libraryScope / browserSessionId / tabInstanceId / documentRevision / lens / version / generation.
@@ -157,8 +168,11 @@ export class ResultCache {
     requestId: string,
     fn: (rec: LensRecord, target: { targetKey: string; tabInstanceId: string }) => LensRecord | null | undefined,
     only?: Set<string>,
+    scope?: string,
   ) {
-    const req = await this.kv.get<RequestRecord>(REQ + requestId);
+    const found = await this.kv.get<RequestRecord>(REQ + requestId);
+    // A page only touches requests of its own library scope.
+    const req = found && (!scope || found.scope === scope) ? found : null;
     if (!req) return { req: null, stored: [] as string[], dropped: [...(only ?? [])] };
     const targets = req.targets.filter((t) => !only || only.has(t.targetKey));
     const stored = await this.tabs(targets.map((t) => t.tabInstanceId));
@@ -213,13 +227,15 @@ export class ResultCache {
     });
   }
 
-  accepted(requestId: string, batchId: string, jobs: { targetKey: string; jobId: string }[]) {
+  accepted(requestId: string, batchId: string, jobs: { targetKey: string; jobId: string }[], scope?: string) {
     return this.mutex.run(async () => {
       const byKey = new Map(jobs.map((j) => [j.targetKey, j.jobId]));
       const { req, writes } = await this.update(requestId, (rec, t) =>
         rec.state === "submitting"
           ? { ...rec, state: "queued", batchId, jobId: byKey.get(t.targetKey), updatedAt: this.now() }
           : undefined,
+        undefined,
+        scope,
       );
       if (!req) return;
       req.batchId = batchId;
@@ -227,7 +243,7 @@ export class ResultCache {
     });
   }
 
-  release(requestId: string, error: string, state: "failed" | "missing") {
+  release(requestId: string, error: string, state: "failed" | "missing", scope?: string) {
     return this.mutex.run(async () => {
       const { req, writes } = await this.update(requestId, (rec) =>
         IN_FLIGHT.includes(rec.state)
@@ -235,6 +251,8 @@ export class ResultCache {
             ? null
             : { ...rec, state: "failed", error, updatedAt: this.now() }
           : undefined,
+        undefined,
+        scope,
       );
       if (!req) return;
       await this.guardedSet(writes ?? {});
@@ -251,6 +269,7 @@ export class ResultCache {
     batchId: string | undefined,
     items: DepositItem[],
     currentRevision: (tabInstanceId: string) => number | undefined,
+    scope?: string,
   ) {
     return this.mutex.run(async () => {
       const byKey = new Map(items.map((i) => [i.targetKey, i]));
@@ -264,6 +283,9 @@ export class ResultCache {
             return null;
           }
           if (FINAL.has(rec.state)) return undefined;
+          // Only real changes are written and reported: a poll that sees "still queued"
+          // must not announce new results (the page would poll again right away).
+          if (!changed(rec, item)) return undefined;
           return {
             ...rec,
             state: item.state,
@@ -277,6 +299,7 @@ export class ResultCache {
           };
         },
         new Set(byKey.keys()),
+        scope,
       );
       if (!req) return { stored: [], dropped };
       await this.guardedSet(writes ?? {});
@@ -304,14 +327,16 @@ export class ResultCache {
     return this.mutex.run(async () => {
       const stored = await this.tabs(tabInstanceIds);
       const writes: Record<string, unknown> = {};
-      const requestIds = new Set<string>();
+      const cancel = new Map<string, string[]>();
       let removed = 0;
       for (const [id, tr] of stored) {
         for (const lensId of lensIds) tr.gens[lensId] = (tr.gens[lensId] ?? 0) + 1;
         for (const [key, rec] of Object.entries(tr.entries)) {
-          const parts = parseTargetKey(key.split("/").pop()!);
+          const target = key.split("/").pop()!;
+          const parts = parseTargetKey(target);
           if (!parts || !lensIds.includes(parts.lensId)) continue;
-          if (rec.requestId && IN_FLIGHT.includes(rec.state)) requestIds.add(rec.requestId);
+          if (rec.requestId && IN_FLIGHT.includes(rec.state))
+            cancel.set(rec.requestId, [...(cancel.get(rec.requestId) ?? []), target]);
           delete tr.entries[key];
           removed++;
         }
@@ -319,7 +344,7 @@ export class ResultCache {
       }
       await this.kv.set(writes);
       await this.pruneRequests((t) => tabInstanceIds.includes(t.tabInstanceId) && lensIds.includes(parseTargetKey(t.targetKey)!.lensId));
-      return { removed, requestIds: [...requestIds] };
+      return { removed, requests: [...cancel].map(([requestId, targetKeys]) => ({ requestId, targetKeys })) };
     });
   }
 
@@ -404,23 +429,30 @@ export class ResultCache {
       const bytes = JSON.stringify(capture).length * 2;
       if (bytes > CAPTURE_MAX) return;
       const index = (await this.kv.get<Record<string, { bytes: number; at: number }>>(CAP_INDEX)) ?? {};
+      // The previous capture of this tab is replaced (or dropped if the new one doesn't fit).
+      const evict = [tabInstanceId];
       delete index[tabInstanceId];
       let total = Object.values(index).reduce((n, e) => n + e.bytes, 0);
-      const evict: string[] = [];
       for (const [id, e] of Object.entries(index).sort((a, b) => a[1].at - b[1].at)) {
         if (total + bytes <= CAPTURE_BUDGET) break;
         evict.push(id);
         total -= e.bytes;
         delete index[id];
       }
+      // Index first, then data: whatever fails below, the index never lists a missing capture.
+      await this.kv.set({ [CAP_INDEX]: index });
       await this.kv.remove(evict.map((id) => CAP + id));
-      index[tabInstanceId] = { bytes, at: this.now() };
       try {
-        await this.kv.set({ [CAP + tabInstanceId]: { documentRevision, source, capture, bytes, at: this.now() }, [CAP_INDEX]: index });
+        await this.kv.set({ [CAP + tabInstanceId]: { documentRevision, source, capture, bytes, at: this.now() } });
       } catch (error) {
         if (!(error instanceof QuotaError)) throw error;
-        // A capture that doesn't fit is simply not cached.
+        return; // A capture that doesn't fit is simply not cached.
       }
+      index[tabInstanceId] = { bytes, at: this.now() };
+      await this.kv.set({ [CAP_INDEX]: index }).catch(async (error) => {
+        if (!(error instanceof QuotaError)) throw error;
+        await this.kv.remove([CAP + tabInstanceId]); // unindexed data would never be evicted
+      });
     });
   }
 

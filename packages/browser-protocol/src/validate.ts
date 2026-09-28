@@ -25,8 +25,16 @@ const color = (v: unknown): v is GroupColor =>
   typeof v === "string" && (GROUP_COLORS as string[]).includes(v);
 
 function tabRef(v: unknown): v is TabRef {
-  return isObj(v) && int(v.tabId) && id(v.tabInstanceId);
+  return isObj(v) && int(v.tabId) && id(v.tabInstanceId) && (v.documentRevision === undefined || int(v.documentRevision));
 }
+/** Serialized size cap for structured values relayed from the backend (answers). */
+const small = (v: unknown, max = 20_000) => {
+  try {
+    return JSON.stringify(v).length <= max;
+  } catch {
+    return false;
+  }
+};
 function tabRefs(v: unknown, max = 500): v is TabRef[] {
   return Array.isArray(v) && v.length <= max && v.every(tabRef);
 }
@@ -54,7 +62,7 @@ function depositItem(v: unknown): v is DepositItem {
     str(v.targetKey, 400) &&
     typeof v.state === "string" &&
     DEPOSIT_STATES.includes(v.state) &&
-    (v.answer === undefined || isObj(v.answer)) &&
+    (v.answer === undefined || (isObj(v.answer) && small(v.answer))) &&
     (v.model === undefined || str(v.model, 200)) &&
     (v.evaluatedAt === undefined || str(v.evaluatedAt, 64)) &&
     (v.error === undefined || str(v.error, 2000)) &&
@@ -94,7 +102,7 @@ const validators: { [K in CommandName]: (a: Obj) => boolean } = {
     a.lensIds.length <= 50 &&
     a.lensIds.every(id) &&
     (a.tabInstanceIds === undefined ||
-      (Array.isArray(a.tabInstanceIds) && a.tabInstanceIds.every(id))),
+      (Array.isArray(a.tabInstanceIds) && a.tabInstanceIds.length <= 500 && a.tabInstanceIds.every(id))),
   capture: (a) =>
     tabRefs(a.tabs, 100) &&
     (a.source === undefined || a.source === "dom" || a.source === "metadata") &&
@@ -120,8 +128,9 @@ const validators: { [K in CommandName]: (a: Obj) => boolean } = {
 
 export function parsePageRequest(raw: unknown): PageRequest | null {
   if (!isObj(raw) || !id(raw.id) || typeof raw.command !== "string") return null;
+  // Own keys only: "constructor", "toString"… are not commands.
+  if (!Object.hasOwn(validators, raw.command)) return null;
   const validate = validators[raw.command as CommandName];
-  if (!validate) return null;
   const args = raw.args === undefined ? {} : raw.args;
   if (!isObj(args) || !validate(args)) return null;
   return { id: raw.id, command: raw.command, args } as PageRequest;

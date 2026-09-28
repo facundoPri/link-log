@@ -10,7 +10,7 @@ async function render() {
   $("revoke").classList.toggle("hidden", !granted);
   $("content-hint").classList.toggle("hidden", granted);
   $("status").textContent = s
-    ? `Extension ${s.version} · ${s.connectedPages ? `${s.connectedPages} Linklog page${s.connectedPages === 1 ? "" : "s"} connected` : "no Linklog page open"} · works with ${s.origins.join(", ")}`
+    ? `Extension ${s.version} · ${s.connectedPages ? `${s.connectedPages} Linklog page${s.connectedPages === 1 ? "" : "s"} connected` : "no Linklog page open"} · works with Linklog on localhost / 127.0.0.1 (any port)${s.origins.length ? ` and ${s.origins.join(", ")}` : ""}`
     : "";
 }
 

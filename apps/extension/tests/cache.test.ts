@@ -87,8 +87,9 @@ describe("result cache", () => {
     expect(read.t1).toBeUndefined();
 
     const d = await claim(cache, lensB, tabs(1));
-    const { requestIds } = await cache.clean(["lensB"], ["t0"]);
-    expect(requestIds).toEqual([d.requestId!]);
+    const { requests } = await cache.clean(["lensB"], ["t0"]);
+    // only the cleaned targets are cancelled, not the whole request
+    expect(requests).toEqual([{ requestId: d.requestId!, targetKeys: [d.claimed[0]!.targetKey] }]);
     const late = await cache.deposit(d.requestId!, "b", [{ targetKey: d.claimed[0]!.targetKey, state: "done", answer: { type: "noul", noul: 1 } }], () => 0);
     expect(late.stored).toEqual([]);
     // clean bumped the generation: a fresh claim uses a new key
@@ -139,6 +140,62 @@ describe("result cache", () => {
   });
 });
 
+describe("deposit reports only real changes", () => {
+  test("a poll that sees the same state stores and announces nothing", async () => {
+    const { cache } = setup();
+    const c = await claim(cache, lensA, tabs(2));
+    const keys = c.claimed.map((x) => x.targetKey);
+    await cache.accepted(c.requestId!, "batch", keys.map((k, i) => ({ targetKey: k, jobId: `job${i}` })));
+    const queued = keys.map((k, i) => ({ targetKey: k, state: "queued" as const, jobId: `job${i}` }));
+    // accepted() already stored "queued" with these jobs: nothing new.
+    expect((await cache.deposit(c.requestId!, "batch", queued, () => 0)).stored).toEqual([]);
+    const running = [{ ...queued[0]!, state: "running" as const }, queued[1]!];
+    expect((await cache.deposit(c.requestId!, "batch", running, () => 0)).stored).toEqual([keys[0]!]);
+    expect((await cache.deposit(c.requestId!, "batch", running, () => 0)).stored).toEqual([]);
+    const done = { ...queued[1]!, state: "done" as const, answer: { type: "noul" as const, noul: 0.7 } };
+    expect((await cache.deposit(c.requestId!, "batch", [done], () => 0)).stored).toEqual([keys[1]!]);
+    // A final answer is never overwritten by a late duplicate.
+    expect((await cache.deposit(c.requestId!, "batch", [done], () => 0)).stored).toEqual([]);
+  });
+
+  test("another library scope can't touch a request", async () => {
+    const { cache } = setup();
+    const c = await claim(cache, lensA, tabs(1));
+    const item = { targetKey: c.claimed[0]!.targetKey, state: "done" as const, answer: { type: "noul" as const, noul: 1 } };
+    expect((await cache.deposit(c.requestId!, "b", [item], () => 0, "local:other")).stored).toEqual([]);
+    expect((await cache.deposit(c.requestId!, "b", [item], () => 0, scope)).stored).toEqual([item.targetKey]);
+  });
+});
+
+describe("capture cache under quota pressure", () => {
+  const capture = (size: number): Capture => ({
+    source: "dom",
+    capturedAt: "t",
+    completeness: "complete",
+    reasons: [],
+    chars: size,
+    facts: [],
+    url: "u",
+    title: "t",
+    description: "",
+    siteName: "",
+    markdown: "x".repeat(size),
+  });
+  test("a capture that doesn't fit leaves no stale index entry or orphaned data", async () => {
+    const kv = memoryKV(60_000);
+    const cache = new ResultCache(kv, new Mutex(), () => 1, uuid);
+    await cache.putCapture("a", 0, "dom", capture(20_000));
+    await cache.putCapture("a", 1, "dom", capture(70_000)); // replaces a's capture but doesn't fit the quota
+    const index = (await kv.get<Record<string, unknown>>("capIndex")) ?? {};
+    const stored = [...kv.data.keys()].filter((k) => k.startsWith("cap:")).map((k) => k.slice(4));
+    expect(Object.keys(index).sort()).toEqual(stored.sort());
+    expect(stored).toEqual([]);
+    expect(await cache.getCapture("a", 0, "dom")).toBeNull(); // the old revision is gone either way
+    await cache.putCapture("b", 0, "dom", capture(10_000));
+    expect(Object.keys((await kv.get<Record<string, unknown>>("capIndex")) ?? {})).toEqual(["b"]);
+  });
+});
+
 describe("tab registry", () => {
   test("instances, revisions, reopen and replacement", async () => {
     const reg = new TabRegistry(memoryKV(), uuid, () => 5);
@@ -162,13 +219,18 @@ describe("tab registry", () => {
 });
 
 describe("bridge sender validation", () => {
-  const origins = ["http://127.0.0.1:3000"];
+  const origins = ["https://linklog.example"];
   const ok = { id: "ext", tab: { id: 4, url: "http://127.0.0.1:3000/" }, frameId: 0, origin: "http://127.0.0.1:3000" };
   test("accepts only this extension's top-frame script on a Linklog origin", () => {
     expect(isBridgeSender(ok, "ext", origins)).toBe(true);
     expect(isBridgeSender({ ...ok, id: "other" }, "ext", origins)).toBe(false);
     expect(isBridgeSender({ ...ok, frameId: 3 }, "ext", origins)).toBe(false);
     expect(isBridgeSender({ ...ok, origin: "https://evil.example" }, "ext", origins)).toBe(false);
+    // Any local port works (the page must still identify as Linklog for the bridge to connect)…
+    expect(isBridgeSender({ ...ok, origin: "http://localhost:4123", tab: { id: 4, url: "http://localhost:4123/x" } }, "ext", origins)).toBe(true);
+    // …and so does a configured origin, but not an arbitrary site or a mismatched tab.
+    expect(isBridgeSender({ ...ok, origin: "https://linklog.example", tab: { id: 4, url: "https://linklog.example/" } }, "ext", origins)).toBe(true);
+    expect(isBridgeSender({ ...ok, origin: "https://linklog.example", tab: { id: 4, url: "https://linklog.example/" } }, "ext", [])).toBe(false);
     expect(isBridgeSender({ ...ok, origin: "http://127.0.0.1:3001" }, "ext", origins)).toBe(false);
     expect(isBridgeSender({ ...ok, tab: undefined }, "ext", origins)).toBe(false);
     expect(isBridgeSender({ ...ok, documentLifecycle: "prerender" }, "ext", origins)).toBe(false);

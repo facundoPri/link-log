@@ -1,6 +1,7 @@
 import {
   BRIDGE_CHANNEL,
   BRIDGE_PORT,
+  LINKLOG_APP_META,
   PROTOCOL_VERSION,
   isExtensionEvent,
   isExtensionResponse,
@@ -8,9 +9,11 @@ import {
 } from "@linklog/browser-protocol";
 import { EXTENSION_VERSION } from "../config";
 
-// Runs only on configured Linklog origins (manifest + background re-checks origin
-// and frame). It relays validated messages between the page and the background.
-// It holds no privileges of its own and never touches other sites.
+// Injected on local http pages (any port) and configured Linklog origins, but stays
+// inert unless the page identifies itself as Linklog with <meta name="linklog-app">:
+// other localhost apps get no listener, no marker and no connection. The background
+// re-checks origin, frame and tab. It relays validated messages between the page and
+// the background, holds no privileges of its own and never touches other sites.
 
 const origin = location.origin;
 let port: chrome.runtime.Port | null = null;
@@ -62,7 +65,7 @@ function connect(): chrome.runtime.Port | null {
   return port;
 }
 
-window.addEventListener("message", (event) => {
+function onPageMessage(event: MessageEvent) {
   if (event.source !== window || event.origin !== origin) return;
   const envelope = parseEnvelope(event.data);
   if (!envelope || envelope.from !== "page") return;
@@ -72,8 +75,16 @@ window.addEventListener("message", (event) => {
     return;
   }
   p.postMessage(envelope.request);
-});
+}
 
-document.documentElement.dataset.linklogBridge = String(PROTOCOL_VERSION);
-connect();
-post({ ready: { version: EXTENSION_VERSION, protocol: PROTOCOL_VERSION } });
+function activate() {
+  if (!document.querySelector(`meta[name="${LINKLOG_APP_META}"]`)) return;
+  window.addEventListener("message", onPageMessage);
+  document.documentElement.dataset.linklogBridge = String(PROTOCOL_VERSION);
+  connect();
+  post({ ready: { version: EXTENSION_VERSION, protocol: PROTOCOL_VERSION } });
+}
+
+// Runs at document_start; the marker is in the static <head>, parsed by DOMContentLoaded.
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", activate, { once: true });
+else activate();

@@ -1,14 +1,23 @@
 import type { Answer } from "./lens.ts";
-import type { GroupColor, PageFact } from "./browser.ts";
+import type { ClaimTarget, GroupColor, PageFact } from "./browser.ts";
 
-/** Backend limits reused by the browser flow. Keep in sync with worker/ai/jev.ts. */
+/**
+ * Backend limits reused by the browser flow. Keep in sync with worker/ai/jev.ts.
+ * Jev cost is bounded per tab (one call each, content trimmed to maxCaptureChars);
+ * the byte limit below is only the transport cap of one POST to our Worker.
+ */
 export const BROWSER_LIMITS = {
   maxTargets: 100,
   maxCaptureChars: 160_000,
-  /** Split POSTs well under the Worker's 2.1 MB request cap. */
-  maxRequestChars: 1_600_000,
+  /** UTF-8 bytes of one JSON body, with margin under the Worker's 2.1 MB cap. */
+  maxRequestBytes: 1_800_000,
+  /** Room for everything in an evaluation body besides its targets. */
+  requestOverheadBytes: 16_000,
   maxDestinations: 10,
-  maxSaveItems: 50,
+  /** URLs per Save request (same as a library import batch). */
+  maxSaveItems: 100,
+  maxUrlChars: 4096,
+  maxTitleChars: 1000,
 } as const;
 
 export type EvaluationCapture = {
@@ -74,19 +83,29 @@ export type BrowserCatalog = {
   retentionDays: number;
 };
 
-export type SaveItem = {
-  key: string;
-  url: string;
-  title: string;
-  favicon: string | null;
-  /** Preview image read from the page (og:image), http(s) only. */
-  image?: string | null;
-  capture?: EvaluationCapture;
-};
-
+/** Save sends URLs only; the library fetches and extracts them like any added link. */
 export type SaveResult = {
-  key: string;
+  url: string;
   status: "created" | "duplicate" | "rejected";
   id?: string;
   error?: string;
 };
+
+/** The body a claimed tab becomes in an evaluation request (fields trimmed to backend limits). */
+export function toEvaluationTarget(t: Pick<ClaimTarget, "targetKey" | "url" | "title" | "capture">): EvaluationTarget {
+  return {
+    targetKey: t.targetKey,
+    url: t.url.slice(0, BROWSER_LIMITS.maxUrlChars),
+    title: (t.title || t.url).slice(0, BROWSER_LIMITS.maxTitleChars),
+    capture: {
+      source: t.capture.source,
+      capturedAt: t.capture.capturedAt,
+      completeness: t.capture.completeness,
+      reasons: t.capture.reasons,
+      facts: t.capture.facts,
+      description: t.capture.description.slice(0, 2000),
+      siteName: t.capture.siteName.slice(0, 200),
+      markdown: t.capture.markdown,
+    },
+  };
+}

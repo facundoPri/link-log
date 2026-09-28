@@ -1,4 +1,4 @@
-import { originOf } from "@linklog/browser-protocol";
+import { isBridgeOrigin, originOf } from "@linklog/browser-protocol";
 
 type Sender = {
   id?: string;
@@ -11,15 +11,17 @@ type Sender = {
 
 /**
  * The manifest match patterns are not enough: accept a bridge connection only from
- * this extension's content script, in the top frame of a tab, on an allowed origin.
+ * this extension's content script, in the top frame of a tab, on a bridge origin
+ * (local http on any port, or a configured Linklog origin). The content script
+ * itself only connects on pages that identify as Linklog.
  */
-export function isBridgeSender(sender: Sender, extensionId: string, origins: readonly string[]): boolean {
+export function isBridgeSender(sender: Sender, extensionId: string, configured: readonly string[]): boolean {
   if (sender.id !== extensionId) return false;
   if (!sender.tab || typeof sender.tab.id !== "number" || sender.tab.id < 0) return false;
   if (sender.frameId !== 0) return false;
   if (sender.documentLifecycle && sender.documentLifecycle !== "active") return false;
   const origin = sender.origin ?? (sender.url ? originOf(sender.url) : null);
-  if (!origin || !origins.includes(origin)) return false;
+  if (!origin || !isBridgeOrigin(origin, configured)) return false;
   // The tab must currently show that origin too (not a stale document).
   const tabOrigin = sender.tab.url ? originOf(sender.tab.url) : origin;
   return tabOrigin === origin;

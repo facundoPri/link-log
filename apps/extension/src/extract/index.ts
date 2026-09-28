@@ -290,6 +290,5 @@ function extract(maxChars: number): Extracted | Unavailable {
   };
 }
 
-const g = globalThis as { __linklogExtract?: typeof extract; __linklogPreview?: typeof preview };
+const g = globalThis as { __linklogExtract?: typeof extract };
 g.__linklogExtract = extract;
-g.__linklogPreview = preview;

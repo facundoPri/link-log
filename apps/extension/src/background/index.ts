@@ -1,4 +1,4 @@
-import { BRIDGE_PORT, parsePageRequest } from "@linklog/browser-protocol";
+import { BRIDGE_PORT, LOCAL_BRIDGE_MATCHES, parsePageRequest } from "@linklog/browser-protocol";
 import { CONTENT_ORIGINS, EXTENSION_VERSION, LINKLOG_ORIGINS } from "../config";
 import { ResultCache } from "./cache";
 import { handle, type Services } from "./commands";
@@ -17,12 +17,16 @@ const local = chromeKV(chrome.storage.local, 10 * 1024 * 1024);
 const mutex = new Mutex();
 const registry = new TabRegistry(session);
 const cache = new ResultCache(session, mutex);
-const groups = new GroupMetaStore(session, mutex);
+const groups = new GroupMetaStore(session, mutex, local);
 const hub = new Hub(session, registry, groups);
 let services: Services | null = null;
 
+// Bridge content-script matches show up as granted origins; they are for the bridge
+// only and never count as access to read a page.
+const BRIDGE_PATTERNS = new Set([...LOCAL_BRIDGE_MATCHES, ...LINKLOG_ORIGINS.map((o) => `${o}/*`)]);
+
 async function refreshAccess() {
-  hub.grants = (await chrome.permissions.getAll()).origins ?? [];
+  hub.grants = ((await chrome.permissions.getAll()).origins ?? []).filter((o) => !BRIDGE_PATTERNS.has(o));
   const granted = await chrome.permissions.contains({ origins: CONTENT_ORIGINS });
   if (granted !== hub.granted) {
     hub.granted = granted;
@@ -48,16 +52,22 @@ async function init(): Promise<Services> {
     await local.set({ installationId });
   }
   let browserSessionId = await session.get<string>("browserSessionId");
+  const fresh = !browserSessionId;
   if (!browserSessionId) {
     browserSessionId = crypto.randomUUID();
     await session.set({ browserSessionId });
   }
-  await Promise.all([registry.load(), groups.load(), hub.loadRevision()]);
+  await Promise.all([registry.load(), groups.load(), hub.load()]);
+  // Chrome restart or extension reload: re-bind pinned groups Chrome kept or restored.
+  if (fresh) await groups.beginRestore();
   await refreshAccess();
   // Reconcile anything missed while the worker was asleep.
   await applyChanges(await registry.reconcile(await chrome.tabs.query({})));
   const alive = await chrome.tabGroups.query({}).catch(() => []);
   await groups.prune(new Set(alive.map((g) => g.id)));
+  await groups.restoreBindings(alive);
+  await groups.syncHints(alive);
+  groups.onChange = () => syncGroups();
   return { registry, cache, groups, hub, ids: { installationId, browserSessionId } };
 }
 const ready = init().then((s) => (services = s));
@@ -66,6 +76,15 @@ function run(task: () => Promise<unknown>) {
   void ready
     .then(task)
     .catch((error) => console.warn("Linklog:", error));
+}
+
+/** Re-binds restored pinned groups (fresh session only) and refreshes their hints. */
+function syncGroups() {
+  run(async () => {
+    const alive = await chrome.tabGroups.query({}).catch(() => [] as chrome.tabGroups.TabGroup[]);
+    if (await groups.restoreBindings(alive)) hub.schedule();
+    await groups.syncHints(alive);
+  });
 }
 
 // Listeners are registered synchronously so Chrome can wake the worker for them.
@@ -110,12 +129,15 @@ for (const event of [
   chrome.tabs.onAttached,
   chrome.tabs.onDetached,
   chrome.tabs.onActivated,
-  chrome.tabGroups.onCreated,
-  chrome.tabGroups.onUpdated,
   chrome.tabGroups.onMoved,
   chrome.windows.onRemoved,
 ] as chrome.events.Event<() => void>[])
   event.addListener(() => run(async () => hub.schedule()));
+for (const event of [chrome.tabGroups.onCreated, chrome.tabGroups.onUpdated] as chrome.events.Event<() => void>[])
+  event.addListener(() => {
+    hub.schedule();
+    syncGroups();
+  });
 chrome.tabGroups.onRemoved.addListener((group) =>
   run(async () => {
     // Closing a Chrome group drops its local association; a pinned definition stays.
@@ -140,7 +162,15 @@ chrome.runtime.onConnect.addListener((port) => {
     last: null,
   };
   hub.connections.set(c.id, c);
-  port.onDisconnect.addListener(() => hub.connections.delete(c.id));
+  // This tab is Linklog: drop it from every list right away, and remember its origin.
+  run(async () => {
+    await hub.learnOrigin(port.sender?.tab?.url);
+    hub.schedule(0);
+  });
+  port.onDisconnect.addListener(() => {
+    hub.connections.delete(c.id);
+    hub.schedule();
+  });
   port.onMessage.addListener((raw) => {
     if (raw && typeof raw === "object" && (raw as { heartbeat?: unknown }).heartbeat === true) return;
     const request = parsePageRequest(raw);
@@ -172,6 +202,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
         browserSessionId: s.ids.browserSessionId,
         contentAccess: hub.granted,
         connectedPages: hub.connections.size,
+        linklogTabs: [...new Set([...hub.connections.values()].map((c) => c.tabId))],
         origins: LINKLOG_ORIGINS,
         cache: await cache.usage(),
       });

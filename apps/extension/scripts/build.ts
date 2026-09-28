@@ -1,11 +1,13 @@
 // Builds the unpacked extension into dist/. Flags: --watch, --package.
-// LINKLOG_ORIGINS (or LINKLOG_UI_PORT / LINKLOG_API_PORT) decide which Linklog
-// origins may use the bridge; they are written into the manifest and the bundle.
+// The bridge content script matches http://localhost and http://127.0.0.1 on any port
+// (it only activates on pages marked as Linklog); LINKLOG_ORIGINS adds other origins,
+// e.g. a deployed Linklog. LINKLOG_UI_PORT decides where "Open Linklog" goes.
 import { cp, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { watch } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { deflateSync } from "node:zlib";
-import { linklogOrigins } from "../../../scripts/ports";
+import { LOCAL_BRIDGE_MATCHES } from "@linklog/browser-protocol";
+import { linklogOrigins, linklogUrl } from "../../../scripts/ports";
 
 const root = resolve(import.meta.dir, "..");
 // LINKLOG_EXTENSION_OUT builds elsewhere (tests); LINKLOG_EXTRA_HOSTS grants test fixture hosts
@@ -15,7 +17,7 @@ const extraHosts = (process.env.LINKLOG_EXTRA_HOSTS ?? "").split(",").map((h) =>
 const pkg = await Bun.file(join(root, "package.json")).json();
 
 export function manifest(origins: string[], version: string, extra: string[] = []) {
-  const patterns = origins.map((o) => `${o}/*`);
+  const patterns = [...LOCAL_BRIDGE_MATCHES, ...origins.map((o) => `${o}/*`)];
   return {
     manifest_version: 3,
     name: "Linklog",
@@ -26,9 +28,9 @@ export function manifest(origins: string[], version: string, extra: string[] = [
     action: { default_title: "Linklog", default_popup: "popup.html", default_icon: { "16": "icons/16.png", "32": "icons/32.png" } },
     background: { service_worker: "background.js", type: "module" },
     permissions: ["storage", "scripting", "tabGroups", "tabs"],
-    // Only Linklog's own pages get the bridge. Reading other pages needs the
-    // optional content access requested from connect.html.
-    host_permissions: [...patterns, ...extra],
+    // The bridge needs no host permission of its own (content-script matches).
+    // Reading pages needs the optional content access requested from connect.html.
+    host_permissions: extra,
     optional_host_permissions: ["http://*/*", "https://*/*"],
     content_scripts: [{ matches: patterns, js: ["bridge.js"], run_at: "document_start", all_frames: false }],
     content_security_policy: { extension_pages: "script-src 'self'; object-src 'self'" },
@@ -114,6 +116,7 @@ async function build() {
   await mkdir(join(dist, "icons"), { recursive: true });
   const define = {
     __LINKLOG_ORIGINS__: JSON.stringify(origins),
+    __LINKLOG_URL__: JSON.stringify(linklogUrl()),
     __EXTENSION_VERSION__: JSON.stringify(pkg.version),
     "process.env.NODE_ENV": '"production"',
   };
@@ -143,7 +146,7 @@ async function build() {
   for (const size of [16, 32, 48, 128]) await Bun.write(join(dist, "icons", `${size}.png`), icon(size));
   await writeFile(join(dist, "manifest.json"), JSON.stringify(manifest(origins, pkg.version, extraHosts), null, 2) + "\n");
   console.log(
-    `Linklog extension ${pkg.version} → ${relative(process.cwd(), dist) || "dist"} (${Math.round(performance.now() - started)} ms)\n  bridge origins: ${origins.join(", ")}`,
+    `Linklog extension ${pkg.version} → ${relative(process.cwd(), dist) || "dist"} (${Math.round(performance.now() - started)} ms)\n  bridge: ${manifest(origins, pkg.version).content_scripts[0]!.matches.join(", ")} (pages marked as Linklog only)`,
   );
 }
 

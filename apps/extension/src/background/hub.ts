@@ -1,6 +1,6 @@
 import {
   diffSnapshots,
-  isLinklogUrl,
+  originOf,
   patternCovers,
   urlAccess,
   type BrowserGroup,
@@ -47,7 +47,10 @@ export class Hub {
   granted = false;
   /** Every host permission Chrome currently grants (broad or per site). */
   grants: string[] = [];
+  /** Origins where a Linklog page connected the bridge during this browser session. */
+  private linklogOrigins = new Set<string>(LINKLOG_ORIGINS);
   private timer: ReturnType<typeof setTimeout> | null = null;
+  private due = 0;
   private settleTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
@@ -56,19 +59,35 @@ export class Hub {
     private groups: GroupMetaStore,
   ) {}
 
-  async loadRevision() {
+  async load() {
     this.revision = (await this.kv.get<number>("revision")) ?? 0;
+    for (const o of (await this.kv.get<string[]>("linklogOrigins")) ?? []) this.linklogOrigins.add(o);
   }
 
   /** Monotonic across service-worker restarts within the browser session. */
   nextRevision() {
     this.revision++;
-    void this.kv.set({ revision: this.revision });
+    this.kv.set({ revision: this.revision }).catch((e) => console.warn("Linklog: could not persist the revision", e));
     return this.revision;
   }
 
-  isLinklog(url: string | undefined) {
-    return !!url && isLinklogUrl(url, LINKLOG_ORIGINS);
+  /**
+   * Linklog pages are never listed, read or closed: a tab with a bridge connection, or
+   * one on an origin where Linklog connected before in this session (covers a Linklog
+   * page that is still loading, before its bridge is up).
+   */
+  isLinklog(tab: { id?: number; url?: string; pendingUrl?: string }) {
+    if (tab.id !== undefined && [...this.connections.values()].some((c) => c.tabId === tab.id)) return true;
+    const origin = originOf(tab.url || tab.pendingUrl || "");
+    return !!origin && this.linklogOrigins.has(origin);
+  }
+
+  /** A bridge connected from this origin: remember it so its pages stay out of the lists. */
+  async learnOrigin(url: string | undefined) {
+    const origin = originOf(url ?? "");
+    if (!origin || this.linklogOrigins.has(origin)) return;
+    this.linklogOrigins.add(origin);
+    await this.kv.set({ linklogOrigins: [...this.linklogOrigins] });
   }
 
   async tabDto(tab: chrome.tabs.Tab, now: number): Promise<BrowserTab | null> {
@@ -95,7 +114,7 @@ export class Hub {
       discarded: !!tab.discarded,
       frozen: !!(tab as { frozen?: boolean }).frozen,
       content: contentAccess(tab, instance, this.grants, now),
-      openedAt: instance.openedAt,
+      firstSeenAt: instance.openedAt,
     };
   }
 
@@ -108,7 +127,7 @@ export class Hub {
     const listed: BrowserTab[] = [];
     let linklogTabs = 0;
     for (const tab of tabs.sort((a, b) => a.index - b.index)) {
-      if (this.isLinklog(tab.url || tab.pendingUrl)) {
+      if (this.isLinklog(tab)) {
         linklogTabs++;
         continue;
       }
@@ -151,9 +170,14 @@ export class Hub {
     return snap;
   }
 
-  /** Coalesces event bursts into one reconciliation per window. */
+  /** Coalesces event bursts into one reconciliation per window; a shorter delay pulls it forward. */
   schedule(delay = 120) {
-    if (this.timer) return;
+    const due = Date.now() + delay;
+    if (this.timer) {
+      if (due >= this.due) return;
+      clearTimeout(this.timer);
+    }
+    this.due = due;
     this.timer = setTimeout(() => {
       this.timer = null;
       void this.flush().catch((e) => console.warn("Linklog: flush failed", e));
@@ -172,7 +196,9 @@ export class Hub {
   async flush() {
     if (!this.connections.size) return;
     const byWindow = new Map<number, Omit<WindowSnapshot, "revision">>();
-    const revision = this.nextRevision();
+    // The revision only moves when something is actually sent.
+    let bumped: number | null = null;
+    const revision = () => (bumped ??= this.nextRevision());
     for (const c of [...this.connections.values()]) {
       if (!c.scope) continue;
       const tab = await chrome.tabs.get(c.tabId).catch(() => null);
@@ -186,13 +212,14 @@ export class Hub {
       let next = byWindow.get(tab.windowId);
       if (!next) byWindow.set(tab.windowId, (next = await this.snapshot(tab.windowId)));
       if (!c.last) {
-        c.last = { ...next, revision };
+        c.last = { ...next, revision: revision() };
         this.send(c, { event: { event: "snapshot", snapshot: c.last } });
         continue;
       }
-      const patch = diffSnapshots(c.last, next, revision);
+      const patch = diffSnapshots(c.last, next, 0);
       if (!patch) continue;
-      c.last = { ...next, revision };
+      patch.revision = revision();
+      c.last = { ...next, revision: patch.revision };
       this.send(c, { event: { event: "patch", patch } });
     }
   }

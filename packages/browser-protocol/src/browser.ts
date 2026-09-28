@@ -5,6 +5,8 @@ export const PROTOCOL_VERSION = 1;
 export const BRIDGE_CHANNEL = "linklog-bridge";
 /** chrome.runtime.connect port name used only by the bridge content script. */
 export const BRIDGE_PORT = "linklog-bridge";
+/** `<meta name="linklog-app">` marks a page as Linklog; the bridge stays inert elsewhere. */
+export const LINKLOG_APP_META = "linklog-app";
 
 export type GroupColor =
   | "grey"
@@ -56,7 +58,8 @@ export type BrowserTab = {
   discarded: boolean;
   frozen: boolean;
   content: ContentAccess;
-  openedAt: number;
+  /** When the extension first saw this opening (install, restart or reload reset it). */
+  firstSeenAt: number;
 };
 
 export type BrowserGroup = {
@@ -187,7 +190,8 @@ export type MoveTarget =
       description: string;
     };
 
-export type TabRef = { tabId: number; tabInstanceId: string };
+/** A tab as the page saw it. With `documentRevision`, commands refuse a tab that navigated since. */
+export type TabRef = { tabId: number; tabInstanceId: string; documentRevision?: number };
 
 export type DepositItem = {
   targetKey: string;
@@ -228,7 +232,14 @@ export type Commands = {
       resumeRequestId?: string;
       limit?: number;
     };
-    result: { requestId: string | null; targets: ClaimTarget[]; skipped: number };
+    result: {
+      requestId: string | null;
+      targets: ClaimTarget[];
+      /** Wanted but left for a later claim (limit or request size). */
+      skipped: number;
+      /** Instances claimed this round, including ones whose capture failed. */
+      attempted: string[];
+    };
   };
   accepted: {
     args: {
@@ -249,7 +260,8 @@ export type Commands = {
   };
   clean: {
     args: { lensIds: string[]; tabInstanceIds?: string[] };
-    result: { removed: number; requestIds: string[] };
+    /** Requests with queued work to cancel, and exactly which of their targets. */
+    result: { removed: number; requests: { requestId: string; targetKeys: string[] }[] };
   };
   capture: {
     /** `fresh` re-reads the page instead of reusing this revision's cached capture. */

@@ -13,12 +13,18 @@ export function uiUrl() {
 export function apiUrl() {
   return `http://${HOST}:${apiPort()}`;
 }
-/** Origins allowed to reach the extension bridge; baked into the extension build. */
+/**
+ * Extra Linklog origins baked into the extension build (e.g. a deployed one). The
+ * bridge always covers http://localhost and http://127.0.0.1 on any port, and only
+ * activates on pages that identify as Linklog.
+ */
 export function linklogOrigins(): string[] {
-  const configured = process.env.LINKLOG_ORIGINS?.split(",").map((o) => o.trim()).filter(Boolean);
-  if (configured?.length) return [...new Set(configured.map((o) => new URL(o).origin))].sort();
-  const ports = [...new Set([uiPort(), apiPort()])];
-  return ports.flatMap((p) => [`http://127.0.0.1:${p}`, `http://localhost:${p}`]).sort();
+  const configured = process.env.LINKLOG_ORIGINS?.split(",").map((o) => o.trim()).filter(Boolean) ?? [];
+  return [...new Set(configured.map((o) => new URL(o).origin))].sort();
+}
+/** Where the extension's "Open Linklog" goes when no Linklog tab is open. */
+export function linklogUrl(): string {
+  return linklogOrigins()[0] ?? uiUrl();
 }
 
 export async function portInUse(port: number): Promise<boolean> {

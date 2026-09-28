@@ -46,9 +46,22 @@ export function originOf(url: string): string | null {
   }
 }
 
-export function isLinklogUrl(url: string, origins: readonly string[]): boolean {
-  const origin = originOf(url);
-  return !!origin && origins.includes(origin);
+/** Content-script matches for the bridge: local development on any port (Chrome ignores ports without one). */
+export const LOCAL_BRIDGE_MATCHES = ["http://localhost/*", "http://127.0.0.1/*"];
+
+/**
+ * Origins where the bridge may run: http localhost / 127.0.0.1 on any port, plus
+ * explicitly configured Linklog origins (e.g. a deployed one). The page must also
+ * identify itself as Linklog before the bridge activates.
+ */
+export function isBridgeOrigin(origin: string, configured: readonly string[]): boolean {
+  if (configured.includes(origin)) return true;
+  try {
+    const u = new URL(origin);
+    return u.protocol === "http:" && (u.hostname === "localhost" || u.hostname === "127.0.0.1") && u.origin === origin;
+  } catch {
+    return false;
+  }
 }
 
 export type TargetKeyParts = {

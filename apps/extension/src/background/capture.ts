@@ -76,12 +76,38 @@ export async function captureTab(tabId: number): Promise<Capture> {
   }
 }
 
-/** Reads only the page's metadata (description, site name, preview image). */
+/**
+ * Reads only the page's metadata (description, site name, preview image) with a small
+ * inline function: no extractor bundle is injected just to read a few <meta> tags.
+ */
 export async function previewTab(tabId: number): Promise<{ description: string; siteName: string; image: string }> {
-  await chrome.scripting.executeScript({ target: { tabId }, files: ["extract.js"] });
   const [injection] = await chrome.scripting.executeScript({
     target: { tabId },
-    func: () => (globalThis as { __linklogPreview?: () => unknown }).__linklogPreview?.(),
+    func: () => {
+      const meta = (...names: string[]) => {
+        for (const n of names) {
+          const el = document.querySelector<HTMLMetaElement>(`meta[name="${n}"], meta[property="${n}"]`);
+          const v = el?.content?.trim();
+          if (v) return v;
+        }
+        return "";
+      };
+      const raw =
+        meta("og:image", "og:image:url", "twitter:image", "twitter:image:src") ||
+        document.querySelector<HTMLLinkElement>("link[rel='image_src']")?.href ||
+        "";
+      let image = "";
+      try {
+        image = raw ? new URL(raw, document.baseURI).href : "";
+      } catch {
+        /* not a URL */
+      }
+      return {
+        description: meta("description", "og:description", "twitter:description"),
+        siteName: meta("og:site_name", "application-name"),
+        image,
+      };
+    },
   });
   const raw = (injection?.result ?? {}) as Record<string, unknown>;
   const image = str(raw.image, 2000);

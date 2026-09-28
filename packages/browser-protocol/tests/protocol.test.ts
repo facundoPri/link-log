@@ -137,7 +137,7 @@ describe("snapshots", () => {
     discarded: false,
     frozen: false,
     content: "available",
-    openedAt: 0,
+    firstSeenAt: 0,
   });
   const snap: WindowSnapshot = { revision: 5, windowId: 1, tabs: [tab(1, 0), tab(2, 1)], groups: [], linklogTabs: 1 };
   test("small patches reproduce the next snapshot", () => {
