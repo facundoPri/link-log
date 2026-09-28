@@ -4,3 +4,5 @@ plugins = ["bun-plugin-tailwind"]
 [install]
 # Keep the hoisted layout this project used before becoming a workspace.
 linker = "hoisted"
+[test]
+preload = ["./tests/setup.ts"]

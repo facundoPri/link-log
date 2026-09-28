@@ -8,6 +8,7 @@ import { preservedContentStateSql } from "./content-state";
 import type { Job, JobUsage, UsageEvent } from "../src/types";
 import { OCR_USAGE_COLUMNS } from "./usage";
 import { browserRoute, cleanupBrowser } from "./browser";
+import { addLink } from "./links";
 export { LinkWorkflow };
 type JobUsageRow = {
   job_id: string;
@@ -255,42 +256,14 @@ export default {
       }
       if (path === "/api/links" && request.method === "POST") {
         if (typeof body.url !== "string") throw new Error("Missing link.");
-        const url = normalizeUrl(body.url);
         const names = tagNames(body.tags || []);
-        const existing = await env.DB.prepare(
-          "SELECT id FROM links WHERE original_url=? OR url=?",
-        )
-          .bind(url, url)
-          .first<{ id: string }>();
-        const proposedId = crypto.randomUUID();
-        const inserted = existing
-          ? null
-          : await env.DB.prepare(
-              "INSERT OR IGNORE INTO links (id,original_url,url,domain,title,created_at) VALUES (?,?,?,?,?,?) RETURNING id",
-            )
-              .bind(
-                proposedId,
-                url,
-                url,
-                domainOf(url),
-                domainOf(url),
-                new Date().toISOString(),
-              )
-              .first<{ id: string }>();
-        const stored =
-          existing ||
-          inserted ||
-          (await env.DB.prepare("SELECT id FROM links WHERE original_url=?")
-            .bind(url)
-            .first<{ id: string }>());
-        if (!stored) throw new Error("Could not save the link.");
-        const id = stored.id;
+        const { id, created } = await addLink(env, body.url);
         const statements = setTags(env.DB, id, names, false);
         if (statements.length) await env.DB.batch(statements);
-        if (inserted) await enqueue(env, [id], "extract");
+        if (created) await enqueue(env, [id], "extract");
         return json(
-          { id, duplicate: !inserted, ...(await library(env)) },
-          inserted ? 201 : 200,
+          { id, duplicate: !created, ...(await library(env)) },
+          created ? 201 : 200,
         );
       }
 

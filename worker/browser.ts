@@ -9,12 +9,12 @@ import {
   type EvaluationStatus,
   type GroupColor,
   type PinnedGroup,
-  type SaveItem,
   type SaveResult,
   type TargetStatus,
 } from "@linklog/browser-protocol";
 import type { Lens } from "../src/types";
-import { domainOf, normalizeUrl } from "../src/url";
+import { enqueue } from "./jobs";
+import { addLink } from "./links";
 import { json, library, parseLensDefinition, text } from "./store";
 
 // Browser view API. Requests come from the Linklog page through the existing
@@ -24,12 +24,17 @@ type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => !!v && typeof v === "object" && !Array.isArray(v);
 const idOk = (v: unknown): v is string => typeof v === "string" && /^[A-Za-z0-9_-]{1,80}$/.test(v);
 
+const readLibraryId = (env: Env) =>
+  env.DB.prepare("SELECT value FROM settings WHERE key='library_id'").first<{ value: string }>();
+
+/** Stable id of this library; created once, then only read (GET routes never write). */
 export async function libraryId(env: Env): Promise<string> {
+  const existing = await readLibraryId(env);
+  if (existing) return existing.value;
   await env.DB.prepare("INSERT OR IGNORE INTO settings(key,value) VALUES('library_id',?)")
     .bind(crypto.randomUUID())
     .run();
-  const row = await env.DB.prepare("SELECT value FROM settings WHERE key='library_id'").first<{ value: string }>();
-  return row!.value;
+  return (await readLibraryId(env))!.value;
 }
 
 function retentionDays(env: Env) {
@@ -202,6 +207,9 @@ async function createEvaluation(env: Env, body: Obj): Promise<Response> {
   if (req.kind === "lens") {
     const row = await env.DB.prepare("SELECT * FROM lenses WHERE id=?").bind(req.lens.id).first<Record<string, unknown>>();
     if (!row) return json({ error: "The lens no longer exists.", code: "lens-missing" }, 404);
+    // Library lenses keep their own results in All links; only browser lenses run here.
+    if (row.scope !== "browser")
+      return json({ error: "Only browser lenses can evaluate open tabs.", code: "lens-scope" }, 400);
     lens = { ...(row as unknown as Lens), ...parseLensDefinition(row.type as Lens["type"], String(row.options)) };
     if (lensFingerprint(lens) !== req.lens.fingerprint)
       return json({ error: "The lens changed. Refresh to evaluate with the current question.", code: "lens-changed" }, 409);
@@ -249,16 +257,30 @@ async function createEvaluation(env: Env, body: Obj): Promise<Response> {
     return json(await evaluationStatus(env, req.requestId));
   }
   // Snapshots are written after the receipt so a duplicate can never overwrite them.
-  await Promise.all(
+  const stored = await Promise.allSettled(
     targets.map((t) =>
       env.CONTENT.put(t.captureKey, t.capture.markdown, {
         httpMetadata: { contentType: "text/markdown; charset=utf-8" },
       }),
     ),
   );
+  const lost = targets.filter((_, i) => stored[i]!.status === "rejected");
+  if (lost.length) {
+    // Never leave a receipt whose jobs can't run: those targets fail visibly (no provider
+    // call was made) and the user can evaluate them again explicitly.
+    console.error(`Could not store ${lost.length} browser snapshot(s)`);
+    await env.DB.batch(
+      lost.map((t) =>
+        env.DB.prepare(
+          "UPDATE jobs SET status='failed',step='Failed',error=?,completed_at=? WHERE id=? AND status='queued'",
+        ).bind("The page snapshot could not be stored. Evaluate the tab again.", new Date().toISOString(), t.jobId),
+      ),
+    );
+  }
+  const ready = targets.filter((t) => !lost.includes(t));
   // D1 is the durable outbox; cron recovery resends if this dispatch fails.
   try {
-    await env.JOBS.sendBatch(targets.map((t) => ({ body: { id: t.jobId } })));
+    if (ready.length) await env.JOBS.sendBatch(ready.map((t) => ({ body: { id: t.jobId } })));
   } catch {
     console.error("Queue dispatch deferred to outbox recovery");
   }
@@ -280,67 +302,32 @@ function faviconOf(v: unknown): string | null {
   }
 }
 
-async function saveCaptures(env: Env, body: Obj): Promise<SaveResult[]> {
-  if (!Array.isArray(body.items) || !body.items.length || body.items.length > BROWSER_LIMITS.maxSaveItems)
+/**
+ * Save from Browser = adding the links in All links: same normalization, URL rules,
+ * dedupe and the normal server pipeline (metadata, content extraction, autotag). Only
+ * URLs are sent; nothing read locally becomes library content.
+ */
+async function saveUrls(env: Env, body: Obj): Promise<SaveResult[]> {
+  if (
+    !Array.isArray(body.urls) ||
+    !body.urls.length ||
+    body.urls.length > BROWSER_LIMITS.maxSaveItems ||
+    body.urls.some((u) => typeof u !== "string")
+  )
     throw new Error(`Save between 1 and ${BROWSER_LIMITS.maxSaveItems} tabs at a time.`);
   const results: SaveResult[] = [];
-  for (const raw of body.items as unknown[]) {
-    const key = isObj(raw) && typeof raw.key === "string" ? raw.key.slice(0, 100) : "";
+  for (const url of body.urls as string[]) {
     try {
-      if (!isObj(raw)) throw new Error("Invalid tab.");
-      const item: SaveItem = {
-        key,
-        url: text(raw.url, 4096),
-        title: text(raw.title, 1000),
-        favicon: faviconOf(raw.favicon),
-        image: faviconOf(raw.image),
-        capture: raw.capture === undefined ? undefined : capture(raw.capture),
-      };
-      // Same normalization, URL rules and dedupe as saving from All links.
-      const url = normalizeUrl(item.url);
-      const existing = await env.DB.prepare("SELECT id FROM links WHERE original_url=? OR url=?")
-        .bind(url, url)
-        .first<{ id: string }>();
-      if (existing) {
-        results.push({ key, status: "duplicate", id: existing.id });
-        continue;
-      }
-      const id = crypto.randomUUID();
-      const now = new Date().toISOString();
-      const inserted = await env.DB.prepare(
-        "INSERT OR IGNORE INTO links(id,original_url,url,domain,title,description,image,favicon,status,created_at) SELECT ?,?,?,?,?,?,?,?,'ready',? WHERE NOT EXISTS(SELECT 1 FROM links WHERE original_url=? OR url=?)",
-      )
-        .bind(id, url, url, domainOf(url), item.title || domainOf(url), item.capture?.description ?? "", item.image ?? null, item.favicon, now, url, url)
-        .run();
-      if (!inserted.meta.changes) {
-        const winner = await env.DB.prepare("SELECT id FROM links WHERE original_url=? OR url=?").bind(url, url).first<{ id: string }>();
-        results.push({ key, status: "duplicate", id: winner?.id });
-        continue;
-      }
-      if (item.capture && item.capture.source === "dom" && item.capture.markdown.trim()) {
-        // Content read locally; saving it never triggers a remote extraction.
-        const contentKey = `links/${id}/${crypto.randomUUID()}.md`;
-        await env.CONTENT.put(contentKey, item.capture.markdown, {
-          httpMetadata: { contentType: "text/markdown; charset=utf-8" },
-        });
-        const partial = item.capture.completeness === "partial";
-        const details = {
-          type: "web",
-          completeness: partial ? "unverified" : "verified",
-          issues: item.capture.reasons,
-          provenance: { source: "browser-extension", capturedAt: item.capture.capturedAt, facts: item.capture.facts },
-        };
-        await env.DB.prepare(
-          "UPDATE links SET content_key=?,content_version=1,content_source='browser',content_state=?,content_error=NULL,content_details=?,content_updated_at=? WHERE id=?",
-        )
-          .bind(contentKey, partial ? "partial" : "ready", JSON.stringify(details), item.capture.capturedAt, id)
-          .run();
-      }
-      results.push({ key, status: "created", id });
+      const { id, created } = await addLink(env, url);
+      results.push({ url, status: created ? "created" : "duplicate", id });
     } catch (error) {
-      results.push({ key, status: "rejected", error: error instanceof Error ? error.message : "Could not save." });
+      const message = error instanceof Error ? error.message : "";
+      results.push({ url, status: "rejected", error: /D1_|SQLITE/i.test(message) ? "Could not save." : message || "Could not save." });
     }
   }
+  // One extraction batch per request, like an import.
+  const created = [...new Set(results.filter((r) => r.status === "created").map((r) => r.id!))];
+  if (created.length) await enqueue(env, created, "extract");
   return results;
 }
 
@@ -391,9 +378,10 @@ export async function browserRoute(
         : null;
     if (evaluation[2] && method === "POST") {
       if (!keys?.length) throw new Error("Nothing to confirm.");
-      // Stored in the extension: the payload can go; the receipt and usage stay.
+      // Stored in the extension: the payload can go; the receipt and usage stay. Only
+      // answered targets are confirmed; the rest keep their snapshot until retention.
       const rows = await env.DB.prepare(
-        `SELECT id,capture_key FROM browser_targets WHERE request_id=? AND target_key IN (${keys.map(() => "?").join(",")})`,
+        `SELECT id,capture_key FROM browser_targets WHERE request_id=? AND answer IS NOT NULL AND target_key IN (${keys.map(() => "?").join(",")})`,
       )
         .bind(requestId, ...keys)
         .all<{ id: string; capture_key: string | null }>();
@@ -455,7 +443,7 @@ export async function browserRoute(
     return json({ error: "Method not allowed." }, 405);
   }
   if (path === "/api/browser/save" && method === "POST") {
-    const results = await saveCaptures(env, body);
+    const results = await saveUrls(env, body);
     return json({ results, ...(await library(env)) });
   }
   return null;
