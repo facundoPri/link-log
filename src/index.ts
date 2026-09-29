@@ -1,13 +1,14 @@
 import { serve } from "bun";
 import index from "./index.html";
+import { apiPort, HOST, uiPort } from "../scripts/ports";
 const server = serve({
-  port: 3000,
-  hostname: "127.0.0.1",
+  port: uiPort(),
+  hostname: HOST,
   routes: {
     "/api/*": async (request) => {
       const url = new URL(request.url);
-      url.hostname = "127.0.0.1";
-      url.port = "8787";
+      url.hostname = HOST;
+      url.port = String(apiPort());
       const headers = new Headers(request.headers);
       headers.delete("host");
       // Wrangler is bound to loopback; preserve same-origin checks at the browser boundary.

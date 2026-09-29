@@ -1,4 +1,5 @@
 import type { Lens, LensResult } from "../types";
+import { lensBucket, lensSelectedKeys } from "@linklog/browser-protocol";
 import { cn } from "../lib/utils";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -7,28 +8,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 
-export function lensBucket(
-  lens: Lens,
-  result: LensResult,
-): "yes" | "unsure" | "no" | string {
-  const a = result.answer;
-  if (a.type === "noul")
-    return a.noul >= lens.threshold
-      ? "yes"
-      : a.noul >= 0.5
-        ? "unsure"
-        : "no";
-  if (a.type === "choice") return a.choice;
-  return "score";
-}
-
-export function lensSelectedKeys(lens: Lens, result: LensResult): string[] {
-  const a = result.answer;
-  if (a.type !== "multi") return [];
-  return lens.options
-    .filter((o) => (a.probabilities[o.key] ?? 0) >= lens.threshold)
-    .map((o) => o.key);
-}
+export { lensBucket, lensSelectedKeys };
 
 export function LensVerdict({
   lens,

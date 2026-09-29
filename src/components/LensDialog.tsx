@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { Plus, X } from "lucide-react";
-import type { Lens, LensLevel, LensOption, LensType } from "../types";
+import type { Lens, LensLevel, LensOption, LensScope, LensType } from "../types";
 import { cn } from "../lib/utils";
 import { lensIcon } from "./Sidebar";
 import { Button } from "@/components/ui/button";
@@ -105,54 +105,78 @@ function EditorRow({
   );
 }
 
+function initialOptions(source: Lens | null): LensOption[] {
+  return source && (source.type === "choice" || source.type === "multi")
+    ? source.options.filter((o) => o.key !== "other").map((o) => ({ ...o }))
+    : [
+        { key: "option_0", label: "", description: "" },
+        { key: "option_1", label: "", description: "" },
+      ];
+}
+
+function initialLevels(source: Lens | null): LensLevel[] {
+  return source && source.type === "score"
+    ? source.levels.map((l) => ({ ...l }))
+    : [
+        { label: "", description: "" },
+        { label: "", description: "" },
+      ];
+}
+
 export function LensDialog({
   lens,
+  scope = lens === "new" ? "library" : lens.scope,
+  template,
+  templates = [],
   selectedCount,
   onClose,
   onSave,
 }: {
   lens: Lens | "new";
+  /** Browser lenses stay out of All links; library lenses stay out of Browser. */
+  scope?: LensScope;
+  /** Explicitly reuse another definition's question; results stay independent. */
+  template?: Lens;
+  templates?: Lens[];
   selectedCount: number;
   onClose: () => void;
   onSave: (draft: LensDraft) => Promise<void>;
 }) {
   const editing = lens !== "new";
-  const [name, setName] = useState(editing ? lens.name : "");
-  const [type, setType] = useState<LensType>(editing ? lens.type : "noul");
-  const [question, setQuestion] = useState(editing ? lens.question : "");
-  const [options, setOptions] = useState<LensOption[]>(
-    editing && (lens.type === "choice" || lens.type === "multi")
-      ? lens.options
-          .filter((o) => o.key !== "other")
-          .map((o) => ({ ...o }))
-      : [
-          { key: "option_0", label: "", description: "" },
-          { key: "option_1", label: "", description: "" },
-        ],
+  const [source, setSource] = useState<Lens | null>(
+    editing ? lens : (template ?? null),
   );
-  const [levels, setLevels] = useState<LensLevel[]>(
-    editing && lens.type === "score"
-      ? lens.levels.map((l) => ({ ...l }))
-      : [
-          { label: "", description: "" },
-          { label: "", description: "" },
-        ],
+  const [name, setName] = useState(
+    editing ? lens.name : template ? `${template.name} (browser)`.slice(0, 60) : "",
   );
+  const [type, setType] = useState<LensType>(source ? source.type : "noul");
+  const [question, setQuestion] = useState(source ? source.question : "");
+  const [options, setOptions] = useState<LensOption[]>(() => initialOptions(source));
+  const [levels, setLevels] = useState<LensLevel[]>(() => initialLevels(source));
   const [criteria, setCriteria] = useState(
-    editing && lens.type === "noul" ? { ...lens.criteria } : { yes: "", no: "" },
+    source && source.type === "noul" ? { ...source.criteria } : { yes: "", no: "" },
   );
   const [criteriaOpen, setCriteriaOpen] = useState(
-    editing && lens.type === "noul" && !!(lens.criteria.yes || lens.criteria.no),
+    !!source && source.type === "noul" && !!(source.criteria.yes || source.criteria.no),
   );
   const [threshold, setThreshold] = useState(
-    editing ? Math.round(lens.threshold * 100) : 80,
+    source ? Math.round(source.threshold * 100) : 80,
   );
-  const [runNow, setRunNow] = useState(!!selectedCount);
+  const applyTemplate = (t: Lens) => {
+    setSource(t);
+    setName(`${t.name} (browser)`.slice(0, 60));
+    setType(t.type);
+    setQuestion(t.question);
+    setOptions(initialOptions(t));
+    setLevels(initialLevels(t));
+    setCriteria(t.type === "noul" ? { ...t.criteria } : { yes: "", no: "" });
+    setCriteriaOpen(t.type === "noul" && !!(t.criteria.yes || t.criteria.no));
+    setThreshold(Math.round(t.threshold * 100));
+  };
+  const [runNow, setRunNow] = useState(!!selectedCount && scope === "library");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const nextKey = useRef(
-    editing ? lens.options.length : 2,
-  );
+  const nextKey = useRef(source ? source.options.length : 2);
 
   const addOption = () =>
     setOptions((o) => [
@@ -172,11 +196,46 @@ export function LensDialog({
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>{editing ? "Edit lens" : "New lens"}</DialogTitle>
-          <DialogDescription className="sr-only">
-            A saved question answered for each link with context
+          <DialogTitle>
+            {editing
+              ? scope === "browser"
+                ? "Edit browser lens"
+                : "Edit lens"
+              : scope === "browser"
+                ? "New browser lens"
+                : "New lens"}
+          </DialogTitle>
+          <DialogDescription
+            className={scope === "browser" ? "text-xs" : "sr-only"}
+          >
+            {scope === "browser"
+              ? "Answered for every open tab in this window while active. Browser lenses don't appear in All links."
+              : "A saved question answered for each link with context"}
           </DialogDescription>
         </DialogHeader>
+        {scope === "browser" && !editing && templates.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-xs text-muted-foreground">
+              Reuse a library question:
+            </span>
+            {templates.slice(0, 6).map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => applyTemplate(t)}
+                className={cn(
+                  "inline-flex h-6 items-center gap-1 rounded-full border px-2 text-xs transition-colors",
+                  source?.id === t.id
+                    ? "border-brand/40 bg-brand/10 text-brand"
+                    : "hover:bg-accent",
+                )}
+              >
+                {lensIcon(t.type, "size-3")}
+                {t.name}
+              </button>
+            ))}
+          </div>
+        )}
         <form
           className="space-y-4"
           onSubmit={async (e) => {
@@ -196,6 +255,7 @@ export function LensDialog({
               await onSave({
                 name: name.trim(),
                 type,
+                scope,
                 question: question.trim(),
                 threshold: threshold / 100,
                 options:
@@ -448,7 +508,7 @@ export function LensDialog({
           )}
           <DialogFooter className="sm:justify-between">
             <div className="flex items-center gap-2">
-              {!editing && !!selectedCount && (
+              {!editing && !!selectedCount && scope === "library" && (
                 <label className="flex items-center gap-2 text-[13px]">
                   <Checkbox
                     checked={runNow}
@@ -460,7 +520,14 @@ export function LensDialog({
               )}
               {editing && (
                 <span className="text-xs text-muted-foreground">
-                  Existing results keep the version they were computed with.
+                  {scope === "browser"
+                    ? "Changing the question re-evaluates tabs; a threshold change reuses answers."
+                    : "Existing results keep the version they were computed with."}
+                </span>
+              )}
+              {!editing && source && scope === "browser" && (
+                <span className="text-xs text-muted-foreground">
+                  Copied from “{source.name}” · results stay separate
                 </span>
               )}
             </div>

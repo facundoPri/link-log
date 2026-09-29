@@ -3,7 +3,13 @@ import {
   type WorkflowEvent,
   type WorkflowStep,
 } from "cloudflare:workers";
-import { handlers, type Pool } from "./handlers";
+import {
+  browserHandlers,
+  handlers,
+  type BrowserTargetRow,
+  type JobConfig,
+  type Pool,
+} from "./handlers";
 import { parseLensDefinition } from "./store";
 import { preservedContentStateSql } from "./content-state";
 import type { Lens, Link, Tag } from "../src/types";
@@ -19,10 +25,11 @@ function poolLimit(env: Env, pool: Pool) {
 export type JobRow = {
   id: string;
   batch_id: string;
-  link_id: string;
+  link_id: string | null;
+  target_id?: string | null;
   status: string;
 };
-type Config = { tags?: Tag[]; lens?: Lens; track?: string };
+type Config = JobConfig;
 export async function enqueue(
   env: Env,
   ids: string[],
@@ -64,6 +71,8 @@ export async function enqueue(
       .bind(lensId)
       .first<Record<string, unknown>>();
     if (!row) throw new Error("The lens no longer exists.");
+    if (row.scope === "browser")
+      throw new Error("Browser lenses evaluate open tabs, not saved links.");
     const lens = {
       ...(row as unknown as Lens),
       ...parseLensDefinition(
@@ -130,8 +139,14 @@ export async function dispatch(batch: MessageBatch<{ id: string }>, env: Env) {
         if (["errored", "terminated", "complete"].includes(status.status)) {
           await env.DB.batch([
             env.DB.prepare(
-              "UPDATE jobs SET status='failed',step='Interrupted',error='Extraction was interrupted. Try again.',completed_at=? WHERE id=? AND status IN ('queued','running')",
-            ).bind(new Date().toISOString(), job.id),
+              "UPDATE jobs SET status='failed',step='Interrupted',error=?,completed_at=? WHERE id=? AND status IN ('queued','running')",
+            ).bind(
+              job.target_id
+                ? "The evaluation was interrupted. Retry it explicitly."
+                : "Extraction was interrupted. Try again.",
+              new Date().toISOString(),
+              job.id,
+            ),
             env.DB.prepare(
               `UPDATE links SET content_state=${preservedContentStateSql("failed")},content_error='Extraction was interrupted. Try again.' WHERE id=? AND content_state='queued'`,
             ).bind(job.link_id),
@@ -159,59 +174,78 @@ export class LinkWorkflow extends WorkflowEntrypoint<Env, { id: string }> {
       if (!row) throw new Error("The job no longer exists.");
       if (row.status !== "queued")
         throw new Error("The job was cancelled before it started.");
-      const link = await env.DB.prepare("SELECT * FROM links WHERE id=?")
-        .bind(row.link_id)
-        .first<Link>();
-      if (!link) throw new Error("The link no longer exists.");
+      // A job targets either a saved link or a browser capture, never both.
+      const link = row.link_id
+        ? await env.DB.prepare("SELECT * FROM links WHERE id=?")
+            .bind(row.link_id)
+            .first<Link>()
+        : null;
+      const target = row.target_id
+        ? await env.DB.prepare(
+            "SELECT id,request_id,target_key,url,title,capture_key,capture_meta FROM browser_targets WHERE id=?",
+          )
+            .bind(row.target_id)
+            .first<BrowserTargetRow>()
+        : null;
+      if (!link && !target)
+        throw new Error(
+          row.target_id
+            ? "The browser capture no longer exists."
+            : "The link no longer exists.",
+        );
       await env.DB.prepare(
         "UPDATE jobs SET status='running',step='Preparing content' WHERE id=? AND status='queued'",
       )
         .bind(row.id)
         .run();
-      return { job: row, link };
+      return { job: row, link, target };
     });
-    const { job, link } = data;
-    try {
-      const handler = handlers[job.kind];
-      if (!handler) throw new Error(`No handler for job kind "${job.kind}".`);
-      const ctx = {
-        env,
-        step,
-        job,
-        link,
-        config: JSON.parse(job.config) as Config,
-      };
-      const pool = handler.pool(ctx);
-      if (pool) {
-        const limit = poolLimit(env, pool);
-        let lease = false;
-        for (let attempt = 0; !lease; attempt++) {
-          lease = await step.do(`provider-slot-${attempt}`, async () => {
-            const now = Date.now();
-            await env.DB.prepare(
-              "DELETE FROM provider_leases WHERE expires_at<?",
+    const { job, link, target } = data;
+    const acquire = async (pool: Pool | null) => {
+      if (!pool) return;
+      const limit = poolLimit(env, pool);
+      let lease = false;
+      for (let attempt = 0; !lease; attempt++) {
+        lease = await step.do(`provider-slot-${attempt}`, async () => {
+          const now = Date.now();
+          await env.DB.prepare(
+            "DELETE FROM provider_leases WHERE expires_at<?",
+          )
+            .bind(now)
+            .run();
+          const result = await env.DB.prepare(
+            "INSERT OR IGNORE INTO provider_leases(job_id,pool,expires_at) SELECT ?,?,? WHERE (SELECT count(*) FROM provider_leases WHERE pool=?)<?",
+          )
+            .bind(job.id, pool, now + 300000, pool, limit)
+            .run();
+          return (
+            result.meta.changes > 0 ||
+            !!(await env.DB.prepare(
+              "SELECT job_id FROM provider_leases WHERE job_id=?",
             )
-              .bind(now)
-              .run();
-            const result = await env.DB.prepare(
-              "INSERT OR IGNORE INTO provider_leases(job_id,pool,expires_at) SELECT ?,?,? WHERE (SELECT count(*) FROM provider_leases WHERE pool=?)<?",
-            )
-              .bind(job.id, pool, now + 300000, pool, limit)
-              .run();
-            return (
-              result.meta.changes > 0 ||
-              !!(await env.DB.prepare(
-                "SELECT job_id FROM provider_leases WHERE job_id=?",
-              )
-                .bind(job.id)
-                .first())
-            );
-          });
-          if (!lease)
-            await step.sleep(`waiting-for-slot-${attempt}`, "2 seconds");
-        }
+              .bind(job.id)
+              .first())
+          );
+        });
+        if (!lease)
+          await step.sleep(`waiting-for-slot-${attempt}`, "2 seconds");
       }
-      await handler.run(ctx);
+    };
+    try {
+      const config = JSON.parse(job.config) as Config;
+      if (target) {
+        const handler = browserHandlers[job.kind];
+        if (!handler) throw new Error(`No handler for job kind "${job.kind}".`);
+        const ctx = { env, step, job, target, config };
+        await acquire(handler.pool(ctx));
+        await handler.run(ctx);
+      } else {
+        const handler = handlers[job.kind];
+        if (!handler) throw new Error(`No handler for job kind "${job.kind}".`);
+        const ctx = { env, step, job, link: link!, config };
+        await acquire(handler.pool(ctx));
+        await handler.run(ctx);
+      }
       await step.do("complete", async () => {
         await env.DB.prepare("UPDATE usage_events SET status='failed',error='Provider call interrupted before completion',duration_ms=?-strftime('%s',created_at)*1000 WHERE job_id=? AND status='started'")
           .bind(Date.now(), job.id).run();
@@ -231,7 +265,7 @@ export class LinkWorkflow extends WorkflowEntrypoint<Env, { id: string }> {
         )
           .bind(message, new Date().toISOString(), job.id)
           .run();
-        if (job.kind === "extract")
+        if (job.kind === "extract" && link)
           await env.DB.prepare(
             `UPDATE links SET content_state=${preservedContentStateSql("failed")},content_error=?,status=CASE WHEN status='pending' THEN 'failed' ELSE status END WHERE id=?`,
           )

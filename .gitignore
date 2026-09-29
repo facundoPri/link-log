@@ -36,5 +36,13 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .wrangler
 .dev.vars
 
-# Local design notes and handoffs
-/docs/
+# Local design notes and handoffs (the Browser feature docs are tracked)
+/docs/*
+!/docs/browser-feature-plan.md
+!/docs/browser-implementation-handoff.md
+!/docs/browser-validation.md
+!/docs/browser-validation/
+
+# Isolated Chrome profiles and packaged extensions
+/.profiles/
+/apps/extension/*.zip

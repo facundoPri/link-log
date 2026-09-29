@@ -1,5 +1,6 @@
 import type { Answer, Lens, LensOption, Question, Tag } from "../../src/types";
 import { measured } from "../usage";
+import { fixtureJev } from "./fixture";
 export type { Answer, Question } from "../../src/types";
 export function probability(n: unknown): n is number {
   return typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= 1;
@@ -175,7 +176,7 @@ export async function judge(
   env: Env,
   state: unknown,
   questions: Record<string, Question>,
-  job: { id: string; batch_id: string; link_id: string },
+  job: { id: string; batch_id: string; link_id: string | null },
 ) {
   // Bytes are not tokens. Content past ~40k tokens is truncated before sending;
   // the provider's tokenizer still enforces the real context window.
@@ -183,7 +184,12 @@ export async function judge(
   const provider = env.JEV_PROVIDER || "cloudflare";
   return measured(env, job, "jev", provider, "classify", async (meter) => {
     let raw: Record<string, unknown>;
-    if (provider === "typesafe") {
+    if (provider === "fixture") {
+      // Deterministic, unpaid answers for automated tests. Never enabled by default.
+      if (env.ALLOW_FIXTURE_JEV !== "1")
+        throw new Error("The fixture Jev provider is only available in tests.");
+      raw = await fixtureJev(input);
+    } else if (provider === "typesafe") {
       if (!env.TYPESAFE_API_KEY)
         throw new Error("TYPESAFE_API_KEY is not configured.");
       const response = await fetch("https://api.typesafe.ai/v1/systemone", {
@@ -197,6 +203,13 @@ export async function judge(
           ...input,
         }),
         signal: AbortSignal.timeout(60000),
+      }).catch((error: unknown) => {
+        if (error instanceof Error && error.name === "TimeoutError")
+          // The request may have reached the provider; never retry blindly.
+          throw new Error(
+            "Jev did not answer within 60 seconds. The call may still have been billed; retry explicitly if needed.",
+          );
+        throw error;
       });
       if (!response.ok) {
         const detail = (await response.text()).slice(0, 8000);

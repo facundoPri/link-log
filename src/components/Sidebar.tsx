@@ -12,6 +12,7 @@ import {
   Plus,
   Tag,
 } from "lucide-react";
+import type { ReactNode } from "react";
 import type { Lens, Library, Tag as TagType } from "../types";
 import { Button } from "@/components/ui/button";
 import {
@@ -33,6 +34,7 @@ export type View =
   | "all"
   | "untagged"
   | "attention"
+  | "browser"
   | { kind: "lens"; id: string };
 
 export function lensIcon(type: Lens["type"], className = "size-4") {
@@ -62,7 +64,13 @@ export function Sidebar({
   onEditLens,
   onDeleteLens,
   onActivity,
+  browserCount,
+  browserPanel,
 }: {
+  /** Tabs in this window, or null while the extension isn't connected. */
+  browserCount: number | null;
+  /** Groups and lens toggles shown instead of Tags/Lenses in Browser mode. */
+  browserPanel: ReactNode;
   library: Library;
   view: View;
   tagIds: string[];
@@ -131,28 +139,21 @@ export function Sidebar({
             <span className={count}>{attentionCount}</span>
           </Button>
         )}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span className="w-full">
-              <Button
-                variant="ghost"
-                className={cn(item, "opacity-60")}
-                disabled
-                aria-disabled="true"
-              >
-                <Globe className="size-4" />
-                Browser
-                <span className="ml-auto rounded-sm border px-1 text-2xs text-muted-foreground">
-                  Soon
-                </span>
-              </Button>
-            </span>
-          </TooltipTrigger>
-          <TooltipContent>
-            Import open tabs from a browser extension — coming soon.
-          </TooltipContent>
-        </Tooltip>
+        <Button
+          variant="ghost"
+          className={item}
+          data-active={view === "browser"}
+          onClick={() => onView("browser")}
+        >
+          <Globe className="size-4" />
+          Browser
+          <span className={count}>{browserCount ?? ""}</span>
+        </Button>
       </nav>
+      {view === "browser" ? (
+        browserPanel
+      ) : (
+        <>
       <div className="mt-3 flex h-7 shrink-0 items-center justify-between px-4">
         <span className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">
           Tags
@@ -245,7 +246,7 @@ export function Sidebar({
             <TooltipContent>New lens</TooltipContent>
           </Tooltip>
         </div>
-        {library.lenses.map((lens) => (
+        {library.lenses.filter((lens) => lens.scope !== "browser").map((lens) => (
           <div key={lens.id} className="group relative">
             <Button
               variant="ghost"
@@ -290,6 +291,8 @@ export function Sidebar({
           </div>
         ))}
       </div>
+        </>
+      )}
       <div className="flex shrink-0 flex-col gap-0.5 border-t p-2">
         <Button variant="ghost" className={item} onClick={onActivity}>
           <Activity className="size-4" />

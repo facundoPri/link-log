@@ -12,6 +12,7 @@ const lens = (partial: Partial<Lens>): Lens => ({
   id: "l1",
   name: "Test",
   type: "noul",
+  scope: "library",
   question: "Is this relevant?",
   options: [],
   levels: [],
