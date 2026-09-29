@@ -1,7 +1,9 @@
 const rtf = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
 
-export function relativeTime(iso: string): string {
-  const seconds = Math.round((new Date(iso).getTime() - Date.now()) / 1000);
+export function relativeTime(iso: string | number): string {
+  const time = new Date(iso).getTime();
+  if (!Number.isFinite(time)) return "unknown";
+  const seconds = Math.round((time - Date.now()) / 1000);
   const abs = Math.abs(seconds);
   if (abs < 60) return rtf.format(seconds, "second");
   const minutes = Math.round(seconds / 60);

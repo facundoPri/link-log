@@ -1,6 +1,8 @@
 import type { Answer } from "./lens.ts";
 
-export const PROTOCOL_VERSION = 1;
+// Bump whenever a message or snapshot shape changes, so a stale extension build is
+// reported as outdated instead of feeding the page fields it doesn't have.
+export const PROTOCOL_VERSION = 2;
 /** window.postMessage channel between the Linklog page and the bridge content script. */
 export const BRIDGE_CHANNEL = "linklog-bridge";
 /** chrome.runtime.connect port name used only by the bridge content script. */

@@ -119,7 +119,7 @@ export function BrowserInspector({
   const image = (preview?.image || capture?.image || "") && !imgFailed ? preview?.image || capture?.image : "";
   const description = preview?.description || capture?.description || "";
   const facts = capture?.facts ?? [];
-  const firstSeen = relativeTime(new Date(tab.firstSeenAt).toISOString());
+  const firstSeen = relativeTime(tab.firstSeenAt);
 
   const lensSection = lenses.length > 0 && (
     <section className="space-y-1.5">
