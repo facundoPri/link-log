@@ -1,5 +1,5 @@
 import type { WorkflowStep } from "cloudflare:workers";
-import { beforeCall, judge, JevFailure, type JevPhase, type Question } from "../ai/jev";
+import { beforeCall, judge, JevFailure, R2_TRANSIENT, uncertain, type JevPhase, type Question } from "../ai/jev";
 
 // Owner decision (FAC-54): one automatic retry, only for known border cases before the call (a transient
 // R2 read or D1 conflict/timeout). Once the request may have been sent, Jev is never retried automatically.
@@ -14,7 +14,8 @@ export async function readSaved(env: Env, key: string | null, missing: string) {
     object = key ? await env.CONTENT.get(key) : null;
     if (object) return await object.text();
   } catch (e) {
-    throw new JevFailure("before_call", "storage_busy", undefined, { technical: e instanceof Error ? e.message : String(e) });
+    // Only R2's known transient answers are retried; a permanent or unknown error is final.
+    throw beforeCall(e, "Failed before calling Jev (no cost): the saved content could not be read.", R2_TRANSIENT);
   }
   throw new JevFailure("before_call", "before_call", missing);
 }
@@ -54,9 +55,14 @@ export async function evaluateWithJev(
   const result = await step.do("evaluate-jev", { retries: JEV_RETRIES, timeout: "2 minutes" }, async (ctx) => {
     let failure: JevFailure;
     try {
-      // A previous attempt that wrote a usage row may have reached the provider before the engine ended it.
-      if (ctx.attempt > 1 && await env.DB.prepare("SELECT 1 FROM usage_events WHERE job_id=? AND service='jev'").bind(job.id).first())
-        failure = new JevFailure("sent", "interrupted", undefined, { technical: "A previous attempt sent the request" });
+      // A previous attempt that claimed the call may have reached the provider before the engine ended it.
+      // Not knowing (the read failed) is treated the same way: never send, and say it may have been billed.
+      const previous = ctx.attempt > 1
+        ? await env.DB.prepare("SELECT jev_call FROM jobs WHERE id=?").bind(job.id).first<{ jev_call: string | null }>()
+          .then((row) => !!row?.jev_call, (e: unknown) => { throw uncertain(e); })
+        : false;
+      if (previous)
+        failure = new JevFailure("sent", "interrupted", undefined, { technical: "A previous attempt claimed the call" });
       else {
         await env.DB.batch([
           // Activity only counts attempts once a retry happens.
@@ -70,6 +76,12 @@ export async function evaluateWithJev(
     } catch (e) {
       failure = beforeCall(e);
     }
+    // On a later attempt, "no cost" holds only if no earlier callback has claimed the call meanwhile.
+    if (failure.phase === "before_call" && ctx.attempt > 1) {
+      const claimed = await env.DB.prepare("SELECT jev_call FROM jobs WHERE id=?").bind(job.id).first<{ jev_call: string | null }>()
+        .then((row) => !!row?.jev_call, () => true);
+      if (claimed) failure = new JevFailure("sent", "interrupted", undefined, failure.detail);
+    }
     const final = !failure.retryable || ctx.attempt >= max;
     logJevFailure(env, failure, job, ctx.attempt, final);
     if (!final) {
@@ -78,6 +90,12 @@ export async function evaluateWithJev(
       throw failure;
     }
     return { failed: { phase: failure.phase, reason: failure.reason, message: failure.message, http_status: failure.detail.http_status ?? null } } satisfies Failed;
+  }).catch((e: unknown) => {
+    // An error the engine raised (step timeout, eviction) says nothing about whether the call was sent.
+    if (e instanceof JevFailure) throw e;
+    const failure = uncertain(e);
+    logJevFailure(env, failure, job, max, true);
+    throw failure;
   });
   if ("failed" in result) {
     const f = result.failed;

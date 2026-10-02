@@ -1,5 +1,5 @@
 import type { Answer, Lens, LensOption, Question, Tag } from "../../src/types";
-import { measured } from "../usage";
+import { finishUsage, guardedUsageInsert, type Meter } from "../usage";
 import { capabilities } from "../store";
 import { jevUnavailable } from "../../src/attention";
 import { fixtureJev } from "./fixture";
@@ -193,16 +193,22 @@ export class JevFailure extends Error {
   }
 }
 const technical = (e: unknown) => (e instanceof Error ? `${e.name}: ${e.message}` : String(e)).slice(0, 300);
-// D1 conflicts and timeouts and R2 hiccups that a second try usually gets past.
-const TRANSIENT = /D1_ERROR|SQLITE_BUSY|database is locked|overloaded|Network connection lost|storage operation exceeded timeout|timed? ?out|internal error|try again/i;
-/** A failure before the request was sent: a known transient storage error or a plain no-cost failure. */
-export function beforeCall(e: unknown, message?: string): JevFailure {
+// Only known transient D1 failures (conflicts, timeouts, resets) are worth the one retry before the call.
+// A bare D1_ERROR (schema, constraint, bad query) is permanent.
+const D1_TRANSIENT = /SQLITE_BUSY|database is locked|D1 DB is overloaded|Network connection lost|storage operation exceeded timeout|storage caused object to be reset|reset because its code was updated|timed? ?out|timeout/i;
+// R2's transient answers: internal error ("please try again"), service unavailable, throttling, timeouts.
+export const R2_TRANSIENT = /internal error|try again|service unavailable|temporarily unavailable|too many requests|reduce your concurrent request rate|timed? ?out|Network connection lost/i;
+/** A failure before the request was sent: a known transient D1 error, or a final no-cost failure. */
+export function beforeCall(e: unknown, message?: string, transient = D1_TRANSIENT): JevFailure {
   if (e instanceof JevFailure) return e;
   const text = e instanceof Error ? e.message : String(e);
-  return TRANSIENT.test(text)
+  return transient.test(text)
     ? new JevFailure("before_call", "storage_busy", undefined, { technical: technical(e) })
     : new JevFailure("before_call", "before_call", message, { technical: technical(e) });
 }
+/** No proof either way that this job's call was not sent: fail closed, never send, and say it may have been billed. */
+export const uncertain = (e: unknown) =>
+  e instanceof JevFailure ? e : new JevFailure("sent", "interrupted", undefined, { technical: technical(e) });
 // Authentication, billing, quota or balance problems: the account can't be used until someone fixes it.
 const ACCOUNT = /insufficient|balance|quota|billing|payment|out of credits|free allocation|account limit|unauthori[sz]ed|authenticat|forbidden|invalid (?:api )?(?:key|token)/i;
 /** A failure once the request may have left. Network errors without a response count too: Workers can't prove it didn't. */
@@ -217,11 +223,40 @@ function afterSend(e: unknown): JevFailure {
     return new JevFailure("sent", "network", undefined, detail);
   return new JevFailure("sent", "provider_error", undefined, detail);
 }
+type JevJob = { id: string; batch_id: string; link_id: string | null };
+const accountStopped = "EXISTS (SELECT 1 FROM jobs s WHERE s.batch_id=? AND s.id<>? AND s.reason='account')";
+/**
+ * Authorizes this job's single Jev call. One transaction claims `jobs.jev_call` (only if no attempt claimed
+ * it, the job is still running and its batch was not stopped by an account error) and writes the usage row
+ * under that claim. Only a callback that got the claim sends, so an abandoned or late attempt never does.
+ */
+async function claimCall(env: Env, job: JevJob, usageId: string, provider: string) {
+  let claimed: boolean;
+  try {
+    const [claim] = await env.DB.batch([
+      env.DB.prepare(`UPDATE jobs SET jev_call=? WHERE id=? AND jev_call IS NULL AND status='running' AND NOT ${accountStopped}`)
+        .bind(usageId, job.id, job.batch_id, job.id),
+      guardedUsageInsert(env, usageId, job, provider, "jev", "classify", "EXISTS (SELECT 1 FROM jobs WHERE id=? AND jev_call=?)", [job.id, usageId]),
+    ]);
+    claimed = (claim?.meta.changes ?? 0) > 0;
+  } catch (e) {
+    // The transaction did not commit: nothing was claimed or sent.
+    throw beforeCall(e);
+  }
+  if (claimed) return;
+  // Why not: another attempt holds the call (it may have sent), the batch stopped, or the job is settled.
+  const row = await env.DB.prepare(`SELECT jev_call,status,${accountStopped} stopped FROM jobs WHERE id=?`)
+    .bind(job.batch_id, job.id, job.id).first<{ jev_call: string | null; status: string; stopped: number }>()
+    .catch((e: unknown) => { throw uncertain(e); });
+  if (!row || row.jev_call) throw new JevFailure("sent", "interrupted", undefined, { technical: "Another attempt holds this job's Jev call" });
+  if (row.stopped) throw new JevFailure("before_call", "account_stopped");
+  throw new JevFailure("before_call", "before_call", undefined, { technical: `Job is ${row.status}` });
+}
 export async function judge(
   env: Env,
   state: unknown,
   questions: Record<string, Question>,
-  job: { id: string; batch_id: string; link_id: string | null },
+  job: JevJob,
 ) {
   // Bytes are not tokens. Content past ~40k tokens is truncated before sending;
   // the provider's tokenizer still enforces the real context window.
@@ -233,66 +268,67 @@ export async function judge(
     console.error(JSON.stringify({ event: "jev_not_configured", provider, job: job.id }));
     throw new JevFailure("before_call", "not_configured", unavailable);
   }
-  // An account error earlier in this batch stops the rest of it without calling.
-  const stopped = await env.DB.prepare("SELECT 1 FROM jobs WHERE batch_id=? AND id<>? AND reason='account' LIMIT 1")
-    .bind(job.batch_id, job.id).first().catch((e: unknown) => { throw beforeCall(e); });
-  if (stopped) throw new JevFailure("before_call", "account_stopped");
-  // The usage row is written right before sending, so Usage only lists calls that may have reached the provider.
-  let sent = false;
+  // The usage row is written with the claim, right before sending: Usage only lists calls that may have been sent.
+  const usageId = crypto.randomUUID(), started = Date.now(), meter: Meter = {};
+  await claimCall(env, job, usageId, provider);
+  let failure: JevFailure | null = null;
+  let result: { answers: Record<string, Answer>; model: string } | undefined;
   try {
-    return await measured(env, job, "jev", provider, "classify", async (meter) => {
-      sent = true;
-      let raw: Record<string, unknown>;
-      // Fixture: deterministic, unpaid answers for automated tests, only with ALLOW_FIXTURE_JEV.
-      if (provider === "fixture") raw = await fixtureJev(input);
-      else if (provider === "typesafe") {
-        const response = await fetch("https://api.typesafe.ai/v1/systemone", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${env.TYPESAFE_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model: env.JEV_MODEL || "jev-1.13.0",
-            ...input,
-          }),
-          signal: AbortSignal.timeout(60000),
-        });
-        if (!response.ok) {
-          const detail = (await response.text()).slice(0, 8000);
-          const http = { http_status: response.status, technical: `TypeSafe HTTP ${response.status}: ${detail.slice(0, 300)}` };
-          if (
-            [400, 413, 422].includes(response.status) &&
-            /(?:context|tokens?).{0,100}(?:length|limit|exceed|maximum|too)|(?:exceed|maximum|too many|too long).{0,100}(?:tokens?|context)/is.test(
-              detail,
-            )
+    let raw: Record<string, unknown>;
+    // Fixture: deterministic, unpaid answers for automated tests, only with ALLOW_FIXTURE_JEV.
+    if (provider === "fixture") raw = await fixtureJev(input);
+    else if (provider === "typesafe") {
+      const response = await fetch("https://api.typesafe.ai/v1/systemone", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${env.TYPESAFE_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: env.JEV_MODEL || "jev-1.13.0",
+          ...input,
+        }),
+        signal: AbortSignal.timeout(60000),
+      });
+      if (!response.ok) {
+        // The status decides an account error; the body only adds detail, and may fail to arrive.
+        const detail = (await response.text().catch(() => "")).slice(0, 8000);
+        const http = { http_status: response.status, technical: `TypeSafe HTTP ${response.status}: ${detail.slice(0, 300)}` };
+        if ([401, 402, 403].includes(response.status))
+          throw new JevFailure("sent", "account", undefined, http);
+        if (
+          [400, 413, 422].includes(response.status) &&
+          /(?:context|tokens?).{0,100}(?:length|limit|exceed|maximum|too)|(?:exceed|maximum|too many|too long).{0,100}(?:tokens?|context)/is.test(
+            detail,
           )
-            throw new JevFailure("sent", "too_long", undefined, http);
-          if ([401, 402, 403].includes(response.status) || ACCOUNT.test(detail))
-            throw new JevFailure("sent", "account", undefined, http);
-          throw new JevFailure("sent", "provider_error", undefined, http);
-        }
-        raw = await response.json<Record<string, unknown>>().catch((e: unknown) => {
-          throw new JevFailure("sent", "invalid_response", undefined, { technical: technical(e) });
-        });
-      } else raw = await env.AI.run("typesafe/jev", input);
-      const usage = raw.usage as
-        { input_tokens?: number; output_tokens?: number } | undefined;
-      if (usage && Number.isFinite(usage.input_tokens))
-        meter.input_tokens = usage.input_tokens;
-      if (usage && Number.isFinite(usage.output_tokens))
-        meter.output_tokens = usage.output_tokens;
-      meter.model = typeof raw.model === "string" ? raw.model : "typesafe/jev";
-      try {
-        return {
-          answers: validateAnswers(raw.answers, questions),
-          model: meter.model,
-        };
-      } catch (e) {
-        throw new JevFailure("sent", "invalid_response", undefined, { technical: technical(e) });
+        )
+          throw new JevFailure("sent", "too_long", undefined, http);
+        throw new JevFailure("sent", ACCOUNT.test(detail) ? "account" : "provider_error", undefined, http);
       }
-    });
+      raw = await response.json<Record<string, unknown>>().catch((e: unknown) => {
+        throw new JevFailure("sent", "invalid_response", undefined, { technical: technical(e) });
+      });
+    } else raw = await env.AI.run("typesafe/jev", input);
+    const usage = raw.usage as
+      { input_tokens?: number; output_tokens?: number } | undefined;
+    if (usage && Number.isFinite(usage.input_tokens))
+      meter.input_tokens = usage.input_tokens;
+    if (usage && Number.isFinite(usage.output_tokens))
+      meter.output_tokens = usage.output_tokens;
+    meter.model = typeof raw.model === "string" ? raw.model : "typesafe/jev";
+    try {
+      result = {
+        answers: validateAnswers(raw.answers, questions),
+        model: meter.model,
+      };
+    } catch (e) {
+      throw new JevFailure("sent", "invalid_response", undefined, { technical: technical(e) });
+    }
   } catch (e) {
-    throw sent ? afterSend(e) : beforeCall(e);
+    failure = afterSend(e);
   }
+  // Metering never replaces the provider's outcome (an account error must still stop the batch).
+  await finishUsage(env, usageId, started, provider, meter, failure?.message ?? null);
+  if (failure) throw failure;
+  return result!;
 }

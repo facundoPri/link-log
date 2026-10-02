@@ -162,7 +162,9 @@ content, Use preview, tags, retry) wait for it. Cancelling a batch drops its que
 and waiting jobs; cancelling a not-yet-started extraction also cancels the auto-tag
 and lens jobs waiting for it. Paid steps are not silently retried. A Jev failure
 is split by phase: before the request is sent ("Failed before calling Jev (no cost)",
-no Usage row) only a transient R2 read or a D1 conflict/timeout is retried, once;
+no Usage row) only a known transient R2 read or D1 conflict/timeout is retried, once;
+a job sends at most one Jev request, authorized by an atomic claim (`jobs.jev_call`)
+written with its Usage row, so a late or overlapping attempt never sends again;
 once the request may have been sent (HTTP error, timeout, network error, invalid
 answer: "may have been billed") it is never retried automatically, and failed
 auto-tag and lens jobs can be retried from Activity. If Jev refuses the account

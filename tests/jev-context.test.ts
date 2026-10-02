@@ -26,6 +26,8 @@ function environment() {
         }),
         first: async () => null,
       }),
+      // The claim and its usage row: one transaction that authorizes the call.
+      batch: async (list: unknown[]) => list.map(() => ({ meta: { changes: 1 } })),
     },
   } as unknown as Env;
   return { env, writes };

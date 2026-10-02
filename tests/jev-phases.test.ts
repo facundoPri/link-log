@@ -199,7 +199,7 @@ test("provider answers are classified by phase", async () => {
   const env = (extra: Record<string, unknown> = {}) => ({
     JEV_PROVIDER: "typesafe",
     TYPESAFE_API_KEY: "k",
-    DB: { prepare: () => ({ bind: () => ({ run: async () => {}, first: async () => null }) }) },
+    DB: { prepare: () => ({ bind: () => ({ run: async () => {}, first: async () => null }) }), batch: async (l: unknown[]) => l.map(() => ({ meta: { changes: 1 } })) },
     ...extra,
   }) as unknown as Env;
   const q = { t: { type: "noul" as const, instructions: "x", criteria: { true: "a", false: "b" } } };
@@ -222,8 +222,124 @@ test("provider answers are classified by phase", async () => {
   expect(await failure(ai("4006: you have used up your daily free allocation"))).toMatchObject({ phase: "sent", reason: "account" });
   expect(await failure(ai("3043: Internal server error"))).toMatchObject({ phase: "sent", reason: "provider_error" });
   // A D1 conflict while recording the call happens before sending.
-  const busy = env({ DB: { prepare: () => ({ bind: () => ({ run: async () => { throw new Error("D1_ERROR: SQLITE_BUSY"); }, first: async () => null }) }) } });
+  const d1 = (message: string) => env({ DB: { prepare: () => ({ bind: () => ({}) }), batch: async () => { throw new Error(message); } } });
+  const busy = d1("D1_ERROR: database is locked (SQLITE_BUSY)");
   const calls = provider(answer);
   expect(await failure(busy)).toMatchObject({ phase: "before_call", reason: "storage_busy", retryable: true });
+  // A bare D1_ERROR (schema, constraint) or an unknown error is permanent: final, not retried.
+  for (const message of ["D1_ERROR: no such table: usage_events", "D1_ERROR: UNIQUE constraint failed", "something odd"])
+    expect(await failure(d1(message))).toMatchObject({ phase: "before_call", reason: "before_call", retryable: false });
   expect(calls.n).toBe(0);
+});
+
+// Round 2 (review): the call is authorized by one atomic claim, outcomes survive metering failures, unknown
+// prior state fails closed, and only known transient storage errors are retried.
+const gate = () => {
+  let open!: () => void;
+  const opened = new Promise<void>((r) => (open = r));
+  return { opened, open };
+};
+const claimSql = /^UPDATE jobs SET jev_call=/;
+
+test("a first attempt delayed before its claim, released after the second attempt finished, never sends", async () => {
+  const { s, ids } = await start();
+  const calls = provider(answer);
+  const hold = gate();
+  let paused: Promise<void> | null = null;
+  fakes.onSql = async (sql, phase) => {
+    if (phase === "write" && claimSql.test(sql) && !paused) await (paused = hold.opened);
+  };
+  s.engine.timeoutMs = 20;
+  const batch = await autotag(s, ids);
+  await s.runQueued();
+  expect(jobs(s, batch)[0]!.status).toBe("done");
+  expect(calls.n).toBe(1);
+  hold.open();
+  await Bun.sleep(10);
+  expect(calls.n).toBe(1);
+  expect(usage(s)).toEqual([{ job_id: jobs(s, batch)[0]!.id, status: "done" }]);
+  expect(jobs(s, batch)[0]!.status).toBe("done");
+});
+
+test("a running job paused right before its claim does not send once another job stopped the batch", async () => {
+  const { s, ids } = await start(2);
+  const calls = provider(() => Response.json({ error: "Insufficient balance" }, { status: 402 }));
+  const batch = await autotag(s, ids);
+  const lens = (await s.api("/lenses", "POST", { name: "Useful", type: "noul", question: "Is it useful?", threshold: 0.8 })).data.lenses[0];
+  const other = (await s.api("/batches", "POST", { kind: "lens", ids: [ids[1]], lensId: lens.id })).data.batchId;
+  const [a, b] = jobs(s, batch);
+  s.sent.splice(0);
+  const hold = gate();
+  let paused = false;
+  fakes.onSql = async (sql, phase) => {
+    if (phase === "write" && claimSql.test(sql) && !paused) { paused = true; await hold.opened; }
+  };
+  const runningB = s.runJob(b!.id); // B is running and pauses right before its claim
+  await Bun.sleep(5);
+  await s.runJob(a!.id); // A gets a 402 and stops the batch
+  expect(calls.n).toBe(1);
+  hold.open();
+  await runningB;
+  expect(calls.n).toBe(1);
+  expect(usage(s)).toEqual([{ job_id: a!.id, status: "failed" }]);
+  expect(jobs(s, batch)[1]).toMatchObject({ status: "failed", reason: "account_stopped", error: JEV_FAILURE_MESSAGES.account_stopped });
+  // The other batch's lens waiting behind B starts.
+  expect(jobs(s, other)[0]!.status).toBe("queued");
+});
+
+for (const [name, setupFault] of [
+  ["the usage row can't be finalized", (s: S) => { fakes.failSqlOnce = /^UPDATE usage_events SET status=\?,model=/; return () => Response.json({ error: "Insufficient balance" }, { status: 402 }); }],
+  ["the error body fails to arrive", () => () => new Response(new ReadableStream({ start: (c) => c.error(new TypeError("network connection lost")) }), { status: 401 })],
+] as const) {
+  test(`an account error still stops the batch when ${name}`, async () => {
+    const { s, ids } = await start(2);
+    const calls = provider(setupFault({} as S));
+    const batch = await autotag(s, ids);
+    const [first] = s.sent.splice(0, 1);
+    await s.runJob(first!.body.id);
+    await s.runQueued();
+    expect(calls.n).toBe(1);
+    const [a, b] = jobs(s, batch);
+    expect(a).toMatchObject({ status: "failed", reason: "account", error: JEV_FAILURE_MESSAGES.account });
+    expect(b).toMatchObject({ status: "failed", reason: "account_stopped" });
+  });
+}
+
+test("a replay guard that can't read the claim fails closed with the may-have-been-billed copy", async () => {
+  const { s, ids } = await start();
+  const calls = provider(() => new Promise<Response>(() => {}));
+  s.engine.timeoutMs = 20;
+  fakes.onSql = async (sql, phase) => {
+    if (phase === "read" && sql === "SELECT jev_call FROM jobs WHERE id=?") throw new Error("D1_ERROR: database is locked (SQLITE_BUSY)");
+  };
+  const batch = await autotag(s, ids);
+  await s.runQueued();
+  expect(calls.n).toBe(1);
+  expect(usage(s)).toHaveLength(1);
+  expect(jobs(s, batch)[0]).toMatchObject({ status: "failed", reason: "interrupted", error: JEV_FAILURE_MESSAGES.interrupted });
+});
+
+test("an engine error that escapes the Jev step is reported as possibly billed, without sending", async () => {
+  const { s, ids } = await start();
+  const calls = provider(answer);
+  (s.env.CONTENT as any).get = () => new Promise(() => {}); // both attempts hang before the call
+  s.engine.timeoutMs = 20;
+  const batch = await autotag(s, ids);
+  await s.runQueued();
+  expect(jevSteps(s)[0]!.attempts).toBe(2);
+  expect(calls.n + usage(s).length).toBe(0);
+  expect(jobs(s, batch)[0]).toMatchObject({ status: "failed", reason: "interrupted", error: JEV_FAILURE_MESSAGES.interrupted });
+});
+
+test("permanent or unknown R2 errors are final: one attempt, no call, no usage", async () => {
+  for (const message of ["R2 access denied: invalid bucket credentials", "unexpected R2 failure"]) {
+    const { s, ids } = await start();
+    const calls = provider(answer);
+    (s.env.CONTENT as any).get = async () => { throw new Error(message); };
+    const batch = await autotag(s, ids);
+    await s.runQueued();
+    expect(jevSteps(s)[0]!.attempts).toBe(1);
+    expect(calls.n + usage(s).length).toBe(0);
+    expect(jobs(s, batch)[0]).toMatchObject({ status: "failed", reason: "before_call", error: "Failed before calling Jev (no cost): the saved content could not be read." });
+  }
 });
