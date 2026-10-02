@@ -1,8 +1,19 @@
 # FAC-40 — Better Auth y Cloudflare: decisión y contexto de implementación
 
-**Investigación inicial:** 28-09-2026. **Actualización con comentarios del dueño y fuentes oficiales:** 01-10-2026. **Estado:** Better Auth aprobado por el dueño; integración propuesta pendiente de validación. Este documento prepara el próximo trabajo de implementación; no implementa autenticación ni configura servicios.
+**Investigación inicial:** 28-09-2026. **Actualización con comentarios del dueño y fuentes oficiales:** 01-10-2026. **Estado (02-10-2026):** Better Auth aprobado e implementado localmente junto con FAC-41 y Hono (ver §0 y el reporte de implementación). El resto del documento es la investigación previa y se conserva como contexto histórico; no configura servicios remotos.
 
 Se volvió a leer [FAC-40](https://linear.app/facundopri/issue/FAC-40/research-and-approve-authentication-then-implement) mediante Orca el 01-10-2026: está **In Progress**. Su descripción todavía conserva la etapa de investigación/aprobación; los comentarios del dueño sobre este informe resuelven las decisiones de producto que siguen. No se modificó Linear. Contexto relacionado: [FAC-41, aislamiento por usuario](https://linear.app/facundopri/issue/FAC-41/separate-saved-links-by-user), [FAC-44, carga mediante API](https://linear.app/facundopri/issue/FAC-44/implement-a-secure-url-only-upload-api-with-plan-aware-limits) y [FAC-49, planes](https://linear.app/facundopri/issue/FAC-49/research-payment-providers-and-cost-based-plans-paddle-creem), leídos en la investigación inicial.
+
+## 0. Decisiones posteriores del dueño (02-10-2026)
+
+Este documento conserva la investigación del stack inicial (secciones 1–9, redactadas antes de implementar). Después de ella, el dueño decidió, vía el coordinador Orca:
+
+- **Implementación aprobada.** Better Auth (D1 nativo) quedó aprobado e implementado en la rama `facundoPri/research-auth-cloudflare` junto con FAC-41. Las frases de §2 y §9 sobre "no instalado / no implementado" describen el estado del 01-10-2026, no el actual. El reporte de la implementación está en [`auth-implementation-report.md`](auth-implementation-report.md).
+- **Hono ahora, en esta misma PR.** La capa HTTP del Worker es Hono 4.13.12 (versión fijada): rutas por módulos, middleware tipado (`Bindings`/`Variables`) que resuelve la sesión y el `Principal`, `auth.handler(c.req.raw)` montado antes de cualquier parser o protección privada. La autorización por dueño sigue en las queries. D1, R2, Queue, Workflow y cron se conservan. Fuentes: [Better Auth + Hono](https://better-auth.com/docs/integrations/hono), [Hono en Cloudflare Workers](https://hono.dev/docs/getting-started/cloudflare-workers) (acceso: 02-10-2026).
+- **Integración con `main` (32fc90f, PR #4 Browser/extensión)** en esta rama: los datos y rutas de Browser también son privados por cuenta.
+- **Una sola PR final** para FAC-40 + FAC-41, publicada por el coordinador después de la review independiente y los fixes. Los workers no hacen push ni PR.
+- **Preferencia de esfuerzo:** los próximos lanzamientos de Claude para este trabajo usan Opus 5.5 Medium.
+- **Sigue sin ejecutarse:** despliegue, provisión de dominio y Email Service remotos, envío real de correo y adjudicación de datos reales. Ninguna de esas acciones está autorizada por estas decisiones.
 
 ## 1. Decisiones del dueño
 

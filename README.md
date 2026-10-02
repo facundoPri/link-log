@@ -9,7 +9,14 @@ bun install
 bun run dev
 ```
 
-Open http://localhost:3000. The command builds the assets with `bun scripts/build.ts` (Bun.build + bun-plugin-tailwind), applies **local** migrations, starts Wrangler on 127.0.0.1:8787 and Bun with HMR on 127.0.0.1:3000. Data persists in `.wrangler/state`; nothing is stored in localStorage or sent to a remote database.
+Open http://127.0.0.1:3000 (localhost redirects there: cookies and the trusted origin are bound to one host). The command builds the assets with `bun scripts/build.ts` (Bun.build + bun-plugin-tailwind), applies **local** migrations, starts Wrangler on 127.0.0.1:8787 and Bun with HMR on 127.0.0.1:3000. Data persists in `.wrangler/state` (override with `LINKLOG_PERSIST_TO`; ports with `LINKLOG_UI_PORT`/`LINKLOG_API_PORT`); nothing is sent to a remote database.
+
+### Accounts and privacy
+
+Every library is private to its account (Better Auth on D1). Sign up with email + password (an emailed link verifies the address), or ask for a one-time magic link (5 minutes). "Forgot password" sends a reset link; resetting ends the other sessions. Locally, emails are **simulated**: Wrangler writes them under `.wrangler/tmp/email/` (they contain live sign-in links for that local state).
+
+- `bun run demo` → isolated A/B demo at http://127.0.0.1:3100 (API 8800, state `.wrangler/demo-state`, local-only bindings). It creates `demo-a@linklog.test` and `demo-b@linklog.test` through the real sign-up flow and offers them on the sign-in screen. Never available in a built/deployed bundle.
+- Data created before accounts existed stays in D1/R2 but belongs to nobody and is invisible until you assign it with the local tool `bun run legacy:adjudicate` (inventory → backup → assign to a verified user). See `planning/research/auth-implementation-report.md`.
 
 - **Add link** button or `⌘/Ctrl K`: one URL or a list, with optional tags.
 - Paste a URL or a list outside of a field, or drag a link from the browser onto the page: saves directly.
@@ -44,7 +51,7 @@ lenses show "No access". With it, row previews (description and image) are read 
 every accessible tab, and those images load from each site's own servers.
 
 Lens results live in the extension's session storage: they survive closing Linklog and the
-service worker sleeping, but not a Chrome restart or reloading the extension. Evaluating a tab
+service worker sleeping, but not a Chrome restart or reloading the extension. They are scoped to the signed-in account's library id, and signing out asks the extension to drop that account's results. Evaluating a tab
 never saves it; **Save** adds the tabs' URLs exactly like adding links in All links (the server
 fetches metadata and content, then autotags).
 Details: [plan](docs/browser-feature-plan.md) · [implementation](docs/browser-implementation-handoff.md) ·
@@ -61,9 +68,9 @@ A blocked, slow or HTML-less page keeps the link and allows a retry. If the Work
 
 ## Cloudflare: current boundary
 
-The API already runs on the Workers runtime and uses the real D1 binding emulated locally. **It is not deployed and not connected to a remote database.** Bun is used for development/build; it is not the Workers production runtime.
+The API runs on the Workers runtime (Hono for HTTP, Better Auth for sessions) and uses the real D1 binding emulated locally. **It is not deployed and not connected to a remote database.** Bun is used for development/build; it is not the Workers production runtime.
 
-`wrangler.jsonc` contains an explicitly local ID. The API rejects remote hosts while there is no authentication. For the next stage: decide personal vs multi-user, add Cloudflare Access or verified sessions, provision remote D1, replace that ID, apply remote migrations and deploy the assets + Worker. Do not remove the host guard without implementing access control. Remote exposure also calls for hardening egress/DNS against rebinding, limiting abuse and paginating the library.
+Configuration fails closed: a deployed Worker defaults to `APP_ENV=production` and answers 503 until `BETTER_AUTH_URL` (public HTTPS origin), the `BETTER_AUTH_SECRET` secret, `EMAIL_FROM` and the `EMAIL` (Cloudflare Email Service) binding are valid; requests for any other host get 403. `wrangler.jsonc` still contains an explicitly local D1 ID. Before a deployment: provision D1/R2, the domain and Email Service, set the secrets, apply remote migrations and verify delivery — see the runbook in `planning/research/auth-implementation-report.md`. Remote exposure also calls for hardening egress/DNS against rebinding and paginating the library.
 
 Documentation consulted: [Bun React](https://bun.sh/guides/ecosystem/react), [Workers Static Assets](https://developers.cloudflare.com/workers/static-assets/), [D1 prepared statements](https://developers.cloudflare.com/d1/worker-api/prepared-statements/).
 
@@ -72,8 +79,11 @@ Documentation consulted: [Bun React](https://bun.sh/guides/ecosystem/react), [Wo
 ```sh
 bun run typecheck
 bun test
-# With dev running: integration against local D1; cleans up only its own records.
-bun scripts/check-api.ts
+# Real local runtime (workerd + D1/R2/Queue/Workflow) behind the proxy: sign-up, verification,
+# magic link, reset, logout, two-account isolation incl. Browser. Throwaway state, ports 3197/8897.
+bun run test:e2e
+# With dev running: integration against local D1 as a local account; cleans up only its own records.
+LINKLOG_CHECK_EMAIL=... LINKLOG_CHECK_PASSWORD=... bun scripts/check-api.ts
 # Build and run without HMR on the Workers runtime:
 bun run preview
 ```
