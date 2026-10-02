@@ -1,9 +1,11 @@
 import type { Capabilities, Link } from "./types";
+import { failureMessage } from "./failures";
 
-// Only a settled link counts: while a job is still working on it (queued, running or retrying another
-// step), a failed preview is not final yet. A pending preview is processing or neutral, never failed.
-export const needsAttention = (l: Pick<Link, "status" | "content_state" | "processing">) =>
-  !l.processing && (l.status === "failed" || l.content_state === "failed");
+// Persisted by the API when a step fails for good (never while queued, running or retrying). It stays
+// while a retry runs, so the link doesn't leave the list until the failed step succeeds or is dismissed.
+export const needsAttention = (l: Pick<Link, "attention_kind">) => l.attention_kind !== null;
+export const attentionMessage = (l: Pick<Link, "attention_kind" | "attention_reason">) =>
+  `${l.attention_kind === "content" ? "Couldn't get the content" : "Couldn't get the preview"}: ${failureMessage(l.attention_reason) ?? "Something went wrong."}`;
 // The API refuses a preview retry while a job is active, so only offer it when idle.
 export const canRetryPreview = (l: Pick<Link, "status" | "processing">) =>
   !l.processing && (l.status === "failed" || l.status === "pending");

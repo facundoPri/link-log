@@ -150,7 +150,7 @@ test("A: queued >30s behind the browser pool stays processing, never Needs atten
   expect(done).toMatchObject({ status: "ready", content: "ready", attention: false });
 });
 
-test("B: a fail-fast preview (403 bot wall, PDF) + successful content stays in Needs attention with its reason; Retry preview repeats it (attention model: S4)", async () => {
+test("B: a fail-fast preview (403 bot wall, PDF) + successful content enters Needs attention once settled, with its reason; it stays until the preview works (FAC-48 S4)", async () => {
   const s = await setup();
   meta = { status: "failed" }; // 403 bot wall: fails fast, no retries (FAC-48 S3)
   const id = (await s.api("/links", "POST", { url: "https://b.example/doc.pdf" })).data.id;
@@ -158,9 +158,13 @@ test("B: a fail-fast preview (403 bot wall, PDF) + successful content stays in N
   const v1 = await s.view(id);
   rec("B", "extract OK, preview non-OK", v1);
   expect(v1).toMatchObject({ status: "failed", content: "ready", attention: true, job: "done/Done" });
-  expect((s.db.query("SELECT preview_reason FROM links WHERE id=?").get(id) as any).preview_reason).toBe("blocked");
+  expect(s.db.query("SELECT preview_reason,attention_kind,attention_reason FROM links WHERE id=?").get(id)).toEqual({ preview_reason: "blocked", attention_kind: "preview", attention_reason: "blocked" });
   const r = await s.api(`/links/${id}/retry`, "POST");
   expect(r.status).toBe(200);
+  const queued = await s.view(id);
+  rec("B", "Retry preview → queued job", queued);
+  expect(queued).toMatchObject({ processing: true, attention: true }); // stays in the list, shown as processing
+  await s.runQueued();
   const v2 = await s.view(id);
   rec("B", "Retry preview (same site response)", v2);
   expect(v2.attention).toBe(true);
@@ -170,6 +174,7 @@ test("B: a fail-fast preview (403 bot wall, PDF) + successful content stays in N
   expect(v3.attention).toBe(true);
   meta = { status: "ready" };
   await s.api(`/links/${id}/retry`, "POST");
+  await s.runQueued();
   const v4 = await s.view(id);
   rec("B", "Retry preview after site answers 200", v4);
   expect(v4.attention).toBe(false);
@@ -196,7 +201,7 @@ test("C: re-extract of a healthy link keeps its previous preview when only the p
   expect(v2.attention).toBe(false);
 });
 
-test("D: content failure without prior content toggles attention on every retry until success", async () => {
+test("D: content failure without prior content stays in Needs attention through Retry (no flicker) until success (FAC-48 S4)", async () => {
   const s = await setup();
   content = { throws: "Markdown: HTTP 503" };
   const id = (await s.api("/links", "POST", { url: "https://d.example/x" })).data.id;
@@ -204,16 +209,16 @@ test("D: content failure without prior content toggles attention on every retry 
   const v1 = await s.view(id);
   rec("D", "extract fails", v1);
   expect(v1).toMatchObject({ status: "ready", content: "failed", attention: true, job: "failed/Needs attention" });
-  await s.api("/batches", "POST", { kind: "extract", ids: [id] });
+  await s.api(`/links/${id}/retry`, "POST", { step: "content" });
   const q = await s.view(id);
   rec("D", "Retry → enqueued (not run yet)", q);
-  expect(q.attention).toBe(false);
+  expect(q).toMatchObject({ processing: true, attention: true });
   await s.runQueued();
   const v2 = await s.view(id);
   rec("D", "retry fails again", v2);
   expect(v2.attention).toBe(true);
   content = { markdown: "# ok" };
-  await s.api("/batches", "POST", { kind: "extract", ids: [id] });
+  await s.api(`/links/${id}/retry`, "POST", { step: "content" });
   await s.runQueued();
   const v3 = await s.view(id);
   rec("D", "retry succeeds", v3);
@@ -245,6 +250,7 @@ test("F: cancelling a fresh import leaves links pending and neutral, never Needs
   rec("F", "+31s reload", v);
   expect(v).toMatchObject({ status: "pending", processing: false, content: "missing", attention: false });
   await s.api(`/links/${id}/retry`, "POST");
+  await s.runQueued();
   const v2 = await s.view(id);
   rec("F", "Fetch preview", v2);
   expect(v2).toMatchObject({ status: "ready", attention: false });
@@ -261,6 +267,7 @@ test("G: preview keeps throwing → retried, then only the preview fails; conten
   expect((s.db.query("SELECT preview_reason FROM links WHERE id=?").get(id) as any).preview_reason).toBe("unreachable");
   meta = { status: "ready" };
   await s.api(`/links/${id}/retry`, "POST");
+  await s.runQueued();
   const v2 = await s.view(id);
   rec("G", "Retry preview succeeds", v2);
   expect(v2).toMatchObject({ status: "ready", content: "ready", attention: false });

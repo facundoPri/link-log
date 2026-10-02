@@ -1,15 +1,14 @@
 import { normalizeUrl, domainOf } from "../src/url";
-import { extractMetadata } from "./metadata";
-import { classify, logFailure } from "./failures";
 import type { LensOption, LensLevel, Link, Tag } from "../src/types";
 
 import { json, library, text, threshold } from "./store";
 import { enqueue, dispatch, recover, LinkWorkflow } from "./jobs";
-import { preservedContentStateSql } from "./content-state";
+import { restoredContentStateSql } from "./content-state";
 import type { Job, JobUsage, UsageEvent } from "../src/types";
 import { OCR_USAGE_COLUMNS } from "./usage";
 import { browserRoute, cleanupBrowser } from "./browser";
 import { addLink } from "./links";
+import { settleAttention } from "./attention";
 export { LinkWorkflow };
 type JobUsageRow = {
   job_id: string;
@@ -36,25 +35,6 @@ type UsageTotalsRow = {
   usd: number | null;
   unknown_cost_calls: number;
 };
-// "Retry preview" runs once outside the queue; its failure reason is shown like a workflow's.
-async function enrich(db: D1Database, id: string, url: string) {
-  try {
-    const m = await extractMetadata(url);
-    await db
-      .prepare(
-        "UPDATE links SET url=?, domain=?, title=?, description=?, image=?, favicon=?, status='ready', preview_reason=NULL WHERE id=?",
-      )
-      .bind(m.url, m.domain, m.title, m.description, m.image, m.favicon, id)
-      .run();
-  } catch (error) {
-    const failure = classify(error);
-    logFailure(failure, { link_id: id, job_id: null, step: "preview-retry", adapter: "preview", url, attempt: 1, max_attempts: 1, final: true });
-    await db
-      .prepare("UPDATE links SET status='failed', preview_reason=? WHERE id=?")
-      .bind(failure.reason, id)
-      .run();
-  }
-}
 function tagNames(value: unknown): string[] {
   if (
     !Array.isArray(value) ||
@@ -290,7 +270,7 @@ export default {
         const details = link.content_details ? JSON.parse(link.content_details) as { transcript?: { tracks?: { languageCode: string }[] } } : {};
         if (!details.transcript?.tracks || (language !== "auto" && !details.transcript.tracks.some((track) => track.languageCode === language)))
           throw new Error("That subtitle track is not available for this video.");
-        const batchId = await enqueue(env, [transcriptMatch[1]!], "extract", undefined, language);
+        const batchId = await enqueue(env, [transcriptMatch[1]!], "extract", undefined, { track: language });
         return json({ ...(await library(env)), batchId });
       }
       const batchMatch = path.match(/^\/api\/batches\/([^/]+)$/);
@@ -316,7 +296,7 @@ export default {
         if (batch.kind === "extract" && pending.results.length)
           statements.push(
             env.DB.prepare(
-              `UPDATE links SET content_state=${preservedContentStateSql("missing")},content_error=NULL,content_reason=NULL WHERE id IN (${pending.results.map(() => "?").join(",")}) AND content_state='queued'`,
+              `UPDATE links SET content_state=${restoredContentStateSql} WHERE id IN (${pending.results.map(() => "?").join(",")}) AND content_state='queued'`,
             ).bind(...pending.results.map((r) => r.link_id)),
           );
         await env.DB.batch(statements);
@@ -457,6 +437,8 @@ export default {
           });
           await env.DB.prepare("UPDATE links SET content_key=?,content_version=content_version+1,content_source='manual',content_state=CASE WHEN content_state='partial' THEN 'partial' ELSE 'ready' END,content_error=NULL,content_reason=NULL,content_updated_at=? WHERE id=?")
             .bind(key, new Date().toISOString(), link.id).run();
+          // Pasted content resolves a failed extraction like a successful one.
+          await settleAttention(env.DB, link.id, { content: "ok" });
           return json(await library(env));
         }
         return json({ error: "Method not allowed." }, 405);
@@ -548,6 +530,13 @@ export default {
         } else return json({ error: "Method not allowed." }, 405);
         return json(await library(env));
       }
+      const dismissMatch = path.match(/^\/api\/links\/([^/]+)\/dismiss$/);
+      if (dismissMatch && request.method === "POST") {
+        // Only leaves the Needs attention list; a later final failure brings it back.
+        await env.DB.prepare("UPDATE links SET attention_kind=NULL,attention_reason=NULL,attention_at=NULL WHERE id=?")
+          .bind(dismissMatch[1]).run();
+        return json(await library(env));
+      }
       const match = path.match(/^\/api\/links\/([^/]+)(\/retry)?$/);
       if (match) {
         const id = match[1]!;
@@ -565,12 +554,11 @@ export default {
             throw new Error("Wait for the running job to finish.");
         }
         if (match[2] && request.method === "POST") {
-          await env.DB.prepare(
-            "UPDATE links SET status='pending', metadata_started_at=? WHERE id=?",
-          )
-            .bind(new Date().toISOString(), id)
-            .run();
-          ctx.waitUntil(enrich(env.DB, id, link.original_url));
+          // Runs only the failed step, through the queue. Needs attention stays until that step succeeds.
+          const batchId = body.step === "content"
+            ? await enqueue(env, [id], "extract", undefined, { step: "content" })
+            : await enqueue(env, [id], "preview");
+          return json({ ...(await library(env)), batchId });
         } else if (request.method === "PATCH") {
           await env.DB.batch(setTags(env.DB, id, tagNames(body.tags), true));
         } else if (request.method === "DELETE") {

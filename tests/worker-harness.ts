@@ -180,6 +180,8 @@ export async function setup() {
       processing: l.processing,
       previewing: l.previewing,
       attention: needsAttention(l),
+      attention_kind: l.attention_kind,
+      attention_reason: l.attention_reason,
       err: l.content_error,
       preview_reason: l.preview_reason,
       content_reason: l.content_reason,

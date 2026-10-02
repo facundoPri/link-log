@@ -165,11 +165,14 @@ test("a later successful preview clears the reason; Retry preview records its ow
   await s.runQueued();
   expect(linkRow(s, id).preview_reason).toBe("not_found");
   fakes.meta = { http: 200, type: "application/pdf" };
-  await s.api(`/links/${id}/retry`, "POST");
-  expect(await s.view(id)).toMatchObject({ status: "failed", preview_reason: "not_html" });
-  expect(logs.at(-1)).toMatchObject({ step: "preview-retry", adapter: "preview", reason: "not_html", final: true, job_id: null });
+  const retry = await s.api(`/links/${id}/retry`, "POST");
+  await s.runQueued();
+  expect(await s.view(id)).toMatchObject({ status: "failed", preview_reason: "not_html", attention: true, job: "failed/Needs attention" });
+  const job = s.db.query("SELECT id FROM jobs WHERE batch_id=?").get(retry.data.batchId) as { id: string };
+  expect(logs.at(-1)).toMatchObject({ step: "preview", adapter: "preview", reason: "not_html", final: true, job_id: job.id });
   fakes.meta = { status: "ready" };
   await s.api(`/links/${id}/retry`, "POST");
+  await s.runQueued();
   expect(await s.view(id)).toMatchObject({ status: "ready", preview_reason: null, attention: false });
 });
 

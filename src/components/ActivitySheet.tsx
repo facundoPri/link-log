@@ -63,7 +63,7 @@ function batchUsageTip(b: Batch) {
 }
 
 function kindIcon(kind: Batch["kind"] | "query") {
-  return kind === "extract" ? (
+  return kind === "extract" || kind === "preview" ? (
     <FileText className="size-4 text-muted-foreground" />
   ) : kind === "autotag" || kind === "browser-autogroup" ? (
     <Sparkles className="size-4 text-muted-foreground" />
@@ -84,6 +84,7 @@ function configLens(b: Batch): Lens | undefined {
 
 function label(b: Batch) {
   if (b.kind === "extract") return "Extract context";
+  if (b.kind === "preview") return "Fetch preview";
   if (b.kind === "autotag") return "Auto-tag";
   if ((b.kind as string) === "query") return "Ask (legacy)";
   if (b.kind === "browser-autogroup") return "Autogroup · open tabs";

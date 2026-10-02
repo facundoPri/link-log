@@ -7,6 +7,7 @@ import type { WorkflowStepContext } from "cloudflare:workers";
 import { classify, logFailure, logResidualFailure, LinkFailure } from "../failures";
 import type { FailureReason } from "../../src/failures";
 import type { JobContext, JobHandler } from "./index";
+import { settleAttention } from "../attention";
 
 const MAX_OCR_PREVIEWS = 20;
 export const MEDIA_UPSERT_SQL = "INSERT INTO media_items(link_id,media_key,position,kind,url,preview_url,ocr_state,updated_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(link_id,media_key) DO UPDATE SET position=excluded.position,kind=excluded.kind,url=excluded.url,preview_url=excluded.preview_url,ocr_state=CASE WHEN ? THEN excluded.ocr_state WHEN media_items.ocr_state='skipped' AND excluded.ocr_state='pending' THEN 'pending' ELSE media_items.ocr_state END,ocr_text=CASE WHEN ? THEN NULL ELSE media_items.ocr_text END,ocr_error=CASE WHEN ? THEN NULL ELSE media_items.ocr_error END,ocr_model=CASE WHEN ? THEN NULL ELSE media_items.ocr_model END,updated_at=excluded.updated_at";
@@ -102,33 +103,61 @@ async function attempt<R, T = R>(
   }
 }
 
+// Preview attempts, with their retries. A failure that ends the step itself (engine timeout, bookkeeping
+// write) is a final preview failure too.
+async function fetchPreview({ env, step, job, link }: JobContext) {
+  return step.do("resolve-and-preview", { retries: PREVIEW_RETRIES, timeout: "30 seconds" },
+    (ctx) => attempt({ env, job, link }, ctx, { step: "preview", label: "Fetching preview", limit: PREVIEW_RETRIES.limit, adapter: "preview" }, () => extractMetadata(link.original_url)))
+    .catch((error) => step.do("record-preview-failure", async (): Promise<Failed> => {
+      const failure = classify(error);
+      await logResidualFailure(env, failure, { link_id: link.id, job_id: job.id, url: link.url });
+      return { failed: failure.reason };
+    }));
+}
+type Preview = Awaited<ReturnType<typeof fetchPreview>>;
+// A preview that worked before is kept, like content: the failure is only recorded in Activity.
+const savePreview = (env: Env, linkId: string, preview: Preview) => "failed" in preview
+  ? env.DB.prepare("UPDATE links SET preview_reason=CASE WHEN status='ready' THEN preview_reason ELSE ? END,status=CASE WHEN status='ready' THEN 'ready' ELSE 'failed' END WHERE id=?")
+    .bind(preview.failed, linkId)
+  : env.DB.prepare("UPDATE links SET url=?,domain=?,title=?,description=?,image=?,favicon=?,status='ready',preview_reason=NULL WHERE id=?")
+    .bind(preview.url, preview.domain, preview.title, preview.description, preview.image, preview.favicon, linkId);
+
+// "Retry preview": only the preview step, through the queue like any job.
+export const previewHandler: JobHandler = {
+  pool: () => null,
+  async run(ctx) {
+    const { env, step, job, link } = ctx;
+    const preview = await fetchPreview(ctx);
+    ctx.progress.preview = "failed" in preview ? "failed" : "ok";
+    await step.do("save-preview", async () => {
+      await env.DB.batch([
+        savePreview(env, link.id, preview),
+        env.DB.prepare("UPDATE jobs SET attempt_started_at=NULL WHERE id=?").bind(job.id),
+      ]);
+      await settleAttention(env.DB, link.id, { preview: ctx.progress.preview });
+    });
+    if ("failed" in preview) throw new LinkFailure(preview.failed);
+  },
+};
+
 export const extractHandler: JobHandler = {
   // The saved URL may redirect to a social source, so reserve discovery capacity up front.
   pool: () => "browser",
-  async run({ env, step, job, link, config }) {
+  async run(ctx) {
+    const { env, step, job, link, config } = ctx;
     const linkJob = { id: job.id, batch_id: job.batch_id, link_id: link.id };
-    const preview = await step.do("resolve-and-preview", { retries: PREVIEW_RETRIES, timeout: "30 seconds" },
-      (ctx) => attempt({ env, job, link }, ctx, { step: "preview", label: "Fetching preview", limit: PREVIEW_RETRIES.limit, adapter: "preview" }, () => extractMetadata(link.original_url)))
-      // Only reached when the step itself fails (engine timeout, bookkeeping write): a final preview failure.
-      .catch((error) => step.do("record-preview-failure", async (): Promise<Failed> => {
-        const failure = classify(error);
-        await logResidualFailure(env, failure, { link_id: link.id, job_id: job.id, url: link.url });
-        return { failed: failure.reason };
-      }));
-    const previewFailed = "failed" in preview ? preview.failed : null;
-    const metadata = { url: "failed" in preview ? link.url : preview.url };
+    // Retrying failed content re-runs only the content step, from the URL the preview resolved before.
+    const preview = config.step === "content" ? null : await fetchPreview(ctx);
+    if (preview) ctx.progress.preview = "failed" in preview ? "failed" : "ok";
+    const previewFailed = preview && "failed" in preview ? preview.failed : null;
+    const metadata = { url: preview && !("failed" in preview) ? preview.url : link.url };
     const adapter = adapterFor(metadata.url);
     await step.do("save-preview", async () => {
-      if ("failed" in preview)
-        // A preview that worked before is kept, like content: the failure is only recorded in Activity.
-        await env.DB.prepare("UPDATE links SET preview_reason=CASE WHEN status='ready' THEN preview_reason ELSE ? END,status=CASE WHEN status='ready' THEN 'ready' ELSE 'failed' END WHERE id=?")
-          .bind(preview.failed, link.id).run();
-      else
-        await env.DB.prepare("UPDATE links SET url=?,domain=?,title=?,description=?,image=?,favicon=?,status='ready',preview_reason=NULL WHERE id=?")
-          .bind(preview.url, preview.domain, preview.title, preview.description, preview.image, preview.favicon, link.id).run();
+      if (preview) await savePreview(env, link.id, preview).run();
       await env.DB.prepare("UPDATE jobs SET step='Extracting content',attempt=NULL,max_attempts=NULL,reason=NULL,attempt_started_at=NULL,attempt_budget_ms=NULL,adapter=?,preview_reason=? WHERE id=?")
         .bind(adapter.name, previewFailed, job.id).run();
     });
+    const settle = () => step.do("settle-attention", () => settleAttention(env.DB, link.id, { content: "ok", preview: ctx.progress.preview }));
     if (!adapter.discover) {
       const content = await step.do("extract-content", { retries: CONTENT_RETRIES, timeout: "2 minutes" },
         (ctx) => attempt({ env, job, link }, ctx, { step: "content", label: "Extracting content", limit: CONTENT_RETRIES.limit, adapter: adapter.name },
@@ -151,6 +180,7 @@ export const extractHandler: JobHandler = {
             .bind(content.key, content.source, new Date().toISOString(), link.id),
         ]);
       });
+      await settle();
       return;
     }
     let previousManual: string | undefined;
@@ -204,5 +234,6 @@ export const extractHandler: JobHandler = {
       await env.DB.prepare("UPDATE links SET content_key=?,content_version=content_version+1,content_source=?,content_state=?,content_error=?,content_reason=NULL,content_details=?,content_updated_at=? WHERE id=?")
         .bind(key, discovered.source, content.state, content.details.issues[0] || null, JSON.stringify(content.details), new Date().toISOString(), link.id).run();
     });
+    await settle();
   },
 };

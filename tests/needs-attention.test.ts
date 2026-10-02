@@ -32,6 +32,7 @@ test("F: cancelling a batch before it runs leaves the link neutral, not in Needs
   tick(31_000);
   expect(await s.view(ids[0]!)).toMatchObject({ status: "pending", content: "missing", processing: false, attention: false });
   await s.api(`/links/${ids[0]}/retry`, "POST");
+  await s.runQueued();
   expect(await s.view(ids[0]!)).toMatchObject({ status: "ready", content: "missing", attention: false });
 });
 
@@ -85,18 +86,20 @@ test("I: while queued, the preview retry is not offered and the API still refuse
   expect(r.data.error).toBe("Wait for the running job to finish.");
 });
 
-test("I: a neutral link offers the preview retry; an orphaned retry turns neutral, never failed", async () => {
+test("I: a neutral link offers the preview retry; it runs as a queued job and the link is fetching meanwhile", async () => {
   const s = await setup();
-  fakes.meta = { status: "ready" };
   const id = (await s.api("/links", "POST", { url: "https://i.example/orphan" })).data.id;
   s.db.query("UPDATE jobs SET status='failed',step='Cancelled' WHERE link_id=?").run(id);
   s.db.query("UPDATE links SET content_state='missing' WHERE id=?").run(id);
+  s.sent.splice(0);
   expect(canRetryPreview((await s.api("/library")).data.links[0])).toBe(true);
-  // "Retry preview" runs outside the queue; simulate the Worker dying before it writes a result.
-  s.db.query("UPDATE links SET metadata_started_at=? WHERE id=?").run(new Date().toISOString(), id);
-  expect(await s.view(id)).toMatchObject({ status: "pending", processing: true, attention: false });
+  await s.api(`/links/${id}/retry`, "POST");
+  expect(await s.view(id)).toMatchObject({ status: "pending", processing: true, previewing: true, attention: false, job: "queued/En cola" });
+  // A lost queue message is resent by recover(); nothing turns failed meanwhile.
   tick(31_000);
-  expect(await s.view(id)).toMatchObject({ status: "pending", processing: false, attention: false });
+  expect(await s.view(id)).toMatchObject({ status: "pending", processing: true, attention: false });
+  await s.runQueued();
+  expect(await s.view(id)).toMatchObject({ status: "ready", content: "missing", processing: false, attention: false, job: "done/Done" });
 });
 
 test("I: a failed preview is not offered for retry while a job is active, and is again once it ends", async () => {

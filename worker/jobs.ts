@@ -12,7 +12,8 @@ import {
 } from "./handlers";
 import { capabilities, parseLensDefinition } from "./store";
 import { jevUnavailable } from "../src/attention";
-import { preservedContentStateSql } from "./content-state";
+import { preservedContentStateSql, restoredContentStateSql } from "./content-state";
+import { settleAttention } from "./attention";
 import { adapterMessage, classify, logResidualFailure, LinkFailure } from "./failures";
 import type { Lens, Link, Tag } from "../src/types";
 const POOL_LIMITS = { browser: 2, jev: 16 } as const;
@@ -35,14 +36,15 @@ type Config = JobConfig;
 export async function enqueue(
   env: Env,
   ids: string[],
-  kind: "extract" | "autotag" | "lens",
+  kind: "extract" | "preview" | "autotag" | "lens",
   lensId?: string,
-  track?: string,
+  extract: Pick<Config, "track" | "step"> = {},
 ) {
+  const jev = kind === "autotag" || kind === "lens";
   ids = [...new Set(ids)];
   if (!ids.length || ids.length > 100)
     throw new Error("Select between 1 and 100 links per batch.");
-  const unavailable = kind === "extract" ? null : jevUnavailable(capabilities(env));
+  const unavailable = !jev ? null : jevUnavailable(capabilities(env));
   if (unavailable) {
     console.error(JSON.stringify({ event: "jev_not_configured", kind, provider: capabilities(env).provider, links: ids.length }));
     throw new Error(unavailable);
@@ -54,7 +56,7 @@ export async function enqueue(
     .all<Link>();
   if (links.results.length !== ids.length)
     throw new Error("One of the links no longer exists.");
-  if (kind !== "extract" && links.results.some((l) => !l.content_key))
+  if (jev && links.results.some((l) => !l.content_key))
     throw new Error(
       "All selected links need context first.",
     );
@@ -89,7 +91,7 @@ export async function enqueue(
     };
     config = { lens };
   }
-  if (kind === "extract" && track) config = { track };
+  if (kind === "extract") config = { ...(extract.track && { track: extract.track }), ...(extract.step && { step: extract.step }) };
   const id = crypto.randomUUID(),
     now = new Date().toISOString();
   const jobs = ids.map((link_id) => ({ id: crypto.randomUUID(), link_id }));
@@ -105,7 +107,8 @@ export async function enqueue(
     ...(kind === "extract"
       ? ids.map((link) =>
           env.DB.prepare(
-            "UPDATE links SET content_state='queued',content_error=NULL,content_reason=NULL WHERE id=?",
+            // The last error and reason stay until the new attempt settles, so a cancel can restore them.
+            "UPDATE links SET content_state='queued' WHERE id=?",
           ).bind(link),
         )
       : []),
@@ -156,7 +159,7 @@ export async function dispatch(batch: MessageBatch<{ id: string }>, env: Env) {
             ),
             // Not a final failure: the link goes back to how it was, like a cancelled job.
             env.DB.prepare(
-              `UPDATE links SET content_state=${preservedContentStateSql("missing")},content_error=CASE WHEN content_key IS NULL THEN NULL ELSE 'Extraction was interrupted. Try again.' END WHERE id=? AND content_state='queued'`,
+              `UPDATE links SET content_state=${restoredContentStateSql},content_error=CASE WHEN content_key IS NULL THEN content_error ELSE 'Extraction was interrupted. Try again.' END WHERE id=? AND content_state='queued'`,
             ).bind(job.link_id),
             env.DB.prepare("DELETE FROM provider_leases WHERE job_id=?").bind(
               job.id,
@@ -209,6 +212,7 @@ export class LinkWorkflow extends WorkflowEntrypoint<Env, { id: string }> {
       return { job: row, link, target };
     });
     const { job, link, target } = data;
+    const progress: { preview?: "ok" | "failed" } = {};
     const acquire = async (pool: Pool | null) => {
       if (!pool) return;
       const limit = poolLimit(env, pool);
@@ -250,7 +254,7 @@ export class LinkWorkflow extends WorkflowEntrypoint<Env, { id: string }> {
       } else {
         const handler = handlers[job.kind];
         if (!handler) throw new Error(`No handler for job kind "${job.kind}".`);
-        const ctx = { env, step, job, link: link!, config };
+        const ctx = { env, step, job, link: link!, config, progress };
         await acquire(handler.pool(ctx));
         await handler.run(ctx);
       }
@@ -268,23 +272,27 @@ export class LinkWorkflow extends WorkflowEntrypoint<Env, { id: string }> {
         await env.DB.prepare("UPDATE usage_events SET status='failed',error='Provider call interrupted before completion' WHERE job_id=? AND status='started'").bind(job.id).run();
         const raw = error instanceof Error ? error.message : "Could not process";
         // Extraction shows a plain reason, or an adapter message written for users; raw detail goes to the logs.
-        const failure = job.kind === "extract" && link ? classify(error) : null;
+        const failure = (job.kind === "extract" || job.kind === "preview") && link ? classify(error) : null;
         if (failure && !(error instanceof LinkFailure))
           await logResidualFailure(env, failure, { link_id: link!.id, job_id: job.id, url: link!.url });
         const reason = failure?.reason ?? null;
         const message = failure ? (adapterMessage(raw) ?? failure.message) : raw;
-        await env.DB.prepare(
+        const settled = await env.DB.prepare(
           "UPDATE jobs SET status='failed',step='Needs attention',error=?,reason=?,completed_at=? WHERE id=? AND status='running'",
         )
           .bind(message, reason, new Date().toISOString(), job.id)
           .run();
         // The preview axis is owned by save-preview: a preview that never ran stays neutral.
-        if (job.kind === "extract" && link)
+        if (job.kind === "extract" && link) {
           await env.DB.prepare(
             `UPDATE links SET content_state=${preservedContentStateSql("failed")},content_error=?,content_reason=? WHERE id=?`,
           )
             .bind(message, reason, link.id)
             .run();
+          // An interrupted or cancelled job was already settled elsewhere and leaves Needs attention alone.
+          if (settled.meta.changes)
+            await settleAttention(env.DB, link.id, { content: "failed", content_reason: reason, preview: progress.preview });
+        }
       });
     } finally {
       await step.do("release-provider-slot", async () => {

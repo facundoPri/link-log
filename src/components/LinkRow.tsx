@@ -7,7 +7,7 @@ import {
   Loader2,
 } from "lucide-react";
 import type { Lens, Link, Tag } from "../types";
-import { canRetryPreview } from "../attention";
+import { attentionMessage, canRetryPreview } from "../attention";
 import { failureMessage } from "../failures";
 import { cn } from "../lib/utils";
 import { youtubeId } from "../lib/youtube";
@@ -30,7 +30,7 @@ import { TagChip } from "./TagChip";
 import { LensVerdict } from "./LensVerdict";
 
 export type LinkJob = {
-  kind: "extract" | "autotag" | "lens" | "query";
+  kind: "extract" | "preview" | "autotag" | "lens" | "query";
   status: string;
 };
 
@@ -47,6 +47,7 @@ export function LinkRow({
   onEditTags,
   onExtract,
   onRetry,
+  onDismiss,
   onDelete,
   onCopyUrl,
 }: {
@@ -61,7 +62,8 @@ export function LinkRow({
   onDomainFilter: (domain: string) => void;
   onEditTags: () => void;
   onExtract: () => void;
-  onRetry: () => void;
+  onRetry: (step?: "content") => void;
+  onDismiss: () => void;
   onDelete: () => void;
   onCopyUrl: () => void;
 }) {
@@ -80,7 +82,9 @@ export function LinkRow({
     job && job.status !== "done" && job.status !== "failed"
       ? job.kind === "extract"
         ? "Extracting…"
-        : job.kind === "autotag"
+        : job.kind === "preview"
+          ? "Fetching preview…"
+          : job.kind === "autotag"
           ? "Tagging…"
           : "Applying lens…"
       : null;
@@ -138,10 +142,10 @@ export function LinkRow({
         <p className="truncate text-sm font-medium leading-5">{link.title}</p>
         <p className="truncate text-xs text-muted-foreground">
           {link.description ||
-            (link.status === "pending"
-              ? link.previewing
-                ? "Fetching title and preview…"
-                : "No preview yet"
+            (link.previewing
+              ? "Fetching title and preview…"
+              : link.status === "pending"
+                ? "No preview yet"
               : link.status === "failed"
                 ? failureMessage(link.preview_reason)
                   ? `No preview: ${failureMessage(link.preview_reason)}`
@@ -209,6 +213,17 @@ export function LinkRow({
               No preview
             </Badge>
           )}
+          {link.attention_kind && !link.processing && (
+            <span className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+              <span className="text-2xs text-destructive">{attentionMessage(link)}</span>
+              <Button variant="ghost" size="xs" onClick={() => onRetry(link.attention_kind === "content" ? "content" : undefined)}>
+                Retry
+              </Button>
+              <Button variant="ghost" size="xs" onClick={onDismiss}>
+                Dismiss
+              </Button>
+            </span>
+          )}
           {lens &&
             (() => {
               const r = link.lens_results.find((r) => r.lens_id === lens.id);
@@ -274,9 +289,12 @@ export function LinkRow({
               {link.content_key ? "Re-extract context" : "Extract context"}
             </DropdownMenuItem>
             {canRetryPreview(link) && (
-              <DropdownMenuItem onClick={onRetry}>
+              <DropdownMenuItem onClick={() => onRetry()}>
                 {link.status === "failed" ? "Retry preview" : "Fetch preview"}
               </DropdownMenuItem>
+            )}
+            {link.attention_kind && (
+              <DropdownMenuItem onClick={onDismiss}>Dismiss from Needs attention</DropdownMenuItem>
             )}
             <DropdownMenuSeparator />
             <DropdownMenuItem variant="destructive" onClick={onDelete}>

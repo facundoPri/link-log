@@ -41,10 +41,15 @@ export type Link = {
   status: "pending" | "ready" | "failed";
   /** Why the last preview failed (a `FailureReason`), shown with `failureMessage`. */
   preview_reason: string | null;
-  /** Derived by the API: an active job (or an out-of-queue preview retry) is working on the link. */
+  /** Derived by the API: an active job is working on the link. */
   processing: boolean;
-  /** Derived by the API: the pending preview is being fetched (extract job or preview retry). */
+  /** Derived by the API: the preview is being fetched (a pending link's extract job, or a preview retry). */
   previewing: boolean;
+  /** Needs attention: the step that failed for good, set when its job settles; cleared by its success or Dismiss. */
+  attention_kind: "preview" | "content" | null;
+  /** Why it failed (a `FailureReason`), shown with `failureMessage`. */
+  attention_reason: string | null;
+  attention_at: string | null;
   created_at: string;
   tags: Tag[];
   evaluations: Evaluation[];
@@ -134,7 +139,7 @@ export type BatchUsage = {
 };
 export type Batch = {
   id: string;
-  kind: "extract" | "autotag" | "lens" | "query" | "browser-lens" | "browser-autogroup";
+  kind: "extract" | "preview" | "autotag" | "lens" | "query" | "browser-lens" | "browser-autogroup";
   config: string;
   created_at: string;
   total: number;

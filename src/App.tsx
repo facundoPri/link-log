@@ -109,7 +109,7 @@ export function App() {
   const [dragging, setDragging] = useState(false);
   const [focusTags, setFocusTags] = useState(false);
   const [jobsByLink, setJobsByLink] = useState<
-    Map<string, { kind: "extract" | "autotag" | "lens" | "query"; status: string }>
+    Map<string, { kind: "extract" | "preview" | "autotag" | "lens" | "query"; status: string }>
   >(new Map());
   const dragDepth = useRef(0);
   const inspectorW = useRef(400);
@@ -177,12 +177,12 @@ export function App() {
         const lib = await refresh();
         const active = lib.batches.filter((b) => b.active > 0);
         if (!alive) return;
-        const map = new Map<string, { kind: "extract" | "autotag" | "lens" | "query"; status: string }>();
+        const map = new Map<string, { kind: "extract" | "preview" | "autotag" | "lens" | "query"; status: string }>();
         for (const b of active) {
           try {
             const { jobs } = await api<{ jobs: Job[] }>(`/batches/${b.id}`);
             for (const j of jobs)
-              if (j.link_id && (b.kind === "extract" || b.kind === "autotag" || b.kind === "lens" || b.kind === "query"))
+              if (j.link_id && (b.kind === "extract" || b.kind === "preview" || b.kind === "autotag" || b.kind === "lens" || b.kind === "query"))
                 map.set(j.link_id, { kind: b.kind, status: j.status });
           } catch {
             /* batch may be gone */
@@ -610,7 +610,9 @@ export function App() {
                   ? "Auto-tagging"
                   : activeBatch.kind === "extract"
                     ? "Extracting"
-                    : "Applying lens",
+                    : activeBatch.kind === "preview"
+                      ? "Fetching preview"
+                      : "Applying lens",
               done: activeBatch.done + activeBatch.failed,
               total: activeBatch.total,
             }
@@ -742,6 +744,11 @@ export function App() {
       }}
       onRetry={() => {
         void mutate(`/links/${activeLink.id}/retry`, "POST").catch((e) =>
+          toast.error(e.message),
+        );
+      }}
+      onRetryContent={() => {
+        void mutate(`/links/${activeLink.id}/retry`, "POST", { step: "content" }).catch((e) =>
           toast.error(e.message),
         );
       }}
@@ -919,8 +926,12 @@ export function App() {
                   setFocusTags(true);
                 },
                 onExtract: (link) => requestExtract([link.id]),
-                onRetry: (link) =>
-                  void mutate(`/links/${link.id}/retry`, "POST").catch((e) =>
+                onRetry: (link, step) =>
+                  void mutate(`/links/${link.id}/retry`, "POST", step ? { step } : {}).catch((e) =>
+                    toast.error(e.message),
+                  ),
+                onDismiss: (link) =>
+                  void mutate(`/links/${link.id}/dismiss`, "POST").catch((e) =>
                     toast.error(e.message),
                   ),
                 onDelete: setDeleteLink,

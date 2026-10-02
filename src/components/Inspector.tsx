@@ -114,6 +114,7 @@ export function Inspector({
   onExtract,
   onSelectTrack,
   onRetry,
+  onRetryContent,
   onSaveRelated,
   savedUrls,
   running,
@@ -133,9 +134,10 @@ export function Inspector({
   onExtract: () => void;
   onSelectTrack: (language: string) => void;
   onRetry: () => void;
+  onRetryContent: () => void;
   onSaveRelated: (url: string) => Promise<void>;
   savedUrls: string[];
-  running?: "extract" | "autotag" | "lens" | "query" | null;
+  running?: "extract" | "preview" | "autotag" | "lens" | "query" | null;
   focusTags?: boolean;
   /** Why Auto-tag and lenses can't run (Jev not configured), or null. */
   jevReason?: string | null;
@@ -631,7 +633,7 @@ export function Inspector({
                   {link.content_error}
                 </p>
                 <div className="mt-3 flex justify-center gap-2">
-                  <Button size="sm" variant="outline" onClick={onExtract}>
+                  <Button size="sm" variant="outline" onClick={onRetryContent}>
                     Retry
                   </Button>
                   <Button
@@ -948,12 +950,12 @@ export function Inspector({
               <dd>{new Date(link.created_at).toLocaleString()}</dd>
               <dt className="text-muted-foreground">Preview</dt>
               <dd>
-                {link.status === "ready"
-                  ? "Ready"
-                  : link.status === "pending"
-                    ? link.previewing
-                      ? "Fetching…"
-                      : "Not fetched yet"
+                {link.previewing
+                  ? "Fetching…"
+                  : link.status === "ready"
+                    ? "Ready"
+                    : link.status === "pending"
+                      ? "Not fetched yet"
                     : `Failed${link.preview_reason ? ` · ${failureMessage(link.preview_reason)}` : ""}`}
                 {canRetryPreview(link) && (
                   <>
