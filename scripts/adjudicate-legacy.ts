@@ -107,11 +107,22 @@ export function assign(db: Database, userId: string, email: string, dryRun: bool
   try {
     for (const table of OWNED)
       moved[table] = db.query(`UPDATE ${table} SET user_id=? WHERE user_id IS NULL`).run(userId).changes;
-    // Includes the legacy Browser library_id, so the extension keeps the same local result scope
-    // (unless the user already opened Browser and got a new id; then theirs is kept).
+    const now = new Date().toISOString();
     moved["settings copied"] = db
-      .query("INSERT OR IGNORE INTO user_settings(user_id,key,value,updated_at) SELECT ?,key,value,? FROM settings")
-      .run(userId, new Date().toISOString()).changes;
+      .query("INSERT OR IGNORE INTO user_settings(user_id,key,value,updated_at) SELECT ?,key,value,? FROM settings WHERE key<>'library_id'")
+      .run(userId, now).changes;
+    // The legacy Browser library id (the extension's local result scope for the legacy data) goes
+    // only to the user who receives the legacy rows in this run, and only if nobody holds it yet
+    // (unique index 0014). A later run for another user moves nothing and never gets it; a user
+    // who already has their own id keeps it.
+    const movedRows = OWNED.reduce((n, table) => n + moved[table]!, 0);
+    moved["legacy library id"] = movedRows
+      ? db
+          .query(
+            "INSERT OR IGNORE INTO user_settings(user_id,key,value,updated_at) SELECT ?,key,value,? FROM settings WHERE key='library_id' AND NOT EXISTS(SELECT 1 FROM user_settings WHERE key='library_id' AND value=settings.value)",
+          )
+          .run(userId, now).changes
+      : 0;
     const crossOwner = db
       .query(
         `SELECT

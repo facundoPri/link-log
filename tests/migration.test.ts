@@ -138,6 +138,52 @@ describe("local adjudication", () => {
     expect(() => db.sqlite.query("UPDATE links SET user_id=? WHERE id='l1'").run(other.userId)).toThrow("immutable");
   });
 
+  test("the legacy Browser library id goes to one owner only (R6)", async () => {
+    const { db, env, call } = await migrated();
+    const a = await testSession(env, "a@example.test");
+    const b = await testSession(env, "b@example.test");
+    const libraryIds = () => db.sqlite.query("SELECT user_id,value FROM user_settings WHERE key='library_id' ORDER BY user_id").all();
+    // Dry run: no settings at all.
+    assign(db.sqlite, a.userId, "a@example.test", true);
+    expect(libraryIds()).toEqual([]);
+    assign(db.sqlite, a.userId, "a@example.test", false);
+    expect(libraryIds()).toEqual([{ user_id: a.userId, value: "legacy-library" }]);
+    // A second adjudication (nothing left to move) never shares A's scope with B.
+    expect(assign(db.sqlite, b.userId, "b@example.test", false).moved["legacy library id"]).toBe(0);
+    const catB = (await (await call("/api/browser/catalog", { cookie: b.cookie })).json()) as { libraryId: string };
+    expect(catB.libraryId).not.toBe("legacy-library");
+    // Retrying A keeps A's identity; the database refuses a shared id outright.
+    assign(db.sqlite, a.userId, "a@example.test", false);
+    const catA = (await (await call("/api/browser/catalog", { cookie: a.cookie })).json()) as { libraryId: string };
+    expect(catA.libraryId).toBe("legacy-library");
+    expect(() =>
+      db.sqlite.query("UPDATE user_settings SET value='legacy-library' WHERE user_id=? AND key='library_id'").run(b.userId),
+    ).toThrow("UNIQUE");
+  });
+
+  test("a user who already had a library id keeps it; the legacy one is not handed to anyone later (R6)", async () => {
+    const { db, env, call } = await migrated();
+    const a = await testSession(env, "a@example.test");
+    const b = await testSession(env, "b@example.test");
+    const own = ((await (await call("/api/browser/catalog", { cookie: a.cookie })).json()) as { libraryId: string }).libraryId;
+    assign(db.sqlite, a.userId, "a@example.test", false);
+    assign(db.sqlite, b.userId, "b@example.test", false);
+    const rows = db.sqlite.query("SELECT user_id,value FROM user_settings WHERE key='library_id'").all();
+    expect(rows).toEqual([{ user_id: a.userId, value: own }]);
+  });
+
+  test("0014 de-duplicates a library id shared by an earlier adjudication, keeping the first holder", async () => {
+    const db = new TestD1();
+    await db.migrate("0013");
+    const { env } = makeEnv(db);
+    const a = await testSession(env, "a@example.test");
+    const b = await testSession(env, "b@example.test");
+    for (const who of [a, b])
+      db.sqlite.query("INSERT INTO user_settings(user_id,key,value,updated_at) VALUES(?,'library_id','legacy-library','now')").run(who.userId);
+    await db.migrate(undefined, "0013");
+    expect(db.sqlite.query("SELECT user_id FROM user_settings WHERE key='library_id'").all()).toEqual([{ user_id: a.userId }]);
+  });
+
   test("refuses unverified users and URL/name conflicts, writing nothing", async () => {
     const { db, env, call } = await migrated();
     const owner = await testSession(env, "owner@example.test");
