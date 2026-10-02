@@ -14,6 +14,7 @@ Este documento conserva la investigación del stack inicial (secciones 1–9, re
 - **Una sola PR final** para FAC-40 + FAC-41, publicada por el coordinador después de la review independiente y los fixes. Los workers no hacen push ni PR.
 - **Preferencia de esfuerzo:** los próximos lanzamientos de Claude para este trabajo usan Opus 5.5 Medium.
 - **Ronda de review (02-10-2026):** el review independiente encontró R1–R8; todos se corrigieron con regresiones. Ver [auth-fix-report.md](auth-fix-report.md). Cambian estas garantías: la cuota de jobs es compartida con Browser y se admite antes de guardar; la metadata de grupos de la extensión es por cuenta; el sign-out se confirma antes de limpiar; el provider fixture se bloquea también en background; el body se limita en bytes; el `library_id` es único por cuenta.
+- **Ronda 2 (02-10-2026):** R3 (la limpieza de la extensión ahora ocurre después del sign-out confirmado) y R9 (alta, import y save escriben links + batch + jobs en una transacción D1; Queue sigue best effort con D1 como outbox; huérfanos recuperados una vez). Las cuotas son UPSERT atómico por clave con compensación, no una transacción multi-cuota. Ver [auth-fix-report.md](auth-fix-report.md).
 - **Sigue sin ejecutarse:** despliegue, provisión de dominio y Email Service remotos, envío real de correo y adjudicación de datos reales. Ninguna de esas acciones está autorizada por estas decisiones.
 
 ## 1. Decisiones del dueño
