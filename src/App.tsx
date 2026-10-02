@@ -3,6 +3,7 @@ import { Link2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "./api";
 import type { Job, Lens, LensResult, LensScope, Library, Link, Tag } from "./types";
+import { needsAttention } from "./attention";
 import { pastedUrls } from "./url";
 import { Sidebar, type View } from "./components/Sidebar";
 import { Toolbar, type ContextFilter } from "./components/Toolbar";
@@ -160,7 +161,7 @@ export function App() {
     });
   }, [refresh]);
 
-  const busyPolling = library.links.some((l) => l.status === "pending") ||
+  const busyPolling = library.links.some((l) => l.processing) ||
     library.batches.some((b) => b.active > 0);
 
   // Poll library + per-batch jobs while work is in flight.
@@ -424,9 +425,7 @@ export function App() {
           (context === "any" ||
             (context === "with" ? !!l.content_key : !l.content_key)) &&
           (view !== "untagged" || !l.tags.length) &&
-          (view !== "attention" ||
-            l.status === "failed" ||
-            l.content_state === "failed") &&
+          (view !== "attention" || needsAttention(l)) &&
           (!activeLens ||
             (() => {
               const r = resultOf(l);

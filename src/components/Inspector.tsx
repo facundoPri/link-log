@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { api } from "../api";
 import type { Lens, Library, Link, Tag, ContentDetails, MediaItem } from "../types";
+import { canRetryPreview } from "../attention";
 import { cn } from "../lib/utils";
 import { captionMenuTracks, youtubeId } from "../lib/youtube";
 import { relativeTime } from "../lib/time";
@@ -342,9 +343,9 @@ export function Inspector({
             <DropdownMenuItem onClick={onExtract}>
               {link.content_key ? "Re-extract context" : "Extract context"}
             </DropdownMenuItem>
-            {link.status === "failed" && (
+            {canRetryPreview(link) && (
               <DropdownMenuItem onClick={onRetry}>
-                Retry preview
+                {link.status === "failed" ? "Retry preview" : "Fetch preview"}
               </DropdownMenuItem>
             )}
             <DropdownMenuSeparator />
@@ -936,16 +937,18 @@ export function Inspector({
                 {link.status === "ready"
                   ? "Ready"
                   : link.status === "pending"
-                    ? "Pending"
+                    ? link.processing
+                      ? "Fetching…"
+                      : "Not fetched yet"
                     : "Failed"}
-                {link.status === "failed" && (
+                {canRetryPreview(link) && (
                   <>
                     {" · "}
                     <button
                       className="underline underline-offset-2"
                       onClick={onRetry}
                     >
-                      Retry
+                      {link.status === "failed" ? "Retry" : "Fetch"}
                     </button>
                   </>
                 )}

@@ -7,6 +7,7 @@ import {
   Loader2,
 } from "lucide-react";
 import type { Lens, Link, Tag } from "../types";
+import { canRetryPreview } from "../attention";
 import { cn } from "../lib/utils";
 import { youtubeId } from "../lib/youtube";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -137,7 +138,9 @@ export function LinkRow({
         <p className="truncate text-xs text-muted-foreground">
           {link.description ||
             (link.status === "pending"
-              ? "Fetching title and preview…"
+              ? link.processing
+                ? "Fetching title and preview…"
+                : "No preview yet"
               : link.status === "failed"
                 ? "No preview available"
                 : link.domain)}
@@ -267,9 +270,9 @@ export function LinkRow({
             <DropdownMenuItem onClick={onExtract}>
               {link.content_key ? "Re-extract context" : "Extract context"}
             </DropdownMenuItem>
-            {link.status === "failed" && (
+            {canRetryPreview(link) && (
               <DropdownMenuItem onClick={onRetry}>
-                Retry preview
+                {link.status === "failed" ? "Retry preview" : "Fetch preview"}
               </DropdownMenuItem>
             )}
             <DropdownMenuSeparator />

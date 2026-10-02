@@ -147,8 +147,9 @@ export async function dispatch(batch: MessageBatch<{ id: string }>, env: Env) {
               new Date().toISOString(),
               job.id,
             ),
+            // Not a final failure: the link goes back to how it was, like a cancelled job.
             env.DB.prepare(
-              `UPDATE links SET content_state=${preservedContentStateSql("failed")},content_error='Extraction was interrupted. Try again.' WHERE id=? AND content_state='queued'`,
+              `UPDATE links SET content_state=${preservedContentStateSql("missing")},content_error=CASE WHEN content_key IS NULL THEN NULL ELSE 'Extraction was interrupted. Try again.' END WHERE id=? AND content_state='queued'`,
             ).bind(job.link_id),
             env.DB.prepare("DELETE FROM provider_leases WHERE job_id=?").bind(
               job.id,

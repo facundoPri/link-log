@@ -24,11 +24,14 @@ export function capabilities(env: Env) {
           : !!env.AI,
   };
 }
+const PREVIEW_RETRY_WINDOW_MS = 30000;
 export async function library(env: Env) {
   const [links, tags, joins, evaluations, batches, lensRows, lensResults, usageRows, mediaRows, hiddenRows] =
     await Promise.all([
-    env.DB.prepare("SELECT * FROM links ORDER BY created_at DESC").all<
-      Link & { metadata_started_at: string | null }
+    env.DB.prepare(
+      "SELECT l.*,EXISTS(SELECT 1 FROM jobs j WHERE j.link_id=l.id AND j.status IN ('queued','running')) active_job FROM links l ORDER BY l.created_at DESC",
+    ).all<
+      Omit<Link, "processing"> & { metadata_started_at: string | null; active_job: number }
     >(),
     env.DB.prepare(
       "SELECT * FROM tags ORDER BY name COLLATE NOCASE",
@@ -138,13 +141,14 @@ export async function library(env: Env) {
     ]);
   }
   return {
-    links: links.results.map((l) => ({
+    links: links.results.map(({ active_job, ...l }) => ({
       ...l,
-      status:
-        l.status === "pending" &&
-        Date.now() - Date.parse(l.metadata_started_at || l.created_at) > 30000
-          ? "failed"
-          : l.status,
+      // "Retry preview" runs outside the queue; if the Worker dies mid-fetch the link turns neutral.
+      processing:
+        !!active_job ||
+        (l.status === "pending" &&
+          !!l.metadata_started_at &&
+          Date.now() - Date.parse(l.metadata_started_at) < PREVIEW_RETRY_WINDOW_MS),
       tags: membership.get(l.id) || [],
       evaluations: scores.get(l.id) || [],
       lens_results: lensByLink.get(l.id) || [],

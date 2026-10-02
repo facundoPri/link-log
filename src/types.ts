@@ -39,6 +39,8 @@ export type Link = {
   image: string | null;
   favicon: string | null;
   status: "pending" | "ready" | "failed";
+  /** Derived by the API: an active job (or an out-of-queue preview retry) is working on the link. */
+  processing: boolean;
   created_at: string;
   tags: Tag[];
   evaluations: Evaluation[];

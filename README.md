@@ -57,7 +57,7 @@ Saves immediately to D1; the extraction workflow enriches title, description, Op
 
 The aliases `youtu.be`, `www.youtube.com`, `m.youtube.com` and `music.youtube.com` are grouped as `youtube.com`. Known tracking parameters are stripped; functional parameters and fragments are preserved. Exact-normalized duplicates or duplicates of an already-resolved destination return the existing link and merge tags, even with concurrent saves. Two different shorteners reaching the same destination after saving can still coexist; they are not merged automatically.
 
-A blocked, slow or HTML-less page keeps the link and allows a retry. If the Worker restarts mid-extraction, the pending state expires after 30s to allow recovery. Remote images have a fallback; their availability depends on the site. There is no image archive or oEmbed. R2 stores the Markdown and transcripts.
+A blocked, slow or HTML-less page keeps the link and allows a retry. A link whose preview has not finished shows as processing while it has a queued or running job; if the Worker restarts mid-extraction, the cron recovery below resends the job. A link left without a preview and without a job (cancelled batch, interrupted extraction) stays neutral, never in Needs attention, and offers "Fetch preview". A "Retry preview" that dies with the Worker turns neutral after 30s. Remote images have a fallback; their availability depends on the site. There is no image archive or oEmbed. R2 stores the Markdown and transcripts.
 
 ## Cloudflare: current boundary
 

@@ -31,6 +31,7 @@ mock.module("../../worker/adapters", () => ({
 
 const { default: worker, LinkWorkflow } = await import("../../worker/index");
 const { dispatch } = await import("../../worker/jobs");
+const { needsAttention } = await import("../../src/attention");
 
 function d1(db: Database) {
   const stmt = (sql: string, params: unknown[] = []) => ({
@@ -114,7 +115,8 @@ async function setup() {
     return {
       status: l.status as string,
       content: l.content_state as string,
-      attention: l.status === "failed" || l.content_state === "failed", // src/components/Sidebar.tsx:90-92, src/App.tsx:427-429
+      processing: l.processing as boolean,
+      attention: needsAttention(l), // shared by Sidebar and App
       err: l.content_error as string | null,
       job: job ? `${job.status}/${job.step}` : null,
     };
@@ -124,9 +126,9 @@ async function setup() {
 
 const log: string[] = [];
 const rec = (scenario: string, event: string, v: Awaited<ReturnType<Awaited<ReturnType<typeof setup>>["view"]>>) =>
-  log.push(`${scenario} | ${event} | status=${v.status} content=${v.content} attention=${v.attention} job=${v.job}${v.err ? ` err="${v.err}"` : ""}`);
+  log.push(`${scenario} | ${event} | status=${v.status} processing=${v.processing} content=${v.content} attention=${v.attention} job=${v.job}${v.err ? ` err="${v.err}"` : ""}`);
 
-test("A: queued >30s behind the browser pool shows Needs attention, then recovers on its own", async () => {
+test("A: queued >30s behind the browser pool stays processing, never Needs attention (fixed in FAC-48 S1)", async () => {
   const s = await setup();
   const { data } = await s.api("/links", "POST", { url: "https://a.example/post" });
   const id = data.id;
@@ -135,7 +137,7 @@ test("A: queued >30s behind the browser pool shows Needs attention, then recover
   tick(31_000); // still waiting for a browser slot; nothing ran
   const waiting = await s.view(id);
   rec("A", "+31s reload, job not started", waiting);
-  expect(waiting).toMatchObject({ status: "failed", content: "queued", attention: true });
+  expect(waiting).toMatchObject({ status: "pending", processing: true, content: "queued", attention: false });
   await s.runQueued();
   const done = await s.view(id);
   rec("A", "workflow ran OK", done);
@@ -221,7 +223,7 @@ test("E: the same content failure on a link that already had content never shows
   expect(v).toMatchObject({ content: "ready", attention: false, job: "failed/Needs attention", err: "Markdown: HTTP 503" });
 });
 
-test("F: cancelling a fresh import leaves links pending forever → Needs attention after 30s", async () => {
+test("F: cancelling a fresh import leaves links pending and neutral, never Needs attention (fixed in FAC-48 S1)", async () => {
   const s = await setup();
   const imp = await s.api("/import", "POST", { urls: ["https://f.example/1", "https://f.example/2"] });
   const batchId = imp.data.batches[0].id;
@@ -232,12 +234,11 @@ test("F: cancelling a fresh import leaves links pending forever → Needs attent
   tick(31_000);
   const v = await s.view(id);
   rec("F", "+31s reload", v);
-  expect(v).toMatchObject({ status: "failed", content: "missing", attention: true });
-  expect((s.db.query("SELECT status FROM links WHERE id=?").get(id) as any).status).toBe("pending"); // stored value never changed
+  expect(v).toMatchObject({ status: "pending", processing: false, content: "missing", attention: false });
   await s.api(`/links/${id}/retry`, "POST");
   const v2 = await s.view(id);
-  rec("F", "Retry preview", v2);
-  expect(v2.attention).toBe(false);
+  rec("F", "Fetch preview", v2);
+  expect(v2).toMatchObject({ status: "ready", attention: false });
 });
 
 test("G: preview step throws → both flags failed; Retry preview fixes only one, still Needs attention", async () => {
@@ -260,7 +261,7 @@ test("G: preview step throws → both flags failed; Retry preview fixes only one
   expect(v3.attention).toBe(false);
 });
 
-test("H: an interrupted workflow (dispatch sees errored instance) marks content failed and leaves status pending", async () => {
+test("H: an interrupted workflow (dispatch sees errored instance) leaves the link neutral (fixed in FAC-48 S1)", async () => {
   const s = await setup();
   const id = (await s.api("/links", "POST", { url: "https://h.example/x" })).data.id;
   const [msg] = s.sent.splice(0);
@@ -272,18 +273,20 @@ test("H: an interrupted workflow (dispatch sees errored instance) marks content 
   await dispatch({ messages: [{ body: msg!.body, ack() {}, retry() {} }] } as never, s.env);
   const v1 = await s.view(id);
   rec("H", "dispatch: instance errored", v1);
-  expect(v1).toMatchObject({ status: "pending", content: "failed", attention: true, job: "failed/Interrupted" });
+  expect(v1).toMatchObject({ status: "pending", processing: false, content: "missing", attention: false, job: "failed/Interrupted" });
   tick(31_000);
-  rec("H", "+31s reload", await s.view(id));
+  const v2 = await s.view(id);
+  rec("H", "+31s reload", v2);
+  expect(v2.attention).toBe(false);
 });
 
-test("I: while queued, the row offers 'Retry preview' (status virtually failed) but the API refuses it", async () => {
+test("I: while queued, the link is processing so the row no longer offers 'Retry preview'; the API still refuses it (FAC-48 S1)", async () => {
   const s = await setup();
   const id = (await s.api("/links", "POST", { url: "https://i.example/x" })).data.id;
   tick(31_000);
   const v = await s.view(id);
   rec("I", "+31s, still queued", v);
-  expect(v.status).toBe("failed"); // LinkRow.tsx:270 shows "Retry preview"
+  expect(v).toMatchObject({ status: "pending", processing: true }); // canRetryPreview (src/attention.ts) is false
   const r = await s.api(`/links/${id}/retry`, "POST");
   log.push(`I | POST /retry while queued | HTTP ${r.status} "${r.data.error}"`);
   expect(r.status).toBe(400);
