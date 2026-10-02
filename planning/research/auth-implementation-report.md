@@ -2,6 +2,8 @@
 
 **Fecha:** 02-10-2026. **Rama:** `facundoPri/research-auth-cloudflare` (sin push ni PR). **Base previa a implementación:** `4d23fe1e5d67a67ad6a00bed120faab79269b46d`. **Base de integración/review:** `main` `32fc90f40c6f136e8038aafa0a143404e531d0f4` (PR #4 Browser/extensión), integrada por merge local. **HEAD final:** ver §1.
 
+> **Actualización 02-10-2026, ronda de review:** R1–R8 de [auth-code-review.md](auth-code-review.md) fueron aceptados y corregidos (commits `9733db6`…`aa16ff9`). Detalle, pruebas antes/después y gates en [auth-fix-report.md](auth-fix-report.md). Las secciones de abajo se ajustaron donde cambió una garantía; los resultados de §6 son los de la entrega inicial (73bf125) y se conservan como histórico.
+
 Entrega única para FAC-40 (autenticación) y FAC-41 (datos privados por usuario), con la capa HTTP migrada a Hono por decisión del dueño. Todo se probó **localmente** (Bun + workerd/Miniflare). No hubo despliegue, correo real, D1 remota ni adjudicación de datos reales.
 
 ## 1. Commits
@@ -28,7 +30,7 @@ El merge integra en un solo commit la resolución de conflictos y lo que esa res
 
 1. `app.use("/api/*", withConfig)`: lee y valida la config **por request** (`readConfig`, fail-closed → 503), comprueba el host (403) y crea una instancia de Better Auth por request ligada a `env` y `executionCtx` (sin sesiones ni instancias globales).
 2. `app.on(["GET","POST"], "/api/auth/*", c => auth.handler(c.req.raw))`: Better Auth recibe el `Request` sin consumir, antes de cualquier parser o protección privada. Otros métodos → 405. Los endpoints fuera de alcance (social, update-user, delete-user, etc.) están en `disabledPaths` → 404.
-3. Grupo privado `app.route("/api", privateApi)`: privado **por defecto**. Usa `sameOriginWrites` (Origin exacto = `BETTER_AUTH_URL`, `Sec-Fetch-Site` same-origin si viene, `Content-Type: application/json` → 403/415), luego `requireSession` (sesión D1 → `Principal { kind: "session", userId, sessionId }` en `c.var.principal`; sin ella → 401) y por último `writeQuotaAndBody` (cuota de escrituras por usuario y JSON objeto ≤ 2.1 MB). Rutas por módulo: `worker/routes/{links,taxonomy,activity,browser}.ts`. Una ruta desconocida responde 401 sin sesión (no permite descubrir rutas) y 404 con sesión.
+3. Grupo privado `app.route("/api", privateApi)`: privado **por defecto**. Usa `sameOriginWrites` (Origin exacto = `BETTER_AUTH_URL`, `Sec-Fetch-Site` same-origin si viene, `Content-Type: application/json` → 403/415), luego `requireSession` (sesión D1 → `Principal { kind: "session", userId, sessionId }` en `c.var.principal`; sin ella → 401) y por último `writeQuotaAndBody` (cuota de escrituras por usuario y JSON objeto ≤ 2.1 MB, contados en **bytes** del stream desde la ronda de review (R5)). Rutas por módulo: `worker/routes/{links,taxonomy,activity,browser}.ts`. Una ruta desconocida responde 401 sin sesión (no permite descubrir rutas) y 404 con sesión.
 4. `app.all("*")` → `ASSETS` (shell SPA pública, sin datos).
 5. `onError`: `HttpError` (status + `code`), `LimitError` → 429, errores D1/trigger → 500 genérico, validación → 400. No se loguean cuerpos, tokens ni cookies.
 
@@ -40,13 +42,13 @@ El merge integra en un solo commit la resolución de conflictos y lo que esa res
 - Email + contraseña (10–128 caracteres) con verificación obligatoria (`sendOnSignUp`/`sendOnSignIn`, auto sign-in tras verificar). Magic link de 5 min, de un solo uso y con token hasheado. Reset de 1 h que revoca las demás sesiones. Logout.
 - Sesiones en D1: 7 días, `updateAge` 1 día, **sin cookie cache**, así que la revocación se nota en el siguiente request. Cookies `linklog.*`: `__Secure-` y `Secure` fuera de local/test; HttpOnly, SameSite Lax.
 - `trustedOrigins = [BETTER_AUTH_URL]`. `disableCSRFCheck`/`disableOriginCheck` se fijan explícitamente en `false`. IP desde `cf-connecting-ip`. Rate limit de Better Auth con `storage: "database"` (tabla `rateLimit`) y reglas estrictas para sign-in/up/magic/reset/verification.
-- `worker/config.ts` hace fail-closed: `APP_ENV` ∈ local|test|preview|production (wrangler.jsonc trae `production` por defecto); `BETTER_AUTH_URL` debe ser un origen pelado, HTTPS público fuera de local y loopback en local; secreto ≥ 32 caracteres que no sea de desarrollo; binding `EMAIL` presente; `EMAIL_FROM` válido. **Nuevo:** `JEV_PROVIDER=fixture`/`ALLOW_FIXTURE_JEV` solo en local/test.
+- `worker/config.ts` hace fail-closed: `APP_ENV` ∈ local|test|preview|production (wrangler.jsonc trae `production` por defecto); `BETTER_AUTH_URL` debe ser un origen pelado, HTTPS público fuera de local y loopback en local; secreto ≥ 32 caracteres que no sea de desarrollo; binding `EMAIL` presente; `EMAIL_FROM` válido. **Nuevo:** `JEV_PROVIDER=fixture`/`ALLOW_FIXTURE_JEV` solo en local/test. Desde la ronda de review (R4), `judge()` aplica la misma regla (`fixtureJevAllowed`) donde corre el provider, incluido Queue/Workflow.
 - Email (`worker/email.ts`): Cloudflare `send_email` (`EMAIL`) en `waitUntil` (timing parejo), con límite por destinatario (hash) de 5/h y diario global (`AUTH_EMAIL_DAILY_LIMIT`, por defecto 200). Logs solo de `kind` y resultado. En local, Wrangler **simula** el envío (archivos en `.wrangler/tmp/email/`).
-- Límites de app (`worker/limits.ts`): contadores atómicos en D1 (un UPSERT…RETURNING) para links por usuario, jobs por usuario y escrituras por minuto. Hay tests de concurrencia (30 paralelos → exactamente 10) y un e2e (10 sign-ins concurrentes → exactamente 5 en D1 real local).
+- Límites de app (`worker/limits.ts`): contadores atómicos en D1 (un UPSERT…RETURNING) para links por usuario, jobs por usuario y escrituras por minuto. Desde la ronda de review, `charge()` toma varias cuotas o ninguna y devuelve lo no usado en la misma ventana. Alta, import y Browser save (`addLinks`) cobran links + jobs **antes** de guardar (R8), y las evaluaciones Browser comparten `jobs:<user>` con la biblioteca (R1). Hay tests de concurrencia (30 paralelos → exactamente 10) y un e2e (10 sign-ins concurrentes → exactamente 5 en D1 real local).
 
 ### Frontend
 
-`src/Root.tsx` es el gate de sesión. `App` se monta con `key={user.id}`: al cambiar de cuenta se descarta todo el estado. Cualquier 401 (`src/api.ts`, `src/browser/api.ts`) dispara `refetch` y vuelve a la pantalla de login. `signOutAndReset()` ejecuta hooks `onBeforeSignOut` (con tope de 1.5 s), cierra la sesión, borra `localStorage` `linklog.*` y `sessionStorage` y recarga. Browser registra un hook que pide a la extensión `forget` (ver §3).
+`src/Root.tsx` es el gate de sesión. `App` se monta con `key={user.id}`: al cambiar de cuenta se descarta todo el estado. Cualquier 401 (`src/api.ts`, `src/browser/api.ts`) dispara `refetch` y vuelve a la pantalla de login. `signOutAndReset()` ejecuta hooks `onBeforeSignOut` (con tope de 1.5 s) y cierra la sesión. Solo si el servidor lo confirma borra `localStorage` `linklog.*` y `sessionStorage` y recarga; si falla, muestra el error con Retry (R3). El gate mantiene AuthScreen montado durante el refetch anónimo posterior al alta (R7). Browser registra un hook que pide a la extensión `forget` (ver §3).
 
 ## 3. Propiedad de datos (FAC-41) y esquema
 
@@ -55,6 +57,7 @@ El merge integra en un solo commit la resolución de conflictos y lo que esa res
 Base de main: `0010_browser_targets`, `0011_jobs_target_index`. Esta entrega las conserva y agrega:
 
 - `0012_auth.sql`: tablas Better Auth (`user`, `session`, `account`, `verification`, `rateLimit`), `app_rate_limits` y `user_settings (user_id, key)`. Generado con `scripts/auth/print-schema.ts` (getMigrations) y revisado.
+- `0014_unique_library_id.sql` (ronda de review, R6): índice único de `library_id` por cuenta; deduplica copias previas conservando la primera.
 - `0013_ownership.sql`:
   - **Reconstruidas** (para pasar la unicidad de global a por dueño): `links` (`UNIQUE(user_id, original_url)`), `tags` y `lenses` (`UNIQUE(user_id, name NOCASE)`, `lenses.scope` conservado), y todo lo que cuelga de ellas: `link_tags`, `jobs` (`link_id` y `target_id` nullable con `CHECK` exclusivo), `tag_evaluations`, `lens_results`, `usage_events` (`user_id` propio), `provider_leases`, `media_items` y `hidden_related_links`. Se usan copias `*_next` que referencian solo padres `*_next`; se borran hijos antes que padres y se renombra al final, porque D1 no permite apagar FKs y `DROP` de un padre dispara cascadas. Un test verifica que el esquema final no referencie tablas `*_next`/`*_prev`.
   - **`ALTER TABLE … ADD COLUMN user_id`** (nullable): `batches`, `browser_requests`, `browser_groups`. Los índices de main (`jobs_active_link`, `jobs_active_target`, `jobs_target`, `browser_targets_request`) se conservan o se recrean.
@@ -68,7 +71,7 @@ Base de main: `0010_browser_targets`, `0011_jobs_target_index`. Esta entrega las
 - R2: el contenido nuevo va en `users/<userId>/links/<linkId>/…` y solo se lee desde una fila propia cuyo `content_key` cae bajo su prefijo (o el prefijo legado `links/<id>/` de esa misma fila). Las capturas Browser van en `users/<userId>/browser/<requestId>/…`.
 - Queue/Workflow/cron: `loadOwnedJob` resuelve el dueño desde `batches.user_id` persistido y carga link o capture **solo** de ese dueño. Un batch sin dueño no corre y `recover` lo ignora. El uso (`measured`) toma `user_id` del batch.
 - Browser: `library_id` por cuenta en `user_settings` (la extensión agrupa sus resultados por ese id). `catalog`, grupos, lenses, evaluaciones (`GET`/`ack`/`DELETE`), `save` y estado van por dueño. Reusar un `requestId` o un id de grupo ajeno → 409 `conflict`, sin revelar a quién pertenece. Un lens ajeno → 404 `lens-missing`. El `libraryId` de otra cuenta → 409 `library-mismatch`. `cleanupBrowser` (retención) sigue siendo un barrido global por tiempo y no expone nada.
-- Extensión: comando aditivo `forget`, ofrecido como capability en `hello` y sin cambio de `PROTOCOL_VERSION`. Borra resultados y requests del scope de la conexión y termina el handshake. Otras cuentas (otros scopes) no se tocan. Con una extensión vieja sin la capability, sus resultados igual quedan aislados por `library_id`.
+- Extensión: comando aditivo `forget`, ofrecido como capability en `hello` y sin cambio de `PROTOCOL_VERSION`. Borra resultados, requests y (desde R2) la metadata y los hints de grupos del scope de la conexión, y termina el handshake. **La garantía no es `forget`:** resultados y metadata de grupos (description, pin, hints de reinicio) se leen filtrados por el scope de la conexión, así que otra cuenta del mismo perfil no los ve aunque la sesión expire o la extensión se reinicie. Los grupos y tabs nativos de Chrome no cambian.
 - Preferencias: `user_settings`. La tabla global `settings` heredada queda sin leer hasta la adjudicación.
 
 ### Rollback
@@ -86,7 +89,7 @@ Base de main: `0010_browser_targets`, `0011_jobs_target_index`. Esta entrega las
 3. `backup`: copia completa del state dir (D1 + R2 + secreto local) a `<dir>.backup-<timestamp>`. Se niega a correr si la base está abierta.
 4. Elegir el dueño: el usuario **verificado** que corresponde a la persona dueña de la biblioteca local (por email, confirmado por el dueño; nunca "el primero").
 5. `assign --user-id <id> --email <email> --dry-run`: valida que id y email coincidan, que el usuario esté verificado y que no haya conflictos (URL o nombres ya usados por ese usuario). Muestra conteos antes, movidos y después, y no escribe nada.
-6. `assign …` sin `--dry-run`: hace todo en una transacción `BEGIN IMMEDIATE`. Copia `settings` a `user_settings` (incluye el `library_id` heredado, así la extensión conserva su scope), verifica que no queden relaciones cruzadas y que los conteos coincidan, corre `PRAGMA foreign_key_check` y hace COMMIT; ante cualquier duda, ROLLBACK.
+6. `assign …` sin `--dry-run`: hace todo en una transacción `BEGIN IMMEDIATE`. Copia `settings` a `user_settings`. El `library_id` heredado (el scope de la extensión) va **solo** al usuario que recibe filas heredadas en esa ejecución y solo si nadie lo tiene; tras R6, un segundo `assign` a otro usuario no lo comparte, verifica que no queden relaciones cruzadas y que los conteos coincidan, corre `PRAGMA foreign_key_check` y hace COMMIT; ante cualquier duda, ROLLBACK.
 7. Para revertir: restaurar el backup del paso 3.
 
 Para D1 remota no hay herramienta, y asignar requiere una decisión explícita del dueño. El procedimiento equivalente sería export → ensayo sobre copia local → `UPDATE … WHERE user_id IS NULL` revisado → verificación.
@@ -147,7 +150,8 @@ Para D1 remota no hay herramienta, y asignar requiere una decisión explícita d
 - Rate limit de Better Auth sobre D1: los contadores son por clave e IP y se probó la concurrencia local. El costo de D1 bajo ataque sigue sin medir.
 - La retención Browser es un barrido global de 7 días; las capturas viejas con prefijo `browser/<requestId>/` (anteriores a esta rama) siguen limpiándose por tiempo.
 - La API es privada por defecto: una ruta desconocida da 401 sin sesión y 404 con sesión (antes daba 404/405 sin sesión).
-- El `forget` de la extensión es de buen esfuerzo (tope de 1.5 s; una extensión vieja no lo ofrece). La garantía de aislamiento es el scope por `library_id`.
+- El `forget` de la extensión es de buen esfuerzo (tope de 1.5 s; una extensión vieja no lo ofrece). La garantía de aislamiento es la lectura por scope (`library_id` único por cuenta): resultados y, desde R2, metadata de grupos. El scope es secreto, no una prueba de identidad: la extensión no autentica cuentas.
+- Browser comparte los 300 jobs/h con la biblioteca (R1): una ventana con muchas pestañas y varios lenses puede agotarlos; aparece un aviso y los targets quedan failed con retry.
 - No implementado (fuera de alcance): FAC-44/API keys, billing/entitlements, passkeys, Google/GitHub, login con Cloudflare, sharing, MCP. nuqs no se instaló (no aporta a auth).
 
 ## 10. Estado final
