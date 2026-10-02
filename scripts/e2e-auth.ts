@@ -230,6 +230,25 @@ try {
   assert.ok(usageBrowserB.events.every((e) => e.provider !== "fixture"));
   pass("Browser: per-account library id; A's capture evaluated via Queue/Workflow; B gets 404/409 on A's request, lens and group; usage per owner");
 
+  // 6c. R9 on real local D1: links + batch + jobs are one transaction. A statement failing mid-import
+  //     (injected with a trigger) leaves nothing; a later import dedupes and queues exactly once.
+  const atomic = ["https://example.com/r9-first", "https://example.com/r9-second"];
+  await d1(`CREATE TRIGGER e2e_fault BEFORE INSERT ON links WHEN NEW.original_url='${atomic[1]}' BEGIN SELECT RAISE(ABORT, 'injected D1 failure'); END`);
+  const failedImport = await A.send("/api/import", { urls: atomic });
+  assert.ok(!failedImport.ok, `import should fail (${failedImport.status})`);
+  const [rolledBack] = await d1(`SELECT (SELECT count(*) FROM links WHERE original_url LIKE 'https://example.com/r9-%') links`);
+  assert.equal(rolledBack!.links, 0, "nothing from the failed import is left");
+  await d1("DROP TRIGGER e2e_fault");
+  assert.equal((await A.send("/api/links", { url: atomic[0] })).status, 201);
+  const imported = (await (await A.send("/api/import", { urls: atomic })).json()) as { imported: number; duplicates: number };
+  assert.deepEqual([imported.imported, imported.duplicates], [1, 1]);
+  const [r9] = await d1(
+    `SELECT (SELECT count(*) FROM links WHERE original_url LIKE 'https://example.com/r9-%') links,
+            (SELECT count(*) FROM jobs j JOIN links l ON l.id=j.link_id WHERE l.original_url LIKE 'https://example.com/r9-%') jobs`,
+  );
+  assert.deepEqual([r9!.links, r9!.jobs], [2, 2]);
+  pass("import is atomic on real D1 (injected mid-import failure leaves nothing); dedupe + one job per new link");
+
   // 7. Password reset revokes A's sessions; logout ends B's.
   since = Date.now();
   assert.equal((await viaUi("/api/auth/request-password-reset", { body: { email: "a@e2e.test", redirectTo: "/reset-password" } })).status, 200);
