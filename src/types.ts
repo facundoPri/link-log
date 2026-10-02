@@ -92,7 +92,9 @@ export type Job = {
   batch_id: string;
   link_id: string | null;
   title: string;
-  status: "queued" | "running" | "done" | "failed";
+  /** "waiting": held behind another job on the same link (waiting_for is that job's kind). */
+  status: "queued" | "running" | "waiting" | "done" | "failed";
+  waiting_for?: string | null;
   step: string;
   error: string | null;
   /** The current attempt of a retried step, and how many it may take. */
@@ -145,7 +147,9 @@ export type Batch = {
   total: number;
   done: number;
   failed: number;
+  /** Queued, running or waiting jobs; `waiting` counts the last ones. */
   active: number;
+  waiting: number;
   usage?: BatchUsage | null;
 };
 export type Capabilities = {

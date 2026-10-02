@@ -34,6 +34,29 @@ export type JobRow = {
   status: string;
 };
 type Config = JobConfig;
+export const contentMissing = "Content missing. Extract it first.";
+// A link runs one job at a time. A job enqueued while another is queued, running or waiting on the same link
+// waits in D1 (never in the Queue) and starts when the jobs before it settle, oldest first.
+const busy = "status IN ('queued','running','waiting')";
+const ahead = (j: string) =>
+  `NOT EXISTS (SELECT 1 FROM jobs a WHERE a.link_id=${j}.link_id AND (a.status IN ('queued','running') OR (a.status='waiting' AND (a.created_at<${j}.created_at OR (a.created_at=${j}.created_at AND a.rowid<${j}.rowid)))))`;
+/** Moves the next waiting job of each idle link (or of one link) to queued. Safe to repeat. */
+export const promoteWaiting = (db: D1Database, linkId?: string) =>
+  db.prepare(`UPDATE jobs SET status='queued' WHERE status='waiting' AND link_id IS NOT NULL${linkId ? " AND link_id=?" : ""} AND ${ahead("jobs")}`)
+    .bind(...(linkId ? [linkId] : []));
+/** Sends the queued jobs of these links. A lost send is resent by recover(), and dispatch ignores repeats. */
+export async function startNext(env: Env, linkIds: (string | null)[]) {
+  const ids = [...new Set(linkIds.filter((id): id is string => !!id))];
+  if (!ids.length) return;
+  const rows = await env.DB.prepare(`SELECT id FROM jobs WHERE status='queued' AND link_id IN (${ids.map(() => "?").join(",")})`)
+    .bind(...ids).all<{ id: string }>();
+  if (!rows.results.length) return;
+  try {
+    await env.JOBS.sendBatch(rows.results.map((body) => ({ body })));
+  } catch {
+    console.error("Queue dispatch deferred to outbox recovery");
+  }
+}
 export async function enqueue(
   env: Env,
   ids: string[],
@@ -50,24 +73,21 @@ export async function enqueue(
     console.error(JSON.stringify({ event: "jev_not_configured", kind, provider: capabilities(env).provider, links: ids.length }));
     throw new Error(unavailable);
   }
+  const marks = ids.map(() => "?").join(",");
   const links = await env.DB.prepare(
-    `SELECT * FROM links WHERE id IN (${ids.map(() => "?").join(",")})`,
+    `SELECT id,content_key,EXISTS (SELECT 1 FROM jobs j JOIN batches b ON b.id=j.batch_id WHERE j.link_id=links.id AND j.${busy} AND b.kind='extract') extracting,EXISTS (SELECT 1 FROM jobs j WHERE j.link_id=links.id AND j.${busy}) busy FROM links WHERE id IN (${marks})`,
   )
     .bind(...ids)
-    .all<Link>();
+    .all<{ id: string; content_key: string | null; extracting: number; busy: number }>();
   if (links.results.length !== ids.length)
     throw new Error("One of the links no longer exists.");
-  if (jev && links.results.some((l) => !l.content_key))
-    throw new Error(
-      "All selected links need context first.",
-    );
-  const active = await env.DB.prepare(
-    `SELECT id FROM jobs WHERE status IN ('queued','running') AND link_id IN (${ids.map(() => "?").join(",")}) LIMIT 1`,
-  )
-    .bind(...ids)
-    .first();
-  if (active)
+  // Jev runs on links with content or with an extraction on the way; it never starts an extraction itself.
+  const skipped = jev ? links.results.filter((l) => !l.content_key && !l.extracting).map((l) => l.id) : [];
+  if (skipped.length === ids.length)
+    throw new Error(ids.length === 1 ? "This link has no content yet. Extract it first." : "None of the selected links have content yet. Extract them first.");
+  if (!jev && links.results.some((l) => l.busy))
     throw new Error("Some selected links are still processing.");
+  ids = ids.filter((id) => !skipped.includes(id));
   let config: Config = {};
   if (kind === "autotag") {
     const tags = await env.DB.prepare(
@@ -95,15 +115,15 @@ export async function enqueue(
   if (kind === "extract") config = { ...(extract.track && { track: extract.track }), ...(extract.step && { step: extract.step }) };
   const id = crypto.randomUUID(),
     now = new Date().toISOString();
-  const jobs = ids.map((link_id) => ({ id: crypto.randomUUID(), link_id }));
   await env.DB.batch([
     env.DB.prepare(
       "INSERT INTO batches(id,kind,config,created_at) VALUES(?,?,?,?)",
     ).bind(id, kind, JSON.stringify(config), now),
-    ...jobs.map((j) =>
+    // Decided inside the transaction, so a concurrent enqueue can't put two active jobs on one link.
+    ...ids.map((link_id) =>
       env.DB.prepare(
-        "INSERT INTO jobs(id,batch_id,link_id,created_at) VALUES(?,?,?,?)",
-      ).bind(j.id, id, j.link_id, now),
+        `INSERT INTO jobs(id,batch_id,link_id,status,created_at) VALUES(?,?,?,CASE WHEN EXISTS (SELECT 1 FROM jobs WHERE link_id=? AND ${busy}) THEN 'waiting' ELSE 'queued' END,?)`,
+      ).bind(crypto.randomUUID(), id, link_id, link_id, now),
     ),
     ...(kind === "extract"
       ? ids.map((link) =>
@@ -115,15 +135,18 @@ export async function enqueue(
       : []),
   ]);
   // D1 is the durable outbox. If dispatch fails, scheduled recovery resends these IDs.
+  const queued = await env.DB.prepare("SELECT id FROM jobs WHERE batch_id=? AND status='queued'").bind(id).all<{ id: string }>();
   try {
-    await env.JOBS.sendBatch(jobs.map((j) => ({ body: { id: j.id } })));
+    if (queued.results.length) await env.JOBS.sendBatch(queued.results.map((body) => ({ body })));
   } catch {
     console.error("Queue dispatch deferred to outbox recovery");
   }
-  return id;
+  return { id, skipped };
 }
 export async function recover(env: Env) {
   await env.DB.prepare("UPDATE usage_events SET status='failed',error='Provider call interrupted before completion' WHERE status='started' AND job_id IN (SELECT id FROM jobs WHERE status IN ('done','failed'))").run();
+  // A waiting job whose predecessor settled without promoting it (a crash in between) starts here.
+  await promoteWaiting(env.DB).run();
   const rows = await env.DB.prepare(
     "SELECT id FROM jobs WHERE status IN ('queued','running') ORDER BY created_at LIMIT 100",
   ).all<{ id: string }>();
@@ -136,7 +159,8 @@ export async function dispatch(batch: MessageBatch<{ id: string }>, env: Env) {
       const job = await env.DB.prepare("SELECT * FROM jobs WHERE id=?")
         .bind(m.body.id)
         .first<JobRow>();
-      if (!job || ["done", "failed"].includes(job.status)) {
+      // A waiting job is started by promotion, never by a stray message.
+      if (!job || ["done", "failed", "waiting"].includes(job.status)) {
         m.ack();
         continue;
       }
@@ -165,7 +189,9 @@ export async function dispatch(batch: MessageBatch<{ id: string }>, env: Env) {
             env.DB.prepare("DELETE FROM provider_leases WHERE job_id=?").bind(
               job.id,
             ),
+            ...(job.link_id ? [promoteWaiting(env.DB, job.link_id)] : []),
           ]);
+          await startNext(env, [job.link_id]);
         }
       }
       m.ack();
@@ -256,17 +282,22 @@ export class LinkWorkflow extends WorkflowEntrypoint<Env, { id: string }> {
         const handler = handlers[job.kind];
         if (!handler) throw new Error(`No handler for job kind "${job.kind}".`);
         const ctx = { env, step, job, link: link!, config, progress };
-        await acquire(handler.pool(ctx));
+        const pool = handler.pool(ctx);
+        // Jev that waited for an extraction which ended without content fails here, free: no slot, no provider
+        // call, no Needs attention, and no extraction started on its behalf.
+        if (pool === "jev" && !link!.content_key) throw new Error(contentMissing);
+        await acquire(pool);
         await handler.run(ctx);
       }
       await step.do("complete", async () => {
         await env.DB.prepare("UPDATE usage_events SET status='failed',error='Provider call interrupted before completion',duration_ms=?-strftime('%s',created_at)*1000 WHERE job_id=? AND status='started'")
           .bind(Date.now(), job.id).run();
-        await env.DB.prepare(
-          "UPDATE jobs SET status='done',step='Done',completed_at=? WHERE id=?",
-        )
-          .bind(new Date().toISOString(), job.id)
-          .run();
+        await env.DB.batch([
+          env.DB.prepare(
+            "UPDATE jobs SET status='done',step='Done',completed_at=? WHERE id=?",
+          ).bind(new Date().toISOString(), job.id),
+          ...(job.link_id ? [promoteWaiting(env.DB, job.link_id)] : []),
+        ]);
       });
     } catch (error) {
       await step.do("record-failure", { retries: { limit: 5, delay: "2 seconds", backoff: "exponential" } }, async () => {
@@ -306,6 +337,8 @@ export class LinkWorkflow extends WorkflowEntrypoint<Env, { id: string }> {
         statements.push(env.DB.prepare(
           `UPDATE jobs SET status='failed',step=${usedPreview ? "CASE WHEN EXISTS (SELECT 1 FROM links WHERE id=? AND content_key=?) THEN 'Used the preview' ELSE 'Needs attention' END" : "'Needs attention'"},error=?,reason=?,completed_at=? WHERE id=? AND status='running'`,
         ).bind(...(usedPreview ? [link!.id, fallbackKey] : []), message, reason, new Date().toISOString(), job.id));
+        // The link's next waiting job starts in the same transaction that settles this one.
+        if (job.link_id) statements.push(promoteWaiting(env.DB, job.link_id));
         await env.DB.batch(statements);
       });
     } finally {
@@ -314,6 +347,7 @@ export class LinkWorkflow extends WorkflowEntrypoint<Env, { id: string }> {
           .bind(job.id)
           .run();
       });
+      if (job.link_id) await step.do("start-next", () => startNext(env, [job.link_id]));
     }
   }
 }

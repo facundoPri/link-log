@@ -2,7 +2,7 @@ import { normalizeUrl, domainOf } from "../src/url";
 import type { LensOption, LensLevel, Link, Tag } from "../src/types";
 
 import { json, library, text, threshold } from "./store";
-import { enqueue, dispatch, recover, LinkWorkflow } from "./jobs";
+import { enqueue, dispatch, recover, promoteWaiting, startNext, LinkWorkflow } from "./jobs";
 import { restoredContentStateSql } from "./content-state";
 import type { Job, JobUsage, UsageEvent } from "../src/types";
 import { OCR_USAGE_COLUMNS } from "./usage";
@@ -253,13 +253,13 @@ export default {
           throw new Error("Invalid action.");
         if (body.kind === "lens" && typeof body.lensId !== "string")
           throw new Error("Pick a lens.");
-        const batchId = await enqueue(
+        const { id: batchId, skipped } = await enqueue(
           env,
           body.ids as string[],
           body.kind as "extract" | "autotag" | "lens",
           body.lensId as string | undefined,
         );
-        return json({ ...(await library(env)), batchId });
+        return json({ ...(await library(env)), batchId, skipped });
       }
       const transcriptMatch = path.match(/^\/api\/links\/([^/]+)\/transcript$/);
       if (transcriptMatch && request.method === "POST") {
@@ -271,7 +271,7 @@ export default {
         const details = link.content_details ? JSON.parse(link.content_details) as { transcript?: { tracks?: { languageCode: string }[] } } : {};
         if (!details.transcript?.tracks || (language !== "auto" && !details.transcript.tracks.some((track) => track.languageCode === language)))
           throw new Error("That subtitle track is not available for this video.");
-        const batchId = await enqueue(env, [transcriptMatch[1]!], "extract", undefined, { track: language });
+        const { id: batchId } = await enqueue(env, [transcriptMatch[1]!], "extract", undefined, { track: language });
         return json({ ...(await library(env)), batchId });
       }
       const batchMatch = path.match(/^\/api\/batches\/([^/]+)$/);
@@ -284,23 +284,29 @@ export default {
           .first<{ kind: string }>();
         if (!batch)
           return json({ error: "The batch no longer exists." }, 404);
+        // Queued and waiting jobs are dropped as if never requested; running ones finish.
         const pending = await env.DB.prepare(
-          "SELECT link_id FROM jobs WHERE batch_id=? AND status='queued'",
+          "SELECT link_id FROM jobs WHERE batch_id=? AND status IN ('queued','waiting')",
         )
           .bind(batchId)
-          .all<{ link_id: string }>();
+          .all<{ link_id: string | null }>();
+        const linkIds = pending.results.map((r) => r.link_id).filter((id): id is string => !!id);
         const statements: D1PreparedStatement[] = [
           env.DB.prepare(
-            "UPDATE jobs SET status='failed',step='Cancelled',error='Cancelled',completed_at=? WHERE batch_id=? AND status='queued'",
+            "UPDATE jobs SET status='failed',step='Cancelled',error='Cancelled',completed_at=? WHERE batch_id=? AND status IN ('queued','waiting')",
           ).bind(new Date().toISOString(), batchId),
+          // Other batches' jobs waiting behind a cancelled one start now. A Jev job left without content then
+          // fails as "content missing" (FAC-55 will cancel it along with its extraction instead).
+          ...linkIds.map((id) => promoteWaiting(env.DB, id)),
         ];
-        if (batch.kind === "extract" && pending.results.length)
+        if (batch.kind === "extract" && linkIds.length)
           statements.push(
             env.DB.prepare(
-              `UPDATE links SET content_state=${restoredContentStateSql} WHERE id IN (${pending.results.map(() => "?").join(",")}) AND content_state='queued'`,
-            ).bind(...pending.results.map((r) => r.link_id)),
+              `UPDATE links SET content_state=${restoredContentStateSql} WHERE id IN (${linkIds.map(() => "?").join(",")}) AND content_state='queued' AND NOT EXISTS (SELECT 1 FROM jobs j JOIN batches b ON b.id=j.batch_id WHERE j.link_id=links.id AND j.status IN ('queued','running','waiting') AND b.kind='extract')`,
+            ).bind(...linkIds),
           );
         await env.DB.batch(statements);
+        await startNext(env, linkIds);
         return json({
           ...(await library(env)),
           cancelled: pending.results.length,
@@ -309,7 +315,8 @@ export default {
       if (batchMatch && request.method === "GET") {
         const [jobs, usage] = await Promise.all([
           env.DB.prepare(
-            "SELECT j.*,coalesce(l.title,bt.title) title FROM jobs j LEFT JOIN links l ON l.id=j.link_id LEFT JOIN browser_targets bt ON bt.id=j.target_id WHERE batch_id=? ORDER BY j.created_at",
+            // A waiting job names what it waits for: the kind of the link's job ahead of it.
+            "SELECT j.*,coalesce(l.title,bt.title) title,CASE WHEN j.status='waiting' THEN (SELECT b.kind FROM jobs a JOIN batches b ON b.id=a.batch_id WHERE a.link_id=j.link_id AND a.status IN ('queued','running','waiting') AND a.id<>j.id ORDER BY a.status='waiting',a.created_at LIMIT 1) END waiting_for FROM jobs j LEFT JOIN links l ON l.id=j.link_id LEFT JOIN browser_targets bt ON bt.id=j.target_id WHERE batch_id=? ORDER BY j.created_at",
           )
             .bind(batchMatch[1])
             .all<Job>(),
@@ -581,7 +588,7 @@ export default {
         }
         if (match[2] && request.method === "POST") {
           // Runs only the failed step, through the queue. Needs attention stays until that step succeeds.
-          const batchId = body.step === "content"
+          const { id: batchId } = body.step === "content"
             ? await enqueue(env, [id], "extract", undefined, { step: "content" })
             : await enqueue(env, [id], "preview");
           return json({ ...(await library(env)), batchId });

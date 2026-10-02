@@ -22,10 +22,13 @@ export const failureMessage = (reason: string | null | undefined) =>
 
 // What Activity shows under a job: the current attempt with its elapsed time against the attempt's
 // time budget, and the reason of the previous failed attempt while retrying.
+const WAITING_FOR: Record<string, string> = { extract: "extraction", preview: "the preview", autotag: "auto-tag", lens: "a lens" };
 export function jobProgress(
-  j: Pick<Job, "status" | "step" | "attempt" | "max_attempts" | "reason" | "preview_reason" | "attempt_started_at" | "attempt_budget_ms">,
+  j: Pick<Job, "status" | "waiting_for" | "step" | "attempt" | "max_attempts" | "reason" | "preview_reason" | "attempt_started_at" | "attempt_budget_ms">,
   now = Date.now(),
 ) {
+  if (j.status === "waiting")
+    return { step: `Waiting for ${(j.waiting_for && WAITING_FOR[j.waiting_for]) || "another job on this link"}`, note: null };
   if (j.status === "done")
     return { step: null, note: j.preview_reason ? `No preview: ${failureMessage(j.preview_reason)}` : null };
   if (j.status === "failed" || !j.attempt) return { step: j.status === "failed" ? null : j.step, note: null };

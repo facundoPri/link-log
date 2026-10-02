@@ -3,6 +3,7 @@ import {
   Check,
   ChevronRight,
   CircleAlert,
+  Clock,
   FileText,
   Globe,
   Loader2,
@@ -178,6 +179,8 @@ function BatchJobs({ batch }: { batch: Batch }) {
                 </span>
               ) : j.status === "failed" ? (
                 <CircleAlert className="size-3.5 text-destructive" />
+              ) : j.status === "waiting" ? (
+                <Clock className="size-3.5 text-muted-foreground" />
               ) : (
                 <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
               )}

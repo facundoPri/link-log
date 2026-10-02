@@ -149,7 +149,16 @@ public access without login or personal cookies. A blocked image remains visible
 as a partial result when useful text was obtained.
 
 D1 acts as the outbox, Queue delivers IDs and each Workflow uses a stable ID so
-work is not duplicated on redelivery. Jev calls are not retried automatically; the
+work is not duplicated on redelivery. A link runs one job at a time: a job requested
+while another is queued, running or waiting on the same link is stored as `waiting`
+(never sent to the Queue) and starts, oldest first, in the same transaction that
+settles the job ahead of it; cron also starts any waiting job left without one ahead.
+Auto-tag and lenses accept links with content or with an extraction on the way and
+skip the rest ("Extract, then auto-tag" extracts them first, only when asked); Jev
+never starts an extraction. If that extraction ends without content, the waiting
+Jev job fails as "Content missing" before any provider call, and stays out of Needs
+attention. A link with a waiting job counts as processing. Cancelling a batch drops
+its queued and waiting jobs. Jev calls are not retried automatically; the
 user can create a new attempt. Browser Rendering → Markdown is retried once on a
 transient failure (each attempt is a row in Usage), and Activity shows the current
 attempt and the reason of the previous one. A failed re-extract keeps the previous

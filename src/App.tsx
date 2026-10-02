@@ -107,6 +107,8 @@ export function App() {
   const [deleteTag, setDeleteTag] = useState<Tag | null>(null);
   const [deleteLens, setDeleteLens] = useState<Lens | null>(null);
   const [confirmAutoTag, setConfirmAutoTag] = useState(false);
+  const [confirmNoContent, setConfirmNoContent] = useState(false);
+  const [extractFirst, setExtractFirst] = useState(false);
   const [confirmExtract, setConfirmExtract] = useState<string[] | null>(null);
   const [running, setRunning] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -185,7 +187,8 @@ export function App() {
           try {
             const { jobs } = await api<{ jobs: Job[] }>(`/batches/${b.id}`);
             for (const j of jobs)
-              if (j.link_id && (b.kind === "extract" || b.kind === "preview" || b.kind === "autotag" || b.kind === "lens" || b.kind === "query"))
+              // A waiting job never hides the job it waits for.
+              if (j.link_id && !(j.status === "waiting" && map.has(j.link_id)) && (b.kind === "extract" || b.kind === "preview" || b.kind === "autotag" || b.kind === "lens" || b.kind === "query"))
                 map.set(j.link_id, { kind: b.kind, status: j.status });
           } catch {
             /* batch may be gone */
@@ -298,13 +301,17 @@ export function App() {
       setRunning(true);
       try {
         for (let offset = 0; offset < ids.length; offset += 100) {
-          const data = await api<Library & { batchId?: string }>("/batches", "POST", {
+          const data = await api<Library & { batchId?: string; skipped?: string[] }>("/batches", "POST", {
             kind,
             ids: ids.slice(offset, offset + 100),
             lensId,
           });
           setLibrary(data);
           if (data.batchId) sessionBatches.current.add(data.batchId);
+          if (data.skipped?.length)
+            toast(`Skipped ${data.skipped.length} ${data.skipped.length === 1 ? "link" : "links"} without content`, {
+              description: "Extract the content first.",
+            });
         }
         await refresh();
       } catch (e) {
@@ -549,14 +556,29 @@ export function App() {
         : cur.filter((id) => !ids.includes(id)),
     );
 
-  const doAutoTag = async () => {
+  // Selected links with no content and no extraction on the way: auto-tag skips them unless the user
+  // explicitly asks to extract them first (Jev never starts an extraction by itself).
+  const noContent = pickedLinks.filter((l) => !l.content_key && l.content_state !== "queued");
+  const doAutoTag = async (extract = extractFirst) => {
     setConfirmAutoTag(false);
+    setConfirmNoContent(false);
+    setExtractFirst(false);
     try {
+      const targets = extract ? noContent.filter((l) => !l.processing).map((l) => l.id) : [];
+      // The auto-tag jobs of these links wait for their extraction and start when it settles.
+      if (targets.length) await runBatch("extract", targets);
       await runBatch("autotag", picked);
       setPicked([]);
     } catch {
       /* toasted */
     }
+  };
+  const proceedAutoTag = (extract: boolean) => {
+    setConfirmNoContent(false);
+    if (manualTagged) {
+      setExtractFirst(extract);
+      setConfirmAutoTag(true);
+    } else void doAutoTag(extract);
   };
 
   const doExtract = async (ids: string[]) => {
@@ -1025,8 +1047,8 @@ export function App() {
           running={running}
           jevReason={jevReason}
           onAutoTag={() => {
-            if (manualTagged) setConfirmAutoTag(true);
-            else void doAutoTag();
+            if (noContent.length) setConfirmNoContent(true);
+            else proceedAutoTag(false);
           }}
           onLens={(lens) =>
             void runBatch("lens", picked, lens.id).then(() => setPicked([]))
@@ -1195,7 +1217,35 @@ export function App() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      <AlertDialog open={confirmAutoTag} onOpenChange={setConfirmAutoTag}>
+      <AlertDialog open={confirmNoContent} onOpenChange={setConfirmNoContent}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {noContent.length} of {picked.length} {picked.length === 1 ? "link has" : "links have"} no content yet
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Auto-tag reads the page content. Extract it first and those links are auto-tagged as soon as it's ready
+              {noContent.length < picked.length ? ", or auto-tag only the links that already have content." : "."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            {noContent.length < picked.length && (
+              <AlertDialogAction variant="outline" onClick={() => proceedAutoTag(false)}>
+                Auto-tag {picked.length - noContent.length} with content
+              </AlertDialogAction>
+            )}
+            <AlertDialogAction onClick={() => proceedAutoTag(true)}>Extract, then auto-tag</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog
+        open={confirmAutoTag}
+        onOpenChange={(o) => {
+          setConfirmAutoTag(o);
+          if (!o) setExtractFirst(false);
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Auto-tag replaces existing tags</AlertDialogTitle>
