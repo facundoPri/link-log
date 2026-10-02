@@ -24,7 +24,7 @@ export type Meter = {
 };
 export async function measured<T>(
   env: Env,
-  job: { id: string; batch_id: string; link_id: string },
+  job: { id: string; batch_id: string; link_id: string | null },
   service: string,
   provider: string,
   operation: string,

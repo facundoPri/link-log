@@ -5,6 +5,7 @@ import { strict as assert } from "node:assert";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { lensFingerprint } from "@linklog/browser-protocol";
 import { waitForMail } from "./lib/local-mail";
 
 const uiPort = Number(process.env.LINKLOG_E2E_UI_PORT || 3197);
@@ -13,12 +14,12 @@ const stateDir = mkdtempSync(join(tmpdir(), "linklog-e2e-"));
 Object.assign(process.env, {
   LINKLOG_UI_PORT: String(uiPort),
   LINKLOG_API_PORT: String(apiPort),
-  LINKLOG_STATE_DIR: stateDir,
+  LINKLOG_PERSIST_TO: stateDir,
   LINKLOG_APP_ENV: "test",
   LINKLOG_WRANGLER_LOCAL: "1",
 });
 const { wranglerDevArgs } = await import("./dev");
-const UI = `http://localhost:${uiPort}`;
+const UI = `http://127.0.0.1:${uiPort}`;
 const API = `http://127.0.0.1:${apiPort}`;
 const PASSWORD = "e2e correct horse battery";
 const results: string[] = [];
@@ -177,6 +178,57 @@ try {
   assert.ok(usageA.events.every((e) => e.link_id === null || e.link_id === linkA));
   assert.ok(usageB.events.every((e) => e.link_id === null || e.link_id === linkB));
   pass(`workflow jobs settled (${owners!.settled}) without cross-owner rows; R2 owner prefix; usage per owner`);
+
+  // 6b. Browser view: per-account library id, a capture evaluated by Queue -> Workflow with the
+  //     fixture Jev provider, and every Browser route closed to the other account.
+  type Catalog = { libraryId: string; groups: { id: string }[] };
+  const catA = (await (await A.get("/api/browser/catalog")).json()) as Catalog;
+  const catB = (await (await B.get("/api/browser/catalog")).json()) as Catalog;
+  assert.notEqual(catA.libraryId, catB.libraryId);
+  assert.equal((await A.send("/api/lenses", { name: "Tab triage", type: "noul", question: "Worth keeping open?", scope: "browser" })).status, 200);
+  const browserLens = ((await (await A.get("/api/library")).json()) as { lenses: { id: string; name: string; type: string; question: string; options: unknown[]; levels: unknown[]; criteria: unknown }[] }).lenses.find((l) => l.name === "Tab triage")!;
+  const evaluation = {
+    requestId: "e2e-req-a",
+    libraryId: catA.libraryId,
+    sessionId: "e2e-session",
+    kind: "lens",
+    lens: { id: browserLens.id, fingerprint: lensFingerprint(browserLens as never) },
+    targets: [{ targetKey: "tab-1", url: "https://example.com/tab", title: "Tab", capture: { source: "dom", capturedAt: new Date().toISOString(), completeness: "complete", reasons: [], facts: [], markdown: "A page about testing jev:yes" } }],
+  };
+  assert.equal((await B.send("/api/browser/evaluations", { ...evaluation, lens: { id: browserLens.id, fingerprint: "x" }, libraryId: catB.libraryId })).status, 404, "B can't run A's lens");
+  assert.equal((await A.send("/api/browser/evaluations", evaluation)).status, 201);
+  let status: { targets: { state: string; answer?: { noul: number } }[] } = { targets: [] };
+  for (let i = 0; i < 60; i++) {
+    status = (await (await A.get("/api/browser/evaluations/e2e-req-a")).json()) as typeof status;
+    if (status.targets[0]?.state === "done" || status.targets[0]?.state === "failed") break;
+    await Bun.sleep(1000);
+  }
+  assert.equal(status.targets[0]?.state, "done", JSON.stringify(status));
+  assert.equal(status.targets[0]?.answer?.noul, 0.95);
+  assert.equal((await B.get("/api/browser/evaluations/e2e-req-a")).status, 404);
+  assert.equal((await B.send("/api/browser/evaluations/e2e-req-a/ack", { targetKeys: ["tab-1"] })).status, 404);
+  assert.equal((await B.send("/api/browser/evaluations/e2e-req-a", { targetKeys: ["tab-1"] }, "DELETE")).status, 404);
+  assert.equal((await B.send("/api/browser/evaluations", { ...evaluation, libraryId: catB.libraryId })).status, 409, "A's request id is not B's");
+  assert.equal((await A.send("/api/browser/groups", { id: "e2e-group", name: "Work", color: "blue" })).status, 201);
+  assert.equal((await B.send("/api/browser/groups/e2e-group", { name: "x" }, "PATCH")).status, 404);
+  assert.deepEqual(((await (await B.get("/api/browser/catalog")).json()) as Catalog).groups, []);
+  assert.equal((await A.send("/api/browser/evaluations/e2e-req-a/ack", { targetKeys: ["tab-1"] })).status, 200);
+  const [browserRows] = await d1(
+    `SELECT (SELECT user_id FROM browser_requests WHERE request_id='e2e-req-a') req_owner,
+            (SELECT count(*) FROM usage_events u JOIN jobs j ON j.id=u.job_id WHERE j.target_id IS NOT NULL AND u.user_id IS NOT (SELECT user_id FROM browser_requests WHERE request_id='e2e-req-a')) foreign_usage,
+            (SELECT count(*) FROM usage_events u JOIN jobs j ON j.id=u.job_id WHERE j.target_id IS NOT NULL) browser_usage,
+            (SELECT count(*) FROM browser_targets WHERE capture_key IS NOT NULL) snapshots,
+            (SELECT user_id FROM browser_groups WHERE id='e2e-group') group_owner`,
+  );
+  const ownerA = ((await (await A.get("/api/auth/get-session")).json()) as { user: { id: string } }).user.id;
+  assert.equal(browserRows!.req_owner, ownerA);
+  assert.equal(browserRows!.group_owner, ownerA);
+  assert.equal(browserRows!.foreign_usage, 0);
+  assert.equal(browserRows!.browser_usage, 1);
+  assert.equal(browserRows!.snapshots, 0, "acked snapshot removed from R2");
+  const usageBrowserB = (await (await B.get("/api/usage")).json()) as { events: { provider: string }[] };
+  assert.ok(usageBrowserB.events.every((e) => e.provider !== "fixture"));
+  pass("Browser: per-account library id; A's capture evaluated via Queue/Workflow; B gets 404/409 on A's request, lens and group; usage per owner");
 
   // 7. Password reset revokes A's sessions; logout ends B's.
   since = Date.now();

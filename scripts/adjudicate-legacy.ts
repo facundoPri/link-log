@@ -11,7 +11,7 @@ import { Database } from "bun:sqlite";
 import { cpSync, existsSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-const OWNED = ["links", "tags", "lenses", "batches", "usage_events"] as const;
+const OWNED = ["links", "tags", "lenses", "batches", "usage_events", "browser_requests", "browser_groups"] as const;
 const DERIVED: Record<string, string> = {
   link_tags: "link_id IN (SELECT id FROM links WHERE user_id IS NULL)",
   jobs: "batch_id IN (SELECT id FROM batches WHERE user_id IS NULL)",
@@ -19,6 +19,7 @@ const DERIVED: Record<string, string> = {
   lens_results: "link_id IN (SELECT id FROM links WHERE user_id IS NULL)",
   media_items: "link_id IN (SELECT id FROM links WHERE user_id IS NULL)",
   hidden_related_links: "link_id IN (SELECT id FROM links WHERE user_id IS NULL)",
+  browser_targets: "request_id IN (SELECT request_id FROM browser_requests WHERE user_id IS NULL)",
   "links with R2 content": "user_id IS NULL AND content_key IS NOT NULL",
 };
 
@@ -31,14 +32,19 @@ export function findDatabase(stateDir: string) {
   const dir = join(stateDir, "v3", "d1", "miniflare-D1DatabaseObject");
   if (!existsSync(dir)) throw new Error(`No local D1 under ${dir}.`);
   const candidates = readdirSync(dir)
-    .filter((f) => f.endsWith(".sqlite"))
+    .filter((f) => f.endsWith(".sqlite") && f !== "metadata.sqlite")
     .map((f) => join(dir, f))
     .filter((file) => {
-      const db = new Database(file, { readonly: true });
       try {
-        return !!db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='links'").get();
-      } finally {
-        db.close();
+        // Miniflare keeps D1 in WAL mode; a read-only open cannot create the -shm file.
+        const db = new Database(file, { readwrite: true, create: false });
+        try {
+          return !!db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='links'").get();
+        } finally {
+          db.close();
+        }
+      } catch {
+        return false;
       }
     });
   if (candidates.length !== 1)
@@ -101,6 +107,8 @@ export function assign(db: Database, userId: string, email: string, dryRun: bool
   try {
     for (const table of OWNED)
       moved[table] = db.query(`UPDATE ${table} SET user_id=? WHERE user_id IS NULL`).run(userId).changes;
+    // Includes the legacy Browser library_id, so the extension keeps the same local result scope
+    // (unless the user already opened Browser and got a new id; then theirs is kept).
     moved["settings copied"] = db
       .query("INSERT OR IGNORE INTO user_settings(user_id,key,value,updated_at) SELECT ?,key,value,? FROM settings")
       .run(userId, new Date().toISOString()).changes;
@@ -110,7 +118,8 @@ export function assign(db: Database, userId: string, email: string, dryRun: bool
           (SELECT count(*) FROM link_tags lt JOIN links l ON l.id=lt.link_id JOIN tags t ON t.id=lt.tag_id WHERE l.user_id IS NOT t.user_id) +
           (SELECT count(*) FROM jobs j JOIN links l ON l.id=j.link_id JOIN batches b ON b.id=j.batch_id WHERE l.user_id IS NOT b.user_id) +
           (SELECT count(*) FROM tag_evaluations e JOIN links l ON l.id=e.link_id JOIN tags t ON t.id=e.tag_id WHERE l.user_id IS NOT t.user_id) +
-          (SELECT count(*) FROM lens_results r JOIN links l ON l.id=r.link_id JOIN lenses x ON x.id=r.lens_id WHERE l.user_id IS NOT x.user_id) c`,
+          (SELECT count(*) FROM lens_results r JOIN links l ON l.id=r.link_id JOIN lenses x ON x.id=r.lens_id WHERE l.user_id IS NOT x.user_id) +
+          (SELECT count(*) FROM browser_requests r JOIN batches b ON b.id=r.batch_id WHERE r.user_id IS NOT b.user_id) c`,
       )
       .get() as { c: number };
     if (crossOwner.c) throw new Error(`Integrity check failed: ${crossOwner.c} cross-owner relations.`);
@@ -136,7 +145,7 @@ if (import.meta.main) {
   const stateDir = resolve(arg("state-dir") ?? ".wrangler/state");
   const file = arg("db-file") ?? findDatabase(stateDir);
   if (command === "inventory") {
-    const db = new Database(file, { readonly: true });
+    const db = new Database(file, { readwrite: true, create: false });
     console.log(JSON.stringify({ database: file, ...inventory(db) }, null, 2));
   } else if (command === "backup") {
     assertNotOpenElsewhere(file);
@@ -148,7 +157,7 @@ if (import.meta.main) {
     if (!userId || !email) throw new Error("Pass --user-id and --email of a verified user (see inventory).");
     const dryRun = process.argv.includes("--dry-run");
     if (!dryRun) assertNotOpenElsewhere(file);
-    const db = new Database(file);
+    const db = new Database(file, { readwrite: true, create: false });
     db.exec("PRAGMA foreign_keys=ON");
     console.log(JSON.stringify(assign(db, userId, email, dryRun), null, 2));
   } else {

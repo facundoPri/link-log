@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "./api";
-import type { Job, Lens, LensResult, Library, Link, Tag } from "./types";
+import type { Job, Lens, LensResult, LensScope, Library, Link, Tag } from "./types";
 import { pastedUrls } from "./url";
 import { Sidebar, type View } from "./components/Sidebar";
 import { Toolbar, type ContextFilter } from "./components/Toolbar";
@@ -15,6 +15,13 @@ import { LensDialog, type LensDraft } from "./components/LensDialog";
 import { lensBucket, lensSelectedKeys } from "./components/LensVerdict";
 import { LensHeader } from "./components/LensHeader";
 import { ActivitySheet } from "./components/ActivitySheet";
+import { BrowserView } from "./components/browser/BrowserView";
+import { BrowserSidebar } from "./components/browser/BrowserSidebar";
+import { tabDomain, useBrowserWorkspace } from "./browser/useBrowserWorkspace";
+import { useSavedLookup } from "./browser/saved";
+import { BrowserInspector } from "./components/browser/BrowserInspector";
+import { BrowserDialogs } from "./components/browser/BrowserDialogs";
+import { useBrowserActions } from "./browser/useBrowserActions";
 import { usd, tokens } from "./lib/format";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -84,8 +91,12 @@ export function App({
   const [context, setContext] = useState<ContextFilter>("any");
   const [ascending, setAscending] = useState(false);
   const [dialog, setDialog] = useState<
-    "add" | { tag: Tag | "new" } | { lens: Lens | "new" } | null
+    | "add"
+    | { tag: Tag | "new" }
+    | { lens: Lens | "new"; scope?: LensScope }
+    | null
   >(null);
+  const [browserPicked, setBrowserPicked] = useState<string[]>([]);
   const [lensFilter, setLensFilter] = useState<Set<string>>(new Set());
   const [lensMinLevel, setLensMinLevel] = useState<number | null>(null);
   const [lensScoreSort, setLensScoreSort] = useState(false);
@@ -116,6 +127,22 @@ export function App({
   const sessionBatches = useRef(new Set<string>());
   const narrow = useMedia("(max-width: 1099px)");
   const mobile = useMedia("(max-width: 767px)");
+  const ws = useBrowserWorkspace(library, view === "browser", loaded && !loadError);
+  const browserController = useBrowserActions(
+    ws,
+    setLibrary,
+    (tabIds) =>
+      setBrowserPicked((cur) =>
+        tabIds
+          ? cur.filter((id) => !ws.tabs.some((t) => t.tabInstanceId === id && tabIds.includes(t.tabId)))
+          : [],
+      ),
+  );
+  const browserActions = browserController.actions;
+  const libraryLenses = useMemo(
+    () => library.lenses.filter((l) => l.scope !== "browser"),
+    [library.lenses],
+  );
 
   useEffect(() => {
     localStorage.setItem(
@@ -158,7 +185,9 @@ export function App({
         for (const b of active) {
           try {
             const { jobs } = await api<{ jobs: Job[] }>(`/batches/${b.id}`);
-            for (const j of jobs) map.set(j.link_id, { kind: b.kind, status: j.status });
+            for (const j of jobs)
+              if (j.link_id && (b.kind === "extract" || b.kind === "autotag" || b.kind === "lens" || b.kind === "query"))
+                map.set(j.link_id, { kind: b.kind, status: j.status });
           } catch {
             /* batch may be gone */
           }
@@ -298,6 +327,8 @@ export function App({
         setDialog("add");
         return;
       }
+      // Browser view has its own search, selection and Escape handling.
+      if (view === "browser" && e.key !== "\\") return;
       if (e.key === "/" && !isInput(e.target) && !dialog) {
         e.preventDefault();
         search.current?.focus();
@@ -357,7 +388,7 @@ export function App({
       window.removeEventListener("keydown", key);
       window.removeEventListener("paste", paste);
     };
-  }, [dialog, activeId, activityOpen, capture]);
+  }, [dialog, activeId, activityOpen, capture, view]);
 
   useEffect(() => {
     setTagIds((current) => current.filter((id) => library.tags.some((t) => t.id === id)));
@@ -617,14 +648,85 @@ export function App({
       }}
       account={account}
       onSignOut={onSignOut}
+      browserCount={ws.browser.snapshot ? ws.tabs.length : null}
+      browserPanel={
+        <BrowserSidebar
+          ws={ws}
+          onNewGroup={() =>
+            browserActions.newGroup(
+              ws.tabs.filter((t) => browserPicked.includes(t.tabInstanceId)),
+            )
+          }
+          onEditDestination={browserActions.editDestination}
+          onTogglePin={browserActions.togglePin}
+          onUngroupAll={(groupId) => void browserActions.ungroupAll(groupId)}
+          onSelectGroup={(groupId) =>
+            setBrowserPicked(
+              ws.tabs.filter((t) => t.groupId === groupId).map((t) => t.tabInstanceId),
+            )
+          }
+          onNewLens={() => setDialog({ lens: "new", scope: "browser" })}
+          onEditLens={(lens) => setDialog({ lens })}
+          onDeleteLens={setDeleteLens}
+          onCleanLens={browserActions.requestClean}
+          onReevaluateLens={(lens) => browserActions.reevaluate(lens)}
+        />
+      }
     />
   );
 
-  const inspector = activeLink && (
+  const savedTab = useSavedLookup(library);
+  const savedUrlSet = useMemo(
+    () => new Set(library.links.flatMap((l) => [l.original_url, l.url])),
+    [library.links],
+  );
+  const activeTab =
+    view === "browser" ? ws.tabs.find((t) => t.tabInstanceId === ws.activeTabId) ?? null : null;
+  const browserInspector = activeTab && (
+    <BrowserInspector
+      key={activeTab.tabInstanceId}
+      tab={activeTab}
+      group={ws.groups.find((g) => g.groupId === activeTab.groupId)}
+      saved={savedTab(activeTab)}
+      preview={ws.previews[activeTab.tabInstanceId]}
+      domain={tabDomain(activeTab)}
+      lenses={ws.activeLenses}
+      records={ws.runner.results[activeTab.tabInstanceId]}
+      savedUrls={savedUrlSet}
+      read={async (fresh) => {
+        const { captures } = await ws.browser.request(
+          "capture",
+          // With the revision: a tab that navigated meanwhile is refused, never shown with another page's content.
+          { tabs: [{ tabId: activeTab.tabId, tabInstanceId: activeTab.tabInstanceId, documentRevision: activeTab.documentRevision }], fresh },
+          60_000,
+        );
+        const c = captures[0];
+        if (!c?.capture) throw new Error(c?.error || "The page could not be read.");
+        return c.capture;
+      }}
+      onClose={() => ws.setActiveTabId(null)}
+      onFocus={() => browserActions.focus(activeTab)}
+      onCopy={() => browserActions.copy(activeTab)}
+      onSave={() => void browserActions.save([activeTab])}
+      onMove={() => browserActions.chooseMove([activeTab])}
+      onUngroup={() => void browserActions.ungroup([activeTab])}
+      onCloseTab={() => browserActions.requestClose([activeTab])}
+      onRetry={(lens) => browserActions.reevaluate(lens, [activeTab])}
+      onMetadata={(lens) => browserActions.evaluateMetadata(lens, activeTab)}
+      onAllowAccess={() => void ws.browser.request("openPermissions", {}).catch(() => {})}
+      onToggleGroup={ws.toggleGroupFilter}
+      onDomainFilter={ws.toggleDomain}
+      onSaveRelated={(url) => save(url)}
+    />
+  );
+  const showInspector = view === "browser" ? !!activeTab : !!activeLink;
+  const closeInspector = () => (view === "browser" ? ws.setActiveTabId(null) : setActiveId(null));
+
+  const libraryInspector = activeLink && (
     <Inspector
       link={activeLink}
       tags={library.tags}
-      lenses={library.lenses}
+      lenses={libraryLenses}
       onClose={() => setActiveId(null)}
       onChange={setLibrary}
       onDeleted={() => {
@@ -654,6 +756,7 @@ export function App({
       focusTags={focusTags}
     />
   );
+  const inspector = view === "browser" ? browserInspector : libraryInspector;
 
   return (
     <TooltipProvider delayDuration={400}>
@@ -706,6 +809,20 @@ export function App({
         </SheetContent>
       </Sheet>
       <main className="@container flex min-w-0 flex-1 flex-col">
+        {view === "browser" ? (
+          <BrowserView
+            ws={ws}
+            library={library}
+            actions={browserActions}
+            picked={browserPicked}
+            setPicked={setBrowserPicked}
+            onToggleSidebar={() =>
+              mobile ? setMenuOpen(true) : setSidebarOpen((o) => !o)
+            }
+            onEditLens={(lens) => setDialog({ lens })}
+          />
+        ) : (
+        <>
         <Toolbar
           view={view}
           lens={activeLens}
@@ -821,8 +938,10 @@ export function App({
             />
           )}
         </div>
+        </>
+        )}
       </main>
-      {activeLink && !narrow && (
+      {showInspector && !narrow && (
         <aside
           className="relative shrink-0 border-l animate-in fade-in slide-in-from-right-2 duration-200"
           style={{ width: inspectorWidth }}
@@ -868,8 +987,8 @@ export function App({
         </aside>
       )}
       <Sheet
-        open={!!activeLink && narrow}
-        onOpenChange={(o) => !o && setActiveId(null)}
+        open={showInspector && narrow}
+        onOpenChange={(o) => !o && closeInspector()}
       >
         <SheetContent
           side="right"
@@ -877,16 +996,16 @@ export function App({
           className="w-full p-0 sm:max-w-[400px]"
         >
           <SheetHeader className="sr-only">
-            <SheetTitle>{activeLink?.title}</SheetTitle>
+            <SheetTitle>{view === "browser" ? activeTab?.title : activeLink?.title}</SheetTitle>
           </SheetHeader>
           {inspector}
         </SheetContent>
       </Sheet>
-      {!!picked.length && (
+      {!!picked.length && view !== "browser" && (
         <SelectionBar
           links={pickedLinks}
           tags={library.tags}
-          lenses={library.lenses}
+          lenses={libraryLenses}
           running={running}
           onAutoTag={() => {
             if (manualTagged) setConfirmAutoTag(true);
@@ -911,6 +1030,8 @@ export function App({
       {dialog && typeof dialog === "object" && "lens" in dialog && (
         <LensDialog
           lens={dialog.lens}
+          scope={dialog.scope ?? (dialog.lens === "new" ? "library" : dialog.lens.scope)}
+          templates={libraryLenses}
           selectedCount={picked.length}
           onClose={() => setDialog(null)}
           onSave={async (draft: LensDraft) => {
@@ -927,6 +1048,13 @@ export function App({
             toast.success(
               dialog.lens === "new" ? "Lens created" : "Lens updated",
             );
+            if (dialog.lens === "new" && draft.scope === "browser") {
+              // A new browser lens starts on: it covers every tab of this window.
+              const created = lib.lenses.find(
+                (l) => l.name.toLowerCase() === draft.name.toLowerCase(),
+              );
+              if (created) ws.activate(created.id);
+            }
             if (runNow && picked.length) {
               const lens = lib.lenses.find(
                 (l) => l.name.toLowerCase() === draft.name.toLowerCase(),
@@ -1110,6 +1238,7 @@ export function App({
           </div>
         </div>
       )}
+      <BrowserDialogs ws={ws} controller={browserController} />
       <Toaster position="bottom-right" />
     </div>
     </TooltipProvider>

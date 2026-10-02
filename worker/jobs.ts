@@ -1,4 +1,4 @@
-import type { Pool } from "./handlers";
+import type { JobConfig, Pool } from "./handlers";
 import { parseLensDefinition } from "./store";
 import { preservedContentStateSql } from "./content-state";
 import { consume, LIMITS, LimitError } from "./limits";
@@ -15,10 +15,12 @@ export function poolLimit(env: Env, pool: Pool) {
 export type JobRow = {
   id: string;
   batch_id: string;
-  link_id: string;
+  /** A job targets either a saved link or a browser capture, never both. */
+  link_id: string | null;
+  target_id?: string | null;
   status: string;
 };
-export type Config = { tags?: Tag[]; lens?: Lens; track?: string };
+export type Config = JobConfig;
 /**
  * Creates a batch for `userId`. Links, tags and the lens are loaded with the owner in the WHERE
  * clause, so a foreign or unassigned ID behaves exactly like a missing one. The owner is persisted
@@ -62,10 +64,12 @@ export async function enqueue(
     config = { tags: tags.results };
   }
   if (kind === "lens") {
-    const row = await env.DB.prepare("SELECT id,name,type,question,options,threshold,version,created_at FROM lenses WHERE id=? AND user_id=?")
+    const row = await env.DB.prepare("SELECT id,name,type,question,options,threshold,version,created_at,scope FROM lenses WHERE id=? AND user_id=?")
       .bind(lensId ?? "", userId)
       .first<Record<string, unknown>>();
     if (!row) throw new Error("The lens no longer exists.");
+    if (row.scope === "browser")
+      throw new Error("Browser lenses evaluate open tabs, not saved links.");
     const lens = {
       ...(row as unknown as Lens),
       ...parseLensDefinition(
@@ -142,8 +146,14 @@ export async function dispatch(batch: MessageBatch<{ id: string }>, env: Env) {
         if (["errored", "terminated", "complete"].includes(status.status)) {
           await env.DB.batch([
             env.DB.prepare(
-              "UPDATE jobs SET status='failed',step='Interrupted',error='Extraction was interrupted. Try again.',completed_at=? WHERE id=? AND status IN ('queued','running')",
-            ).bind(new Date().toISOString(), job.id),
+              "UPDATE jobs SET status='failed',step='Interrupted',error=?,completed_at=? WHERE id=? AND status IN ('queued','running')",
+            ).bind(
+              job.target_id
+                ? "The evaluation was interrupted. Retry it explicitly."
+                : "Extraction was interrupted. Try again.",
+              new Date().toISOString(),
+              job.id,
+            ),
             env.DB.prepare(
               `UPDATE links SET content_state=${preservedContentStateSql("failed")},content_error='Extraction was interrupted. Try again.' WHERE id=? AND content_state='queued'`,
             ).bind(job.link_id),

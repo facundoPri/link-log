@@ -14,9 +14,21 @@ export function onUnauthorized(listener: () => void) {
   return () => window.removeEventListener(UNAUTHORIZED, listener);
 }
 
+// Work that must run while the session is still valid, e.g. the Browser view asking the extension
+// to forget this account's cached results. Each hook gets a short deadline; sign-out never waits on it.
+const beforeSignOut = new Set<() => Promise<unknown>>();
+export function onBeforeSignOut(hook: () => Promise<unknown>) {
+  beforeSignOut.add(hook);
+  return () => void beforeSignOut.delete(hook);
+}
+
 /** Drops everything this browser kept for the previous account, then reloads from a clean slate. */
 export async function signOutAndReset() {
   try {
+    await Promise.race([
+      Promise.allSettled([...beforeSignOut].map((hook) => hook())),
+      new Promise((resolve) => setTimeout(resolve, 1500)),
+    ]);
     await authClient.signOut();
   } finally {
     try {

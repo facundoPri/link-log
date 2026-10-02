@@ -142,7 +142,7 @@ describe("background processing resolves the persisted owner", () => {
     expect(queued.map((m) => m.id)).toContain(job.id);
     const loaded = await loadOwnedJob(env.DB, job.id);
     expect(loaded.job.user_id).toBe(A.userId);
-    expect(loaded.link.id).toBe(a.linkId);
+    expect(loaded.link!.id).toBe(a.linkId);
 
     const b = await seed(B);
     // A job row pointing at B's link from A's batch cannot even be inserted.

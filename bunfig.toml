@@ -1,5 +1,8 @@
 [serve.static]
 env = "BUN_PUBLIC_*"
 plugins = ["bun-plugin-tailwind"]
+[install]
+# Keep the hoisted layout this project used before becoming a workspace.
+linker = "hoisted"
 [test]
-preload = ["./tests/support/preload.ts"]
+preload = ["./tests/setup.ts"]

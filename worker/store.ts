@@ -16,7 +16,12 @@ export function capabilities(env: Env) {
   return {
     provider,
     markdown: !!env.BROWSER,
-    jev: provider === "typesafe" ? !!env.TYPESAFE_API_KEY : !!env.AI,
+    jev:
+      provider === "typesafe"
+        ? !!env.TYPESAFE_API_KEY
+        : provider === "fixture"
+          ? env.ALLOW_FIXTURE_JEV === "1"
+          : !!env.AI,
   };
 }
 export async function library(env: Env, userId: string) {
@@ -41,7 +46,7 @@ export async function library(env: Env, userId: string) {
     env.DB.prepare(
       "SELECT b.id,b.kind,b.config,b.created_at,count(j.id) total,coalesce(sum(j.status='done'),0) done,coalesce(sum(j.status='failed'),0) failed,coalesce(sum(j.status IN ('queued','running')),0) active FROM batches b LEFT JOIN jobs j ON j.batch_id=b.id WHERE b.user_id=?1 GROUP BY b.id HAVING count(j.id)>0 ORDER BY b.created_at DESC LIMIT 30",
     ).bind(userId).all<Batch>(),
-    env.DB.prepare("SELECT id,name,type,question,options,threshold,version,created_at FROM lenses WHERE user_id=?1 ORDER BY name COLLATE NOCASE").bind(userId).all<
+    env.DB.prepare("SELECT id,name,type,question,options,threshold,version,created_at,scope FROM lenses WHERE user_id=?1 ORDER BY name COLLATE NOCASE").bind(userId).all<
       Omit<Lens, "options" | "levels"> & { options: string }
     >(),
     env.DB.prepare(`SELECT * FROM lens_results WHERE link_id IN (${ownedLinks})`).bind(userId).all<

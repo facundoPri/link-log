@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { TestD1 } from "./support/d1";
 import { client, cookieOf, linkFrom, makeEnv, signUpVerified, TEST_ORIGIN } from "./support/env";
+import { testSession } from "./support/auth.test-instance";
 
 const PASSWORD = "correct horse battery";
 let logs: string[] = [];
@@ -208,11 +209,15 @@ describe("CSRF, origins and policies", () => {
     expect((await call("/api/links", { body, cookie })).status).toBe(201);
   });
 
-  test("undeclared routes 404 before any session lookup; declared ones need a session", async () => {
-    const { call } = await setup();
-    expect((await call("/api/admin")).status).toBe(404);
+  test("the API is private by default: no session, no route discovery", async () => {
+    const { call, env } = await setup();
+    expect((await call("/api/admin")).status).toBe(401);
     expect((await call("/api/library")).status).toBe(401);
-    expect((await call("/api/library", { method: "POST", body: {} })).status).toBe(405);
+    expect((await call("/api/library", { method: "POST", body: {} })).status).toBe(401);
+    const { cookie } = await testSession(env, "routes@example.test");
+    expect((await call("/api/admin", { cookie })).status).toBe(404);
+    expect((await call("/api/library", { method: "POST", body: {}, cookie })).status).toBe(404);
+    expect((await call("/api/auth/sign-in/email", { method: "PUT", body: {} })).status).toBe(405);
     expect((await call("/api/auth/update-user", { body: { name: "x" } })).status).toBe(404);
     expect((await call("/api/auth/sign-in/social", { body: { provider: "github" } })).status).toBe(404);
     expect((await call("/api/usage", { cookie: "linklog.session_token=forged.value" })).status).toBe(401);
@@ -242,6 +247,7 @@ describe("fail-closed configuration", () => {
     ["production on loopback", { ...prod, BETTER_AUTH_URL: "https://localhost" }],
     ["production with a dev secret", { ...prod, BETTER_AUTH_SECRET: "changeme-changeme-changeme-changeme-123" }],
     ["production without sender", { ...prod, EMAIL_FROM: undefined }],
+    ["production with the fixture Jev provider", { ...prod, JEV_PROVIDER: "fixture", ALLOW_FIXTURE_JEV: "1" }],
   ];
   for (const [name, overrides] of cases)
     test(`${name} -> 503 on every API route`, async () => {

@@ -3,7 +3,11 @@ interface Env {
   CLOUDFLARE_ACCOUNT_ID?: string;
   CLOUDFLARE_API_TOKEN?: string;
   TYPESAFE_API_KEY?: string;
-  JEV_PROVIDER?: "cloudflare" | "typesafe";
+  JEV_PROVIDER?: "cloudflare" | "typesafe" | "fixture";
+  /** Must be "1" for JEV_PROVIDER="fixture" (tests only). */
+  ALLOW_FIXTURE_JEV?: string;
+  /** Days an unconfirmed browser result is kept before it expires (default 7). */
+  BROWSER_RESULT_TTL_DAYS?: string;
   JEV_MODEL?: string;
   BROWSER_CONCURRENCY?: string;
   JEV_CONCURRENCY?: string;

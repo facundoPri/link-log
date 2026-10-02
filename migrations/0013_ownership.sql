@@ -1,16 +1,22 @@
--- FAC-41: every library row belongs to one Better Auth user.
+-- FAC-41: every library and Browser row belongs to one Better Auth user.
 --
--- Existing rows keep their IDs, relations and content but get user_id NULL: unassigned and
+-- Existing rows keep their IDs, relations, R2 keys and content but get user_id NULL: unassigned and
 -- unreachable through the API until scripts/adjudicate-legacy.ts assigns them to a verified user.
 -- Nothing is assigned to the first signup or to a fixture.
 --
--- Uniqueness moves from global to per owner, which needs table rebuilds. In SQLite, DROP TABLE on a
--- parent runs an implicit DELETE that fires ON DELETE CASCADE even with deferred foreign keys, and
--- D1 cannot turn foreign keys off. So every table in the foreign-key graph is copied into a *_next
--- table that references only *_next parents, old tables are dropped children-first (nothing left to
--- cascade into), and the copies are renamed (renames rewrite the references to the final names).
--- Rollback: scripts/migrations/rollback/0011_ownership.down.sql or restore the pre-migration backup.
+-- Tables that only gain an owner use ALTER TABLE (batches, browser_requests, browser_groups).
+-- links/tags/lenses move from global to per-owner uniqueness, which needs a rebuild. In SQLite,
+-- DROP TABLE on a parent runs an implicit DELETE that fires ON DELETE CASCADE even with deferred
+-- foreign keys, and D1 cannot turn foreign keys off. So those three and every table referencing them
+-- (directly or through jobs) are copied into *_next tables that reference only *_next parents, the
+-- old tables are dropped children-first (nothing left to cascade into), and the copies are renamed
+-- (renames rewrite the references to the final names).
+-- Rollback: scripts/migrations/rollback/0013_ownership.down.sql or restore the pre-migration backup.
 PRAGMA defer_foreign_keys = true;
+
+ALTER TABLE batches ADD COLUMN user_id TEXT REFERENCES "user"(id) ON DELETE CASCADE;
+ALTER TABLE browser_requests ADD COLUMN user_id TEXT REFERENCES "user"(id) ON DELETE CASCADE;
+ALTER TABLE browser_groups ADD COLUMN user_id TEXT REFERENCES "user"(id) ON DELETE CASCADE;
 
 CREATE TABLE links_next (
   id TEXT PRIMARY KEY,
@@ -42,17 +48,11 @@ CREATE TABLE lenses_next (
   type TEXT NOT NULL CHECK(type IN ('noul','choice','multi','score')),
   question TEXT NOT NULL, options TEXT NOT NULL DEFAULT '{}',
   threshold REAL NOT NULL DEFAULT 0.8 CHECK(threshold>=0 AND threshold<=1),
-  version INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL
+  version INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL,
+  scope TEXT NOT NULL DEFAULT 'library' CHECK(scope IN ('library','browser'))
 );
-INSERT INTO lenses_next(id,user_id,name,type,question,options,threshold,version,created_at)
-  SELECT id,NULL,name,type,question,options,threshold,version,created_at FROM lenses;
-
-CREATE TABLE batches_next (
-  id TEXT PRIMARY KEY,
-  user_id TEXT REFERENCES "user"(id) ON DELETE CASCADE,
-  kind TEXT NOT NULL, config TEXT NOT NULL, created_at TEXT NOT NULL
-);
-INSERT INTO batches_next(id,user_id,kind,config,created_at) SELECT id,NULL,kind,config,created_at FROM batches;
+INSERT INTO lenses_next(id,user_id,name,type,question,options,threshold,version,created_at,scope)
+  SELECT id,NULL,name,type,question,options,threshold,version,created_at,scope FROM lenses;
 
 CREATE TABLE link_tags_next (
   link_id TEXT NOT NULL REFERENCES links_next(id) ON DELETE CASCADE,
@@ -64,13 +64,15 @@ INSERT INTO link_tags_next(link_id,tag_id,origin) SELECT link_id,tag_id,origin F
 
 CREATE TABLE jobs_next (
   id TEXT PRIMARY KEY,
-  batch_id TEXT NOT NULL REFERENCES batches_next(id) ON DELETE CASCADE,
-  link_id TEXT NOT NULL REFERENCES links_next(id) ON DELETE CASCADE,
+  batch_id TEXT NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
+  link_id TEXT REFERENCES links_next(id) ON DELETE CASCADE,
   status TEXT NOT NULL DEFAULT 'queued', step TEXT NOT NULL DEFAULT 'En cola',
-  error TEXT, result TEXT, created_at TEXT NOT NULL, completed_at TEXT
+  error TEXT, result TEXT, created_at TEXT NOT NULL, completed_at TEXT,
+  target_id TEXT REFERENCES browser_targets(id) ON DELETE CASCADE,
+  CHECK((link_id IS NOT NULL) + (target_id IS NOT NULL) = 1)
 );
-INSERT INTO jobs_next(id,batch_id,link_id,status,step,error,result,created_at,completed_at)
-  SELECT id,batch_id,link_id,status,step,error,result,created_at,completed_at FROM jobs;
+INSERT INTO jobs_next(id,batch_id,link_id,status,step,error,result,created_at,completed_at,target_id)
+  SELECT id,batch_id,link_id,status,step,error,result,created_at,completed_at,target_id FROM jobs;
 
 CREATE TABLE tag_evaluations_next (
   link_id TEXT NOT NULL REFERENCES links_next(id) ON DELETE CASCADE,
@@ -78,7 +80,7 @@ CREATE TABLE tag_evaluations_next (
   probability REAL NOT NULL CHECK(probability>=0 AND probability<=1),
   threshold REAL NOT NULL, tag_version INTEGER NOT NULL, description TEXT NOT NULL,
   content_version INTEGER NOT NULL, model TEXT NOT NULL, evaluated_at TEXT NOT NULL,
-  batch_id TEXT NOT NULL REFERENCES batches_next(id) ON DELETE CASCADE,
+  batch_id TEXT NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
   chunks INTEGER NOT NULL DEFAULT 1,
   PRIMARY KEY(link_id,tag_id)
 );
@@ -90,7 +92,7 @@ CREATE TABLE lens_results_next (
   lens_id TEXT NOT NULL REFERENCES lenses_next(id) ON DELETE CASCADE,
   answer TEXT NOT NULL, lens_version INTEGER NOT NULL, content_version INTEGER NOT NULL,
   model TEXT NOT NULL, evaluated_at TEXT NOT NULL,
-  batch_id TEXT NOT NULL REFERENCES batches_next(id) ON DELETE CASCADE,
+  batch_id TEXT NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
   PRIMARY KEY(link_id,lens_id)
 );
 INSERT INTO lens_results_next(link_id,lens_id,answer,lens_version,content_version,model,evaluated_at,batch_id)
@@ -100,7 +102,7 @@ INSERT INTO lens_results_next(link_id,lens_id,answer,lens_version,content_versio
 CREATE TABLE usage_events_next (
   id TEXT PRIMARY KEY,
   user_id TEXT REFERENCES "user"(id) ON DELETE CASCADE,
-  batch_id TEXT REFERENCES batches_next(id) ON DELETE SET NULL,
+  batch_id TEXT REFERENCES batches(id) ON DELETE SET NULL,
   job_id TEXT REFERENCES jobs_next(id) ON DELETE SET NULL,
   link_id TEXT REFERENCES links_next(id) ON DELETE SET NULL,
   provider TEXT NOT NULL, service TEXT NOT NULL, model TEXT,
@@ -151,7 +153,6 @@ DROP TABLE link_tags;
 DROP TABLE media_items;
 DROP TABLE hidden_related_links;
 DROP TABLE jobs;
-DROP TABLE batches;
 DROP TABLE tags;
 DROP TABLE lenses;
 DROP TABLE links;
@@ -159,7 +160,6 @@ DROP TABLE links;
 ALTER TABLE links_next RENAME TO links;
 ALTER TABLE tags_next RENAME TO tags;
 ALTER TABLE lenses_next RENAME TO lenses;
-ALTER TABLE batches_next RENAME TO batches;
 ALTER TABLE link_tags_next RENAME TO link_tags;
 ALTER TABLE jobs_next RENAME TO jobs;
 ALTER TABLE tag_evaluations_next RENAME TO tag_evaluations;
@@ -176,9 +176,13 @@ CREATE INDEX links_domain ON links(domain);
 CREATE UNIQUE INDEX tags_owner_name ON tags(user_id, name COLLATE NOCASE);
 CREATE UNIQUE INDEX lenses_owner_name ON lenses(user_id, name COLLATE NOCASE);
 CREATE INDEX batches_owner_created ON batches(user_id, created_at);
+CREATE INDEX browser_requests_owner ON browser_requests(user_id);
+CREATE INDEX browser_groups_owner ON browser_groups(user_id);
 CREATE INDEX link_tags_tag ON link_tags(tag_id);
 CREATE INDEX jobs_batch ON jobs(batch_id);
-CREATE UNIQUE INDEX jobs_active_link ON jobs(link_id) WHERE status IN ('queued','running');
+CREATE UNIQUE INDEX jobs_active_link ON jobs(link_id) WHERE status IN ('queued','running') AND link_id IS NOT NULL;
+CREATE UNIQUE INDEX jobs_active_target ON jobs(target_id) WHERE status IN ('queued','running') AND target_id IS NOT NULL;
+CREATE INDEX jobs_target ON jobs(target_id);
 CREATE INDEX usage_batch ON usage_events(batch_id);
 CREATE INDEX usage_owner_created ON usage_events(user_id, created_at);
 CREATE INDEX media_items_order ON media_items(link_id,position);
@@ -194,6 +198,10 @@ BEGIN SELECT RAISE(ABORT, 'owner required'); END;
 CREATE TRIGGER batches_owner_required BEFORE INSERT ON batches WHEN NEW.user_id IS NULL
 BEGIN SELECT RAISE(ABORT, 'owner required'); END;
 CREATE TRIGGER usage_owner_required BEFORE INSERT ON usage_events WHEN NEW.user_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'owner required'); END;
+CREATE TRIGGER browser_requests_owner_required BEFORE INSERT ON browser_requests WHEN NEW.user_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'owner required'); END;
+CREATE TRIGGER browser_groups_owner_required BEFORE INSERT ON browser_groups WHEN NEW.user_id IS NULL
 BEGIN SELECT RAISE(ABORT, 'owner required'); END;
 
 CREATE TRIGGER links_owner_immutable BEFORE UPDATE OF user_id ON links
@@ -211,15 +219,29 @@ BEGIN SELECT RAISE(ABORT, 'owner is immutable'); END;
 CREATE TRIGGER usage_owner_immutable BEFORE UPDATE OF user_id ON usage_events
 WHEN OLD.user_id IS NOT NULL AND NEW.user_id IS NOT OLD.user_id
 BEGIN SELECT RAISE(ABORT, 'owner is immutable'); END;
+CREATE TRIGGER browser_requests_owner_immutable BEFORE UPDATE OF user_id ON browser_requests
+WHEN OLD.user_id IS NOT NULL AND NEW.user_id IS NOT OLD.user_id
+BEGIN SELECT RAISE(ABORT, 'owner is immutable'); END;
+CREATE TRIGGER browser_groups_owner_immutable BEFORE UPDATE OF user_id ON browser_groups
+WHEN OLD.user_id IS NOT NULL AND NEW.user_id IS NOT OLD.user_id
+BEGIN SELECT RAISE(ABORT, 'owner is immutable'); END;
 
 CREATE TRIGGER link_tags_same_owner BEFORE INSERT ON link_tags
 WHEN (SELECT user_id FROM links WHERE id=NEW.link_id) IS NULL
   OR (SELECT user_id FROM links WHERE id=NEW.link_id) IS NOT (SELECT user_id FROM tags WHERE id=NEW.tag_id)
 BEGIN SELECT RAISE(ABORT, 'cross-owner relation'); END;
+-- A job runs as its batch owner: its saved link or browser capture must have that same owner.
 CREATE TRIGGER jobs_same_owner BEFORE INSERT ON jobs
-WHEN (SELECT user_id FROM links WHERE id=NEW.link_id) IS NULL
-  OR (SELECT user_id FROM links WHERE id=NEW.link_id) IS NOT (SELECT user_id FROM batches WHERE id=NEW.batch_id)
+WHEN (SELECT user_id FROM batches WHERE id=NEW.batch_id) IS NULL
+  OR (NEW.link_id IS NOT NULL AND (SELECT user_id FROM links WHERE id=NEW.link_id) IS NOT (SELECT user_id FROM batches WHERE id=NEW.batch_id))
+  OR (NEW.target_id IS NOT NULL AND (SELECT r.user_id FROM browser_targets t JOIN browser_requests r ON r.request_id=t.request_id WHERE t.id=NEW.target_id) IS NOT (SELECT user_id FROM batches WHERE id=NEW.batch_id))
 BEGIN SELECT RAISE(ABORT, 'cross-owner relation'); END;
+CREATE TRIGGER browser_requests_same_owner BEFORE INSERT ON browser_requests
+WHEN (SELECT user_id FROM batches WHERE id=NEW.batch_id) IS NOT NEW.user_id
+BEGIN SELECT RAISE(ABORT, 'cross-owner relation'); END;
+CREATE TRIGGER browser_targets_owned_request BEFORE INSERT ON browser_targets
+WHEN (SELECT user_id FROM browser_requests WHERE request_id=NEW.request_id) IS NULL
+BEGIN SELECT RAISE(ABORT, 'owner required'); END;
 CREATE TRIGGER tag_evaluations_same_owner BEFORE INSERT ON tag_evaluations
 WHEN (SELECT user_id FROM links WHERE id=NEW.link_id) IS NULL
   OR (SELECT user_id FROM links WHERE id=NEW.link_id) IS NOT (SELECT user_id FROM tags WHERE id=NEW.tag_id)

@@ -1,7 +1,7 @@
 // Idempotent A/B fixtures for a DISPOSABLE local state dir. Accounts go through the real Better
 // Auth endpoints (sign-up -> simulated email -> verification link), so passwords are hashed by
 // Better Auth and nothing bypasses verification. No real/legacy data is assigned to them.
-//   LINKLOG_STATE_DIR=.wrangler/demo-state LINKLOG_API_PORT=8800 LINKLOG_UI_PORT=3100 bun scripts/seed-dev-users.ts
+//   LINKLOG_PERSIST_TO=.wrangler/demo-state LINKLOG_API_PORT=8800 LINKLOG_UI_PORT=3100 bun scripts/seed-dev-users.ts
 // (scripts/demo.ts runs it automatically.)
 import { resolve } from "node:path";
 import { waitForMail } from "./lib/local-mail";
@@ -15,7 +15,7 @@ export function assertDisposableTarget(apiUrl: string, stateDir: string) {
   const host = new URL(apiUrl).hostname;
   if (!["127.0.0.1", "localhost", "[::1]"].includes(host)) throw new Error("Fixtures only seed a loopback Worker.");
   if (resolve(stateDir) === resolve(".wrangler/state"))
-    throw new Error("Refusing to seed the default state dir (.wrangler/state may hold real data). Use LINKLOG_STATE_DIR.");
+    throw new Error("Refusing to seed the default state dir (.wrangler/state may hold real data). Use LINKLOG_PERSIST_TO.");
 }
 
 type Session = { cookie: string };
@@ -88,7 +88,6 @@ export async function seedFixtures(apiUrl: string, origin: string, stateDir: str
 }
 
 if (import.meta.main) {
-  const apiPort = Number(process.env.LINKLOG_API_PORT || 8787);
-  const uiPort = Number(process.env.LINKLOG_UI_PORT || 3000);
-  await seedFixtures(`http://127.0.0.1:${apiPort}`, `http://localhost:${uiPort}`, process.env.LINKLOG_STATE_DIR || ".wrangler/state");
+  const { apiUrl, uiUrl } = await import("./ports");
+  await seedFixtures(apiUrl(), uiUrl(), process.env.LINKLOG_PERSIST_TO || ".wrangler/state");
 }

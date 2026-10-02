@@ -4,7 +4,8 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-const ROOT = ".wrangler/tmp/email";
+// Wrangler writes next to its config: LINKLOG_MAIL_DIR points elsewhere for an alternate config.
+const root = () => process.env.LINKLOG_MAIL_DIR || ".wrangler/tmp/email";
 const ACTION = { verify: "Confirm email: ", magic: "Sign in: ", reset: "Choose a new password: " } as const;
 export type MailKind = keyof typeof ACTION;
 
@@ -12,12 +13,12 @@ function textFiles() {
   const files: string[] = [];
   let sessions: string[] = [];
   try {
-    sessions = readdirSync(ROOT);
+    sessions = readdirSync(root());
   } catch {
     return files;
   }
   for (const session of sessions) {
-    const dir = join(ROOT, session, "email-text");
+    const dir = join(root(), session, "email-text");
     try {
       for (const name of readdirSync(dir)) files.push(join(dir, name));
     } catch {}

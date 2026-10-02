@@ -8,8 +8,14 @@
     "build": "bun scripts/build.ts",
     "dev:ui": "bun --hot src/index.ts",
     "dev:api": "wrangler dev --ip 127.0.0.1 --port 8787",
-    "typecheck": "tsc --noEmit",
+    "extension:build": "bun apps/extension/scripts/build.ts",
+    "extension:dev": "bun apps/extension/scripts/build.ts --watch",
+    "extension:package": "bun apps/extension/scripts/build.ts --package",
+    "extension:chrome": "bun scripts/chrome.ts",
+    "build:all": "bun run build && bun run extension:build",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p packages/browser-protocol && tsc --noEmit -p apps/extension",
     "test": "bun test",
+    "test:browser": "bun tests/browser/run.ts",
     "db:migrate": "wrangler d1 migrations apply linklog --local",
     "preview": "bun run build && wrangler dev --ip 127.0.0.1 --port 8787",
     "demo": "bun run build && bun scripts/demo.ts",
@@ -17,17 +23,20 @@
     "legacy:adjudicate": "bun scripts/adjudicate-legacy.ts"
   },
   "dependencies": {
+    "@linklog/browser-protocol": "workspace:*",
     "better-auth": "1.7.7",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "entities": "^8.1.0",
+    "hono": "4.13.12",
     "ipaddr.js": "^2.5.0",
     "lucide-react": "^1.47.0",
     "radix-ui": "^1.6.7",
     "react": "19",
     "react-dom": "19",
     "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "sonner": "^2.0.8",
     "tailwind-merge": "^3.7.0",
     "tailwindcss": "^4.3.3",
@@ -45,5 +54,9 @@
     "prettier": "^3.9.8",
     "typescript": "^7.0.2",
     "wrangler": "^4.136.1"
-  }
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ]
 }
