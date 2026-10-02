@@ -719,8 +719,11 @@ try {
       const list = await inSw(ctx, async (w: number) => chrome.tabGroups.query({ windowId: w }), W2);
       return list.length === 1 ? list[0] : null;
     });
-    const meta = await inSw(ctx, async () => (await chrome.storage.session.get("groups")).groups as Record<string, any>, 0);
-    assert(meta[String(g!.id)].pinnedId === pinnedId, "binding missing");
+    // The binding is written right after Chrome creates the group: wait for it, don't race it.
+    await waitFor("binding stored", async () => {
+      const meta = await inSw(ctx, async () => (await chrome.storage.session.get("groups")).groups as Record<string, any>, 0);
+      return meta?.[String(g!.id)]?.pinnedId === pinnedId;
+    }, 5000);
     await shot(L2, "10-pinned-other-window");
     return `created group ${g!.id} in window ${W2} bound to the same definition`;
   });
@@ -922,7 +925,7 @@ try {
       L.evaluate(
         () =>
           new Promise<string>((resolve) => {
-            const id = `probe-${Math.random()}`;
+            const id = `probe-${Date.now()}`;
             addEventListener("message", (e) => e.data?.from === "extension" && e.data.response?.id === id && resolve(e.data.response.ok ? "ok" : e.data.response.error));
             postMessage({ channel: "linklog-bridge", from: "page", request: { id, command: "snapshot", args: {} } }, location.origin);
             setTimeout(() => resolve("timeout"), 3000);
@@ -944,7 +947,7 @@ try {
     assert(stillA.status === 200, `session should still be active after the refused sign-out (${stillA.status})`);
     await shot(L, "15b-signout-refused");
     // 2) Retry: confirmed sign-out, then the extension forgets A and the page reloads anonymous.
-    await L.getByRole("button", { name: "Retry" }).click();
+    await L.locator("[data-sonner-toast]", { hasText: "Could not sign out" }).getByRole("button", { name: "Retry" }).click();
     await waitFor("sign-in screen", async () => (await L.getByLabel("Password").count()) > 0, 15000);
     const after = await kept(scopeA);
     assert(after === 0, `${after} entries left in the first account's scope`);
