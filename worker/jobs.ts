@@ -296,8 +296,8 @@ export class LinkWorkflow extends WorkflowEntrypoint<Env, { id: string }> {
             `UPDATE links SET content_state=${preservedContentStateSql("failed")},content_error=?,content_reason=?,${set.sql} WHERE id=? AND ${running}`,
           ).bind(message, reason, ...set.params, link!.id, job.id));
           const preview = await readPreview(env.DB, link.id);
-          if (preview && canUsePreview(preview) && await previewFallbackOn(env.DB)) {
-            await storePreview(env, fallbackKey, preview);
+          // The fallback is optional: if its text can't be stored, the original failure still settles as usual.
+          if (preview && canUsePreview(preview) && await previewFallbackOn(env.DB) && await storePreview(env, fallbackKey, preview, { link_id: link.id, job_id: job.id })) {
             statements.push(usePreviewStatement(env.DB, link.id, fallbackKey, preview, `${previewFallbackSetting} AND ${running}`, job.id));
             usedPreview = true;
           }

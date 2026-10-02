@@ -1,7 +1,7 @@
 // FAC-56: when the content fails for good and the preview worked, the title and description can stand in
 // for the content: automatically with the Settings option, or on demand with the per-link action.
 import { afterEach, expect, spyOn, test } from "bun:test";
-import { fakes, resetClock, setup, tick } from "./worker-harness";
+import { dispatch, fakes, resetClock, setup, tick } from "./worker-harness";
 
 afterEach(resetClock);
 
@@ -217,4 +217,110 @@ test("the per-link action loses to a job enqueued between its check and its writ
   };
   expect((await s.api(`/links/${id}/use-preview`, "POST")).data.error).toBe("The link changed meanwhile. Try again.");
   expect(await fallbackView(s, id)).toMatchObject({ source: null, content: "queued", attention: "content", has_key: false });
+});
+
+// Round 2: storing the optional fallback can fail; the original failure must still settle.
+const failingPuts = (s: S, failures: number) => {
+  const content = (s.env as any).CONTENT;
+  const put = content.put;
+  const calls = { n: 0 };
+  content.put = async (...a: unknown[]) => {
+    calls.n++;
+    if (failures-- > 0) throw new Error("R2 temporarily unavailable");
+    return put(...a);
+  };
+  return calls;
+};
+
+test("a fallback write that fails once is retried and the preview is used", async () => {
+  const s = await setup();
+  await setFallback(s, true);
+  fakes.content = { throws: "Markdown: HTTP 404" };
+  const id = await save(s, "https://fb.example/r2-once");
+  const calls = failingPuts(s, 1);
+  await s.runQueued();
+  expect(calls.n).toBe(2);
+  expect(s.steps.find((x) => x.name === "record-failure")?.attempts).toBe(1);
+  expect(await fallbackView(s, id)).toMatchObject({ source: "preview", content: "partial", attention: null });
+  expect(lastJob(s, id)).toMatchObject({ status: "failed", step: "Used the preview", reason: "not_found" });
+});
+
+test("when the fallback can't be stored, the original content failure still settles atomically", async () => {
+  const s = await setup();
+  await setFallback(s, true);
+  fakes.content = { throws: "Markdown: HTTP 404" };
+  const id = await save(s, "https://fb.example/r2-down");
+  const calls = failingPuts(s, Infinity);
+  await s.runQueued();
+  expect(calls.n).toBe(3);
+  expect(s.steps.find((x) => x.name === "record-failure")?.attempts).toBe(1);
+  const settled = await s.view(id);
+  expect(settled).toMatchObject({ content: "failed", attention: true, attention_kind: "content", attention_reason: "not_found", content_reason: "not_found", processing: false, job: "failed/Needs attention" });
+  expect(settled.err).toBeString();
+  expect(lastJob(s, id)).toMatchObject({ status: "failed", reason: "not_found", error: settled.err });
+  expect((await fallbackView(s, id)).has_key).toBe(false);
+
+  // A late redelivery of the settled job (errored instance) changes nothing.
+  const job = s.db.query("SELECT id FROM jobs WHERE link_id=?").get(id) as { id: string };
+  (s.env as any).PROCESS_LINK = {
+    create: async () => { throw new Error("instance already exists"); },
+    get: async () => ({ status: async () => ({ status: "errored" }) }),
+  };
+  await dispatch({ messages: [{ body: { id: job.id }, ack() {}, retry() {} }] } as never, s.env);
+  expect(await s.view(id)).toEqual(settled);
+});
+
+test("Use preview needs a final content failure on record: refused for never-failed links, allowed for failed and dismissed ones", async () => {
+  const s = await setup();
+  // Never failed: import cancelled, then only the preview fetched.
+  const imp = await s.api("/import", "POST", { urls: ["https://fb.example/neutral"] });
+  const neutral = imp.data.links[0].id;
+  s.sent.splice(0);
+  await s.api(`/batches/${imp.data.batches[0].id}`, "DELETE");
+  await s.api(`/links/${neutral}/retry`, "POST");
+  await s.runQueued();
+  expect(fakes.calls.content).toBe(0);
+  expect(await fallbackView(s, neutral)).toMatchObject({ content: "missing", has_key: false, attention: null });
+  expect((await s.api(`/links/${neutral}/use-preview`, "POST")).data.error).toBe("The content hasn't failed; extract it first.");
+
+  // Interrupted extraction: back to neutral, still not eligible.
+  await s.api("/batches", "POST", { kind: "extract", ids: [neutral] });
+  const [msg] = s.sent.splice(0);
+  (s.env as any).PROCESS_LINK = {
+    create: async () => { throw new Error("instance already exists"); },
+    get: async () => ({ status: async () => ({ status: "errored" }) }),
+  };
+  await dispatch({ messages: [{ body: msg!.body, ack() {}, retry() {} }] } as never, s.env);
+  expect(await fallbackView(s, neutral)).toMatchObject({ content: "missing", has_key: false });
+  expect((await s.api(`/links/${neutral}/use-preview`, "POST")).status).toBe(400);
+  expect((await fallbackView(s, neutral)).source).toBeNull();
+
+  // Failed for good: allowed.
+  fakes.content = { throws: "Markdown: HTTP 404" };
+  const failed = await save(s, "https://fb.example/failed");
+  await s.runQueued();
+  expect((await s.api(`/links/${failed}/use-preview`, "POST")).status).toBe(200);
+  expect(await fallbackView(s, failed)).toMatchObject({ source: "preview", attention: null });
+
+  // Failed and dismissed: Dismiss keeps the content failure, so it stays eligible.
+  const dismissed = await save(s, "https://fb.example/dismissed");
+  await s.runQueued();
+  await s.api(`/links/${dismissed}/dismiss`, "POST");
+  expect(await fallbackView(s, dismissed)).toMatchObject({ content: "failed", attention: null });
+  expect((await s.api(`/links/${dismissed}/use-preview`, "POST")).status).toBe(200);
+  expect(await fallbackView(s, dismissed)).toMatchObject({ source: "preview", content: "partial", attention: null });
+});
+
+test("Use preview re-checks the content failure in its write", async () => {
+  const s = await setup();
+  fakes.content = { throws: "Markdown: HTTP 404" };
+  const id = await save(s, "https://fb.example/eligibility-race");
+  await s.runQueued();
+  fakes.onSql = async (sql, phase) => {
+    if (phase !== "write" || !sql.includes("content_source='preview'")) return;
+    fakes.onSql = undefined;
+    s.db.query("UPDATE links SET content_state='missing' WHERE id=?").run(id);
+  };
+  expect((await s.api(`/links/${id}/use-preview`, "POST")).data.error).toBe("The link changed meanwhile. Try again.");
+  expect((await fallbackView(s, id)).source).toBeNull();
 });

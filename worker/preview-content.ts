@@ -6,17 +6,28 @@ import type { Link } from "../src/types";
 export const PREVIEW_FALLBACK_KEY = "preview_fallback";
 export const previewFallbackSetting = `EXISTS (SELECT 1 FROM settings WHERE key='${PREVIEW_FALLBACK_KEY}' AND value='1')`;
 export const previewFallbackOn = async (db: D1Database) => !!(await db.prepare(`SELECT ${previewFallbackSetting} on_`).first<{ on_: number }>())?.on_;
-type Preview = Pick<Link, "status" | "title" | "description" | "content_key">;
+type Preview = Pick<Link, "status" | "title" | "description" | "content_key"> & Partial<Pick<Link, "content_state">>;
 export const previewText = (l: Pick<Link, "title" | "description">) =>
   [l.title, l.description].map((s) => s?.trim()).filter(Boolean).join("\n\n");
-// Usable only when the preview was obtained and there is no content to show instead.
+// Usable only when the preview was obtained and there is no content to show instead. The per-link action also
+// needs a final content failure on record (content_state='failed', which Dismiss keeps).
 export const canUsePreview = (l: Preview) => l.status === "ready" && !l.content_key && !!previewText(l);
 
 export const readPreview = (db: D1Database, linkId: string) =>
-  db.prepare("SELECT status,title,description,content_key FROM links WHERE id=?").bind(linkId).first<Preview>();
+  db.prepare("SELECT status,title,description,content_key,content_state FROM links WHERE id=?").bind(linkId).first<Preview>();
 
-export const storePreview = (env: Env, key: string, link: Preview) =>
-  env.CONTENT.put(key, previewText(link), { httpMetadata: { contentType: "text/markdown; charset=utf-8" } });
+// A few quick attempts; false when the text could not be stored (logged), so the caller goes on without it.
+export async function storePreview(env: Env, key: string, link: Preview, where: Record<string, string>, attempts = 3) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await env.CONTENT.put(key, previewText(link), { httpMetadata: { contentType: "text/markdown; charset=utf-8" } });
+      return true;
+    } catch (error) {
+      console.error(JSON.stringify({ event: "preview_fallback_store_failed", ...where, attempt, final: attempt >= attempts, detail: String(error) }));
+      if (attempt >= attempts) return false;
+    }
+  }
+}
 
 // Applies the stored preview text as the link's content, only if the row is still the one it was made from
 // (no content yet, the same preview) and `guard` holds. Content attention goes away: the link has a usable path.

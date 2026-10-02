@@ -547,10 +547,12 @@ export default {
         if (!(await env.DB.prepare(`SELECT ${idle} idle`).bind(id).first<{ idle: number }>())?.idle)
           throw new Error("Wait for the running job to finish.");
         if (link.content_key) throw new Error("This link already has content.");
+        // Only after the content failed for good; a dismissed failure still counts (Dismiss keeps content_state).
+        if (link.content_state !== "failed") throw new Error("The content hasn't failed; extract it first.");
         if (!canUsePreview(link)) throw new Error("There is no preview to use.");
         const key = `links/${id}/${crypto.randomUUID()}-preview.md`;
-        await storePreview(env, key, link);
-        const used = await usePreviewStatement(env.DB, id, key, link, idle, id).run();
+        if (!(await storePreview(env, key, link, { link_id: id }))) throw new Error("Could not save. Try again.");
+        const used = await usePreviewStatement(env.DB, id, key, link, `content_state='failed' AND ${idle}`, id).run();
         if (!used.meta.changes) throw new Error("The link changed meanwhile. Try again.");
         return json(await library(env));
       }
