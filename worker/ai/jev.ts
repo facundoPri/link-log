@@ -3,6 +3,7 @@ import { measured } from "../usage";
 import { capabilities } from "../store";
 import { jevUnavailable } from "../../src/attention";
 import { fixtureJev } from "./fixture";
+import { JEV_FAILURE_MESSAGES, type JevReason } from "../../src/failures";
 export type { Answer, Question } from "../../src/types";
 export function probability(n: unknown): n is number {
   return typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= 1;
@@ -174,6 +175,48 @@ export function truncateState(state: unknown): unknown {
   }
   return state;
 }
+/** Where a Jev failure happened: before the request was sent (no cost) or after (it may have been billed). */
+export type JevPhase = "before_call" | "sent";
+/** A Jev failure with its phase. Its message is the plain text users see. */
+export class JevFailure extends Error {
+  constructor(
+    readonly phase: JevPhase,
+    readonly reason: JevReason | "not_configured",
+    message: string = JEV_FAILURE_MESSAGES[reason as JevReason],
+    readonly detail: { http_status?: number; technical?: string } = {},
+  ) {
+    super(message);
+  }
+  /** Only these known border cases before the call are retried; nothing after it ever is. */
+  get retryable() {
+    return this.phase === "before_call" && this.reason === "storage_busy";
+  }
+}
+const technical = (e: unknown) => (e instanceof Error ? `${e.name}: ${e.message}` : String(e)).slice(0, 300);
+// D1 conflicts and timeouts and R2 hiccups that a second try usually gets past.
+const TRANSIENT = /D1_ERROR|SQLITE_BUSY|database is locked|overloaded|Network connection lost|storage operation exceeded timeout|timed? ?out|internal error|try again/i;
+/** A failure before the request was sent: a known transient storage error or a plain no-cost failure. */
+export function beforeCall(e: unknown, message?: string): JevFailure {
+  if (e instanceof JevFailure) return e;
+  const text = e instanceof Error ? e.message : String(e);
+  return TRANSIENT.test(text)
+    ? new JevFailure("before_call", "storage_busy", undefined, { technical: technical(e) })
+    : new JevFailure("before_call", "before_call", message, { technical: technical(e) });
+}
+// Authentication, billing, quota or balance problems: the account can't be used until someone fixes it.
+const ACCOUNT = /insufficient|balance|quota|billing|payment|out of credits|free allocation|account limit|unauthori[sz]ed|authenticat|forbidden|invalid (?:api )?(?:key|token)/i;
+/** A failure once the request may have left. Network errors without a response count too: Workers can't prove it didn't. */
+function afterSend(e: unknown): JevFailure {
+  if (e instanceof JevFailure) return e;
+  const text = e instanceof Error ? e.message : String(e);
+  const detail = { technical: technical(e) };
+  if (e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError"))
+    return new JevFailure("sent", "no_answer", undefined, detail);
+  if (ACCOUNT.test(text)) return new JevFailure("sent", "account", undefined, detail);
+  if (e instanceof TypeError || /network|fetch failed|connection/i.test(text))
+    return new JevFailure("sent", "network", undefined, detail);
+  return new JevFailure("sent", "provider_error", undefined, detail);
+}
 export async function judge(
   env: Env,
   state: unknown,
@@ -188,57 +231,68 @@ export async function judge(
   const unavailable = jevUnavailable(capabilities(env));
   if (unavailable) {
     console.error(JSON.stringify({ event: "jev_not_configured", provider, job: job.id }));
-    throw new Error(unavailable);
+    throw new JevFailure("before_call", "not_configured", unavailable);
   }
-  return measured(env, job, "jev", provider, "classify", async (meter) => {
-    let raw: Record<string, unknown>;
-    // Fixture: deterministic, unpaid answers for automated tests, only with ALLOW_FIXTURE_JEV.
-    if (provider === "fixture") raw = await fixtureJev(input);
-    else if (provider === "typesafe") {
-      const response = await fetch("https://api.typesafe.ai/v1/systemone", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${env.TYPESAFE_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: env.JEV_MODEL || "jev-1.13.0",
-          ...input,
-        }),
-        signal: AbortSignal.timeout(60000),
-      }).catch((error: unknown) => {
-        if (error instanceof Error && error.name === "TimeoutError")
-          // The request may have reached the provider; never retry blindly.
-          throw new Error(
-            "Jev did not answer within 60 seconds. The call may still have been billed; retry explicitly if needed.",
-          );
-        throw error;
-      });
-      if (!response.ok) {
-        const detail = (await response.text()).slice(0, 8000);
-        if (
-          [400, 413, 422].includes(response.status) &&
-          /(?:context|tokens?).{0,100}(?:length|limit|exceed|maximum|too)|(?:exceed|maximum|too many|too long).{0,100}(?:tokens?|context)/is.test(
-            detail,
+  // An account error earlier in this batch stops the rest of it without calling.
+  const stopped = await env.DB.prepare("SELECT 1 FROM jobs WHERE batch_id=? AND id<>? AND reason='account' LIMIT 1")
+    .bind(job.batch_id, job.id).first().catch((e: unknown) => { throw beforeCall(e); });
+  if (stopped) throw new JevFailure("before_call", "account_stopped");
+  // The usage row is written right before sending, so Usage only lists calls that may have reached the provider.
+  let sent = false;
+  try {
+    return await measured(env, job, "jev", provider, "classify", async (meter) => {
+      sent = true;
+      let raw: Record<string, unknown>;
+      // Fixture: deterministic, unpaid answers for automated tests, only with ALLOW_FIXTURE_JEV.
+      if (provider === "fixture") raw = await fixtureJev(input);
+      else if (provider === "typesafe") {
+        const response = await fetch("https://api.typesafe.ai/v1/systemone", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${env.TYPESAFE_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: env.JEV_MODEL || "jev-1.13.0",
+            ...input,
+          }),
+          signal: AbortSignal.timeout(60000),
+        });
+        if (!response.ok) {
+          const detail = (await response.text()).slice(0, 8000);
+          const http = { http_status: response.status, technical: `TypeSafe HTTP ${response.status}: ${detail.slice(0, 300)}` };
+          if (
+            [400, 413, 422].includes(response.status) &&
+            /(?:context|tokens?).{0,100}(?:length|limit|exceed|maximum|too)|(?:exceed|maximum|too many|too long).{0,100}(?:tokens?|context)/is.test(
+              detail,
+            )
           )
-        )
-          throw new Error(
-            "Jev rejected the content for exceeding its token window. The full document is still saved and its tags were not changed. To classify it, split the content or paste a shorter version.",
-          );
-        throw new Error(`TypeSafe: HTTP ${response.status}`);
+            throw new JevFailure("sent", "too_long", undefined, http);
+          if ([401, 402, 403].includes(response.status) || ACCOUNT.test(detail))
+            throw new JevFailure("sent", "account", undefined, http);
+          throw new JevFailure("sent", "provider_error", undefined, http);
+        }
+        raw = await response.json<Record<string, unknown>>().catch((e: unknown) => {
+          throw new JevFailure("sent", "invalid_response", undefined, { technical: technical(e) });
+        });
+      } else raw = await env.AI.run("typesafe/jev", input);
+      const usage = raw.usage as
+        { input_tokens?: number; output_tokens?: number } | undefined;
+      if (usage && Number.isFinite(usage.input_tokens))
+        meter.input_tokens = usage.input_tokens;
+      if (usage && Number.isFinite(usage.output_tokens))
+        meter.output_tokens = usage.output_tokens;
+      meter.model = typeof raw.model === "string" ? raw.model : "typesafe/jev";
+      try {
+        return {
+          answers: validateAnswers(raw.answers, questions),
+          model: meter.model,
+        };
+      } catch (e) {
+        throw new JevFailure("sent", "invalid_response", undefined, { technical: technical(e) });
       }
-      raw = await response.json();
-    } else raw = await env.AI.run("typesafe/jev", input);
-    const usage = raw.usage as
-      { input_tokens?: number; output_tokens?: number } | undefined;
-    if (usage && Number.isFinite(usage.input_tokens))
-      meter.input_tokens = usage.input_tokens;
-    if (usage && Number.isFinite(usage.output_tokens))
-      meter.output_tokens = usage.output_tokens;
-    meter.model = typeof raw.model === "string" ? raw.model : "typesafe/jev";
-    return {
-      answers: validateAnswers(raw.answers, questions),
-      model: meter.model,
-    };
-  });
+    });
+  } catch (e) {
+    throw sent ? afterSend(e) : beforeCall(e);
+  }
 }

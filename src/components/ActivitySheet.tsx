@@ -7,6 +7,7 @@ import {
   FileText,
   Globe,
   Loader2,
+  RotateCw,
   Sparkles,
   Telescope,
   X,
@@ -94,7 +95,19 @@ function label(b: Batch) {
   return `Lens: ${name}`;
 }
 
-function BatchJobs({ batch }: { batch: Batch }) {
+// Jev is never retried automatically once called; failed auto-tag and lens jobs are retried from here.
+const retriable = (b: Batch) => b.kind === "autotag" || b.kind === "lens";
+async function retryFailed(id: string, ids: string[] | undefined, onLibrary: (l: Library) => void) {
+  try {
+    const data = await api<Library & { skipped?: string[] }>(`/batches/${id}/retry`, "POST", ids ? { ids } : {});
+    onLibrary(data);
+    toast(data.skipped?.length ? `Retrying; ${data.skipped.length} without content were skipped` : "Retrying");
+  } catch (e) {
+    toast.error((e as Error).message);
+  }
+}
+
+function BatchJobs({ batch, onLibrary }: { batch: Batch; onLibrary: (l: Library) => void }) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -202,16 +215,23 @@ function BatchJobs({ batch }: { batch: Batch }) {
               </div>
             )}
             {j.error && (
-              <p
-                className={cn(
-                  "mt-0.5 text-2xs",
-                  j.step === "Cancelled"
-                    ? "text-muted-foreground"
-                    : "text-destructive",
+              <div className="mt-0.5 flex items-start gap-2">
+                <p
+                  className={cn(
+                    "min-w-0 flex-1 text-2xs",
+                    j.step === "Cancelled"
+                      ? "text-muted-foreground"
+                      : "text-destructive",
+                  )}
+                >
+                  {j.error}
+                </p>
+                {retriable(batch) && j.status === "failed" && j.step !== "Cancelled" && j.link_id && (
+                  <Button variant="ghost" size="xs" className="-my-0.5 shrink-0" onClick={() => void retryFailed(batch.id, [j.link_id!], onLibrary)}>
+                    Retry
+                  </Button>
                 )}
-              >
-                {j.error}
-              </p>
+              </div>
             )}
             {j.step === "Used the preview" && (
               <p className="mt-0.5 text-2xs text-muted-foreground">Used the preview as content instead.</p>
@@ -337,10 +357,30 @@ export function ActivitySheet({
                       </Button>
                     </span>
                   ) : b.failed ? (
-                    <Badge variant="outline" className="gap-1">
-                      <CircleAlert className="size-3" />
-                      {b.failed} failed
-                    </Badge>
+                    <span className="flex items-center gap-1">
+                      <Badge variant="outline" className="gap-1">
+                        <CircleAlert className="size-3" />
+                        {b.failed} failed
+                      </Badge>
+                      {retriable(b) && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              aria-label="Retry failed"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void retryFailed(b.id, undefined, onLibrary);
+                              }}
+                            >
+                              <RotateCw className="size-3.5" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Retry failed</TooltipContent>
+                        </Tooltip>
+                      )}
+                    </span>
                   ) : (
                     <span className="flex items-center gap-1 text-2xs text-muted-foreground">
                       <Check className="size-3" />
@@ -371,7 +411,7 @@ export function ActivitySheet({
                   />
                 )}
                 <CollapsibleContent>
-                  <BatchJobs batch={b} />
+                  <BatchJobs batch={b} onLibrary={onLibrary} />
                 </CollapsibleContent>
               </div>
             </Collapsible>

@@ -282,6 +282,28 @@ export default {
         const { id: batchId } = await enqueue(env, [transcriptMatch[1]!], "extract", undefined, { track: language });
         return json({ ...(await library(env)), batchId });
       }
+      // Retry failed auto-tag or lens jobs of a batch (all, or the given links) as a new batch. Jev is never
+      // retried automatically once called; this is the explicit way back.
+      const retryMatch = path.match(/^\/api\/batches\/([^/]+)\/retry$/);
+      if (retryMatch && request.method === "POST") {
+        const batch = await env.DB.prepare("SELECT kind,config FROM batches WHERE id=?")
+          .bind(retryMatch[1]).first<{ kind: string; config: string }>();
+        if (!batch) return json({ error: "The batch no longer exists." }, 404);
+        if (batch.kind !== "autotag" && batch.kind !== "lens") throw new Error("Only auto-tag and lens runs can be retried here.");
+        const only = Array.isArray(body.ids) ? (body.ids as unknown[]).filter((id): id is string => typeof id === "string") : null;
+        const failed = await env.DB.prepare("SELECT DISTINCT link_id FROM jobs WHERE batch_id=? AND status='failed' AND step<>'Cancelled' AND link_id IS NOT NULL")
+          .bind(retryMatch[1]).all<{ link_id: string }>();
+        const ids = failed.results.map((r) => r.link_id).filter((id) => !only || only.includes(id));
+        if (!ids.length) throw new Error("Nothing to retry.");
+        const lensId = batch.kind === "lens" ? (JSON.parse(batch.config) as { lens?: { id: string } }).lens?.id : undefined;
+        try {
+          const { id: batchId, skipped } = await enqueue(env, ids, batch.kind, lensId);
+          return json({ ...(await library(env)), batchId, skipped });
+        } catch (error) {
+          if (error instanceof NothingToRun) return json({ error: error.message, skipped: error.skipped }, 400);
+          throw error;
+        }
+      }
       const batchMatch = path.match(/^\/api\/batches\/([^/]+)$/);
       if (batchMatch && request.method === "DELETE") {
         const batchId = batchMatch[1]!;

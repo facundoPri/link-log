@@ -1,38 +1,25 @@
-import { judge, tagQuestions, lensQuestions, lensAnswer } from "../ai/jev";
+import { JevFailure, tagQuestions, lensQuestions, lensAnswer } from "../ai/jev";
+import { evaluateWithJev, readSaved } from "./jev-step";
 import { evaluationStatements } from "../ai/persist";
 import type { JobHandler } from "./index";
 
 export const classifyHandler: JobHandler = {
   pool: () => "jev",
   async run({ env, step, job, link, config }) {
-    const result = await step.do(
-      "evaluate-jev",
-      { retries: { limit: 0, delay: "1 second" }, timeout: "2 minutes" },
-      async () => {
-        await env.DB.prepare(
-          "UPDATE jobs SET step='Evaluating with Jev' WHERE id=?",
-        )
-          .bind(job.id)
-          .run();
-        const object = await env.CONTENT.get(link.content_key!);
-        if (!object)
-          throw new Error("Saved content is missing. Extract it again.");
-        if (job.kind !== "autotag" && !config.lens)
-          throw new Error("This job predates lenses; it can't be run.");
-        return judge(
-          env,
-          {
-            url: link.url,
-            title: link.title,
-            content: await object.text(),
-          },
-          job.kind === "autotag"
-            ? tagQuestions(config.tags!)
-            : lensQuestions(config.lens!), // legacy "query" jobs lack config.lens and fail here
-          job,
-        );
-      },
-    );
+    const result = await evaluateWithJev(env, step, job, async () => {
+      if (job.kind !== "autotag" && !config.lens)
+        throw new JevFailure("before_call", "before_call", "This job predates lenses; it can't be run.");
+      return {
+        state: {
+          url: link.url,
+          title: link.title,
+          content: await readSaved(env, link.content_key, "Saved content is missing. Extract it again."),
+        },
+        questions: job.kind === "autotag"
+          ? tagQuestions(config.tags!)
+          : lensQuestions(config.lens!), // legacy "query" jobs lack config.lens and fail above
+      };
+    });
     await step.do("save-evaluation", async () => {
       const now = new Date().toISOString();
       const statements: D1PreparedStatement[] = [];

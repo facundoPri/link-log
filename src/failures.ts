@@ -17,8 +17,26 @@ export const FAILURE_MESSAGES = {
 } as const;
 export type FailureReason = keyof typeof FAILURE_MESSAGES;
 
+// Jev failures say whether the provider was called: before the call nothing is billed, after it may be.
+export const JEV_FAILURE_MESSAGES = {
+  storage_busy: "Failed before calling Jev (no cost): saved data was briefly unavailable.",
+  before_call: "Failed before calling Jev (no cost).",
+  account_stopped: "Stopped before calling Jev (no cost): Jev refused an earlier request in this batch. Check the API key or the account balance.",
+  account: "Jev refused the request: check the API key or the account balance. It may have been billed.",
+  provider_error: "Jev returned an error (may have been billed).",
+  no_answer: "Jev did not answer in time (may have been billed).",
+  network: "Could not reach Jev (may have been billed).",
+  invalid_response: "Jev returned an invalid answer (may have been billed).",
+  too_long: "Jev rejected the content for exceeding its token window. The full document is still saved and its tags were not changed. To classify it, split the content or paste a shorter version.",
+  interrupted: "The Jev call was interrupted (may have been billed).",
+} as const;
+export type JevReason = keyof typeof JEV_FAILURE_MESSAGES;
+
 export const failureMessage = (reason: string | null | undefined) =>
-  reason && reason in FAILURE_MESSAGES ? FAILURE_MESSAGES[reason as FailureReason] : null;
+  !reason ? null
+    : reason in FAILURE_MESSAGES ? FAILURE_MESSAGES[reason as FailureReason]
+    : reason in JEV_FAILURE_MESSAGES ? JEV_FAILURE_MESSAGES[reason as JevReason]
+    : null;
 
 // What Activity shows under a job: the current attempt with its elapsed time against the attempt's
 // time budget, and the reason of the previous failed attempt while retrying.

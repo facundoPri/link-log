@@ -160,8 +160,15 @@ Jev job fails as "Content missing" before any provider call, and stays out of Ne
 attention. A link with a waiting job counts as processing, and one-off edits (paste
 content, Use preview, tags, retry) wait for it. Cancelling a batch drops its queued
 and waiting jobs; cancelling a not-yet-started extraction also cancels the auto-tag
-and lens jobs waiting for it. Jev calls are not retried automatically; the
-user can create a new attempt. Browser Rendering → Markdown is retried once on a
+and lens jobs waiting for it. Paid steps are not silently retried. A Jev failure
+is split by phase: before the request is sent ("Failed before calling Jev (no cost)",
+no Usage row) only a transient R2 read or a D1 conflict/timeout is retried, once;
+once the request may have been sent (HTTP error, timeout, network error, invalid
+answer: "may have been billed") it is never retried automatically, and failed
+auto-tag and lens jobs can be retried from Activity. If Jev refuses the account
+(401/402/403, insufficient balance, quota), the rest of that batch stops without
+calling. Jev failures never put a link in Needs attention and are logged as
+`jev_step_failed` (phase, reason, provider, HTTP status, attempt). Browser Rendering → Markdown is retried once on a
 transient failure (each attempt is a row in Usage), and Activity shows the current
 attempt and the reason of the previous one. A failed re-extract keeps the previous
 content. Each failed attempt is logged as a `link_step_failed` JSON line (step,

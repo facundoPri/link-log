@@ -17,6 +17,8 @@ import { contentFailureAttentionSql } from "./attention";
 import { canUsePreview, previewFallbackOn, previewFallbackSetting, readPreview, storePreview, usePreviewStatement } from "./preview-content";
 import { adapterMessage, classify, logResidualFailure, LinkFailure } from "./failures";
 import type { Lens, Link, Tag } from "../src/types";
+import { JevFailure } from "./ai/jev";
+import { JEV_FAILURE_MESSAGES } from "../src/failures";
 const POOL_LIMITS = { browser: 2, jev: 16 } as const;
 function poolLimit(env: Env, pool: Pool) {
   const override = Number(
@@ -257,6 +259,7 @@ export class LinkWorkflow extends WorkflowEntrypoint<Env, { id: string }> {
     });
     const { job, link, target } = data;
     const progress: { preview?: "ok" | "failed" } = {};
+    let stoppedLinks: (string | null)[] = [];
     const acquire = async (pool: Pool | null) => {
       if (!pool) return;
       const limit = poolLimit(env, pool);
@@ -317,14 +320,15 @@ export class LinkWorkflow extends WorkflowEntrypoint<Env, { id: string }> {
         ]);
       });
     } catch (error) {
-      await step.do("record-failure", { retries: { limit: 5, delay: "2 seconds", backoff: "exponential" } }, async () => {
+      stoppedLinks = await step.do("record-failure", { retries: { limit: 5, delay: "2 seconds", backoff: "exponential" } }, async () => {
         await env.DB.prepare("UPDATE usage_events SET status='failed',error='Provider call interrupted before completion' WHERE job_id=? AND status='started'").bind(job.id).run();
         const raw = error instanceof Error ? error.message : "Could not process";
         // Extraction shows a plain reason, or an adapter message written for users; raw detail goes to the logs.
         const failure = (job.kind === "extract" || job.kind === "preview") && link ? classify(error) : null;
         if (failure && !(error instanceof LinkFailure))
           await logResidualFailure(env, failure, { link_id: link!.id, job_id: job.id, url: link!.url });
-        const reason = failure?.reason ?? null;
+        const jev = error instanceof JevFailure ? error : null;
+        const reason = failure?.reason ?? jev?.reason ?? null;
         const message = failure ? (adapterMessage(raw) ?? failure.message) : raw;
         // One transaction: the job's terminal status, the link's failure and its Needs attention. Every write is
         // guarded by the job still running, so a repeated callback finishes an unfinished settlement while a
@@ -351,12 +355,31 @@ export class LinkWorkflow extends WorkflowEntrypoint<Env, { id: string }> {
           }
         }
         // Activity keeps the original failure; the step notes when the preview was used instead.
+        // Jev, lens and browser failures never put a link in Needs attention.
+        const failedStep = job.kind === "extract" || job.kind === "preview" ? "'Needs attention'" : "'Failed'";
+        const now = new Date().toISOString();
         statements.push(env.DB.prepare(
-          `UPDATE jobs SET status='failed',step=${usedPreview ? "CASE WHEN EXISTS (SELECT 1 FROM links WHERE id=? AND content_key=?) THEN 'Used the preview' ELSE 'Needs attention' END" : "'Needs attention'"},error=?,reason=?,completed_at=? WHERE id=? AND status='running'`,
-        ).bind(...(usedPreview ? [link!.id, fallbackKey] : []), message, reason, new Date().toISOString(), job.id));
+          `UPDATE jobs SET status='failed',step=${usedPreview ? `CASE WHEN EXISTS (SELECT 1 FROM links WHERE id=? AND content_key=?) THEN 'Used the preview' ELSE ${failedStep} END` : failedStep},error=?,reason=?,completed_at=? WHERE id=? AND status='running'`,
+        ).bind(...(usedPreview ? [link!.id, fallbackKey] : []), message, reason, now, job.id));
         // The link's next waiting job starts in the same transaction that settles this one.
         if (job.link_id) statements.push(promoteWaiting(env.DB, job.link_id));
+        // Jev refused the account: the rest of the batch would fail the same way, so it stops without calling.
+        // Running jobs see this job's reason before they send (see judge).
+        let stopped: (string | null)[] = [];
+        if (jev?.reason === "account") {
+          stopped = (await env.DB.prepare("SELECT link_id FROM jobs WHERE batch_id=? AND id<>? AND status IN ('queued','waiting')")
+            .bind(job.batch_id, job.id).all<{ link_id: string | null }>()).results.map((r) => r.link_id);
+          statements.push(
+            env.DB.prepare(
+              `UPDATE jobs SET status='failed',step='Stopped',error=?,reason='account_stopped',completed_at=? WHERE batch_id=? AND id<>? AND status IN ('queued','waiting') AND EXISTS (SELECT 1 FROM jobs WHERE id=? AND status='failed' AND reason='account')`,
+            ).bind(JEV_FAILURE_MESSAGES.account_stopped, now, job.batch_id, job.id, job.id),
+            // Jobs of other batches waiting behind a stopped one start now.
+            promoteWaiting(env.DB),
+          );
+          console.log(JSON.stringify({ event: "jev_batch_stopped", batch_id: job.batch_id, job_id: job.id, http_status: jev.detail.http_status ?? null, stopped: stopped.length }));
+        }
         await env.DB.batch(statements);
+        return stopped;
       });
     } finally {
       await step.do("release-provider-slot", async () => {
@@ -364,7 +387,8 @@ export class LinkWorkflow extends WorkflowEntrypoint<Env, { id: string }> {
           .bind(job.id)
           .run();
       });
-      if (job.link_id) await step.do("start-next", () => startNext(env, [job.link_id]));
+      const next = [job.link_id, ...stoppedLinks];
+      if (next.some(Boolean)) await step.do("start-next", () => startNext(env, next));
     }
   }
 }
