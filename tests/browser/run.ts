@@ -913,6 +913,6 @@ try {
   site.stop();
   markedApp.stop();
   const failed = checks.filter((c) => !c.ok);
-  console.log(`\n${checks.length - failed.length}/${checks.length} checks passed. Evidence: docs/browser-validation/`);
+  console.log(`\n${checks.length - failed.length}/${checks.length} checks passed. Evidence: ${EVIDENCE}`);
   process.exit(failed.length ? 1 : 0);
 }
