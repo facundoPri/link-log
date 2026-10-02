@@ -55,8 +55,8 @@ export async function addLinks(env: Env, userId: string, inputs: string[]): Prom
     const db = env.DB;
     const now = new Date().toISOString();
     const batchId = crypto.randomUUID();
-    const linkIds = [...fresh.map((f) => f.id), ...orphans.map((o) => o.id)];
-    const marks = linkIds.map(() => "?").join(",");
+    // D1 allows at most 100 bound parameters per statement, also inside a batch: every statement
+    // below binds a constant number of values, so up to 100 URLs (and orphans) fit in ONE batch.
     const statements: D1PreparedStatement[] = [
       ...fresh.map((f) =>
         db
@@ -65,12 +65,7 @@ export async function addLinks(env: Env, userId: string, inputs: string[]): Prom
           )
           .bind(f.id, userId, f.url, f.url, domainOf(f.url), domainOf(f.url), now, userId, f.url, f.url),
       ),
-      // The batch exists only if it will hold a job (a fully deduped call writes nothing).
-      db
-        .prepare(
-          `INSERT INTO batches(id,user_id,kind,config,created_at) SELECT ?,?,'extract','{}',? WHERE EXISTS(SELECT 1 FROM links l WHERE l.user_id=? AND l.id IN (${marks}) AND NOT EXISTS(SELECT 1 FROM jobs j WHERE j.link_id=l.id))`,
-        )
-        .bind(batchId, userId, now, userId, ...linkIds),
+      db.prepare("INSERT INTO batches(id,user_id,kind,config,created_at) VALUES(?,?,'extract','{}',?)").bind(batchId, userId, now),
       ...[...fresh, ...orphans].map((j) =>
         db
           .prepare(
@@ -81,6 +76,8 @@ export async function addLinks(env: Env, userId: string, inputs: string[]): Prom
       db
         .prepare(`UPDATE links SET content_state='queued',content_error=NULL WHERE user_id=? AND id IN (SELECT link_id FROM jobs WHERE batch_id=?)`)
         .bind(userId, batchId),
+      // A fully deduped call (every link already had a job) leaves no empty batch behind.
+      db.prepare("DELETE FROM batches WHERE id=? AND user_id=? AND NOT EXISTS(SELECT 1 FROM jobs WHERE batch_id=?)").bind(batchId, userId, batchId),
     ];
     let results: D1Result[];
     try {

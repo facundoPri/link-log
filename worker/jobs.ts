@@ -39,22 +39,34 @@ export async function enqueue(
   ids = [...new Set(ids)];
   if (!ids.length || ids.length > 100)
     throw new Error("Select between 1 and 100 links per batch.");
-  const links = await env.DB.prepare(
-    `SELECT * FROM links WHERE user_id=? AND id IN (${ids.map(() => "?").join(",")})`,
-  )
-    .bind(userId, ...ids)
-    .all<Link>();
+  // Reads stay under D1's 100 bound parameters per statement (owner + 99 ids per chunk).
+  const chunks = Array.from({ length: Math.ceil(ids.length / 99) }, (_, i) => ids.slice(i * 99, i * 99 + 99));
+  const links = {
+    results: (
+      await Promise.all(
+        chunks.map((chunk) =>
+          env.DB.prepare(`SELECT * FROM links WHERE user_id=? AND id IN (${chunk.map(() => "?").join(",")})`)
+            .bind(userId, ...chunk)
+            .all<Link>(),
+        ),
+      )
+    ).flatMap((r) => r.results),
+  };
   if (links.results.length !== ids.length)
     throw new Error("One of the links no longer exists.");
   if (kind !== "extract" && links.results.some((l) => !l.content_key))
     throw new Error(
       "All selected links need context first.",
     );
-  const active = await env.DB.prepare(
-    `SELECT id FROM jobs WHERE status IN ('queued','running') AND link_id IN (${ids.map(() => "?").join(",")}) LIMIT 1`,
-  )
-    .bind(...ids)
-    .first();
+  const active = (
+    await Promise.all(
+      chunks.map((chunk) =>
+        env.DB.prepare(`SELECT id FROM jobs WHERE status IN ('queued','running') AND link_id IN (${chunk.map(() => "?").join(",")}) LIMIT 1`)
+          .bind(...chunk)
+          .first(),
+      ),
+    )
+  ).some(Boolean);
   if (active)
     throw new Error("Some selected links are still processing.");
   let config: Config = {};

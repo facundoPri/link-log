@@ -50,16 +50,19 @@ export const activityRoutes = new Hono<AppEnv>()
     const batch = await ownedBatch(env.DB, userId, c.req.param("id"));
     const pending = await env.DB.prepare("SELECT link_id FROM jobs WHERE batch_id=? AND status='queued' AND link_id IS NOT NULL")
       .bind(batch.id).all<{ link_id: string }>();
-    const statements: D1PreparedStatement[] = [
-      env.DB.prepare("UPDATE jobs SET status='failed',step='Cancelled',error='Cancelled',completed_at=? WHERE batch_id=? AND status='queued'")
-        .bind(new Date().toISOString(), batch.id),
-    ];
+    // Constant bound parameters (D1: max 100 per statement): the links are selected by subquery,
+    // before their queued jobs are marked cancelled in the same batch.
+    const statements: D1PreparedStatement[] = [];
     if (batch.kind === "extract" && pending.results.length)
       statements.push(
         env.DB.prepare(
-          `UPDATE links SET content_state=${preservedContentStateSql("missing")},content_error=NULL WHERE user_id=? AND id IN (${pending.results.map(() => "?").join(",")}) AND content_state='queued'`,
-        ).bind(userId, ...pending.results.map((r) => r.link_id)),
+          `UPDATE links SET content_state=${preservedContentStateSql("missing")},content_error=NULL WHERE user_id=? AND content_state='queued' AND id IN (SELECT link_id FROM jobs WHERE batch_id=? AND status='queued' AND link_id IS NOT NULL)`,
+        ).bind(userId, batch.id),
       );
+    statements.push(
+      env.DB.prepare("UPDATE jobs SET status='failed',step='Cancelled',error='Cancelled',completed_at=? WHERE batch_id=? AND status='queued'")
+        .bind(new Date().toISOString(), batch.id),
+    );
     await env.DB.batch(statements);
     return json({ ...(await library(env, userId)), cancelled: pending.results.length });
   })

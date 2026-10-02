@@ -13,6 +13,8 @@ const toSqlite = (v: unknown): Value => {
 };
 const returnsRows = (sql: string) => /^\s*(select|with|pragma)\b/i.test(sql) || /\breturning\b/i.test(sql);
 
+export const MAX_BOUND_PARAMETERS = 100;
+
 export class TestD1 {
   readonly sqlite: Database;
   constructor(sqlite = new Database(":memory:")) {
@@ -32,6 +34,9 @@ export class TestD1 {
     }
   }
   run(sql: string, params: unknown[]) {
+    // D1's limit, also per statement inside batch() (developers.cloudflare.com/d1/platform/limits/).
+    // SQLite itself allows far more, so without this the tests could not catch it.
+    if (params.length > MAX_BOUND_PARAMETERS) throw new Error(`D1_ERROR: too many SQL variables (${params.length} > ${MAX_BOUND_PARAMETERS})`);
     const stmt = this.sqlite.prepare(sql);
     const values = params.map(toSqlite);
     if (returnsRows(sql)) {
