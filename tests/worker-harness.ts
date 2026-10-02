@@ -25,6 +25,8 @@ export const fakes: {
   discoverError?: string;
   /** Make D1 statements matching this pattern fail like a busy database. */
   failSql?: RegExp;
+  /** Like failSql, but only the first matching write fails. */
+  failSqlOnce?: RegExp;
 } = {
   meta: { status: "ready" },
   content: { markdown: "# page" },
@@ -74,6 +76,10 @@ export const { dispatch } = await import("../worker/jobs");
 function d1(db: Database) {
   const check = (sql: string) => {
     if (fakes.failSql?.test(sql)) throw new Error("D1_ERROR: database unavailable (SQLITE_BUSY)");
+    if (fakes.failSqlOnce?.test(sql)) {
+      fakes.failSqlOnce = undefined;
+      throw new Error("D1_ERROR: database unavailable (SQLITE_BUSY)");
+    }
   };
   const stmt = (sql: string, params: unknown[] = []) => ({
     bind: (...p: unknown[]) => stmt(sql, p),
@@ -102,6 +108,7 @@ export async function setup() {
   fakes.onContent = undefined;
   fakes.browser = undefined;
   fakes.failSql = undefined;
+  fakes.failSqlOnce = undefined;
   fakes.discoverError = undefined;
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys=ON");

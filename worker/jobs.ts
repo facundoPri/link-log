@@ -13,7 +13,7 @@ import {
 import { capabilities, parseLensDefinition } from "./store";
 import { jevUnavailable } from "../src/attention";
 import { preservedContentStateSql, restoredContentStateSql } from "./content-state";
-import { settleAttention } from "./attention";
+import { attentionSet, nextAttention, readAttentionState } from "./attention";
 import { adapterMessage, classify, logResidualFailure, LinkFailure } from "./failures";
 import type { Lens, Link, Tag } from "../src/types";
 const POOL_LIMITS = { browser: 2, jev: 16 } as const;
@@ -268,7 +268,7 @@ export class LinkWorkflow extends WorkflowEntrypoint<Env, { id: string }> {
           .run();
       });
     } catch (error) {
-      await step.do("record-failure", async () => {
+      await step.do("record-failure", { retries: { limit: 5, delay: "2 seconds", backoff: "exponential" } }, async () => {
         await env.DB.prepare("UPDATE usage_events SET status='failed',error='Provider call interrupted before completion' WHERE job_id=? AND status='started'").bind(job.id).run();
         const raw = error instanceof Error ? error.message : "Could not process";
         // Extraction shows a plain reason, or an adapter message written for users; raw detail goes to the logs.
@@ -277,22 +277,23 @@ export class LinkWorkflow extends WorkflowEntrypoint<Env, { id: string }> {
           await logResidualFailure(env, failure, { link_id: link!.id, job_id: job.id, url: link!.url });
         const reason = failure?.reason ?? null;
         const message = failure ? (adapterMessage(raw) ?? failure.message) : raw;
-        const settled = await env.DB.prepare(
-          "UPDATE jobs SET status='failed',step='Needs attention',error=?,reason=?,completed_at=? WHERE id=? AND status='running'",
-        )
-          .bind(message, reason, new Date().toISOString(), job.id)
-          .run();
+        // One transaction: the job's terminal status, the link's failure and its Needs attention. Every write is
+        // guarded by the job still running, so a repeated callback finishes an unfinished settlement while a
+        // cancelled or interrupted job (already settled elsewhere) is left alone.
+        const running = "EXISTS (SELECT 1 FROM jobs WHERE id=? AND status='running')";
+        const statements: D1PreparedStatement[] = [];
         // The preview axis is owned by save-preview: a preview that never ran stays neutral.
-        if (job.kind === "extract" && link) {
-          await env.DB.prepare(
-            `UPDATE links SET content_state=${preservedContentStateSql("failed")},content_error=?,content_reason=? WHERE id=?`,
-          )
-            .bind(message, reason, link.id)
-            .run();
-          // An interrupted or cancelled job was already settled elsewhere and leaves Needs attention alone.
-          if (settled.meta.changes)
-            await settleAttention(env.DB, link.id, { content: "failed", content_reason: reason, preview: progress.preview });
+        const state = job.kind === "extract" && link ? await readAttentionState(env.DB, link.id) : null;
+        if (state) {
+          const set = attentionSet(nextAttention(state, { content: "failed", content_reason: reason, preview: progress.preview }));
+          statements.push(env.DB.prepare(
+            `UPDATE links SET content_state=${preservedContentStateSql("failed")},content_error=?,content_reason=?,${set.sql} WHERE id=? AND ${running}`,
+          ).bind(message, reason, ...set.params, link!.id, job.id));
         }
+        statements.push(env.DB.prepare(
+          "UPDATE jobs SET status='failed',step='Needs attention',error=?,reason=?,completed_at=? WHERE id=? AND status='running'",
+        ).bind(message, reason, new Date().toISOString(), job.id));
+        await env.DB.batch(statements);
       });
     } finally {
       await step.do("release-provider-slot", async () => {
