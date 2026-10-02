@@ -11,9 +11,13 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "db:migrate": "wrangler d1 migrations apply linklog --local",
-    "preview": "bun run build && wrangler dev --ip 127.0.0.1 --port 8787"
+    "preview": "bun run build && wrangler dev --ip 127.0.0.1 --port 8787",
+    "demo": "bun run build && bun scripts/demo.ts",
+    "test:e2e": "bun run build && bun scripts/e2e-auth.ts",
+    "legacy:adjudicate": "bun scripts/adjudicate-legacy.ts"
   },
   "dependencies": {
+    "better-auth": "1.7.7",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
@@ -35,6 +39,7 @@
     "@types/bun": "latest",
     "@types/react": "19",
     "@types/react-dom": "19",
+    "auth": "1.7.7",
     "bun-plugin-tailwind": "^0.1.2",
     "playwright-core": "^1.63.0",
     "prettier": "^3.9.8",

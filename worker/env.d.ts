@@ -7,4 +7,9 @@ interface Env {
   JEV_MODEL?: string;
   BROWSER_CONCURRENCY?: string;
   JEV_CONCURRENCY?: string;
+  // Auth/runtime configuration, validated fail-closed by worker/config.ts.
+  BETTER_AUTH_URL?: string;
+  BETTER_AUTH_SECRET?: string;
+  EMAIL_FROM?: string;
+  AUTH_EMAIL_DAILY_LIMIT?: string;
 }
