@@ -14,6 +14,7 @@ import { capabilities, parseLensDefinition } from "./store";
 import { jevUnavailable } from "../src/attention";
 import { preservedContentStateSql, restoredContentStateSql } from "./content-state";
 import { contentFailureAttentionSql } from "./attention";
+import { canUsePreview, previewFallbackOn, previewFallbackSetting, readPreview, storePreview, usePreviewStatement } from "./preview-content";
 import { adapterMessage, classify, logResidualFailure, LinkFailure } from "./failures";
 import type { Lens, Link, Tag } from "../src/types";
 const POOL_LIMITS = { browser: 2, jev: 16 } as const;
@@ -282,16 +283,29 @@ export class LinkWorkflow extends WorkflowEntrypoint<Env, { id: string }> {
         // cancelled or interrupted job (already settled elsewhere) is left alone.
         const running = "EXISTS (SELECT 1 FROM jobs WHERE id=? AND status='running')";
         const statements: D1PreparedStatement[] = [];
+        // A final content failure with no content to show can use the preview instead, when the setting is on.
+        // The text is stored first under this job's key; it only becomes the content if the same transaction
+        // still finds the setting on, the job running and the row without content and with that preview.
+        // Anything that ends extraction for good without content (a login wall too) settles here.
+        const fallbackKey = `links/${link?.id}/${job.id}-preview.md`;
+        let usedPreview = false;
         // The preview axis is owned by save-preview: a preview that never ran stays neutral.
         if (job.kind === "extract" && link) {
           const set = contentFailureAttentionSql(reason, progress.preview === "ok");
           statements.push(env.DB.prepare(
             `UPDATE links SET content_state=${preservedContentStateSql("failed")},content_error=?,content_reason=?,${set.sql} WHERE id=? AND ${running}`,
           ).bind(message, reason, ...set.params, link!.id, job.id));
+          const preview = await readPreview(env.DB, link.id);
+          if (preview && canUsePreview(preview) && await previewFallbackOn(env.DB)) {
+            await storePreview(env, fallbackKey, preview);
+            statements.push(usePreviewStatement(env.DB, link.id, fallbackKey, preview, `${previewFallbackSetting} AND ${running}`, job.id));
+            usedPreview = true;
+          }
         }
+        // Activity keeps the original failure; the step notes when the preview was used instead.
         statements.push(env.DB.prepare(
-          "UPDATE jobs SET status='failed',step='Needs attention',error=?,reason=?,completed_at=? WHERE id=? AND status='running'",
-        ).bind(message, reason, new Date().toISOString(), job.id));
+          `UPDATE jobs SET status='failed',step=${usedPreview ? "CASE WHEN EXISTS (SELECT 1 FROM links WHERE id=? AND content_key=?) THEN 'Used the preview' ELSE 'Needs attention' END" : "'Needs attention'"},error=?,reason=?,completed_at=? WHERE id=? AND status='running'`,
+        ).bind(...(usedPreview ? [link!.id, fallbackKey] : []), message, reason, new Date().toISOString(), job.id));
         await env.DB.batch(statements);
       });
     } finally {

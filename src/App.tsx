@@ -16,6 +16,7 @@ import { LensDialog, type LensDraft } from "./components/LensDialog";
 import { lensBucket, lensSelectedKeys } from "./components/LensVerdict";
 import { LensHeader } from "./components/LensHeader";
 import { ActivitySheet } from "./components/ActivitySheet";
+import { SettingsDialog } from "./components/SettingsDialog";
 import { BrowserView } from "./components/browser/BrowserView";
 import { BrowserSidebar } from "./components/browser/BrowserSidebar";
 import { tabDomain, useBrowserWorkspace } from "./browser/useBrowserWorkspace";
@@ -74,6 +75,7 @@ export function App() {
     lenses: [],
     batches: [],
     capabilities: { markdown: false, jev: false, provider: "typesafe" },
+    settings: { preview_fallback: false },
   });
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -89,6 +91,7 @@ export function App() {
     | "add"
     | { tag: Tag | "new" }
     | { lens: Lens | "new"; scope?: LensScope }
+    | "settings"
     | null
   >(null);
   const [browserPicked, setBrowserPicked] = useState<string[]>([]);
@@ -642,6 +645,10 @@ export function App() {
         setActivityOpen(true);
         setMenuOpen(false);
       }}
+      onSettings={() => {
+        setDialog("settings");
+        setMenuOpen(false);
+      }}
       browserCount={ws.browser.snapshot ? ws.tabs.length : null}
       browserPanel={
         <BrowserSidebar
@@ -934,6 +941,10 @@ export function App() {
                   void mutate(`/links/${link.id}/dismiss`, "POST").catch((e) =>
                     toast.error(e.message),
                   ),
+                onUsePreview: (link) =>
+                  void mutate(`/links/${link.id}/use-preview`, "POST").catch((e) =>
+                    toast.error(e.message),
+                  ),
                 onDelete: setDeleteLink,
                 onCopyUrl: (link) => {
                   void navigator.clipboard.writeText(link.url);
@@ -1070,6 +1081,9 @@ export function App() {
             }
           }}
         />
+      )}
+      {dialog === "settings" && (
+        <SettingsDialog library={library} onClose={() => setDialog(null)} onChange={setLibrary} />
       )}
       {dialog && typeof dialog === "object" && "tag" in dialog && (
         <TagDialog

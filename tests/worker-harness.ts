@@ -10,7 +10,7 @@ import { responseFailure } from "../worker/failures";
 import { webAdapter } from "../worker/adapters/web";
 import type { Link } from "../src/types";
 
-type Meta = { status: "ready" | "failed" } | { throws: string } | { http: number; type?: string; headers?: Record<string, string> };
+type Meta = { status: "ready" | "failed"; description?: string } | { throws: string } | { http: number; type?: string; headers?: Record<string, string> };
 type Content = { markdown: string } | { throws: string } | { error: unknown } | { pending: true } | { wait: Promise<string> };
 // A list is consumed one item per call (the last item sticks), to script transient failures.
 export const fakes: {
@@ -49,7 +49,7 @@ mock.module("../worker/metadata", () => ({
       if (failure) throw failure;
     }
     const domain = new URL(url).hostname;
-    return { url, domain, title: `Title of ${domain}`, description: "", image: null, favicon: null, status: "ready" as const };
+    return { url, domain, title: `Title of ${domain}`, description: ("status" in meta && meta.description) || "", image: null, favicon: null, status: "ready" as const };
   },
 }));
 mock.module("../worker/adapters", () => ({

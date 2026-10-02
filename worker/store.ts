@@ -9,6 +9,7 @@ import type {
   MediaItem,
 } from "../src/types";
 import { OCR_USAGE_COLUMNS } from "./usage";
+import { PREVIEW_FALLBACK_KEY } from "./preview-content";
 export const json = (body: unknown, status = 200) =>
   Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
 export function capabilities(env: Env) {
@@ -25,7 +26,7 @@ export function capabilities(env: Env) {
   };
 }
 export async function library(env: Env) {
-  const [links, tags, joins, evaluations, batches, lensRows, lensResults, usageRows, mediaRows, hiddenRows] =
+  const [links, tags, joins, evaluations, batches, lensRows, lensResults, usageRows, mediaRows, hiddenRows, settingRows] =
     await Promise.all([
     env.DB.prepare(
       "SELECT l.*,(SELECT b.kind FROM jobs j JOIN batches b ON b.id=j.batch_id WHERE j.link_id=l.id AND j.status IN ('queued','running') LIMIT 1) active_kind FROM links l ORDER BY l.created_at DESC",
@@ -71,6 +72,7 @@ export async function library(env: Env) {
     }>(),
     env.DB.prepare("SELECT link_id,media_key,position,kind,url,preview_url,ocr_state,ocr_text,ocr_error,ocr_model FROM media_items ORDER BY position").all<MediaItem & {link_id: string}>(),
     env.DB.prepare("SELECT link_id,url FROM hidden_related_links ORDER BY hidden_at").all<{link_id: string; url: string}>(),
+    env.DB.prepare("SELECT key,value FROM settings WHERE key=?").bind(PREVIEW_FALLBACK_KEY).all<{key: string; value: string}>(),
   ]);
   const hiddenByLink = new Map<string, string[]>();
   for (const row of hiddenRows.results)
@@ -159,6 +161,7 @@ export async function library(env: Env) {
       usage: usageByBatch.get(b.id) ?? null,
     })),
     capabilities: capabilities(env),
+    settings: { preview_fallback: settingRows.results.some((r) => r.value === "1") },
   };
 }
 export function parseLensDefinition(

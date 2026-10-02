@@ -7,7 +7,7 @@ import {
   Loader2,
 } from "lucide-react";
 import type { Lens, Link, Tag } from "../types";
-import { attentionMessage, canRetryPreview } from "../attention";
+import { attentionMessage, canRetryPreview, canUsePreview } from "../attention";
 import { failureMessage } from "../failures";
 import { cn } from "../lib/utils";
 import { youtubeId } from "../lib/youtube";
@@ -48,6 +48,7 @@ export function LinkRow({
   onExtract,
   onRetry,
   onDismiss,
+  onUsePreview,
   onDelete,
   onCopyUrl,
 }: {
@@ -64,6 +65,7 @@ export function LinkRow({
   onExtract: () => void;
   onRetry: (step?: "content") => void;
   onDismiss: () => void;
+  onUsePreview: () => void;
   onDelete: () => void;
   onCopyUrl: () => void;
 }) {
@@ -219,6 +221,11 @@ export function LinkRow({
               <Button variant="ghost" size="xs" onClick={() => onRetry(link.attention_kind === "content" ? "content" : undefined)}>
                 Retry
               </Button>
+              {canUsePreview(link) && (
+                <Button variant="ghost" size="xs" onClick={onUsePreview} title="Save the title and description as the content, so Jev can use it">
+                  Use preview
+                </Button>
+              )}
               <Button variant="ghost" size="xs" onClick={onDismiss}>
                 Dismiss
               </Button>
@@ -292,6 +299,9 @@ export function LinkRow({
               <DropdownMenuItem onClick={() => onRetry()}>
                 {link.status === "failed" ? "Retry preview" : "Fetch preview"}
               </DropdownMenuItem>
+            )}
+            {canUsePreview(link) && (
+              <DropdownMenuItem onClick={onUsePreview}>Use preview as content</DropdownMenuItem>
             )}
             {link.attention_kind && (
               <DropdownMenuItem onClick={onDismiss}>Dismiss from Needs attention</DropdownMenuItem>

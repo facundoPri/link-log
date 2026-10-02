@@ -210,6 +210,9 @@ function BatchJobs({ batch }: { batch: Batch }) {
                 {j.error}
               </p>
             )}
+            {j.step === "Used the preview" && (
+              <p className="mt-0.5 text-2xs text-muted-foreground">Used the preview as content instead.</p>
+            )}
             {!j.error && progress.step && (
               <p className="mt-0.5 text-2xs text-muted-foreground">{progress.step}</p>
             )}

@@ -237,8 +237,8 @@ test("signed URL refreshes retain OCR while a changed asset path invalidates it"
 
 test("failed and cancelled retries retain a prior partial state", () => {
   const db = new Database(":memory:");
-  db.exec("CREATE TABLE links(content_key TEXT, content_details TEXT, content_state TEXT, content_error TEXT)");
-  db.query("INSERT INTO links VALUES(?,?,?,NULL)").run("old.md", JSON.stringify({ completeness: "verified", issues: ["Image 2 failed"] }), "queued");
+  db.exec("CREATE TABLE links(content_key TEXT, content_details TEXT, content_state TEXT, content_error TEXT, content_source TEXT)");
+  db.query("INSERT INTO links VALUES(?,?,?,NULL,'x-post')").run("old.md", JSON.stringify({ completeness: "verified", issues: ["Image 2 failed"] }), "queued");
   db.exec(`UPDATE links SET content_state=${preservedContentStateSql("failed")},content_error='New extraction failed'`);
   expect(db.query("SELECT content_state,content_error FROM links").get()).toEqual({ content_state: "partial", content_error: "New extraction failed" });
   db.exec("UPDATE links SET content_state='queued'");

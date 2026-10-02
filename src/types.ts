@@ -159,6 +159,11 @@ export type Library = {
   lenses: Lens[];
   batches: Batch[];
   capabilities: Capabilities;
+  settings: Settings;
+};
+export type Settings = {
+  /** If the content can't be extracted, use the preview (title + description) for Jev. */
+  preview_fallback: boolean;
 };
 export type UsageEvent = {
   id: string;

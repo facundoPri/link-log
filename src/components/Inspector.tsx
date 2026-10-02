@@ -67,6 +67,7 @@ const sourceLabel: Record<string, string> = {
   web: "Page text",
   youtube: "Transcript",
   manual: "Manual text",
+  preview: "Content extracted from preview",
   "youtube-post": "YouTube post",
   "instagram-post": "Instagram post",
   "instagram-reel": "Instagram reel",
@@ -505,12 +506,17 @@ export function Inspector({
               </div>
               {!details.transcript.originalLanguage && <p className="text-muted-foreground">Original audio language could not be verified.</p>}
             </div>}
-            {(link.content_state === "partial" || (details?.issues.length || 0) > 0) && <div role="status" className="mb-3 flex flex-col gap-1 rounded-md bg-muted/50 p-2 text-xs">
+            {link.content_source === "preview" && link.content_key && <div role="status" className="mb-3 flex flex-col gap-1 rounded-md bg-muted/50 p-2 text-xs">
+              <span className="font-medium">Content extracted from preview</span>
+              <span className="text-muted-foreground">Only the title and description are saved, because the page content couldn't be extracted{link.content_error ? `: ${link.content_error}` : "."}</span>
+              <Button variant="outline" size="sm" className="mt-1 self-start" disabled={!!running} onClick={onRetryContent}>Retry getting content</Button>
+            </div>}
+            {link.content_source !== "preview" && (link.content_state === "partial" || (details?.issues.length || 0) > 0) && <div role="status" className="mb-3 flex flex-col gap-1 rounded-md bg-muted/50 p-2 text-xs">
               <span className="font-medium">Extraction incomplete</span>
               {details?.issues.map((issue, i) => <span key={i} className="text-muted-foreground">{issue}</span>)}
               <Button variant="outline" size="sm" className="mt-1 self-start" onClick={onExtract}>Retry extraction</Button>
             </div>}
-            {link.content_key && link.content_error && link.content_state !== "queued" && !details?.issues.includes(link.content_error) && <p role="alert" className="mb-3 text-xs text-destructive">Last extraction failed, showing the previous version: {link.content_error}</p>}
+            {link.content_key && link.content_error && link.content_state !== "queued" && link.content_source !== "preview" && !details?.issues.includes(link.content_error) && <p role="alert" className="mb-3 text-xs text-destructive">Last extraction failed, showing the previous version: {link.content_error}</p>}
             {!editing && !!link.media?.length && <div className="mb-4 flex flex-col gap-2" aria-label="Post media">
               <p className="text-xs text-muted-foreground">{link.media.length} media · {link.media.filter((item) => item.ocr_state === "done").length} with OCR</p>
               {link.media.length > 1 && <div className="grid grid-cols-5 gap-1.5" aria-label="Media in post order">

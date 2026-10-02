@@ -10,6 +10,7 @@ import {
   Link2,
   ListChecks,
   Plus,
+  Settings,
   Tag,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -65,6 +66,7 @@ export function Sidebar({
   onEditLens,
   onDeleteLens,
   onActivity,
+  onSettings,
   browserCount,
   browserPanel,
 }: {
@@ -86,6 +88,7 @@ export function Sidebar({
   onEditLens: (lens: Lens) => void;
   onDeleteLens: (lens: Lens) => void;
   onActivity: () => void;
+  onSettings: () => void;
 }) {
   const untaggedCount = library.links.filter((l) => !l.tags.length).length;
   const attentionCount = library.links.filter(needsAttention).length;
@@ -302,6 +305,10 @@ export function Sidebar({
               <span className="size-1.5 rounded-full bg-brand animate-pulse" />
             </span>
           )}
+        </Button>
+        <Button variant="ghost" className={item} onClick={onSettings}>
+          <Settings className="size-4" />
+          Settings
         </Button>
       </div>
     </div>

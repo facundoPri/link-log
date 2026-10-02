@@ -9,6 +9,7 @@ import { OCR_USAGE_COLUMNS } from "./usage";
 import { browserRoute, cleanupBrowser } from "./browser";
 import { addLink } from "./links";
 import { settleAttention } from "./attention";
+import { canUsePreview, PREVIEW_FALLBACK_KEY, readPreview, storePreview, usePreviewStatement } from "./preview-content";
 export { LinkWorkflow };
 type JobUsageRow = {
   job_id: string;
@@ -435,7 +436,7 @@ export default {
           await env.CONTENT.put(key, markdown, {
             httpMetadata: { contentType: "text/markdown; charset=utf-8" },
           });
-          await env.DB.prepare("UPDATE links SET content_key=?,content_version=content_version+1,content_source='manual',content_state=CASE WHEN content_state='partial' THEN 'partial' ELSE 'ready' END,content_error=NULL,content_reason=NULL,content_updated_at=? WHERE id=?")
+          await env.DB.prepare("UPDATE links SET content_key=?,content_version=content_version+1,content_source='manual',content_state=CASE WHEN content_state='partial' AND content_source IS NOT 'preview' THEN 'partial' ELSE 'ready' END,content_error=NULL,content_reason=NULL,content_updated_at=? WHERE id=?")
             .bind(key, new Date().toISOString(), link.id).run();
           // Pasted content resolves a failed extraction like a successful one.
           await settleAttention(env.DB, link.id, { content: "ok" });
@@ -528,6 +529,29 @@ export default {
             )
             .run();
         } else return json({ error: "Method not allowed." }, 405);
+        return json(await library(env));
+      }
+      if (path === "/api/settings" && request.method === "PUT") {
+        if (typeof body.preview_fallback !== "boolean") throw new Error("Invalid settings.");
+        await env.DB.prepare("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+          .bind(PREVIEW_FALLBACK_KEY, body.preview_fallback ? "1" : "0").run();
+        return json(await library(env));
+      }
+      const usePreviewMatch = path.match(/^\/api\/links\/([^/]+)\/use-preview$/);
+      if (usePreviewMatch && request.method === "POST") {
+        // The per-link "use the preview as content": the same result as the setting, on demand, never while a job runs.
+        const id = usePreviewMatch[1]!;
+        const link = await readPreview(env.DB, id);
+        if (!link) return json({ error: "The link no longer exists." }, 404);
+        const idle = "NOT EXISTS (SELECT 1 FROM jobs WHERE link_id=? AND status IN ('queued','running'))";
+        if (!(await env.DB.prepare(`SELECT ${idle} idle`).bind(id).first<{ idle: number }>())?.idle)
+          throw new Error("Wait for the running job to finish.");
+        if (link.content_key) throw new Error("This link already has content.");
+        if (!canUsePreview(link)) throw new Error("There is no preview to use.");
+        const key = `links/${id}/${crypto.randomUUID()}-preview.md`;
+        await storePreview(env, key, link);
+        const used = await usePreviewStatement(env.DB, id, key, link, idle, id).run();
+        if (!used.meta.changes) throw new Error("The link changed meanwhile. Try again.");
         return json(await library(env));
       }
       const dismissMatch = path.match(/^\/api\/links\/([^/]+)\/dismiss$/);

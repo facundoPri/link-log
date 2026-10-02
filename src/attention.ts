@@ -6,6 +6,9 @@ import { failureMessage } from "./failures";
 export const needsAttention = (l: Pick<Link, "attention_kind">) => l.attention_kind !== null;
 export const attentionMessage = (l: Pick<Link, "attention_kind" | "attention_reason">) =>
   `${l.attention_kind === "content" ? "Couldn't get the content" : "Couldn't get the preview"}: ${failureMessage(l.attention_reason) ?? "Something went wrong."}`;
+// With content that failed for good, the preview (title + description) can stand in for it (FAC-56).
+export const canUsePreview = (l: Pick<Link, "attention_kind" | "status" | "content_key" | "processing">) =>
+  l.attention_kind === "content" && l.status === "ready" && !l.content_key && !l.processing;
 // The API refuses a preview retry while a job is active, so only offer it when idle.
 export const canRetryPreview = (l: Pick<Link, "status" | "processing">) =>
   !l.processing && (l.status === "failed" || l.status === "pending");
