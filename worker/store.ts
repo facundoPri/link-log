@@ -9,6 +9,7 @@ import type {
   MediaItem,
 } from "../src/types";
 import { OCR_USAGE_COLUMNS } from "./usage";
+import { fixtureJevAllowed } from "./config";
 export const json = (body: unknown, status = 200) =>
   Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
 export function capabilities(env: Env) {
@@ -20,7 +21,7 @@ export function capabilities(env: Env) {
       provider === "typesafe"
         ? !!env.TYPESAFE_API_KEY
         : provider === "fixture"
-          ? env.ALLOW_FIXTURE_JEV === "1"
+          ? fixtureJevAllowed(env)
           : !!env.AI,
   };
 }

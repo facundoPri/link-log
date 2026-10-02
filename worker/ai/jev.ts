@@ -1,6 +1,7 @@
 import type { Answer, Lens, LensOption, Question, Tag } from "../../src/types";
 import { measured } from "../usage";
 import { fixtureJev } from "./fixture";
+import { fixtureJevAllowed } from "../config";
 export type { Answer, Question } from "../../src/types";
 export function probability(n: unknown): n is number {
   return typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= 1;
@@ -182,12 +183,13 @@ export async function judge(
   // the provider's tokenizer still enforces the real context window.
   const input = { state: truncateState(state), questions };
   const provider = env.JEV_PROVIDER || "cloudflare";
+  // Refused before anything is measured or saved: no fictitious answers outside local/test.
+  if (provider === "fixture" && !fixtureJevAllowed(env))
+    throw new Error("The fixture Jev provider is only available in local and test environments.");
   return measured(env, job, "jev", provider, "classify", async (meter) => {
     let raw: Record<string, unknown>;
     if (provider === "fixture") {
       // Deterministic, unpaid answers for automated tests. Never enabled by default.
-      if (env.ALLOW_FIXTURE_JEV !== "1")
-        throw new Error("The fixture Jev provider is only available in tests.");
       raw = await fixtureJev(input);
     } else if (provider === "typesafe") {
       if (!env.TYPESAFE_API_KEY)

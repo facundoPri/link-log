@@ -17,6 +17,12 @@ const LOOPBACK = ["localhost", "127.0.0.1", "[::1]"];
 const KNOWN_WEAK = /^(changeme|secret|password|better-auth-secret|linklog-dev|test)/i;
 
 export const isLocalEnv = (env: AppEnv) => env === "local" || env === "test";
+/**
+ * The deterministic test provider. Checked where it runs (Queue/Workflow included), not only by
+ * readConfig on HTTP requests: both flags plus a local/test APP_ENV, or nothing.
+ */
+export const fixtureJevAllowed = (env: Env) =>
+  env.JEV_PROVIDER === "fixture" && env.ALLOW_FIXTURE_JEV === "1" && isLocalEnv(String(env.APP_ENV ?? "") as AppEnv);
 export const isLoopbackHost = (hostname: string) => LOOPBACK.includes(hostname);
 
 export function readConfig(env: Env): AppConfig {
