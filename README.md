@@ -57,7 +57,7 @@ Saves immediately to D1; the extraction workflow enriches title, description, Op
 
 The aliases `youtu.be`, `www.youtube.com`, `m.youtube.com` and `music.youtube.com` are grouped as `youtube.com`. Known tracking parameters are stripped; functional parameters and fragments are preserved. Exact-normalized duplicates or duplicates of an already-resolved destination return the existing link and merge tags, even with concurrent saves. Two different shorteners reaching the same destination after saving can still coexist; they are not merged automatically.
 
-A blocked, slow or HTML-less page keeps the link and allows a retry. A link whose preview has not finished shows as processing while it has a queued or running job; if the Worker restarts mid-extraction, the cron recovery below resends the job. A link left without a preview and without a job (cancelled batch, interrupted extraction) stays neutral, never in Needs attention, and offers "Fetch preview". A "Retry preview" that dies with the Worker turns neutral after 30s. Remote images have a fallback; their availability depends on the site. There is no image archive or oEmbed. R2 stores the Markdown and transcripts.
+The preview is retried twice with exponential backoff when the site is slow, unreachable, rate limited or answers 5xx; a block (401/403 or a bot challenge), 404/410 or a non-HTML file (like a PDF) fails at once. A failed preview keeps the link, shows a plain reason and allows a retry; on a re-extract, a preview that worked before is kept and the failure is only listed in Activity. A link whose preview has not finished shows as processing while it has a queued or running job; if the Worker restarts mid-extraction, the cron recovery below resends the job. A link left without a preview and without a job (cancelled batch, interrupted extraction) stays neutral, never in Needs attention, and offers "Fetch preview". A "Retry preview" that dies with the Worker turns neutral after 30s. Remote images have a fallback; their availability depends on the site. There is no image archive or oEmbed. R2 stores the Markdown and transcripts.
 
 ## Cloudflare: current boundary
 
@@ -147,8 +147,12 @@ public access without login or personal cookies. A blocked image remains visible
 as a partial result when useful text was obtained.
 
 D1 acts as the outbox, Queue delivers IDs and each Workflow uses a stable ID so
-work is not duplicated on redelivery. Paid steps are not silently retried; the
-user can create a new attempt. There are two shared provider slots via five-minute
+work is not duplicated on redelivery. Jev calls are not retried automatically; the
+user can create a new attempt. Browser Rendering → Markdown is retried once on a
+transient failure (each attempt is a row in Usage), and Activity shows the current
+attempt and the reason of the previous one. A failed re-extract keeps the previous
+content. Each failed attempt is logged as a `link_step_failed` JSON line (step,
+reason, HTTP status, content type, domain, attempt) in Workers Logs. There are two shared provider slots via five-minute
 D1 leases; steps have a two-minute timeout. Cron recovers pending jobs;
 `scripts/dev.ts` simulates this cron every 30 seconds because Wrangler does not
 run cron automatically in local dev.

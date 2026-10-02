@@ -16,6 +16,7 @@ import { api } from "../api";
 import type { Library } from "../types";
 import type { Batch, Job, Lens, OcrUsage, UsageTotals } from "../types";
 import { LensVerdict } from "./LensVerdict";
+import { jobProgress } from "../failures";
 import { relativeTime } from "../lib/time";
 import { usd, tokens, duration } from "../lib/format";
 import { cn } from "../lib/utils";
@@ -119,6 +120,7 @@ function BatchJobs({ batch }: { batch: Batch }) {
       {jobs.map((j) => {
         const result = j.result ? JSON.parse(j.result) : null;
         const answer = result?.answer ?? result?.answers?.lens;
+        const progress = jobProgress(j);
         return (
           <div key={j.id} className="rounded-md px-2 py-1.5">
             <div className="flex items-center gap-2">
@@ -207,8 +209,11 @@ function BatchJobs({ batch }: { batch: Batch }) {
                 {j.error}
               </p>
             )}
-            {!j.error && j.status !== "done" && j.status !== "failed" && (
-              <p className="mt-0.5 text-2xs text-muted-foreground">{j.step}</p>
+            {!j.error && progress.step && (
+              <p className="mt-0.5 text-2xs text-muted-foreground">{progress.step}</p>
+            )}
+            {progress.note && (
+              <p className="mt-0.5 text-2xs text-muted-foreground">{progress.note}</p>
             )}
           </div>
         );

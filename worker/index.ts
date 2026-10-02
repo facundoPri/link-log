@@ -1,5 +1,6 @@
 import { normalizeUrl, domainOf } from "../src/url";
 import { extractMetadata } from "./metadata";
+import { classify, logFailure } from "./failures";
 import type { LensOption, LensLevel, Link, Tag } from "../src/types";
 
 import { json, library, text, threshold } from "./store";
@@ -35,28 +36,22 @@ type UsageTotalsRow = {
   usd: number | null;
   unknown_cost_calls: number;
 };
+// "Retry preview" runs once outside the queue; its failure reason is shown like a workflow's.
 async function enrich(db: D1Database, id: string, url: string) {
   try {
     const m = await extractMetadata(url);
     await db
       .prepare(
-        "UPDATE links SET url=?, domain=?, title=?, description=?, image=?, favicon=?, status=? WHERE id=?",
+        "UPDATE links SET url=?, domain=?, title=?, description=?, image=?, favicon=?, status='ready', preview_reason=NULL WHERE id=?",
       )
-      .bind(
-        m.url,
-        m.domain,
-        m.title,
-        m.description,
-        m.image,
-        m.favicon,
-        m.status,
-        id,
-      )
+      .bind(m.url, m.domain, m.title, m.description, m.image, m.favicon, id)
       .run();
-  } catch {
+  } catch (error) {
+    const failure = classify(error);
+    logFailure(failure, { link_id: id, job_id: null, step: "preview-retry", url, attempt: 1, max_attempts: 1, final: true });
     await db
-      .prepare("UPDATE links SET status='failed' WHERE id=?")
-      .bind(id)
+      .prepare("UPDATE links SET status='failed', preview_reason=? WHERE id=?")
+      .bind(failure.reason, id)
       .run();
   }
 }
@@ -321,7 +316,7 @@ export default {
         if (batch.kind === "extract" && pending.results.length)
           statements.push(
             env.DB.prepare(
-              `UPDATE links SET content_state=${preservedContentStateSql("missing")},content_error=NULL WHERE id IN (${pending.results.map(() => "?").join(",")}) AND content_state='queued'`,
+              `UPDATE links SET content_state=${preservedContentStateSql("missing")},content_error=NULL,content_reason=NULL WHERE id IN (${pending.results.map(() => "?").join(",")}) AND content_state='queued'`,
             ).bind(...pending.results.map((r) => r.link_id)),
           );
         await env.DB.batch(statements);
@@ -460,7 +455,7 @@ export default {
           await env.CONTENT.put(key, markdown, {
             httpMetadata: { contentType: "text/markdown; charset=utf-8" },
           });
-          await env.DB.prepare("UPDATE links SET content_key=?,content_version=content_version+1,content_source='manual',content_state=CASE WHEN content_state='partial' THEN 'partial' ELSE 'ready' END,content_error=NULL,content_updated_at=? WHERE id=?")
+          await env.DB.prepare("UPDATE links SET content_key=?,content_version=content_version+1,content_source='manual',content_state=CASE WHEN content_state='partial' THEN 'partial' ELSE 'ready' END,content_error=NULL,content_reason=NULL,content_updated_at=? WHERE id=?")
             .bind(key, new Date().toISOString(), link.id).run();
           return json(await library(env));
         }

@@ -6,28 +6,50 @@ import { mock, setSystemTime } from "bun:test";
 import * as metadata from "../worker/metadata";
 import * as adapters from "../worker/adapters";
 import { needsAttention } from "../src/attention";
+import { responseFailure } from "../worker/failures";
 import type { Link } from "../src/types";
 
-type Meta = { status: "ready" | "failed" } | { throws: string };
-export const fakes: { meta: Meta; content: { markdown: string } | { throws: string } } = {
+type Meta = { status: "ready" | "failed" } | { throws: string } | { http: number; type?: string; headers?: Record<string, string> };
+type Content = { markdown: string } | { throws: string } | { error: unknown };
+// A list is consumed one item per call (the last item sticks), to script transient failures.
+export const fakes: {
+  meta: Meta | Meta[];
+  content: Content | Content[];
+  calls: { meta: number; content: number };
+  onMeta?: () => Promise<void>;
+  onContent?: () => Promise<void>;
+} = {
   meta: { status: "ready" },
   content: { markdown: "# page" },
+  calls: { meta: 0, content: 0 },
 };
+const next = <T>(v: T | T[]): T => (Array.isArray(v) ? (v.length > 1 ? v.shift()! : v[0]!) : v);
 mock.module("../worker/metadata", () => ({
   ...metadata,
   extractMetadata: async (url: string) => {
-    const meta = fakes.meta;
+    fakes.calls.meta++;
+    await fakes.onMeta?.();
+    const meta = next(fakes.meta);
     if ("throws" in meta) throw new Error(meta.throws);
+    // A failed preview is the 403 bot wall unless an explicit HTTP answer is scripted.
+    const http = "http" in meta ? meta : meta.status === "failed" ? { http: 403 } : null;
+    if (http) {
+      const failure = responseFailure(new Response(null, { status: http.http, headers: { "content-type": http.type ?? "text/html", ...http.headers } }));
+      if (failure) throw failure;
+    }
     const domain = new URL(url).hostname;
-    return { url, domain, title: meta.status === "ready" ? `Title of ${domain}` : domain, description: "", image: null, favicon: null, status: meta.status };
+    return { url, domain, title: `Title of ${domain}`, description: "", image: null, favicon: null, status: "ready" as const };
   },
 }));
 mock.module("../worker/adapters", () => ({
   ...adapters,
   adapterFor: () => ({
     extract: async () => {
-      const content = fakes.content;
+      fakes.calls.content++;
+      await fakes.onContent?.();
+      const content = next(fakes.content);
       if ("throws" in content) throw new Error(content.throws);
+      if ("error" in content) throw content.error;
       return { markdown: content.markdown, source: "web" };
     },
   }),
@@ -59,6 +81,9 @@ export async function setup() {
   tick(0);
   fakes.meta = { status: "ready" };
   fakes.content = { markdown: "# page" };
+  fakes.calls = { meta: 0, content: 0 };
+  fakes.onMeta = undefined;
+  fakes.onContent = undefined;
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys=ON");
   for (const f of readdirSync("migrations").filter((f) => f.endsWith(".sql")).sort())
@@ -90,13 +115,20 @@ export async function setup() {
     await Promise.all(waits);
     return { status: res.status, data: (await res.json()) as any };
   };
-  // Minimal Workflow step: runs callbacks inline, honouring an explicit retry limit.
+  // Minimal Workflow step: runs callbacks inline with ctx.attempt (1-based), honouring an explicit retry
+  // limit and NonRetryableError. It records each retried step's config and attempts.
+  const steps: { name: string; retries?: { limit: number; delay: unknown; backoff?: string }; attempts: number }[] = [];
   const step = {
-    do: async (_name: string, a: unknown, b?: unknown) => {
-      const fn = (typeof a === "function" ? a : b) as () => Promise<unknown>;
-      const limit = typeof a === "object" ? ((a as any).retries?.limit ?? 0) : 0;
+    do: async (name: string, a: unknown, b?: unknown) => {
+      const fn = (typeof a === "function" ? a : b) as (ctx: unknown) => Promise<unknown>;
+      const config = typeof a === "object" ? (a as any) : {};
+      const limit = config.retries?.limit ?? 0;
+      const record = { name, retries: config.retries, attempts: 0 };
+      steps.push(record);
       for (let i = 0; ; i++) {
-        try { return await fn(); } catch (e) { if (i >= limit) throw e; }
+        record.attempts++;
+        try { return await fn({ step: { name, count: 1 }, attempt: i + 1, config }); }
+        catch (e) { if (i >= limit || (e as Error)?.name === "NonRetryableError") throw e; }
       }
     },
     sleep: async () => {},
@@ -122,8 +154,10 @@ export async function setup() {
       previewing: l.previewing,
       attention: needsAttention(l),
       err: l.content_error,
+      preview_reason: l.preview_reason,
+      content_reason: l.content_reason,
       job: job ? `${job.status}/${job.step}` : null,
     };
   };
-  return { db, env, api, runQueued, runJob, view, sent };
+  return { db, env, api, runQueued, runJob, view, sent, steps };
 }

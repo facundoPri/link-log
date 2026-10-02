@@ -13,6 +13,7 @@ import {
 import { capabilities, parseLensDefinition } from "./store";
 import { jevUnavailable } from "../src/attention";
 import { preservedContentStateSql } from "./content-state";
+import { classify, logFailure, LinkFailure } from "./failures";
 import type { Lens, Link, Tag } from "../src/types";
 const POOL_LIMITS = { browser: 2, jev: 16 } as const;
 function poolLimit(env: Env, pool: Pool) {
@@ -104,7 +105,7 @@ export async function enqueue(
     ...(kind === "extract"
       ? ids.map((link) =>
           env.DB.prepare(
-            "UPDATE links SET content_state='queued',content_error=NULL WHERE id=?",
+            "UPDATE links SET content_state='queued',content_error=NULL,content_reason=NULL WHERE id=?",
           ).bind(link),
         )
       : []),
@@ -265,18 +266,24 @@ export class LinkWorkflow extends WorkflowEntrypoint<Env, { id: string }> {
     } catch (error) {
       await step.do("record-failure", async () => {
         await env.DB.prepare("UPDATE usage_events SET status='failed',error='Provider call interrupted before completion' WHERE job_id=? AND status='started'").bind(job.id).run();
-        const message =
-          error instanceof Error ? error.message : "Could not process";
+        const raw = error instanceof Error ? error.message : "Could not process";
+        // Extraction failures carry a plain reason; adapter messages without one are already user-facing.
+        const failure = job.kind === "extract" && link ? classify(error) : null;
+        if (failure && !(error instanceof LinkFailure))
+          logFailure(failure, { link_id: link!.id, job_id: job.id, step: "extract", url: link!.url, attempt: 1, max_attempts: 1, final: true });
+        const reason = failure && (error instanceof LinkFailure || failure.reason !== "unknown") ? failure.reason : null;
+        const message = reason ? failure!.message : raw;
         await env.DB.prepare(
-          "UPDATE jobs SET status='failed',step='Needs attention',error=?,completed_at=? WHERE id=? AND status='running'",
+          "UPDATE jobs SET status='failed',step='Needs attention',error=?,reason=?,completed_at=? WHERE id=? AND status='running'",
         )
-          .bind(message, new Date().toISOString(), job.id)
+          .bind(message, reason, new Date().toISOString(), job.id)
           .run();
+        // The preview axis is owned by save-preview: a preview that never ran stays neutral.
         if (job.kind === "extract" && link)
           await env.DB.prepare(
-            `UPDATE links SET content_state=${preservedContentStateSql("failed")},content_error=?,status=CASE WHEN status='pending' THEN 'failed' ELSE status END WHERE id=?`,
+            `UPDATE links SET content_state=${preservedContentStateSql("failed")},content_error=?,content_reason=? WHERE id=?`,
           )
-            .bind(message, link.id)
+            .bind(message, reason, link.id)
             .run();
       });
     } finally {

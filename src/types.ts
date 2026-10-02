@@ -39,6 +39,8 @@ export type Link = {
   image: string | null;
   favicon: string | null;
   status: "pending" | "ready" | "failed";
+  /** Why the last preview failed (a `FailureReason`), shown with `failureMessage`. */
+  preview_reason: string | null;
   /** Derived by the API: an active job (or an out-of-queue preview retry) is working on the link. */
   processing: boolean;
   /** Derived by the API: the pending preview is being fetched (extract job or preview retry). */
@@ -51,6 +53,7 @@ export type Link = {
   content_source: string | null;
   content_state: "missing" | "queued" | "ready" | "partial" | "failed";
   content_error: string | null;
+  content_reason: string | null;
   content_updated_at: string | null;
   content_details: string | null;
   media?: MediaItem[];
@@ -87,6 +90,13 @@ export type Job = {
   status: "queued" | "running" | "done" | "failed";
   step: string;
   error: string | null;
+  /** The current attempt of a retried step, and how many it may take. */
+  attempt: number | null;
+  max_attempts: number | null;
+  /** The previous failed attempt's reason while retrying; the final reason once failed. */
+  reason: string | null;
+  /** A preview that failed while the job still extracted the content. */
+  preview_reason: string | null;
   result: string | null;
   usage?: JobUsage | null;
 };

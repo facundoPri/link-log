@@ -3,7 +3,10 @@ import { adapterFor } from "../adapters";
 import type { Discovered } from "../adapters/types";
 import { transcribeImage, OCR_MODEL } from "../ocr";
 import type { MediaItem, ContentDetails } from "../../src/types";
-import type { JobHandler } from "./index";
+import type { WorkflowStepContext } from "cloudflare:workers";
+import { classify, logFailure, LinkFailure } from "../failures";
+import type { FailureReason } from "../../src/failures";
+import type { JobContext, JobHandler } from "./index";
 
 const MAX_OCR_PREVIEWS = 20;
 export const MEDIA_UPSERT_SQL = "INSERT INTO media_items(link_id,media_key,position,kind,url,preview_url,ocr_state,updated_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(link_id,media_key) DO UPDATE SET position=excluded.position,kind=excluded.kind,url=excluded.url,preview_url=excluded.preview_url,ocr_state=CASE WHEN ? THEN excluded.ocr_state WHEN media_items.ocr_state='skipped' AND excluded.ocr_state='pending' THEN 'pending' ELSE media_items.ocr_state END,ocr_text=CASE WHEN ? THEN NULL ELSE media_items.ocr_text END,ocr_error=CASE WHEN ? THEN NULL ELSE media_items.ocr_error END,ocr_model=CASE WHEN ? THEN NULL ELSE media_items.ocr_model END,updated_at=excluded.updated_at";
@@ -40,30 +43,79 @@ async function storedMedia(env: Env, linkId: string): Promise<MediaItem[]> {
   return rows.results;
 }
 
+// Owner decision (FAC-48): preview 2 retries, Browser Rendering → Markdown 1. Blocked, not found and
+// non-HTML answers fail fast. The backoff only runs for transient reasons.
+const PREVIEW_RETRIES = { limit: 2, delay: "5 seconds", backoff: "exponential" } as const;
+const CONTENT_RETRIES = { limit: 1, delay: "10 seconds", backoff: "exponential" } as const;
+type Failed = { failed: FailureReason };
+
+// One attempt of a retried step. A transient failure with attempts left rethrows so Workflows retries it;
+// the last or a fail-fast failure is returned, so its reason survives the step boundary as data.
+async function attempt<T>(
+  { env, job, link }: Pick<JobContext, "env" | "job" | "link">,
+  ctx: WorkflowStepContext,
+  at: { step: "preview" | "content"; label: string; limit: number },
+  run: () => Promise<T>,
+): Promise<T | Failed> {
+  const max = at.limit + 1;
+  await env.DB.batch([
+    env.DB.prepare(`UPDATE jobs SET step=?,attempt=?,max_attempts=?${ctx.attempt === 1 ? ",reason=NULL" : ""} WHERE id=?`)
+      .bind(at.label, ctx.attempt, max, job.id),
+    // Retries and backoff run while holding the slot; keep the lease alive.
+    env.DB.prepare("UPDATE provider_leases SET expires_at=? WHERE job_id=?").bind(Date.now() + 300000, job.id),
+  ]);
+  try {
+    return await run();
+  } catch (error) {
+    const failure = classify(error);
+    const final = !failure.retryable || ctx.attempt >= max;
+    logFailure(failure, { link_id: link.id, job_id: job.id, step: at.step, url: link.url || link.original_url, attempt: ctx.attempt, max_attempts: max, final });
+    await env.DB.prepare("UPDATE jobs SET reason=?,attempt=? WHERE id=?").bind(failure.reason, final ? ctx.attempt : ctx.attempt + 1, job.id).run();
+    if (final) return { failed: failure.reason };
+    throw failure;
+  }
+}
+
 export const extractHandler: JobHandler = {
   // The saved URL may redirect to a social source, so reserve discovery capacity up front.
   pool: () => "browser",
   async run({ env, step, job, link, config }) {
     const linkJob = { id: job.id, batch_id: job.batch_id, link_id: link.id };
-    const metadata = await step.do("resolve-and-preview", { retries: { limit: 1, delay: "2 seconds", backoff: "constant" } }, () => extractMetadata(link.original_url));
+    const preview = await step.do("resolve-and-preview", { retries: PREVIEW_RETRIES },
+      (ctx) => attempt({ env, job, link }, ctx, { step: "preview", label: "Fetching preview", limit: PREVIEW_RETRIES.limit }, () => extractMetadata(link.original_url)))
+      .catch((error): Failed => {
+        // Only reached when the step itself fails (for example its bookkeeping write); treat it as a final failure.
+        const failure = classify(error);
+        logFailure(failure, { link_id: link.id, job_id: job.id, step: "preview", url: link.url, attempt: PREVIEW_RETRIES.limit + 1, max_attempts: PREVIEW_RETRIES.limit + 1, final: true });
+        return { failed: failure.reason };
+      });
+    const previewFailed = "failed" in preview ? preview.failed : null;
     await step.do("save-preview", async () => {
-      await env.DB.prepare("UPDATE links SET url=?,domain=?,title=?,description=?,image=?,favicon=?,status=? WHERE id=?")
-        .bind(metadata.url, metadata.domain, metadata.title, metadata.description, metadata.image, metadata.favicon, metadata.status, link.id).run();
-      await env.DB.prepare("UPDATE jobs SET step='Extracting content' WHERE id=?").bind(job.id).run();
+      if ("failed" in preview)
+        // A preview that worked before is kept, like content: the failure is only recorded in Activity.
+        await env.DB.prepare("UPDATE links SET preview_reason=CASE WHEN status='ready' THEN preview_reason ELSE ? END,status=CASE WHEN status='ready' THEN 'ready' ELSE 'failed' END WHERE id=?")
+          .bind(preview.failed, link.id).run();
+      else
+        await env.DB.prepare("UPDATE links SET url=?,domain=?,title=?,description=?,image=?,favicon=?,status='ready',preview_reason=NULL WHERE id=?")
+          .bind(preview.url, preview.domain, preview.title, preview.description, preview.image, preview.favicon, link.id).run();
+      await env.DB.prepare("UPDATE jobs SET step='Extracting content',attempt=NULL,max_attempts=NULL,reason=NULL,preview_reason=? WHERE id=?").bind(previewFailed, job.id).run();
     });
+    const metadata = { url: "failed" in preview ? link.url : preview.url };
     const adapter = adapterFor(metadata.url);
     if (!adapter.discover) {
-      const content = await step.do("extract-content", { retries: { limit: 0, delay: "1 second" }, timeout: "2 minutes" }, async () => {
-        const result = await adapter.extract(env, metadata.url, linkJob);
-        if (new TextEncoder().encode(result.markdown).length > 2_000_000) throw new Error("The content exceeds 2 MB. You can upload a manual version.");
-        const key = `links/${link.id}/${job.id}.md`;
-        await env.CONTENT.put(key, result.markdown, { httpMetadata: { contentType: "text/markdown; charset=utf-8" } });
-        return { key, source: result.source };
-      });
+      const content = await step.do("extract-content", { retries: CONTENT_RETRIES, timeout: "2 minutes" },
+        (ctx) => attempt({ env, job, link }, ctx, { step: "content", label: "Extracting content", limit: CONTENT_RETRIES.limit }, async () => {
+          const result = await adapter.extract(env, metadata.url, linkJob);
+          if (new TextEncoder().encode(result.markdown).length > 2_000_000) throw new LinkFailure("too_large");
+          const key = `links/${link.id}/${job.id}.md`;
+          await env.CONTENT.put(key, result.markdown, { httpMetadata: { contentType: "text/markdown; charset=utf-8" } });
+          return { key, source: result.source };
+        }));
+      if ("failed" in content) throw new LinkFailure(content.failed);
       await step.do("save-content", async () => {
         await env.DB.batch([
           env.DB.prepare("DELETE FROM media_items WHERE link_id=?").bind(link.id),
-          env.DB.prepare("UPDATE links SET content_key=?,content_version=content_version+1,content_source=?,content_state='ready',content_error=NULL,content_details=NULL,content_updated_at=? WHERE id=?")
+          env.DB.prepare("UPDATE links SET content_key=?,content_version=content_version+1,content_source=?,content_state='ready',content_error=NULL,content_reason=NULL,content_details=NULL,content_updated_at=? WHERE id=?")
             .bind(content.key, content.source, new Date().toISOString(), link.id),
         ]);
       });
@@ -117,7 +169,7 @@ export const extractHandler: JobHandler = {
       await env.CONTENT.put(key, content.markdown, { httpMetadata: { contentType: "text/markdown; charset=utf-8" } });
     });
     await step.do("save-composed-content", async () => {
-      await env.DB.prepare("UPDATE links SET content_key=?,content_version=content_version+1,content_source=?,content_state=?,content_error=?,content_details=?,content_updated_at=? WHERE id=?")
+      await env.DB.prepare("UPDATE links SET content_key=?,content_version=content_version+1,content_source=?,content_state=?,content_error=?,content_reason=NULL,content_details=?,content_updated_at=? WHERE id=?")
         .bind(key, discovered.source, content.state, content.details.issues[0] || null, JSON.stringify(content.details), new Date().toISOString(), link.id).run();
     });
   },

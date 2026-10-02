@@ -1,5 +1,6 @@
 import { validateDestination } from "../metadata";
 import { measured } from "../usage";
+import { LinkFailure } from "../failures";
 import type { ContentAdapter } from "./types";
 export const webAdapter: ContentAdapter = {
   matches: () => true,
@@ -26,9 +27,7 @@ export const webAdapter: ContentAdapter = {
             data.errors?.[0]?.message || `Markdown: HTTP ${response.status}`,
           );
         if (typeof data.result !== "string" || !data.result.trim())
-          throw new Error(
-            "The page returned no content. You can paste it manually.",
-          );
+          throw new LinkFailure("empty");
         return { markdown: data.result, source: "web" };
       },
     );

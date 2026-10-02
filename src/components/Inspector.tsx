@@ -22,6 +22,7 @@ import {
 import { api } from "../api";
 import type { Lens, Library, Link, Tag, ContentDetails, MediaItem } from "../types";
 import { canRetryPreview } from "../attention";
+import { failureMessage } from "../failures";
 import { cn } from "../lib/utils";
 import { captionMenuTracks, youtubeId } from "../lib/youtube";
 import { relativeTime } from "../lib/time";
@@ -507,7 +508,7 @@ export function Inspector({
               {details?.issues.map((issue, i) => <span key={i} className="text-muted-foreground">{issue}</span>)}
               <Button variant="outline" size="sm" className="mt-1 self-start" onClick={onExtract}>Retry extraction</Button>
             </div>}
-            {link.content_key && link.content_error && link.content_state !== "queued" && !details?.issues.includes(link.content_error) && <p role="alert" className="mb-3 text-xs text-destructive">Last extraction failed: {link.content_error}</p>}
+            {link.content_key && link.content_error && link.content_state !== "queued" && !details?.issues.includes(link.content_error) && <p role="alert" className="mb-3 text-xs text-destructive">Last extraction failed, showing the previous version: {link.content_error}</p>}
             {!editing && !!link.media?.length && <div className="mb-4 flex flex-col gap-2" aria-label="Post media">
               <p className="text-xs text-muted-foreground">{link.media.length} media · {link.media.filter((item) => item.ocr_state === "done").length} with OCR</p>
               {link.media.length > 1 && <div className="grid grid-cols-5 gap-1.5" aria-label="Media in post order">
@@ -953,7 +954,7 @@ export function Inspector({
                     ? link.previewing
                       ? "Fetching…"
                       : "Not fetched yet"
-                    : "Failed"}
+                    : `Failed${link.preview_reason ? ` · ${failureMessage(link.preview_reason)}` : ""}`}
                 {canRetryPreview(link) && (
                   <>
                     {" · "}

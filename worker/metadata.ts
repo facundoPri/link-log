@@ -1,6 +1,7 @@
 import ipaddr from "ipaddr.js";
 import { decodeHTML } from "entities";
 import { normalizeUrl, domainOf } from "../src/url";
+import { LinkFailure, responseFailure } from "./failures";
 export function publicAddress(address: string): boolean {
   try {
     return ipaddr.process(address).range() === "unicast";
@@ -75,20 +76,11 @@ export async function extractMetadata(input: string) {
     }
     break;
   }
-  if (
-    !response?.ok ||
-    !response.headers.get("content-type")?.includes("text/html")
-  ) {
-    await response?.body?.cancel();
-    return {
-      url: url.href,
-      domain: domainOf(url.href),
-      title: domainOf(url.href),
-      description: "",
-      image: null,
-      favicon: null,
-      status: "failed" as const,
-    };
+  if (!response) throw new LinkFailure("unknown", { technical: "Too many redirects", retryable: false });
+  const failure = responseFailure(response);
+  if (failure) {
+    await response.body?.cancel();
+    throw failure;
   }
   const reader = response.body?.getReader();
   if (!reader) throw new Error("Empty page");

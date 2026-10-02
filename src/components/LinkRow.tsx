@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import type { Lens, Link, Tag } from "../types";
 import { canRetryPreview } from "../attention";
+import { failureMessage } from "../failures";
 import { cn } from "../lib/utils";
 import { youtubeId } from "../lib/youtube";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -142,7 +143,9 @@ export function LinkRow({
                 ? "Fetching title and preview…"
                 : "No preview yet"
               : link.status === "failed"
-                ? "No preview available"
+                ? failureMessage(link.preview_reason)
+                  ? `No preview: ${failureMessage(link.preview_reason)}`
+                  : "No preview available"
                 : link.domain)}
         </p>
         <div className="mt-1 flex flex-wrap items-center gap-1.5">

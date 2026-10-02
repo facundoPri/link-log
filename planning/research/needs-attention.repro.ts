@@ -6,6 +6,7 @@
 import { Database } from "bun:sqlite";
 import { readdirSync } from "node:fs";
 import { expect, mock, setSystemTime, test, afterEach } from "bun:test";
+import { responseFailure } from "../../worker/failures";
 
 type Meta = { status: "ready" | "failed" } | { throws: string };
 let meta: Meta = { status: "ready" };
@@ -16,8 +17,10 @@ mock.module("../../worker/metadata", () => ({
   publicAddress: () => true,
   extractMetadata: async (url: string) => {
     if ("throws" in meta) throw new Error(meta.throws);
+    // Since FAC-48 S3 a non-OK or non-HTML answer throws a classified failure (here the 403 bot wall).
+    if (meta.status === "failed") throw responseFailure(new Response(null, { status: 403, headers: { "content-type": "text/html" } }))!;
     const domain = new URL(url).hostname;
-    return { url, domain, title: meta.status === "ready" ? `Title of ${domain}` : domain, description: "", image: null, favicon: null, status: meta.status };
+    return { url, domain, title: `Title of ${domain}`, description: "", image: null, favicon: null, status: meta.status };
   },
 }));
 mock.module("../../worker/adapters", () => ({
@@ -87,13 +90,15 @@ async function setup() {
     await Promise.all(waits);
     return { status: res.status, data: (await res.json()) as any };
   };
-  // Minimal Workflow step: runs callbacks inline, honouring an explicit retry limit.
+  // Minimal Workflow step: runs callbacks inline with ctx.attempt (1-based), honouring an explicit retry limit.
   const step = {
-    do: async (_name: string, a: unknown, b?: unknown) => {
-      const fn = (typeof a === "function" ? a : b) as () => Promise<unknown>;
-      const limit = typeof a === "object" ? ((a as any).retries?.limit ?? 0) : 0;
+    do: async (name: string, a: unknown, b?: unknown) => {
+      const fn = (typeof a === "function" ? a : b) as (ctx: unknown) => Promise<unknown>;
+      const config = typeof a === "object" ? (a as any) : {};
+      const limit = config.retries?.limit ?? 0;
       for (let i = 0; ; i++) {
-        try { return await fn(); } catch (e) { if (i >= limit) throw e; }
+        try { return await fn({ step: { name, count: 1 }, attempt: i + 1, config }); }
+        catch (e) { if (i >= limit || (e as Error)?.name === "NonRetryableError") throw e; }
       }
     },
     sleep: async () => {},
@@ -144,14 +149,15 @@ test("A: queued >30s behind the browser pool stays processing, never Needs atten
   expect(done).toMatchObject({ status: "ready", content: "ready", attention: false });
 });
 
-test("B: 4xx/non-HTML preview + successful content stays in Needs attention; Retry preview repeats it", async () => {
+test("B: a fail-fast preview (403 bot wall, PDF) + successful content stays in Needs attention with its reason; Retry preview repeats it (attention model: S4)", async () => {
   const s = await setup();
-  meta = { status: "failed" }; // e.g. 403 bot wall, 429, PDF: extractMetadata returns status 'failed'
+  meta = { status: "failed" }; // 403 bot wall: fails fast, no retries (FAC-48 S3)
   const id = (await s.api("/links", "POST", { url: "https://b.example/doc.pdf" })).data.id;
   await s.runQueued();
   const v1 = await s.view(id);
   rec("B", "extract OK, preview non-OK", v1);
   expect(v1).toMatchObject({ status: "failed", content: "ready", attention: true, job: "done/Done" });
+  expect((s.db.query("SELECT preview_reason FROM links WHERE id=?").get(id) as any).preview_reason).toBe("blocked");
   const r = await s.api(`/links/${id}/retry`, "POST");
   expect(r.status).toBe(200);
   const v2 = await s.view(id);
@@ -168,17 +174,19 @@ test("B: 4xx/non-HTML preview + successful content stays in Needs attention; Ret
   expect(v4.attention).toBe(false);
 });
 
-test("C: re-extract of a healthy link flips it into Needs attention when only the preview fetch fails", async () => {
+test("C: re-extract of a healthy link keeps its previous preview when only the preview fetch fails (fixed in FAC-48 S3)", async () => {
   const s = await setup();
   const id = (await s.api("/links", "POST", { url: "https://c.example/x" })).data.id;
   await s.runQueued();
   rec("C", "first extract OK", await s.view(id));
-  meta = { status: "failed" }; // transient 429 on the metadata GET
+  meta = { status: "failed" }; // the preview GET now fails (after retries, or fail-fast)
   await s.api("/batches", "POST", { kind: "extract", ids: [id] });
   await s.runQueued();
   const v = await s.view(id);
-  rec("C", "re-extract, preview 429, content OK", v);
-  expect(v).toMatchObject({ status: "failed", content: "ready", attention: true, job: "done/Done" });
+  rec("C", "re-extract, preview fails, content OK", v);
+  expect(v).toMatchObject({ status: "ready", content: "ready", attention: false, job: "done/Done" });
+  // The failure is only recorded in Activity.
+  expect((s.db.query("SELECT preview_reason FROM jobs WHERE link_id=? ORDER BY rowid DESC LIMIT 1").get(id) as any).preview_reason).toBe("blocked");
   meta = { status: "ready" };
   await s.api("/batches", "POST", { kind: "extract", ids: [id] });
   await s.runQueued();
@@ -220,7 +228,7 @@ test("E: the same content failure on a link that already had content never shows
   await s.runQueued();
   const v = await s.view(id);
   rec("E", "re-extract fails, prior content kept", v);
-  expect(v).toMatchObject({ content: "ready", attention: false, job: "failed/Needs attention", err: "Markdown: HTTP 503" });
+  expect(v).toMatchObject({ content: "ready", attention: false, job: "failed/Needs attention", err: "The site had a problem." }); // plain reason since FAC-48 S3
 });
 
 test("F: cancelling a fresh import leaves links pending and neutral, never Needs attention (fixed in FAC-48 S1)", async () => {
@@ -241,24 +249,20 @@ test("F: cancelling a fresh import leaves links pending and neutral, never Needs
   expect(v2).toMatchObject({ status: "ready", attention: false });
 });
 
-test("G: preview step throws → both flags failed; Retry preview fixes only one, still Needs attention", async () => {
+test("G: preview keeps throwing → retried, then only the preview fails; content is still extracted (FAC-48 S3)", async () => {
   const s = await setup();
   meta = { throws: "DNS unavailable" };
   const id = (await s.api("/links", "POST", { url: "https://g.example/x" })).data.id;
   await s.runQueued();
   const v1 = await s.view(id);
-  rec("G", "resolve-and-preview throws (after 1 retry)", v1);
-  expect(v1).toMatchObject({ status: "failed", content: "failed", attention: true, err: "DNS unavailable" });
+  rec("G", "resolve-and-preview throws (3 attempts)", v1);
+  expect(v1).toMatchObject({ status: "failed", content: "ready", attention: true, err: null, job: "done/Done" });
+  expect((s.db.query("SELECT preview_reason FROM links WHERE id=?").get(id) as any).preview_reason).toBe("unreachable");
   meta = { status: "ready" };
   await s.api(`/links/${id}/retry`, "POST");
   const v2 = await s.view(id);
   rec("G", "Retry preview succeeds", v2);
-  expect(v2).toMatchObject({ status: "ready", content: "failed", attention: true });
-  await s.api("/batches", "POST", { kind: "extract", ids: [id] });
-  await s.runQueued();
-  const v3 = await s.view(id);
-  rec("G", "Extract context", v3);
-  expect(v3.attention).toBe(false);
+  expect(v2).toMatchObject({ status: "ready", content: "ready", attention: false });
 });
 
 test("H: an interrupted workflow (dispatch sees errored instance) leaves the link neutral (fixed in FAC-48 S1)", async () => {
