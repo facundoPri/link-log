@@ -8,7 +8,8 @@ export type Pool = "browser" | "jev";
 export type JobContext = {
   env: Env;
   step: WorkflowStep;
-  job: JobRow & { kind: string; config: string };
+  /** user_id is resolved from the persisted batch by loadOwnedJob. */
+  job: JobRow & { kind: string; config: string; user_id: string };
   link: Link;
   config: { tags?: Tag[]; lens?: Lens; track?: string };
 };

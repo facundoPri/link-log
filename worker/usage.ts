@@ -34,7 +34,8 @@ export async function measured<T>(
     started = Date.now(),
     meter: Meter = {};
   await env.DB.prepare(
-    "INSERT INTO usage_events(id,batch_id,job_id,link_id,provider,service,operation,status,rate_snapshot,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+    // The owner comes from the persisted batch, never from the caller.
+    "INSERT INTO usage_events(id,user_id,batch_id,job_id,link_id,provider,service,operation,status,rate_snapshot,created_at) SELECT ?,user_id,?,?,?,?,?,?,?,?,? FROM batches WHERE id=?",
   )
     .bind(
       id,
@@ -47,6 +48,7 @@ export async function measured<T>(
       "started",
       service === "image-ocr" ? JSON.stringify({ input_usd_per_million: GEMMA_USD_PER_M_INPUT, output_usd_per_million: GEMMA_USD_PER_M_OUTPUT }) : "{}",
       new Date().toISOString(),
+      job.batch_id,
     )
     .run();
   let error: string | null = null;

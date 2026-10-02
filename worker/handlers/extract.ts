@@ -4,6 +4,7 @@ import type { Discovered, ExtractionJob } from "../adapters/types";
 import { transcribeImage, OCR_MODEL } from "../ocr";
 import type { MediaItem, ContentDetails } from "../../src/types";
 import type { JobHandler } from "./index";
+import { contentPrefix } from "../store";
 
 const MAX_OCR_PREVIEWS = 20;
 export const MEDIA_UPSERT_SQL = "INSERT INTO media_items(link_id,media_key,position,kind,url,preview_url,ocr_state,updated_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(link_id,media_key) DO UPDATE SET position=excluded.position,kind=excluded.kind,url=excluded.url,preview_url=excluded.preview_url,ocr_state=CASE WHEN ? THEN excluded.ocr_state WHEN media_items.ocr_state='skipped' AND excluded.ocr_state='pending' THEN 'pending' ELSE media_items.ocr_state END,ocr_text=CASE WHEN ? THEN NULL ELSE media_items.ocr_text END,ocr_error=CASE WHEN ? THEN NULL ELSE media_items.ocr_error END,ocr_model=CASE WHEN ? THEN NULL ELSE media_items.ocr_model END,updated_at=excluded.updated_at";
@@ -46,8 +47,8 @@ export const extractHandler: JobHandler = {
   async run({ env, step, job, link, config }) {
     const metadata = await step.do("resolve-and-preview", { retries: { limit: 1, delay: "2 seconds", backoff: "constant" } }, () => extractMetadata(link.original_url));
     await step.do("save-preview", async () => {
-      await env.DB.prepare("UPDATE links SET url=?,domain=?,title=?,description=?,image=?,favicon=?,status=? WHERE id=?")
-        .bind(metadata.url, metadata.domain, metadata.title, metadata.description, metadata.image, metadata.favicon, metadata.status, link.id).run();
+      await env.DB.prepare("UPDATE links SET url=?,domain=?,title=?,description=?,image=?,favicon=?,status=? WHERE id=? AND user_id=?")
+        .bind(metadata.url, metadata.domain, metadata.title, metadata.description, metadata.image, metadata.favicon, metadata.status, link.id, job.user_id).run();
       await env.DB.prepare("UPDATE jobs SET step='Extracting content' WHERE id=?").bind(job.id).run();
     });
     const adapter = adapterFor(metadata.url);
@@ -55,15 +56,15 @@ export const extractHandler: JobHandler = {
       const content = await step.do("extract-content", { retries: { limit: 0, delay: "1 second" }, timeout: "2 minutes" }, async () => {
         const result = await adapter.extract(env, metadata.url, job);
         if (new TextEncoder().encode(result.markdown).length > 2_000_000) throw new Error("The content exceeds 2 MB. You can upload a manual version.");
-        const key = `links/${link.id}/${job.id}.md`;
+        const key = `${contentPrefix(job.user_id, link.id)}${job.id}.md`;
         await env.CONTENT.put(key, result.markdown, { httpMetadata: { contentType: "text/markdown; charset=utf-8" } });
         return { key, source: result.source };
       });
       await step.do("save-content", async () => {
         await env.DB.batch([
           env.DB.prepare("DELETE FROM media_items WHERE link_id=?").bind(link.id),
-          env.DB.prepare("UPDATE links SET content_key=?,content_version=content_version+1,content_source=?,content_state='ready',content_error=NULL,content_details=NULL,content_updated_at=? WHERE id=?")
-            .bind(content.key, content.source, new Date().toISOString(), link.id),
+          env.DB.prepare("UPDATE links SET content_key=?,content_version=content_version+1,content_source=?,content_state='ready',content_error=NULL,content_details=NULL,content_updated_at=? WHERE id=? AND user_id=?")
+            .bind(content.key, content.source, new Date().toISOString(), link.id, job.user_id),
         ]);
       });
       return;
@@ -110,14 +111,14 @@ export const extractHandler: JobHandler = {
     if (ocrMedia.length > MAX_OCR_PREVIEWS)
       discovered.details.issues.push(`Only the first ${MAX_OCR_PREVIEWS} images and video previews were processed; the remainder are pending.`);
     const content = composeSocial(discovered, media);
-    const key = `links/${link.id}/${job.id}.md`;
+    const key = `${contentPrefix(job.user_id, link.id)}${job.id}.md`;
     await step.do("store-composed-content", async () => {
       if (new TextEncoder().encode(content.markdown).length > 2_000_000) throw new Error("The extracted content exceeds 2 MB.");
       await env.CONTENT.put(key, content.markdown, { httpMetadata: { contentType: "text/markdown; charset=utf-8" } });
     });
     await step.do("save-composed-content", async () => {
-      await env.DB.prepare("UPDATE links SET content_key=?,content_version=content_version+1,content_source=?,content_state=?,content_error=?,content_details=?,content_updated_at=? WHERE id=?")
-        .bind(key, discovered.source, content.state, content.details.issues[0] || null, JSON.stringify(content.details), new Date().toISOString(), link.id).run();
+      await env.DB.prepare("UPDATE links SET content_key=?,content_version=content_version+1,content_source=?,content_state=?,content_error=?,content_details=?,content_updated_at=? WHERE id=? AND user_id=?")
+        .bind(key, discovered.source, content.state, content.details.issues[0] || null, JSON.stringify(content.details), new Date().toISOString(), link.id, job.user_id).run();
     });
   },
 };
