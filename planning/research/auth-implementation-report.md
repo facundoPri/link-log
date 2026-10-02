@@ -1,12 +1,74 @@
 # FAC-40 + FAC-41 — Reporte de implementación
 
-**Fecha:** 02-10-2026. **Rama:** `facundoPri/research-auth-cloudflare` (sin push ni PR). **Base previa a implementación:** `4d23fe1e5d67a67ad6a00bed120faab79269b46d`. **Base de integración/review:** `main` `32fc90f40c6f136e8038aafa0a143404e531d0f4` (PR #4 Browser/extensión), integrada por merge local. **HEAD final:** ver §1.
+**Fecha:** 02-10-2026. **Rama:** `facundoPri/research-auth-cloudflare` (sin push ni PR). **Base previa a implementación:** `4d23fe1e5d67a67ad6a00bed120faab79269b46d`. **Base de integración:** `main` `32fc90f40c6f136e8038aafa0a143404e531d0f4` (PR #4 Browser/extensión), integrada por merge local. **Snapshot de código aprobado por el reviewer:** `a8a1f628c77862a83bd8a235048ca4b15e091509`. El commit que agrega este cierre documental es posterior y no cambia código.
 
-> **Actualización 02-10-2026, ronda de review:** R1–R8 de [auth-code-review.md](auth-code-review.md) fueron aceptados y corregidos (commits `9733db6`…`aa16ff9`). Detalle, pruebas antes/después y gates en [auth-fix-report.md](auth-fix-report.md). Las secciones de abajo se ajustaron donde cambió una garantía; los resultados de §6 son los de la entrega inicial (73bf125) y se conservan como histórico.
+Entrega única para FAC-40 (autenticación) y FAC-41 (datos privados por usuario), con la capa HTTP migrada a Hono por decisión del dueño. Todo se probó **localmente** (Bun + workerd/Miniflare + Chromium de Playwright). No hubo despliegue, correo real, D1 remota ni adjudicación de datos reales.
 
-Entrega única para FAC-40 (autenticación) y FAC-41 (datos privados por usuario), con la capa HTTP migrada a Hono por decisión del dueño. Todo se probó **localmente** (Bun + workerd/Miniflare). No hubo despliegue, correo real, D1 remota ni adjudicación de datos reales.
+Cómo leer este documento: **§0 es el estado vigente**. Las secciones 1–5 describen arquitectura y esquema, actualizadas donde una ronda cambió una garantía. Lo marcado **Histórico** conserva la evidencia de la entrega inicial (`73bf125`). El detalle por finding (R1–R10, antes/después) está en [auth-fix-report.md](auth-fix-report.md). El review y la validación independientes están en [auth-code-review.md](auth-code-review.md) y [auth-validation-report.md](auth-validation-report.md).
 
-## 1. Commits
+## 0. Estado vigente (snapshot `a8a1f62`)
+
+### Garantías
+
+- **Auth:** Better Auth 1.7.7 sobre D1 nativo. Email + contraseña con verificación obligatoria, magic link de 5 min y un uso, reset que revoca sesiones, sesiones en D1 sin cookie cache. CSRF/origin activos y `trustedOrigins` exacto. Config fail-closed: 503 si falta o es débil, 403 para un host ajeno.
+- **HTTP:** Hono 4.13.12. `/api/auth/*` recibe el `Request` crudo antes de cualquier parser. El resto de `/api` es privado por defecto: same-origin JSON, sesión → `Principal`, cuota de escrituras y body ≤ 2.1 MB **contado en bytes** del stream.
+- **Datos por dueño:** todas las tablas de biblioteca y Browser tienen dueño. Cada query filtra por `user_id` de la sesión; un id ajeno, heredado o borrado responde 404/409 sin revelar al dueño. Hay triggers de dueño requerido, dueño inmutable y relaciones del mismo dueño. Las claves R2 llevan el prefijo del usuario. Queue/Workflow/cron resuelven el dueño desde el batch persistido.
+- **Datos previos:** quedan sin asignar e invisibles hasta la adjudicación local explícita. Nunca se asignan al primer signup. El `library_id` heredado va a un único dueño (índice único, migración 0014).
+- **Cuotas:** cada contador es un UPSERT atómico **por clave** en D1. `charge()` consume varias claves en secuencia y compensa las tomadas si una no alcanza: todo-o-nada **por compensación**, no una transacción multi-cuota. Los reembolsos ocurren en la misma ventana. Browser comparte `jobs:<user>` con la biblioteca.
+- **Alta/import/Browser save:** las cuotas se admiten antes de escribir. Los links nuevos, su batch de extracción, sus jobs y el `content_state` se escriben en **un** `D1.batch`, que D1 ejecuta como transacción: un fallo no deja nada y devuelve la cuota. Cada sentencia enlaza una cantidad constante de parámetros, así que 1–100 URLs entran en una sola transacción. Un link sin contenido ni jobs (de una operación interrumpida anterior) recibe una extracción al volver a guardarse, una sola vez. **D1 + Queue no es atómico:** tras el commit, el envío a Queue es best effort, con D1 como outbox y `recover()` por cron.
+- **Logout:** primero se cierra la sesión en el servidor. Solo si lo confirma (o responde 401) se ejecuta el `forget` de la extensión, la limpieza local y la recarga. Ante HTTP o red fallidos no se toca nada: sesión, bridge, cache y metadata quedan, y aparece un error con **Retry**.
+- **Extensión:** resultados, requests y metadata de grupos (descripción, pin, hints de reinicio) se **leen filtrados por el scope de la cuenta** (`library_id` único, aleatorio, entregado solo a la sesión dueña). Otra cuenta del mismo perfil no los ve aunque `forget` no haya corrido. El scope es secreto, no prueba de identidad. Tabs y grupos nativos de Chrome son del perfil.
+- **Fixtures:** Test Utils y las credenciales demo quedan **fuera** del bundle (`tests/bundle.test.ts`, `scripts/build.ts`). El provider Jev fixture **sí** está en el bundle y falla cerrado fuera de local/test por guard de runtime (`fixtureJevAllowed`, también en Queue/Workflow). No hay usuario por defecto ni bypass.
+
+### Gates verificados (resultados reales, por snapshot)
+
+| Gate | Resultado | Snapshot del código probado |
+| --- | --- | --- |
+| `bun run typecheck` (raíz, protocolo, extensión) | OK | `d433a8a` (= código de `a8a1f62`) |
+| `bun test` | **198 pass, 0 fail**, 27 archivos; el shim aplica el límite D1 de 100 parámetros | `d433a8a` |
+| `bun run test:e2e` (workerd + D1/R2/Queue/Workflow locales vía proxy; UI 3197 / API 8897; estado tmp) | **12/12**: auth completa, A/B, Browser A/B, atomicidad del import con fallo inyectado, import de 100 y save de 97 | `d433a8a` |
+| `bun tests/browser/run.ts` (Chromium de Playwright 1243 + extensión real; UI 3010 / API 8790) | **45/45**, incluye logout refused (503) → estado y bridge intactos → Retry → cuenta B sin fuga | `531782f`. R10 (`c558f58`) cambió solo `worker/links.ts`, `worker/jobs.ts` y `worker/routes/activity.ts`, no extensión/UI/auth; no se repitió por indicación del coordinador |
+| Validación independiente | Luna (`auth-validation-report.md`) y veredicto **APPROVED** del reviewer sobre `a8a1f628c77862a83bd8a235048ca4b15e091509` | según esos informes |
+
+### Commits de la entrega (sobre `4d23fe1`, primer padre)
+
+`2427b71` auth · `635e5bb` ownership · `79d2dda` UI · `eb88989` dev/demo · `04e914a` tests · `d1de00d` merge de main + Hono + Browser privado · `d06a0b2`, `73bf125` tests Browser · `50c6030` docs · ronda 1: `9733db6` (R2), `98a55df` (R1/R8), `9b93a1d` (R4), `081e9eb` (R5), `1b87290` (R6), `d1663cc` (R3/R7), `aa16ff9`, `e965bf8` · ronda 2: `ea5b75c` (R9), `f2fb5db` (R3), `11a3611`, `531782f`, `9dd9fee` · ronda 3: `c558f58` (R10), `d433a8a`, `a8a1f62`.
+
+### Demo local y extensión
+
+- `bun run demo` → http://127.0.0.1:3100 (API 127.0.0.1:8800, estado `.wrangler/demo-state`, bindings solo locales). Crea `demo-a@linklog.test` y `demo-b@linklog.test` con el flujo real. El email es **simulado** (archivos bajo `.wrangler/tmp/email/`). En el primer minuto tras sembrar, un login manual puede recibir 429 (límite de 5 sign-ins/min por IP).
+- Extensión, según la **configuración inspeccionada** (no es una prueba nueva con la demo 3100): el bridge corre en páginas que se identifican como Linklog sobre `http://localhost` o `http://127.0.0.1` **en cualquier puerto** (`packages/browser-protocol/src/keys.ts`, `LOCAL_BRIDGE_MATCHES`/`isBridgeOrigin`). Basta abrir la demo directamente. Para que el botón "Open Linklog" del popup apunte a la demo: `LINKLOG_UI_PORT=3100 bun run extension:build`, recargar la extensión y después la página (`scripts/ports.ts:linklogUrl`, `apps/extension/scripts/build.ts`). Un dominio desplegado se agrega con `LINKLOG_ORIGINS=https://… bun run extension:build`.
+
+### Checklist del dueño
+
+- [ ] Arrancar `bun run demo` (puertos y estado de arriba) y comprobar que no usa datos reales.
+- [ ] Sin login: la app muestra el login; GET, escrituras y contenido de `/api` responden 401 sin datos.
+- [ ] Alta con email + contraseña → aviso "Check … for a confirmation link" visible → verificar desde el email simulado → entrar. Los errores y el reenvío tienen mensajes utilizables.
+- [ ] Magic link: entrar una vez; reusarlo o usarlo vencido se rechaza.
+- [ ] "Forgot password" → reset: la contraseña anterior deja de servir, las otras sesiones se cierran y el enlace no se reutiliza.
+- [ ] Recargar y reabrir: la sesión persiste. **Logout con fallo:** en DevTools, bloquear o fallar `POST /api/auth/sign-out` (503 o sin red) → aparece el error con **Retry**; la sesión sigue activa y, en Browser, la extensión sigue conectada con sus resultados y la descripción de grupos intactos. Con Retry exitoso: pantalla de login y la cookie anterior recibe 401.
+- [ ] Dos cuentas A/B (perfiles o contextos separados): la misma URL, tag y lens en cada una son independientes. Los IDs ajenos en lectura, edición, borrado, contenido, tags/lenses, lotes/cancelación/jobs y uso se rechazan sin filtrar datos.
+- [ ] Procesar y reintentar enlaces: resultados, archivos R2, jobs y uso quedan en la cuenta correcta.
+- [ ] **Import en el límite:** importar 100 URLs nuevas → éxito, un job por link. Reimportar → todo duplicado, sin cobro ni jobs nuevos. 101 URLs se rechaza por contrato. Con la cuota agotada: 429 sin filas parciales. Revisar las regresiones de rollback con fallo inyectado, reembolso de cuotas, dedupe concurrente, Queue caída y recuperación del outbox (`tests/link-atomicity.test.ts`, `tests/link-bindings.test.ts`, E2E 6c/6d).
+- [ ] Browser/extensión con A y B en el mismo perfil: evaluar, re-evaluar, guardar tabs, grupos (con descripción), polling y cancelación. Al cambiar de cuenta no reaparecen resultados ni descripciones de pins de la otra. El `library_id` de una cuenta no da acceso a la otra.
+- [ ] Revisar en Hono que las rutas públicas y privadas estén agrupadas y que una ruta nueva quede bajo el middleware privado con autorización por dueño en la query.
+- [ ] Confirmar que producción/previews no tienen usuario por defecto ni bypass, que Test Utils y demo quedan fuera del bundle y que el fixture Jev falla cerrado (guard de runtime).
+- [ ] Antes de adjudicar links antiguos: `legacy:adjudicate inventory` → `backup` → elegir el dueño verificado → `assign --dry-run` sobre una **copia** → revisar conteos y rollback. Ningún signup reclama datos.
+- [ ] Revisar versiones fijadas (Better Auth 1.7.7, Hono 4.13.12), dominio y orígenes, secretos fuera de Git y límites de abuso.
+- [ ] **Antes de desplegar (requisito operativo pendiente, no aprovisionado ni aprobado):** confirmar el plan de Workers/D1 y el presupuesto de consultas. La tabla de [límites D1](https://developers.cloudflare.com/d1/platform/limits/) publica *Queries per Worker invocation* = 1000 en Workers Paid y 50 en Free (acceso 02-10-2026). Es una métrica distinta del límite de *subrequests* de Workers ([Workers limits](https://developers.cloudflare.com/workers/platform/limits/#subrequests): Paid 10000, Free 50, y 1000 para servicios internos en Free). Un import de 100 URLs ya hace 100 lecturas explícitas de dedupe antes del batch, más de 50. No hay conteo remoto medido. Que el producto sea gratis para los usuarios no define el plan de infraestructura.
+- [ ] En el entorno desplegado autorizado: DNS y correo real (entregabilidad), cookies HTTPS, todos los dominios y previews, aislamiento A/B. La simulación local no prueba nada de eso.
+
+No se exige aquí FAC-44/API keys, billing/planes, login social, passkeys, sharing ni MCP.
+
+### Límites vigentes
+
+- **Sin validación remota:** dominio, Email Service, D1/R2 remotas, secretos, edge (`cf-connecting-ip`, cookies `__Secure-`), `workers.dev` y previews. Runbook en §9 (histórico, sigue válido).
+- **Heredado de main, fuera de esta PR:** `POST /api/browser/evaluations/:id/ack` y `DELETE /api/browser/evaluations/:id` con 100 targets enlazan 101–102 parámetros, y la limpieza de media en `worker/handlers/extract.ts` enlaza `link_id` + la cantidad de media. Pueden exceder el límite de 100 parámetros de D1. Esta entrega no los valida.
+- `forget` es limpieza de buen esfuerzo (tope de 1.5 s; una extensión vieja no lo ofrece). La privacidad entre cuentas viene de las lecturas por scope, no de esa limpieza.
+- La API es privada por defecto: una ruta desconocida da 401 sin sesión y 404 con sesión.
+- Fuera de alcance: FAC-44/API keys, billing, passkeys, Google/GitHub, login con Cloudflare, sharing, MCP, nuqs.
+
+## 1. Commits (histórico, entrega inicial)
 
 | Commit | Contenido |
 | --- | --- |
@@ -18,7 +80,7 @@ Entrega única para FAC-40 (autenticación) y FAC-41 (datos privados por usuario
 | `d1de00d` | Merge de `main` 32fc90f: Hono, Browser privado por cuenta, migraciones renumeradas 0012/0013, `forget` en la extensión, scripts/tests actualizados. Padres: `04e914a`, `32fc90f`. |
 | `d06a0b2` | Test Browser: imprime el directorio de evidencia realmente usado. |
 | `50c6030` | Este reporte, README (cuentas/privacidad, demo, límites de Cloudflare) y decisiones posteriores en `auth-cloudflare.md`. |
-| HEAD | Check de cambio de cuenta en Chrome real (`forget` al cerrar sesión) y clasificación de pruebas en este reporte. |
+| `73bf125` | Check de cambio de cuenta en Chrome real (`forget` al cerrar sesión) y clasificación de pruebas en este reporte. |
 
 El merge integra en un solo commit la resolución de conflictos y lo que esa resolución exige (Hono reemplazó al router propio en `worker/index.ts`, y el esquema Browser necesitaba dueños para compilar y migrar). Dividirlo habría requerido reescribir un router intermedio que no se iba a usar.
 
@@ -107,9 +169,11 @@ Para D1 remota no hay herramienta, y asignar requiere una decisión explícita d
 - Verificado el 02-10-2026 con un state dir nuevo (`LINKLOG_PERSIST_TO=.cache/demo-check bun run demo`): A y B ven la misma URL, el mismo tag y el mismo lens, cada uno con su link privado. El seeding usa 4 sign-ins desde 127.0.0.1, así que un login manual en el primer minuto puede recibir 429 (límite de 5 sign-ins/min por IP, a propósito).
 - La sesión persiste entre reinicios: el secreto local se genera una vez por state dir (`linklog-auth-secret`, modo 600, fuera de Git) y el e2e prueba el reinicio.
 - Los puertos ocupados no se matan: `runStack` aborta y pide otro puerto.
-- No existe usuario por defecto ni bypass. Fixtures y Test Utils no están disponibles en producción ni en previews (config fail-closed + test de bundle).
+- No existe usuario por defecto ni bypass. Test Utils y credenciales demo quedan fuera del bundle (test de bundle, `scripts/build.ts`). El fixture Jev sí está en el bundle, con guard de runtime fuera de local/test (ver §0).
 
-## 6. Comandos y resultados (02-10-2026, HEAD de esta entrega)
+## 6. Histórico: comandos y resultados de la entrega inicial (`73bf125`)
+
+> Resultados de la entrega inicial, previos a las rondas de review. Los gates vigentes están en §0.
 
 | Comando | Resultado |
 | --- | --- |
@@ -123,10 +187,10 @@ Para D1 remota no hay herramienta, y asignar requiere una decisión explícita d
 ### Clasificación de las pruebas (pedido del coordinador)
 
 - **Chrome real + extensión real (`tests/browser/run.ts`, 45 checks):** los 44 contratos Browser de main (conexión, lenses y caché, ciclo de vida, identidad, estados, contenido, seguridad del bridge, Save/Close, grupos, dos páginas/ventanas/segundo perfil, Activity) corren ahora con una cuenta autenticada de verdad (sign-up + verificación por email simulado; la cookie de sesión se inyecta en cada perfil y `api()` manda Cookie + Origin). Check nuevo **"Accounts"**: A cierra sesión desde el menú real → la extensión borra las 65 entradas del scope de A → la cookie vieja de A recibe 401 → B entra por el formulario en el mismo perfil → `library_id` distinto, 0 grupos fijados, 0 celdas de lens y ninguno de los lenses de A.
-- **Fixture/transporte:** el Jev fixture (`JEV_PROVIDER=fixture`, solo local/test; config fail-closed lo rechaza en preview/producción), el email simulado de Wrangler y las fallas de red simuladas con `page.route` (outage, respuesta perdida). Ninguna llamada paga.
+- **Fixture/transporte:** el Jev fixture (`JEV_PROVIDER=fixture`, solo local/test; en esa entrega la config fail-closed lo rechazaba en HTTP, y desde R4 también lo bloquea el guard de runtime), el email simulado de Wrangler y las fallas de red simuladas con `page.route` (outage, respuesta perdida). Ninguna llamada paga.
 - **Expectativas que cambiaron por auth (sin retirar aserciones de seguridad):** `startApi` espera 401 en lugar de 200 (la API ya no es pública) y se agregó el binding `EMAIL` a la config de test (sin él, la config fail-closed respondía 503). En `tests/auth.test.ts`, "ruta desconocida → 404" pasó a 401 sin sesión y 404 con sesión, lo que es más restrictivo. Las dos aserciones de bridge `=== "1"` estaban desactualizadas en main desde el protocolo v2 y ahora comparan contra `PROTOCOL_VERSION`; siguen exigiendo que haya bridge. No se eliminó ninguna aserción.
 - **API/Worker con A/B y auth real:** `bun test` (rutas Browser vía Hono con dos sesiones Better Auth sobre D1) y `test:e2e` (workerd real a través del proxy). La autorización siempre sale de la sesión. Los IDs de cliente (`libraryId`, `requestId`, ids de grupo) nunca autorizan: un id ajeno da 404/409, y el `forget` de la extensión solo actúa sobre el scope de **su propia** conexión.
-- **Pendiente / límites:** la corrida 1 sin diagnóstico (ver arriba). La metadata local de grupos nativos (descripción, vínculo con el pin) vive en el almacenamiento de la extensión por perfil de Chrome, no por cuenta: otra cuenta en el mismo perfil ve los grupos nativos de Chrome (que de todos modos son visibles en el navegador), pero no los pins ni lenses del servidor. No se probó contra un Linklog desplegado ni con Chrome estable cargando la extensión a mano.
+- **Pendiente / límites (histórico; la parte de metadata la superó R2, ver §0):** la corrida 1 sin diagnóstico (ver arriba). La metadata local de grupos nativos (descripción, vínculo con el pin) vivía en el almacenamiento de la extensión por perfil de Chrome, no por cuenta: otra cuenta en el mismo perfil ve los grupos nativos de Chrome (que de todos modos son visibles en el navegador), pero no los pins ni lenses del servidor. No se probó contra un Linklog desplegado ni con Chrome estable cargando la extensión a mano.
 
 ## 7. Fuentes verificadas (acceso 01–02-10-2026)
 
@@ -136,26 +200,18 @@ Para D1 remota no hay herramienta, y asignar requiere una decisión explícita d
 
 ## 8. Checklist manual del dueño
 
-1. `bun run demo` → abrir http://127.0.0.1:3100 → entrar como Demo A y luego como Demo B (botones del login): cada cuenta ve solo su `shared-demo` + su link privado, su tag `shared` y su lens.
-2. Con A: crear una cuenta nueva desde la pantalla de alta; abrir el link de verificación desde `.wrangler/tmp/email/…/email-text/` (o la carpeta de la demo) y comprobar el auto-login.
-3. Pedir un magic link, usarlo una vez y reintentarlo (debe fallar). "Forgot password" → reset → la sesión anterior queda cerrada.
-4. Sign out desde el menú de cuenta (sidebar) → login; no deben quedar datos de A al entrar como B.
-5. Browser: cargar la extensión (`bun run extension:build`), entrar como A, evaluar pestañas con un lens Browser; cerrar sesión y entrar como B: no se ven resultados ni grupos de A.
-6. Antes de exponer datos reales: `legacy:adjudicate inventory` sobre la copia y decidir el dueño; ensayar `backup` → `assign --dry-run` sobre una **copia** del state dir.
+Reemplazado por el checklist vigente de §0.
 
-## 9. Límites reales y pendientes
+## 9. Histórico: límites de la entrega inicial (los vigentes están en §0)
 
 - **Sin prueba remota:** no se provisionaron dominio, Email Service, D1/R2 remotas ni secretos. La entregabilidad del correo (SPF/DKIM/DMARC, cuota de Email Service), las cookies `__Secure-` sobre HTTPS real, el comportamiento de `cf-connecting-ip` en el edge y la política para `workers.dev`/previews se cubren solo con config y tests unitarios (por ejemplo, el host ajeno da 403). Hay que ejecutarlos en un entorno autorizado.
 - Runbook de despliegue (no ejecutado): crear D1/R2 y Queue; reemplazar el `database_id` local; `wrangler secret put BETTER_AUTH_SECRET`; vars `BETTER_AUTH_URL` (dominio canónico) y `EMAIL_FROM`; habilitar Email Service con el dominio remitente verificado y `send_email` remoto; `wrangler d1 migrations apply --remote` **sobre una copia primero**; deploy; probar alta, verificación, magic, reset y A/B en el dominio real; dejar `invocation_logs` apagados (los links de auth llevan tokens en la URL).
 - Rate limit de Better Auth sobre D1: los contadores son por clave e IP y se probó la concurrencia local. El costo de D1 bajo ataque sigue sin medir.
 - La retención Browser es un barrido global de 7 días; las capturas viejas con prefijo `browser/<requestId>/` (anteriores a esta rama) siguen limpiándose por tiempo.
 - La API es privada por defecto: una ruta desconocida da 401 sin sesión y 404 con sesión (antes daba 404/405 sin sesión).
-- El `forget` de la extensión es de buen esfuerzo (tope de 1.5 s; una extensión vieja no lo ofrece). La garantía de aislamiento es la lectura por scope (`library_id` único por cuenta): resultados y, desde R2, metadata de grupos. El scope es secreto, no una prueba de identidad: la extensión no autentica cuentas.
 - Browser comparte los 300 jobs/h con la biblioteca (R1): una ventana con muchas pestañas y varios lenses puede agotarlos; aparece un aviso y los targets quedan failed con retry.
 - No implementado (fuera de alcance): FAC-44/API keys, billing/entitlements, passkeys, Google/GitHub, login con Cloudflare, sharing, MCP. nuqs no se instaló (no aporta a auth).
 
 ## 10. Estado final
 
-- Rama `facundoPri/research-auth-cloudflare`, sin push. Commits de esta entrega sobre `4d23fe1`: `2427b71`, `635e5bb`, `79d2dda`, `eb88989`, `04e914a`, `d1de00d` (merge de main `32fc90f40c6f136e8038aafa0a143404e531d0f4`), `d06a0b2`, `50c6030` (docs) y el commit final que agrega el check de cambio de cuenta en Chrome real y esta sección (HEAD de la rama; `git log -1` lo muestra).
-- Archivos principales: `worker/http/{app,context,middleware}.ts`, `worker/routes/{links,taxonomy,activity,browser,shared}.ts`, `worker/{index,auth,config,email,limits,store,jobs,workflow,browser,links}.ts`, `migrations/0012_auth.sql`, `migrations/0013_ownership.sql`, `scripts/migrations/rollback/*`, `scripts/{adjudicate-legacy,dev,demo,seed-dev-users,e2e-auth,check-api}.ts`, `scripts/lib/local-mail.ts`, `src/{Root,auth-client,api,frontend,proxy}.ts(x)`, `src/components/AuthScreen.tsx`, `src/browser/{api,useBrowser}.ts`, `packages/browser-protocol/src/{browser,validate}.ts`, `apps/extension/src/background/{cache,commands}.ts`, tests (`tests/*.test.ts`, `tests/browser/{env,run}.ts`, `apps/extension/tests/commands.test.ts`).
-- No se borró `.wrangler/state` ni se tocaron datos reales, otros worktrees o procesos ajenos. Los servidores de validación corrieron en los puertos propios de la tabla §5 y se detuvieron al terminar.
+Ver §0 (snapshot aprobado `a8a1f62`, commits y gates). No se borró `.wrangler/state` ni se tocaron datos reales, otros worktrees o procesos ajenos; los servidores de validación usaron puertos propios y se detuvieron.
