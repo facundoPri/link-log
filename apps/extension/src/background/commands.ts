@@ -108,7 +108,9 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
     };
   },
   async forget(_args, { c, s }) {
-    const result = await s.cache.forget(requireScope(c));
+    const scope = requireScope(c);
+    const result = await s.cache.forget(scope);
+    await s.groups.forget(scope);
     c.scope = null;
     return result;
   },
@@ -118,7 +120,7 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
   },
   async results(args, { c, windowId, s }) {
     const scope = requireScope(c);
-    const snap = await s.hub.snapshot(windowId);
+    const snap = await s.hub.snapshot(windowId, c.scope);
     return {
       results: await s.cache.read(
         scope,
@@ -131,7 +133,7 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
   async claim(args, { c, windowId, s }) {
     const scope = requireScope(c);
     const source = args.source ?? "dom";
-    const snap = await s.hub.snapshot(windowId);
+    const snap = await s.hub.snapshot(windowId, c.scope);
     const explicit = args.tabInstanceIds ? new Set(args.tabInstanceIds) : null;
     // Activating a lens covers every eligible tab in the window, whatever is selected
     // or filtered in the page. Only an explicit retry narrows it.
@@ -238,15 +240,15 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
     if (result.stored.length) s.hub.broadcast({ event: "results-changed", windowId });
     return result;
   },
-  async clean(args, { windowId, s }) {
-    const snap = await s.hub.snapshot(windowId);
+  async clean(args, { c, windowId, s }) {
+    const snap = await s.hub.snapshot(windowId, c.scope);
     const inWindow = snap.tabs.map((t) => t.tabInstanceId);
     const scope = args.tabInstanceIds ? inWindow.filter((id) => args.tabInstanceIds!.includes(id)) : inWindow;
     const result = await s.cache.clean(args.lensIds, scope);
     s.hub.broadcast({ event: "results-changed", windowId });
     return result;
   },
-  async capture(args, { windowId, s }) {
+  async capture(args, { c, windowId, s }) {
     const captures: Commands["capture"]["result"]["captures"] = [];
     for (const ref of args.tabs) {
       try {
@@ -271,9 +273,9 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
     }
     return { captures };
   },
-  async previews(args, { windowId, s }) {
+  async previews(args, { c, windowId, s }) {
     // Only tabs the extension may read and that finished loading; the rest keep title + favicon.
-    const snap = await s.hub.snapshot(windowId);
+    const snap = await s.hub.snapshot(windowId, c.scope);
     const readable = new Map(snap.tabs.filter((t) => t.content === "available").map((t) => [t.tabInstanceId, t]));
     const wanted = args.tabs.filter((r) => readable.get(r.tabInstanceId)?.tabId === r.tabId);
     const previews: TabPreview[] = [];
@@ -318,7 +320,8 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
     s.hub.schedule(0);
     return { items };
   },
-  async moveToGroup(args, { windowId, s }) {
+  async moveToGroup(args, { c, windowId, s }) {
+    const scope = requireScope(c);
     const { ok, items } = await each(args.tabs, windowId, s, (tab) =>
       // Autogroup keeps tabs that already have a group, even if one was added while Jev ran.
       args.onlyIfUngrouped && tab.groupId !== undefined && tab.groupId >= 0 ? "Already in a group — kept." : null,
@@ -336,7 +339,7 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
         target.kind === "pinned"
           ? (
               await Promise.all(
-                s.groups.groupsBoundTo(target.pinnedId).map((id) => chrome.tabGroups.get(id).catch(() => null)),
+                s.groups.groupsBoundTo(target.pinnedId, scope).map((id) => chrome.tabGroups.get(id).catch(() => null)),
               )
             ).find((g) => g?.windowId === windowId)
           : null;
@@ -344,10 +347,11 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
       else {
         groupId = await chrome.tabs.group({ tabIds, createProperties: { windowId } });
         await chrome.tabGroups.update(groupId, { title: target.title, color: target.color });
-        await s.groups.set(groupId, {
-          description: target.description,
-          pinnedId: target.kind === "pinned" ? target.pinnedId : null,
-        });
+        await s.groups.set(
+          groupId,
+          { description: target.description, pinnedId: target.kind === "pinned" ? target.pinnedId : null },
+          scope,
+        );
       }
     }
     s.hub.schedule(0);
@@ -361,7 +365,7 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
     s.hub.schedule(0);
     return { items };
   },
-  async updateGroup(args, { windowId, s }) {
+  async updateGroup(args, { c, windowId, s }) {
     await groupInWindow(args.groupId, windowId);
     if (args.title !== undefined || args.color !== undefined)
       await chrome.tabGroups.update(args.groupId, {
@@ -369,15 +373,19 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
         ...(args.color !== undefined ? { color: args.color } : {}),
       });
     if (args.description !== undefined || args.pinnedId !== undefined)
-      await s.groups.set(args.groupId, {
-        ...(args.description !== undefined ? { description: args.description } : {}),
-        ...(args.pinnedId !== undefined ? { pinnedId: args.pinnedId } : {}),
-      });
+      await s.groups.set(
+        args.groupId,
+        {
+          ...(args.description !== undefined ? { description: args.description } : {}),
+          ...(args.pinnedId !== undefined ? { pinnedId: args.pinnedId } : {}),
+        },
+        requireScope(c),
+      );
     s.hub.schedule(0);
     return {};
   },
-  async unbindPinned(args, { s }) {
-    const groups = await s.groups.unbindPinned(args.pinnedId);
+  async unbindPinned(args, { c, s }) {
+    const groups = await s.groups.unbindPinned(args.pinnedId, requireScope(c));
     s.hub.schedule(0);
     return { groups };
   },
