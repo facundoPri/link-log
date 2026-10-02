@@ -53,11 +53,14 @@ type Failed = { failed: FailureReason };
 
 // One attempt of a retried step. A transient failure with attempts left rethrows so Workflows retries it;
 // the last or a fail-fast failure is returned, so its reason survives the step boundary as data.
-async function attempt<T>(
+// `run` is raced against the budget and must have no side effects: a timed-out run may still finish later,
+// so it is aborted and its result dropped. Only the accepted result reaches `accept` (which may write).
+async function attempt<R, T = R>(
   { env, job, link }: Pick<JobContext, "env" | "job" | "link">,
   ctx: WorkflowStepContext,
   at: { step: "preview" | "content"; label: string; limit: number; adapter: string },
-  run: () => Promise<T>,
+  run: (signal: AbortSignal) => Promise<R>,
+  accept: (result: R) => Promise<T> = async (result) => result as unknown as T,
 ): Promise<T | Failed> {
   const max = at.limit + 1, budget = ATTEMPT_BUDGET_MS[at.step];
   const where = { link_id: link.id, job_id: job.id, step: at.step, adapter: at.adapter, url: link.url || link.original_url, max_attempts: max };
@@ -74,13 +77,19 @@ async function attempt<T>(
     env.DB.prepare("UPDATE provider_leases SET expires_at=? WHERE job_id=?").bind(Date.now() + 300000, job.id),
   ]);
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const abandon = new AbortController();
   try {
-    return await Promise.race([
-      run(),
+    const result = await Promise.race([
+      run(abandon.signal),
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new LinkFailure("timeout", { technical: `Attempt exceeded ${budget} ms` })), budget);
+        timer = setTimeout(() => {
+          abandon.abort();
+          reject(new LinkFailure("timeout", { technical: `Attempt exceeded ${budget} ms` }));
+        }, budget);
       }),
     ]);
+    clearTimeout(timer);
+    return await accept(result);
   } catch (error) {
     const failure = classify(error);
     const final = !failure.retryable || ctx.attempt >= max;
@@ -122,13 +131,18 @@ export const extractHandler: JobHandler = {
     });
     if (!adapter.discover) {
       const content = await step.do("extract-content", { retries: CONTENT_RETRIES, timeout: "2 minutes" },
-        (ctx) => attempt({ env, job, link }, ctx, { step: "content", label: "Extracting content", limit: CONTENT_RETRIES.limit, adapter: adapter.name }, async () => {
-          const result = await adapter.extract(env, metadata.url, linkJob);
-          if (new TextEncoder().encode(result.markdown).length > 2_000_000) throw new LinkFailure("too_large");
-          const key = `links/${link.id}/${job.id}.md`;
-          await env.CONTENT.put(key, result.markdown, { httpMetadata: { contentType: "text/markdown; charset=utf-8" } });
-          return { key, source: result.source };
-        }));
+        (ctx) => attempt({ env, job, link }, ctx, { step: "content", label: "Extracting content", limit: CONTENT_RETRIES.limit, adapter: adapter.name },
+          async (signal) => {
+            const result = await adapter.extract(env, metadata.url, linkJob, signal);
+            if (new TextEncoder().encode(result.markdown).length > 2_000_000) throw new LinkFailure("too_large");
+            return result;
+          },
+          // A per-attempt key: a step callback the engine abandoned can never overwrite the accepted content.
+          async (result) => {
+            const key = `links/${link.id}/${job.id}-${ctx.attempt}.md`;
+            await env.CONTENT.put(key, result.markdown, { httpMetadata: { contentType: "text/markdown; charset=utf-8" } });
+            return { key, source: result.source };
+          }));
       if ("failed" in content) throw new LinkFailure(content.failed);
       await step.do("save-content", async () => {
         await env.DB.batch([

@@ -38,14 +38,23 @@ test("thrown errors: timeouts, network and Markdown HTTP errors map to plain rea
   expect(classify(new Error("boom")).detail.technical).toBe("Error: boom");
 });
 
-test("Browser Rendering error envelopes keep their HTTP status; a 2xx failure is classified by its message", () => {
-  expect(pick(browserFailure(403, "Authentication error"))).toMatchObject({ reason: "blocked", retryable: false, http_status: 403 });
-  expect(browserFailure(403, "Authentication error").detail.technical).toBe("Browser Rendering HTTP 403: Authentication error");
-  expect(pick(browserFailure(404, "Not found"))).toMatchObject({ reason: "not_found", retryable: false });
-  expect(pick(browserFailure(429, "Rate limit exceeded"))).toMatchObject({ reason: "rate_limited", retryable: true, http_status: 429 });
-  expect(pick(browserFailure(503, "Service unavailable"))).toMatchObject({ reason: "site_error", retryable: true });
-  expect(pick(browserFailure(422, "Unprocessable"))).toMatchObject({ reason: "unknown", retryable: false });
-  expect(pick(browserFailure(200, "Navigation timeout of 30000 ms exceeded"))).toMatchObject({ reason: "timeout", retryable: true });
+test("Browser Rendering envelopes: service failures are told apart from the destination's status", () => {
+  // The API's own authentication failure is not a site block: fail fast with a service message.
+  const auth = browserFailure(403, { code: 10000, message: "Authentication error" });
+  expect(pick(auth)).toEqual({ reason: "service_unavailable", retryable: false, http_status: 403, message: FAILURE_MESSAGES.service_unavailable });
+  expect(auth.detail.technical).toBe("Browser Rendering HTTP 403 code 10000: Authentication error");
+  expect(pick(browserFailure(401, {}))).toMatchObject({ reason: "service_unavailable", retryable: false });
+  // A render timeout reported as 422 is a retryable timeout.
+  expect(pick(browserFailure(422, { message: "Navigation timeout of 30000 ms exceeded" }))).toMatchObject({ reason: "timeout", retryable: true, http_status: 422 });
+  expect(pick(browserFailure(422, { message: "Unprocessable" }))).toMatchObject({ reason: "unknown", retryable: true, http_status: 422 });
+  expect(pick(browserFailure(500, { message: "net::ERR_NAME_NOT_RESOLVED" }))).toMatchObject({ reason: "unreachable", retryable: true });
+  // Otherwise the status decides.
+  expect(pick(browserFailure(403, { message: "Forbidden" }))).toMatchObject({ reason: "blocked", retryable: false });
+  expect(pick(browserFailure(404, { message: "Not found" }))).toMatchObject({ reason: "not_found", retryable: false });
+  expect(pick(browserFailure(429, { message: "Rate limit exceeded" }))).toMatchObject({ reason: "rate_limited", retryable: true, http_status: 429 });
+  expect(pick(browserFailure(503, { message: "Service unavailable" }))).toMatchObject({ reason: "site_error", retryable: true });
+  expect(pick(browserFailure(400, {}))).toMatchObject({ reason: "unknown", retryable: false });
+  expect(pick(browserFailure(200, { message: "Navigation timeout of 30000 ms exceeded" }))).toMatchObject({ reason: "timeout", retryable: true });
 });
 
 test("only allowlisted adapter messages reach users, even with technical detail appended", () => {

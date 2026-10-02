@@ -177,19 +177,21 @@ test("a later successful preview clears the reason; Retry preview records its ow
 
 const envelope = (status: number, body: unknown) =>
   () => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-const failedEnvelope = (status: number, message: string) => envelope(status, { success: false, errors: [{ code: 10000, message }] });
+const failedEnvelope = (status: number, message: string, code?: number) => envelope(status, { success: false, errors: [{ code, message }] });
 // A public IP literal skips DNS in validateDestination, so the real web adapter runs offline.
 const PUBLIC_URL = "https://93.184.216.34/page";
 
-for (const [status, message, reason, calls] of [
-  [403, "Authentication error", "blocked", 1],
-  [404, "Not found", "not_found", 1],
-  [429, "Rate limit exceeded", "rate_limited", 2],
-  [503, "Service unavailable", "site_error", 2],
+for (const [status, message, code, reason, calls] of [
+  [403, "Authentication error", 10000, "service_unavailable", 1], // the Browser API's own account error, not the site
+  [403, "Forbidden", undefined, "blocked", 1],
+  [404, "Not found", undefined, "not_found", 1],
+  [422, "Navigation timeout of 30000 ms exceeded", undefined, "timeout", 2], // how the API reports a render timeout
+  [429, "Rate limit exceeded", undefined, "rate_limited", 2],
+  [503, "Service unavailable", undefined, "site_error", 2],
 ] as const)
-  test(`real web adapter: a JSON ${status} error envelope is ${reason} with ${calls} Browser call(s)`, async () => {
+  test(`real web adapter: a JSON ${status} "${message}" envelope is ${reason} with ${calls} Browser call(s)`, async () => {
     const s = await setup();
-    fakes.browser = failedEnvelope(status, message);
+    fakes.browser = failedEnvelope(status, message, code);
     const id = await save(s, PUBLIC_URL);
     await s.runQueued();
     expect(fakes.calls.browser).toBe(calls);
@@ -198,6 +200,55 @@ for (const [status, message, reason, calls] of [
     expect(logs.at(-1)).toMatchObject({ step: "content", adapter: "web", reason, http_status: status, final: true, attempt: calls });
     expect(String(logs.at(-1)!.detail)).toContain(message);
   });
+
+test("a timed-out Markdown call that answers during the next attempt can't replace its content or count as a success", async () => {
+  const s = await setup();
+  ATTEMPT_BUDGET_MS.content = 20;
+  let releaseFirst!: (r: Response) => void;
+  const ok = (markdown: string) => new Response(JSON.stringify({ success: true, result: markdown }), { status: 200 });
+  fakes.browser = async () => {
+    if (fakes.calls.browser === 1) return new Promise<Response>((resolve) => (releaseFirst = resolve));
+    // Attempt 2 is running: the abandoned first call answers now and finishes its work.
+    releaseFirst(ok("# timed-out first attempt"));
+    await Bun.sleep(5);
+    return ok("# second attempt");
+  };
+  const id = await save(s, PUBLIC_URL);
+  await s.runQueued();
+  await Bun.sleep(5);
+  expect(fakes.calls.browser).toBe(2);
+  const link = s.db.query("SELECT content_key,content_state,content_error FROM links WHERE id=?").get(id) as any;
+  expect(link).toMatchObject({ content_state: "ready", content_error: null });
+  expect(s.r2.get(link.content_key)).toBe("# second attempt");
+  expect([...s.r2.values()]).not.toContain("# timed-out first attempt");
+  expect(s.db.query("SELECT status,error FROM usage_events WHERE link_id=? ORDER BY rowid").all(id)).toEqual([
+    { status: "failed", error: "The attempt timed out before the provider answered." },
+    { status: "done", error: null },
+  ]);
+  expect(lastJob(s, id)).toMatchObject({ status: "done" });
+});
+
+test("an adapter that ignores the abort still can't publish a timed-out result: only the accepted attempt is stored", async () => {
+  const s = await setup();
+  ATTEMPT_BUDGET_MS.content = 20;
+  let releaseFirst!: (markdown: string) => void;
+  const first = new Promise<string>((resolve) => (releaseFirst = resolve));
+  fakes.content = [{ wait: first }, { markdown: "# second attempt" }];
+  // The abandoned call answers right after the accepted attempt stored its content, before it is saved.
+  const content = s.env.CONTENT as unknown as { put: (k: string, v: string, o?: unknown) => Promise<void> };
+  const put = content.put;
+  content.put = async (k, v, o) => {
+    await put(k, v, o);
+    if (v === "# second attempt") { releaseFirst("# timed-out first attempt"); await Bun.sleep(5); }
+  };
+  const id = await save(s, "https://late.example/x");
+  await s.runQueued();
+  await Bun.sleep(5);
+  const link = s.db.query("SELECT content_key,content_state FROM links WHERE id=?").get(id) as any;
+  expect(link.content_state).toBe("ready");
+  expect(s.r2.get(link.content_key)).toBe("# second attempt");
+  expect([...s.r2.values()]).toEqual(["# second attempt"]);
+});
 
 test("real web adapter: a successful envelope is saved; an empty one fails fast", async () => {
   const s = await setup();

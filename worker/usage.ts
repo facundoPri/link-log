@@ -29,6 +29,7 @@ export async function measured<T>(
   provider: string,
   operation: string,
   fn: (meter: Meter) => Promise<T>,
+  signal?: AbortSignal,
 ): Promise<T> {
   const id = crypto.randomUUID(),
     started = Date.now(),
@@ -51,7 +52,10 @@ export async function measured<T>(
     .run();
   let error: string | null = null;
   try {
-    return await fn(meter);
+    const result = await fn(meter);
+    // An attempt abandoned at its time budget stays failed even if the provider answers later.
+    if (signal?.aborted) throw new Error("The attempt timed out before the provider answered.");
+    return result;
   } catch (e) {
     error = e instanceof Error ? e.message : "Provider failed";
     throw e;

@@ -37,15 +37,23 @@ export function responseFailure(response: Pick<Response, "ok" | "status" | "head
   return null;
 }
 
-/** A Browser Rendering error answer (JSON envelope, never HTML): the HTTP status decides the reason. */
-export function browserFailure(status: number, message: string | undefined): LinkFailure {
-  const technical = `Browser Rendering HTTP ${status}${message ? `: ${message}` : ""}`;
-  if (status >= 200 && status < 300) {
-    const found = classify(new Error(message || "Browser Rendering failed"));
-    return new LinkFailure(found.reason, { technical, retryable: found.retryable });
-  }
+/**
+ * A Browser Rendering error answer. Its status and envelope come from the Browser API, not from the page:
+ * the service's own failures (authentication, render timeouts) are recognized first, and only then is the
+ * status read as the destination's. The API status and envelope stay in telemetry.
+ */
+export function browserFailure(status: number, error: { code?: number; message?: string } = {}): LinkFailure {
+  const message = error.message ?? "";
+  const technical = `Browser Rendering HTTP ${status}${error.code ? ` code ${error.code}` : ""}${message ? `: ${message}` : ""}`;
+  const base = { technical, http_status: status };
+  if (status === 401 || error.code === 10000 || /authenticat|unauthori[sz]ed|not authorized|invalid (api )?token|account/i.test(message))
+    return new LinkFailure("service_unavailable", { ...base, retryable: false });
+  const found = message ? classify(new Error(message)) : null;
+  if (found && found.reason !== "unknown") return new LinkFailure(found.reason, { ...base, retryable: found.retryable });
+  // 422 is how the API reports a page it could not render; like an unexplained 2xx failure, retry it once.
+  if ((status >= 200 && status < 300) || status === 422) return new LinkFailure("unknown", base);
   const reason = statusReason(status);
-  return new LinkFailure(reason, { technical, http_status: status, retryable: reason === "unknown" ? false : undefined });
+  return new LinkFailure(reason, { ...base, retryable: reason === "unknown" ? false : undefined });
 }
 
 // Content adapters' own messages that are written for users. Anything else is shown as a plain reason.

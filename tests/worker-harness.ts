@@ -11,7 +11,7 @@ import { webAdapter } from "../worker/adapters/web";
 import type { Link } from "../src/types";
 
 type Meta = { status: "ready" | "failed" } | { throws: string } | { http: number; type?: string; headers?: Record<string, string> };
-type Content = { markdown: string } | { throws: string } | { error: unknown } | { pending: true };
+type Content = { markdown: string } | { throws: string } | { error: unknown } | { pending: true } | { wait: Promise<string> };
 // A list is consumed one item per call (the last item sticks), to script transient failures.
 export const fakes: {
   meta: Meta | Meta[];
@@ -20,7 +20,7 @@ export const fakes: {
   onMeta?: () => Promise<void>;
   onContent?: () => Promise<void>;
   /** Run the real web adapter against this Browser Rendering answer instead of the fake content. */
-  browser?: () => Response;
+  browser?: () => Response | Promise<Response>;
   /** Make the link's adapter a discovering (social-style) one that throws this error. */
   discoverError?: string;
   /** Make D1 statements matching this pattern fail like a busy database. */
@@ -62,6 +62,7 @@ mock.module("../worker/adapters", () => ({
       if ("throws" in content) throw new Error(content.throws);
       if ("error" in content) throw content.error;
       if ("pending" in content) return new Promise(() => {});
+      if ("wait" in content) return { markdown: await content.wait, source: "web" }; // ignores the abort signal
       return { markdown: content.markdown, source: "web" };
     },
   }),
@@ -185,5 +186,5 @@ export async function setup() {
       job: job ? `${job.status}/${job.step}` : null,
     };
   };
-  return { db, env, api, runQueued, runJob, view, sent, steps, engine };
+  return { db, env, api, runQueued, runJob, view, sent, steps, engine, r2 };
 }
