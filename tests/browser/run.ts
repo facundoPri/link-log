@@ -917,6 +917,14 @@ try {
     await waitFor("sign-in screen", async () => (await L.getByLabel("Password").count()) > 0, 15000);
     const after = await kept(scopeA);
     assert(after === 0, `${after} entries left in the first account's scope`);
+    // Pinned-group metadata (descriptions, bindings, restart hints) of A: none left, and what any
+    // other scope wrote is invisible to A's successor anyway (scoped reads, see groups.test.ts).
+    const groupMeta = await inSw(ctx, async (s: string) => {
+      const meta = Object.values(((await chrome.storage.session.get("groups")).groups ?? {}) as Record<string, { scope?: string }>);
+      const hints = Object.values(((await chrome.storage.local.get("pinnedHints")).pinnedHints ?? {}) as Record<string, { scope?: string }>);
+      return { meta: meta.filter((m) => m.scope === s).length, hints: hints.filter((h) => h.scope === s).length, unscoped: [...meta, ...hints].filter((m) => !m.scope).length };
+    }, scopeA);
+    assert(groupMeta.meta === 0 && groupMeta.hints === 0, `group metadata left for the first account: ${JSON.stringify(groupMeta)}`);
     const stale = await fetch(`${API}/library`, { headers: { Cookie: `linklog.session_token=${cookieA}` } });
     assert(stale.status === 401, `old session still works (${stale.status})`);
     // Second account, signed in through the form in the same browser profile.
@@ -938,7 +946,7 @@ try {
     assert(leaked.length === 0, `first account's lenses listed: ${leaked.join(", ")}`);
     assert((await kept(`local:${catB.libraryId}`)) === 0, "second account inherited cached results");
     await shot(L, "16-second-account");
-    return `${before} cached entries forgotten at sign-out; old cookie 401; second account: new library id, 0 groups, 0 lens cells, none of ${lensNamesA.length} lenses`;
+    return `${before} cached entries + group metadata/hints forgotten at sign-out; old cookie 401; second account: new library id, 0 groups, 0 lens cells, none of ${lensNamesA.length} lenses`;
   });
 } finally {
   meta.finishedAt = new Date().toISOString();
