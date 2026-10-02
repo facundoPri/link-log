@@ -1,5 +1,5 @@
 import type { WorkflowStep } from "cloudflare:workers";
-import { beforeCall, judge, JevFailure, R2_TRANSIENT, uncertain, type JevPhase, type Question } from "../ai/jev";
+import { beforeCall, judge, JevFailure, outcomeFailure, R2_TRANSIENT, uncertain, type JevOutcome, type JevPhase, type Question } from "../ai/jev";
 
 // Owner decision (FAC-54): one automatic retry, only for known border cases before the call (a transient
 // R2 read or D1 conflict/timeout). Once the request may have been sent, Jev is never retried automatically.
@@ -55,13 +55,17 @@ export async function evaluateWithJev(
   const result = await step.do("evaluate-jev", { retries: JEV_RETRIES, timeout: "2 minutes" }, async (ctx) => {
     let failure: JevFailure;
     try {
-      // A previous attempt that claimed the call may have reached the provider before the engine ended it.
-      // Not knowing (the read failed) is treated the same way: never send, and say it may have been billed.
+      // A previous attempt that claimed the call may have reached the provider before the engine ended it:
+      // its recorded answer is used as is, and without one it may have been billed. Not knowing (the read
+      // failed) is treated the same way: never send again.
       const previous = ctx.attempt > 1
-        ? await env.DB.prepare("SELECT jev_call FROM jobs WHERE id=?").bind(job.id).first<{ jev_call: string | null }>()
-          .then((row) => !!row?.jev_call, (e: unknown) => { throw uncertain(e); })
-        : false;
-      if (previous)
+        ? await env.DB.prepare("SELECT jev_call,jev_outcome FROM jobs WHERE id=?").bind(job.id).first<{ jev_call: string | null; jev_outcome: string | null }>()
+          .catch((e: unknown) => { throw uncertain(e); })
+        : null;
+      const recorded = previous?.jev_outcome ? JSON.parse(previous.jev_outcome) as JevOutcome : null;
+      if (recorded?.ok) return recorded.result;
+      if (recorded) failure = outcomeFailure(recorded);
+      else if (previous?.jev_call)
         failure = new JevFailure("sent", "interrupted", undefined, { technical: "A previous attempt claimed the call" });
       else {
         await env.DB.batch([

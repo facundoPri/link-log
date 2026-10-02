@@ -310,7 +310,7 @@ test("a replay guard that can't read the claim fails closed with the may-have-be
   const calls = provider(() => new Promise<Response>(() => {}));
   s.engine.timeoutMs = 20;
   fakes.onSql = async (sql, phase) => {
-    if (phase === "read" && sql === "SELECT jev_call FROM jobs WHERE id=?") throw new Error("D1_ERROR: database is locked (SQLITE_BUSY)");
+    if (phase === "read" && /^SELECT jev_call/.test(sql)) throw new Error("D1_ERROR: database is locked (SQLITE_BUSY)");
   };
   const batch = await autotag(s, ids);
   await s.runQueued();
@@ -342,4 +342,80 @@ test("permanent or unknown R2 errors are final: one attempt, no call, no usage",
     expect(calls.n + usage(s).length).toBe(0);
     expect(jobs(s, batch)[0]).toMatchObject({ status: "failed", reason: "before_call", error: "Failed before calling Jev (no cost): the saved content could not be read." });
   }
+});
+
+// Round 3 (review): the provider's outcome is recorded under the claim before metering is awaited.
+const finalizeSql = /^UPDATE usage_events SET status=\?,model=/;
+const holdFinalize = () => {
+  const hold = gate();
+  let held = false;
+  fakes.onSql = async (sql, phase) => {
+    if (phase === "write" && finalizeSql.test(sql) && !held) { held = true; await hold.opened; }
+  };
+  return hold;
+};
+
+test("an account error whose metering outlives the step still settles as account/402 and stops the batch", async () => {
+  const { s, ids } = await start(2);
+  const calls = provider(() => Response.json({ error: "Insufficient balance" }, { status: 402 }));
+  const batch = await autotag(s, ids);
+  const hold = holdFinalize();
+  s.engine.timeoutMs = 20;
+  const [first] = s.sent.splice(0, 1);
+  await s.runJob(first!.body.id); // A's first attempt is stuck finalizing Usage; the engine retries the step
+  await s.runQueued(); // B runs before A's write is released
+  const [a, b] = jobs(s, batch);
+  expect(a).toMatchObject({ status: "failed", reason: "account", error: JEV_FAILURE_MESSAGES.account });
+  expect(b).toMatchObject({ status: "failed", reason: "account_stopped" });
+  expect(calls.n).toBe(1);
+  hold.open();
+  await Bun.sleep(10);
+  expect(calls.n).toBe(1);
+  expect(usage(s)).toEqual([{ job_id: a!.id, status: "failed" }]);
+});
+
+test("a running job of the batch can't claim once another job recorded an account error, even before it settles", async () => {
+  const { s, ids } = await start(2);
+  const calls = provider(() => Response.json({ error: "Insufficient balance" }, { status: 402 }));
+  const batch = await autotag(s, ids);
+  const hold = holdFinalize();
+  const [a, b] = jobs(s, batch);
+  s.sent.splice(0);
+  const runningA = s.runJob(a!.id); // A has its 402 recorded and is still finalizing Usage
+  await Bun.sleep(5);
+  await s.runJob(b!.id);
+  expect(calls.n).toBe(1);
+  expect(jobs(s, batch)[1]).toMatchObject({ status: "failed", reason: "account_stopped" });
+  hold.open();
+  await runningA;
+  expect(jobs(s, batch)[0]).toMatchObject({ status: "failed", reason: "account" });
+});
+
+test("a 401 is an account error even when its body never arrives", async () => {
+  const { s, ids } = await start(2);
+  const calls = provider(() => new Response(new ReadableStream({ start: () => {} }), { status: 401 }));
+  s.engine.timeoutMs = 20;
+  const batch = await autotag(s, ids);
+  const [first] = s.sent.splice(0, 1);
+  await s.runJob(first!.body.id);
+  await s.runQueued();
+  expect(calls.n).toBe(1);
+  expect(jobs(s, batch)[0]).toMatchObject({ status: "failed", reason: "account" });
+  expect(jobs(s, batch)[1]).toMatchObject({ status: "failed", reason: "account_stopped" });
+  expect(s.db.query("SELECT json_extract(jev_outcome,'$.http_status') s FROM jobs WHERE id=?").get(jobs(s, batch)[0]!.id)).toEqual({ s: 401 });
+});
+
+test("a successful answer whose metering outlives the step is recovered, not paid for twice", async () => {
+  const { s, ids } = await start();
+  const calls = provider(answer);
+  const hold = holdFinalize();
+  s.engine.timeoutMs = 20;
+  const batch = await autotag(s, ids);
+  await s.runQueued();
+  expect(calls.n).toBe(1);
+  expect(jobs(s, batch)[0]!.status).toBe("done");
+  expect(s.db.query("SELECT count(*) n FROM tag_evaluations WHERE link_id=?").get(ids[0]!)).toEqual({ n: 1 });
+  hold.open();
+  await Bun.sleep(10);
+  expect(usage(s)).toEqual([{ job_id: jobs(s, batch)[0]!.id, status: "done" }]);
 });

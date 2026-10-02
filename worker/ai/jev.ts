@@ -224,7 +224,15 @@ function afterSend(e: unknown): JevFailure {
   return new JevFailure("sent", "provider_error", undefined, detail);
 }
 type JevJob = { id: string; batch_id: string; link_id: string | null };
-const accountStopped = "EXISTS (SELECT 1 FROM jobs s WHERE s.batch_id=? AND s.id<>? AND s.reason='account')";
+// A job of the batch settled with an account error, or recorded one and has not settled yet.
+const accountStopped = "EXISTS (SELECT 1 FROM jobs s WHERE s.batch_id=? AND s.id<>? AND (s.reason='account' OR json_extract(s.jev_outcome,'$.reason')='account'))";
+export type JevResult = { answers: Record<string, Answer>; model: string };
+/** What a sent call ended with, as stored in `jobs.jev_outcome`. */
+export type JevOutcome = { ok: true; result: JevResult } | { ok: false; reason: JevFailure["reason"]; message: string; http_status: number | null };
+export const outcomeFailure = (o: Extract<JevOutcome, { ok: false }>) =>
+  new JevFailure("sent", o.reason, o.message, o.http_status ? { http_status: o.http_status } : {});
+// Optional error detail is waited for briefly: the status already decided what matters.
+const BODY_DETAIL_MS = 5000;
 /**
  * Authorizes this job's single Jev call. One transaction claims `jobs.jev_call` (only if no attempt claimed
  * it, the job is still running and its batch was not stopped by an account error) and writes the usage row
@@ -272,7 +280,7 @@ export async function judge(
   const usageId = crypto.randomUUID(), started = Date.now(), meter: Meter = {};
   await claimCall(env, job, usageId, provider);
   let failure: JevFailure | null = null;
-  let result: { answers: Record<string, Answer>; model: string } | undefined;
+  let result: JevResult | undefined;
   try {
     let raw: Record<string, unknown>;
     // Fixture: deterministic, unpaid answers for automated tests, only with ALLOW_FIXTURE_JEV.
@@ -291,11 +299,17 @@ export async function judge(
         signal: AbortSignal.timeout(60000),
       });
       if (!response.ok) {
-        // The status decides an account error; the body only adds detail, and may fail to arrive.
-        const detail = (await response.text().catch(() => "")).slice(0, 8000);
+        // The status decides an account error, before any body is awaited.
+        if ([401, 402, 403].includes(response.status)) {
+          void response.body?.cancel().catch(() => {});
+          throw new JevFailure("sent", "account", undefined, { http_status: response.status, technical: `TypeSafe HTTP ${response.status}` });
+        }
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const detail = (await Promise.race([
+          response.text().catch(() => ""),
+          new Promise<string>((resolve) => (timer = setTimeout(() => resolve(""), BODY_DETAIL_MS))),
+        ]).finally(() => clearTimeout(timer))).slice(0, 8000);
         const http = { http_status: response.status, technical: `TypeSafe HTTP ${response.status}: ${detail.slice(0, 300)}` };
-        if ([401, 402, 403].includes(response.status))
-          throw new JevFailure("sent", "account", undefined, http);
         if (
           [400, 413, 422].includes(response.status) &&
           /(?:context|tokens?).{0,100}(?:length|limit|exceed|maximum|too)|(?:exceed|maximum|too many|too long).{0,100}(?:tokens?|context)/is.test(
@@ -327,7 +341,13 @@ export async function judge(
   } catch (e) {
     failure = afterSend(e);
   }
-  // Metering never replaces the provider's outcome (an account error must still stop the batch).
+  // The outcome is recorded under the claim before metering is awaited: if the attempt ends during the
+  // metering, the next one recovers it (an account error must still stop the batch). Metering never replaces it.
+  const outcome: JevOutcome = failure
+    ? { ok: false, reason: failure.reason, message: failure.message, http_status: failure.detail.http_status ?? null }
+    : { ok: true, result: result! };
+  await env.DB.prepare("UPDATE jobs SET jev_outcome=? WHERE id=? AND jev_call=?").bind(JSON.stringify(outcome), job.id, usageId).run()
+    .catch((e: unknown) => console.error(JSON.stringify({ event: "jev_outcome_unsaved", job_id: job.id, ok: outcome.ok, reason: failure?.reason ?? null, detail: e instanceof Error ? e.message.slice(0, 300) : String(e) })));
   await finishUsage(env, usageId, started, provider, meter, failure?.message ?? null);
   if (failure) throw failure;
   return result!;
