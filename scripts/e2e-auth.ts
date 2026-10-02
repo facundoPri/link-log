@@ -74,8 +74,14 @@ async function follow(link: string) {
   return viaUi(url.pathname + url.search);
 }
 async function d1(sql: string) {
-  const run = Bun.spawnSync(["bunx", "wrangler", "d1", "execute", "linklog", "--local", "--persist-to", stateDir, "--json", "--command", sql], { stdout: "pipe", stderr: "pipe" });
-  if (run.exitCode !== 0) throw new Error(run.stderr.toString());
+  // The CLI opens the same local database the running Worker writes to; a busy moment can fail
+  // one attempt (seen once, without output). Retry briefly and keep the full error otherwise.
+  let run = Bun.spawnSync(["bunx", "wrangler", "d1", "execute", "linklog", "--local", "--persist-to", stateDir, "--json", "--command", sql], { stdout: "pipe", stderr: "pipe" });
+  for (let attempt = 1; run.exitCode !== 0 && attempt < 3; attempt++) {
+    await Bun.sleep(500);
+    run = Bun.spawnSync(["bunx", "wrangler", "d1", "execute", "linklog", "--local", "--persist-to", stateDir, "--json", "--command", sql], { stdout: "pipe", stderr: "pipe" });
+  }
+  if (run.exitCode !== 0) throw new Error(`${run.stderr.toString()}${run.stdout.toString()}`.slice(0, 2000));
   return (JSON.parse(run.stdout.toString()) as { results: Record<string, unknown>[] }[])[0]!.results;
 }
 
@@ -248,6 +254,23 @@ try {
   );
   assert.deepEqual([r9!.links, r9!.jobs], [2, 2]);
   pass("import is atomic on real D1 (injected mid-import failure leaves nothing); dedupe + one job per new link");
+
+  // 6d. R10 on real local D1: the full 100-URL contract fits D1's 100 bound parameters per statement.
+  const hundred = Array.from({ length: 100 }, (_, i) => `https://example.com/r10/${i}`);
+  const big = await A.send("/api/import", { urls: hundred });
+  assert.equal(big.status, 200, `import of 100 (${big.status})`);
+  assert.deepEqual(((await big.json()) as { imported: number }).imported, 100);
+  const bigAgain = (await (await A.send("/api/import", { urls: hundred })).json()) as { imported: number; duplicates: number };
+  assert.deepEqual([bigAgain.imported, bigAgain.duplicates], [0, 100]);
+  const saved = await B.send("/api/browser/save", { urls: Array.from({ length: 97 }, (_, i) => `https://example.com/r10-save/${i}`) });
+  assert.equal(saved.status, 200, `Browser save of 97 (${saved.status})`);
+  const [r10] = await d1(
+    `SELECT (SELECT count(*) FROM links WHERE original_url LIKE 'https://example.com/r10%') links,
+            (SELECT count(*) FROM jobs j JOIN links l ON l.id=j.link_id WHERE l.original_url LIKE 'https://example.com/r10%') jobs,
+            (SELECT count(*) FROM batches b WHERE NOT EXISTS(SELECT 1 FROM jobs j WHERE j.batch_id=b.id)) empty_batches`,
+  );
+  assert.deepEqual([r10!.links, r10!.jobs, r10!.empty_batches], [197, 197, 0]);
+  pass("100-URL import and 97-URL Browser save succeed on real D1 (bound-parameter limit); retry is a pure duplicate, no empty batches");
 
   // 7. Password reset revokes A's sessions; logout ends B's.
   since = Date.now();
