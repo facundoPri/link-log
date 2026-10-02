@@ -122,6 +122,12 @@ export async function startApi() {
   throw new Error("API did not start");
 }
 
+/** A second real account (sign-up + emailed verification), for account-switch checks. */
+export async function createAccount(email: string, password: string) {
+  const { ensureFixture } = await import("../../scripts/seed-dev-users");
+  return ensureFixture(`http://127.0.0.1:${API_PORT}`, UI, { label: email, email, password });
+}
+
 export async function buildAll() {
   await run(["bun", "scripts/build.ts"]);
   // No LINKLOG_ORIGINS: the bridge must find Linklog on this non-default port by itself.

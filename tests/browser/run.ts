@@ -6,7 +6,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { BrowserContext, Page, Worker } from "playwright-core";
 import { PROTOCOL_VERSION } from "@linklog/browser-protocol";
-import { api, API_PORT, buildAll, EXTENSION, launch, OTHER_APP_PORT, OUT, ROOT, SITE, startApi, startMarkedApp, startSite, UI, UI_PORT, waitFor } from "./env";
+import { api, API, API_PORT, buildAll, createAccount, EXTENSION, launch, OTHER_APP_PORT, OUT, ROOT, SITE, startApi, startMarkedApp, startSite, UI, UI_PORT, waitFor } from "./env";
 
 // LINKLOG_BROWSER_EVIDENCE writes the run elsewhere (e.g. .cache/...) instead of the committed evidence.
 const EVIDENCE = resolve(ROOT, process.env.LINKLOG_BROWSER_EVIDENCE ?? "docs/browser-validation");
@@ -889,6 +889,56 @@ try {
     await Bun.sleep(400);
     await shot(L, "14-activity");
     await L.keyboard.press("Escape");
+  });
+
+  section("Accounts");
+  await check("sign-out makes the extension forget this account; the next account sees none of it", async () => {
+    const catA = await api<{ libraryId: string; groups: unknown[] }>("/browser/catalog");
+    const lensNamesA = (await api<{ lenses: { name: string }[] }>("/library")).lenses.map((l) => l.name);
+    const scopeA = `local:${catA.libraryId}`;
+    // Result entries and pending requests the extension keeps for one library scope.
+    const kept = (scope: string) =>
+      inSw(ctx, async (s: string) => {
+        const all = await chrome.storage.session.get(null);
+        let n = 0;
+        for (const [k, v] of Object.entries(all)) {
+          if (k.startsWith("res:")) n += Object.keys((v as { entries: Record<string, unknown> }).entries).filter((e) => e.startsWith(`${s}/`)).length;
+          if (k.startsWith("req:") && (v as { scope: string }).scope === s) n++;
+        }
+        return n;
+      }, scope);
+    const before = await kept(scopeA);
+    assert(before > 0, "no cached results for the first account before sign-out");
+    const cookieA = (await ctx.cookies()).find((c) => c.name === "linklog.session_token")!.value;
+    // Real UI path: account menu -> Sign out (asks the extension to forget, then ends the session).
+    await L.bringToFront();
+    await L.locator("aside").getByRole("button", { name: /browser-test@linklog\.test/ }).click();
+    await L.getByRole("menuitem", { name: "Sign out" }).click();
+    await waitFor("sign-in screen", async () => (await L.getByLabel("Password").count()) > 0, 15000);
+    const after = await kept(scopeA);
+    assert(after === 0, `${after} entries left in the first account's scope`);
+    const stale = await fetch(`${API}/library`, { headers: { Cookie: `linklog.session_token=${cookieA}` } });
+    assert(stale.status === 401, `old session still works (${stale.status})`);
+    // Second account, signed in through the form in the same browser profile.
+    await createAccount("browser-b@linklog.test", "browser-b-password");
+    await L.getByLabel("Email").fill("browser-b@linklog.test");
+    await L.getByLabel("Password").fill("browser-b-password");
+    await L.getByRole("button", { name: "Sign in", exact: true }).click();
+    await waitFor("second account signed in", async () => (await L.locator("aside").getByRole("button", { name: /browser-b@linklog\.test/ }).count()) > 0, 15000);
+    await L.locator("aside").getByRole("button", { name: /^Browser/ }).click();
+    await waitFor("Browser view connected", async () => (await L.locator("h1", { hasText: "Browser" }).count()) > 0, 15000);
+    const cookieB = (await ctx.cookies()).find((c) => c.name === "linklog.session_token")!.value;
+    const catB = (await (await fetch(`${API}/browser/catalog`, { headers: { Cookie: `linklog.session_token=${cookieB}` } })).json()) as { libraryId: string; groups: unknown[] };
+    assert(catB.libraryId !== catA.libraryId, "same library id for both accounts");
+    assert(catB.groups.length === 0, `second account sees ${catB.groups.length} pinned groups`);
+    await waitFor("tab rows", async () => (await rowCount(L)) > 0, 15000);
+    assert((await L.locator("[data-lens-cell]").count()) === 0, "lens result cells shown for the second account");
+    const sidebar = await L.locator("aside").innerText();
+    const leaked = lensNamesA.filter((name) => sidebar.includes(name));
+    assert(leaked.length === 0, `first account's lenses listed: ${leaked.join(", ")}`);
+    assert((await kept(`local:${catB.libraryId}`)) === 0, "second account inherited cached results");
+    await shot(L, "16-second-account");
+    return `${before} cached entries forgotten at sign-out; old cookie 401; second account: new library id, 0 groups, 0 lens cells, none of ${lensNamesA.length} lenses`;
   });
 } finally {
   meta.finishedAt = new Date().toISOString();
