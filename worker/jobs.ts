@@ -321,9 +321,9 @@ export class LinkWorkflow extends WorkflowEntrypoint<Env, { id: string }> {
     const acquire = async (pool: Pool | null) => {
       if (!pool) return;
       const limit = poolLimit(env, pool);
-      let lease = false;
+      let lease: boolean | null = false;
       for (let attempt = 0; !lease; attempt++) {
-        lease = await step.do(`provider-slot-${attempt}`, async () => {
+        lease = await step.do(`provider-slot-${attempt}`, async (): Promise<boolean | null> => {
           const now = Date.now();
           await env.DB.prepare(
             "DELETE FROM provider_leases WHERE expires_at<?",
@@ -331,19 +331,17 @@ export class LinkWorkflow extends WorkflowEntrypoint<Env, { id: string }> {
             .bind(now)
             .run();
           const result = await env.DB.prepare(
-            "INSERT OR IGNORE INTO provider_leases(job_id,pool,expires_at) SELECT ?,?,? WHERE (SELECT count(*) FROM provider_leases WHERE pool=?)<?",
+            // Only a running job takes a slot: a cancelled one never gets its lease back.
+            "INSERT OR IGNORE INTO provider_leases(job_id,pool,expires_at) SELECT ?,?,? WHERE (SELECT count(*) FROM provider_leases WHERE pool=?)<? AND EXISTS (SELECT 1 FROM jobs WHERE id=? AND status='running')",
           )
-            .bind(job.id, pool, now + 300000, pool, limit)
+            .bind(job.id, pool, now + 300000, pool, limit, job.id)
             .run();
-          return (
-            result.meta.changes > 0 ||
-            !!(await env.DB.prepare(
-              "SELECT job_id FROM provider_leases WHERE job_id=?",
-            )
-              .bind(job.id)
-              .first())
-          );
+          if (result.meta.changes > 0 || await env.DB.prepare("SELECT job_id FROM provider_leases WHERE job_id=?").bind(job.id).first())
+            return true;
+          // Stop waiting for a slot once the job is no longer running (cancelled).
+          return (await env.DB.prepare("SELECT 1 FROM jobs WHERE id=? AND status='running'").bind(job.id).first()) ? false : null;
         });
+        if (lease === null) throw new Error("The job is no longer running.");
         if (!lease)
           await step.sleep(`waiting-for-slot-${attempt}`, "2 seconds");
       }

@@ -23,6 +23,8 @@ export const fakes: {
   browser?: () => Response | Promise<Response>;
   /** Make the link's adapter a discovering (social-style) one that throws this error. */
   discoverError?: string;
+  /** Make the link's adapter a discovering one that finds this. */
+  discover?: () => unknown;
   /** Make D1 statements matching this pattern fail like a busy database. */
   failSql?: RegExp;
   /** Like failSql, but only the first matching write fails. */
@@ -54,7 +56,7 @@ mock.module("../worker/metadata", () => ({
 }));
 mock.module("../worker/adapters", () => ({
   ...adapters,
-  adapterFor: () => fakes.browser ? webAdapter : fakes.discoverError ? ({
+  adapterFor: () => fakes.browser ? webAdapter : fakes.discover ? ({ name: "x", discover: async () => fakes.discover!() }) : fakes.discoverError ? ({
     name: "x",
     discover: async () => { throw new Error(fakes.discoverError); },
   }) : ({
@@ -124,6 +126,7 @@ export async function setup() {
   fakes.failSqlOnce = undefined;
   fakes.onSql = undefined;
   fakes.discoverError = undefined;
+  fakes.discover = undefined;
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys=ON");
   for (const f of readdirSync("migrations").filter((f) => f.endsWith(".sql")).sort())

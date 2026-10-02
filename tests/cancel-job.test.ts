@@ -297,3 +297,165 @@ test("a running Jev job cancelled after sending may have been billed, is never r
   expect((await s.api(`/batches/${batch}/retry`, "POST")).data.error).toBe("Nothing to retry.");
   expect(await s.view(id)).toMatchObject({ attention: false });
 });
+
+// Round 2 (review): a write already on its way when the cancel lands is fenced inside the statement itself.
+// Each test pauses one real write of the stopped workflow's in-flight step, cancels, then lets it run.
+function pauseAt(pattern: RegExp) {
+  const hold = gate();
+  const state = { reached: false };
+  fakes.onSql = async (sql, phase) => {
+    if (phase === "write" && !state.reached && pattern.test(sql)) {
+      state.reached = true;
+      await hold.opened;
+    }
+  };
+  return { state, release: hold.open };
+}
+const attention = (s: S, id: string) =>
+  s.db.query("SELECT status,preview_reason,attention_kind,attention_reason,attention_at FROM links WHERE id=?").get(id);
+
+test("a pending attention write of a cancelled extraction adds nothing to Needs attention", async () => {
+  const s = await start();
+  fakes.meta = { status: "failed" }; // the preview fails fast (403); the content works
+  const id = await save(s, "https://c.example/attention");
+  const j = s.sent.splice(0)[0]!.body.id;
+  const pause = pauseAt(/^UPDATE links SET attention_kind=/);
+  const running = s.runJob(j);
+  await until(() => pause.state.reached);
+  expect((await cancel(s, j)).status).toBe(200);
+  const atCancel = attention(s, id);
+  pause.release();
+  await running;
+  expect(attention(s, id)).toEqual(atCancel);
+  expect(atCancel).toMatchObject({ attention_kind: null });
+  expect(await s.view(id)).toMatchObject({ attention: false, job: "failed/Cancelled" });
+});
+
+test("a cancelled preview retry publishes no preview failure and no attention", async () => {
+  const s = await start();
+  const imp = await s.api("/import", "POST", { urls: ["https://c.example/preview-only"] });
+  const id = imp.data.links[0].id as string;
+  await s.api(`/batches/${imp.data.batches[0].id}`, "DELETE");
+  s.sent.splice(0);
+  fakes.meta = { status: "failed" };
+  await s.api(`/links/${id}/retry`, "POST");
+  const j = s.sent.splice(0)[0]!.body.id;
+  const before = attention(s, id);
+  const pause = pauseAt(/^UPDATE links SET preview_reason=/);
+  const running = s.runJob(j);
+  await until(() => pause.state.reached);
+  expect((await cancel(s, j)).status).toBe(200);
+  pause.release();
+  await running;
+  expect(attention(s, id)).toEqual(before);
+  expect(before).toMatchObject({ status: "pending", attention_kind: null });
+  expect(await s.view(id)).toMatchObject({ attention: false });
+});
+
+// Two Jev jobs on one link: A is cancelled while its save is pending, B runs and saves, then A's write lands.
+async function successorRace(kind: "autotag" | "lens", pattern: RegExp) {
+  const { s, id } = await jevReady();
+  const lens = kind === "lens" ? await lensOf(s) : null;
+  const scores = [0.2, 0.9];
+  const calls = provider((q) =>
+    Response.json({
+      model: "jev-test",
+      answers: Object.fromEntries(Object.keys(q).map((k) => [k, { type: "noul", noul: scores[calls.n - 1] }])),
+      usage: { input_tokens: 100, output_tokens: 5 },
+    }));
+  const body = { kind, ids: [id], ...(lens && { lensId: lens.id }) };
+  const a = (await s.api("/batches", "POST", body)).data.batchId;
+  const b = (await s.api("/batches", "POST", body)).data.batchId;
+  const ja = s.sent.splice(0)[0]!.body.id;
+  const pause = pauseAt(pattern);
+  const runningA = s.runJob(ja);
+  await until(() => pause.state.reached);
+  expect((await cancel(s, ja)).status).toBe(200);
+  expect(s.sent.map((m) => m.body.id)).toEqual([jobOf(s, b, id).id]);
+  await s.runQueued();
+  expect(jobOf(s, b, id).status).toBe("done");
+  pause.release();
+  await runningA;
+  expect(calls.n).toBe(2);
+  expect(s.db.query("SELECT status,step,result FROM jobs WHERE id=?").get(ja)).toEqual({ status: "failed", step: "Cancelled", result: null });
+  return { s, id, a, b };
+}
+
+test("a cancelled auto-tag's pending save never replaces the tags of the auto-tag that ran after it", async () => {
+  const { s, id, b } = await successorRace("autotag", /^DELETE FROM link_tags/);
+  expect(s.db.query("SELECT probability,batch_id FROM tag_evaluations WHERE link_id=?").all(id)).toEqual([{ probability: 0.9, batch_id: b }]);
+  const applied = (s.db.query("SELECT threshold FROM tags").get() as { threshold: number }).threshold <= 0.9 ? 1 : 0;
+  expect((s.db.query("SELECT count(*) n FROM link_tags WHERE link_id=?").get(id) as { n: number }).n).toBe(applied);
+});
+
+test("a cancelled lens's pending save never replaces the result of the lens that ran after it", async () => {
+  const { s, id, b } = await successorRace("lens", /^INSERT OR REPLACE INTO lens_results/);
+  const row = s.db.query("SELECT answer,batch_id FROM lens_results WHERE link_id=?").get(id) as { answer: string; batch_id: string };
+  expect(row.batch_id).toBe(b);
+  expect(JSON.parse(row.answer).noul).toBe(0.9);
+});
+
+// A social-style link whose first extraction kept one media item, with stored OCR.
+async function socialWithMedia(media: { media_key: string; url: string }[]) {
+  const s = await start();
+  const found = (items: typeof media) => ({
+    source: "x-post", text: "post", title: "Post",
+    media: items.map((m, position) => ({ ...m, position, kind: "image", preview_url: null })),
+    details: { completeness: "verified", issues: [] },
+  });
+  fakes.discover = () => found(media);
+  const id = await save(s, "https://c.example/social");
+  await s.runQueued();
+  s.db.run("UPDATE media_items SET ocr_state='failed',ocr_text=NULL,ocr_error='old error' WHERE link_id=?", [id]);
+  expect(linkRow(s, id)).toMatchObject({ content_state: "partial", content_version: 1 });
+  const mediaRows = () => s.db.query("SELECT media_key,url,ocr_state,ocr_text,ocr_error FROM media_items WHERE link_id=? ORDER BY media_key").all(id);
+  return { s, id, mediaRows, found };
+}
+async function cancelDuring(s: S, id: string, pattern: RegExp) {
+  await s.api("/batches", "POST", { kind: "extract", ids: [id] });
+  const j = s.sent.splice(0)[0]!.body.id;
+  const pause = pauseAt(pattern);
+  const running = s.runJob(j);
+  await until(() => pause.state.reached);
+  expect((await cancel(s, j)).status).toBe(200);
+  pause.release();
+  await running;
+}
+
+test("a cancelled social re-extraction's pending media publication keeps the stored media", async () => {
+  const { s, id, mediaRows, found } = await socialWithMedia([{ media_key: "old", url: "https://example.com/old.jpg" }]);
+  const before = mediaRows(), content = linkRow(s, id);
+  fakes.discover = () => found([]); // the new run finds no media at all
+  await cancelDuring(s, id, /^DELETE FROM media_items WHERE link_id=/);
+  expect(mediaRows()).toEqual(before);
+  expect(linkRow(s, id)).toEqual(content);
+});
+
+test("a cancelled social re-extraction's pending OCR result keeps the stored OCR", async () => {
+  const { s, id, mediaRows } = await socialWithMedia([{ media_key: "old", url: "https://example.com/old.jpg" }]);
+  const before = mediaRows(), content = linkRow(s, id);
+  expect(before).toEqual([{ media_key: "old", url: "https://example.com/old.jpg", ocr_state: "failed", ocr_text: null, ocr_error: "old error" }]);
+  await cancelDuring(s, id, /^UPDATE media_items SET ocr_state=/);
+  expect(mediaRows()).toEqual(before);
+  expect(linkRow(s, id)).toEqual(content);
+});
+
+test("a slot acquisition in flight when its job is cancelled leaves no lease; the next job gets the slot at once", async () => {
+  const s = await start();
+  Object.assign(s.env as any, { BROWSER_CONCURRENCY: "1" });
+  const first = await save(s, "https://c.example/slot-1");
+  const j = s.sent.splice(0)[0]!.body.id;
+  const pause = pauseAt(/^INSERT OR IGNORE INTO provider_leases/);
+  const running = s.runJob(j);
+  await until(() => pause.state.reached);
+  expect((await cancel(s, j)).status).toBe(200);
+  pause.release();
+  await running;
+  expect(leases(s)).toBe(0);
+  expect(fakes.calls).toMatchObject({ meta: 0, content: 0 });
+  expect(await s.view(first)).toMatchObject({ processing: false, attention: false, job: "failed/Cancelled" });
+  const second = await save(s, "https://c.example/slot-2");
+  await s.runQueued();
+  expect(s.steps.some((x) => x.name.startsWith("waiting-for-slot"))).toBe(false);
+  expect(await s.view(second)).toMatchObject({ content: "ready", job: "done/Done" });
+});

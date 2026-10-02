@@ -2,6 +2,7 @@ import { JevFailure, tagQuestions, lensQuestions, lensAnswer } from "../ai/jev";
 import { evaluateWithJev, readSaved } from "./jev-step";
 import { evaluationStatements } from "../ai/persist";
 import type { JobHandler } from "./index";
+import { jobRunning } from "../attention";
 
 export const classifyHandler: JobHandler = {
   pool: () => "jev",
@@ -33,6 +34,7 @@ export const classifyHandler: JobHandler = {
             result.model,
             job.batch_id,
             now,
+            job.id,
           ),
         );
       let jobResult: unknown = result;
@@ -42,7 +44,7 @@ export const classifyHandler: JobHandler = {
         jobResult = { ...result, answer };
         statements.push(
           env.DB.prepare(
-            "INSERT OR REPLACE INTO lens_results(link_id,lens_id,answer,lens_version,content_version,model,evaluated_at,batch_id) VALUES(?,?,?,?,?,?,?,?)",
+            `INSERT OR REPLACE INTO lens_results(link_id,lens_id,answer,lens_version,content_version,model,evaluated_at,batch_id) SELECT ?,?,?,?,?,?,?,? WHERE ${jobRunning}`,
           ).bind(
             link.id,
             lens.id,
@@ -52,11 +54,13 @@ export const classifyHandler: JobHandler = {
             result.model,
             now,
             job.batch_id,
+            job.id,
           ),
         );
       }
       statements.push(
-        env.DB.prepare("UPDATE jobs SET result=? WHERE id=?").bind(
+        // A cancelled job publishes nothing; its paid answer stays in jobs.jev_outcome and Usage.
+        env.DB.prepare("UPDATE jobs SET result=? WHERE id=? AND status='running'").bind(
           JSON.stringify(jobResult),
           job.id,
         ),

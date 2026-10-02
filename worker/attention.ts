@@ -26,17 +26,21 @@ export function nextAttention(link: State, outcome: StepOutcomes): Pick<Link, "a
 const readAttentionState = (db: D1Database, linkId: string) =>
   db.prepare("SELECT status,preview_reason,content_key,attention_kind,attention_reason FROM links WHERE id=?").bind(linkId).first<State>();
 
+/** Fences a Workflow's write on its job still running, inside the statement: a cancelled job writes nothing. */
+export const jobRunning = "EXISTS (SELECT 1 FROM jobs WHERE id=? AND status='running')";
 // Settles against the live row: a state that only stays the same is never written back, and a change only
 // applies if nobody (Dismiss) changed the attention since it was read; otherwise it is read again.
-export async function settleAttention(db: D1Database, linkId: string, outcome: StepOutcomes) {
+// With a job, every write also requires that job to be still running (a cancelled job settles nothing).
+export async function settleAttention(db: D1Database, linkId: string, outcome: StepOutcomes, jobId?: string) {
   for (let i = 0; i < 3; i++) {
     const link = await readAttentionState(db, linkId);
     if (!link) return;
     const next = nextAttention(link, outcome);
     if (next.attention_kind === link.attention_kind && next.attention_reason === link.attention_reason) return;
-    const changed = await db.prepare("UPDATE links SET attention_kind=?,attention_reason=?,attention_at=? WHERE id=? AND attention_kind IS ? AND attention_reason IS ?")
-      .bind(next.attention_kind, next.attention_reason, next.attention_kind ? new Date().toISOString() : null, linkId, link.attention_kind, link.attention_reason).run();
+    const changed = await db.prepare(`UPDATE links SET attention_kind=?,attention_reason=?,attention_at=? WHERE id=? AND attention_kind IS ? AND attention_reason IS ?${jobId ? ` AND ${jobRunning}` : ""}`)
+      .bind(next.attention_kind, next.attention_reason, next.attention_kind ? new Date().toISOString() : null, linkId, link.attention_kind, link.attention_reason, ...(jobId ? [jobId] : [])).run();
     if (changed.meta.changes) return;
+    if (jobId && !(await db.prepare(`SELECT 1 WHERE ${jobRunning}`).bind(jobId).first())) return;
   }
 }
 

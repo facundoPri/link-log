@@ -7,10 +7,11 @@ import type { WorkflowStepContext } from "cloudflare:workers";
 import { classify, logFailure, logResidualFailure, LinkFailure } from "../failures";
 import type { FailureReason } from "../../src/failures";
 import type { JobContext, JobHandler } from "./index";
-import { settleAttention } from "../attention";
+import { jobRunning, settleAttention } from "../attention";
 
 const MAX_OCR_PREVIEWS = 20;
-export const MEDIA_UPSERT_SQL = "INSERT INTO media_items(link_id,media_key,position,kind,url,preview_url,ocr_state,updated_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(link_id,media_key) DO UPDATE SET position=excluded.position,kind=excluded.kind,url=excluded.url,preview_url=excluded.preview_url,ocr_state=CASE WHEN ? THEN excluded.ocr_state WHEN media_items.ocr_state='skipped' AND excluded.ocr_state='pending' THEN 'pending' ELSE media_items.ocr_state END,ocr_text=CASE WHEN ? THEN NULL ELSE media_items.ocr_text END,ocr_error=CASE WHEN ? THEN NULL ELSE media_items.ocr_error END,ocr_model=CASE WHEN ? THEN NULL ELSE media_items.ocr_model END,updated_at=excluded.updated_at";
+// Bound as: the 8 row values, the extraction's job id (written only while it runs), then the 4 asset-changed flags.
+export const MEDIA_UPSERT_SQL = "INSERT INTO media_items(link_id,media_key,position,kind,url,preview_url,ocr_state,updated_at) SELECT ?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM jobs WHERE id=? AND status='running') ON CONFLICT(link_id,media_key) DO UPDATE SET position=excluded.position,kind=excluded.kind,url=excluded.url,preview_url=excluded.preview_url,ocr_state=CASE WHEN ? THEN excluded.ocr_state WHEN media_items.ocr_state='skipped' AND excluded.ocr_state='pending' THEN 'pending' ELSE media_items.ocr_state END,ocr_text=CASE WHEN ? THEN NULL ELSE media_items.ocr_text END,ocr_error=CASE WHEN ? THEN NULL ELSE media_items.ocr_error END,ocr_model=CASE WHEN ? THEN NULL ELSE media_items.ocr_model END,updated_at=excluded.updated_at";
 
 export function mediaAssetIdentity(raw: string): string {
   const url = new URL(raw);
@@ -116,11 +117,12 @@ async function fetchPreview({ env, step, job, link }: JobContext) {
 }
 type Preview = Awaited<ReturnType<typeof fetchPreview>>;
 // A preview that worked before is kept, like content: the failure is only recorded in Activity.
-const savePreview = (env: Env, linkId: string, preview: Preview) => "failed" in preview
-  ? env.DB.prepare("UPDATE links SET preview_reason=CASE WHEN status='ready' THEN preview_reason ELSE ? END,status=CASE WHEN status='ready' THEN 'ready' ELSE 'failed' END WHERE id=?")
-    .bind(preview.failed, linkId)
-  : env.DB.prepare("UPDATE links SET url=?,domain=?,title=?,description=?,image=?,favicon=?,status='ready',preview_reason=NULL WHERE id=?")
-    .bind(preview.url, preview.domain, preview.title, preview.description, preview.image, preview.favicon, linkId);
+// Published only while the job runs: a cancelled job leaves the preview as it was.
+const savePreview = (env: Env, linkId: string, jobId: string, preview: Preview) => "failed" in preview
+  ? env.DB.prepare(`UPDATE links SET preview_reason=CASE WHEN status='ready' THEN preview_reason ELSE ? END,status=CASE WHEN status='ready' THEN 'ready' ELSE 'failed' END WHERE id=? AND ${jobRunning}`)
+    .bind(preview.failed, linkId, jobId)
+  : env.DB.prepare(`UPDATE links SET url=?,domain=?,title=?,description=?,image=?,favicon=?,status='ready',preview_reason=NULL WHERE id=? AND ${jobRunning}`)
+    .bind(preview.url, preview.domain, preview.title, preview.description, preview.image, preview.favicon, linkId, jobId);
 
 // "Retry preview": only the preview step, through the queue like any job.
 export const previewHandler: JobHandler = {
@@ -131,10 +133,10 @@ export const previewHandler: JobHandler = {
     ctx.progress.preview = "failed" in preview ? "failed" : "ok";
     await step.do("save-preview", async () => {
       await env.DB.batch([
-        savePreview(env, link.id, preview),
+        savePreview(env, link.id, job.id, preview),
         env.DB.prepare("UPDATE jobs SET attempt_started_at=NULL WHERE id=? AND status='running'").bind(job.id),
       ]);
-      await settleAttention(env.DB, link.id, { preview: ctx.progress.preview });
+      await settleAttention(env.DB, link.id, { preview: ctx.progress.preview }, job.id);
     });
     if ("failed" in preview) throw new LinkFailure(preview.failed);
   },
@@ -153,16 +155,14 @@ export const extractHandler: JobHandler = {
     const metadata = { url: preview && !("failed" in preview) ? preview.url : link.url };
     const adapter = adapterFor(metadata.url);
     await step.do("save-preview", async () => {
-      if (preview) await savePreview(env, link.id, preview).run();
+      if (preview) await savePreview(env, link.id, job.id, preview).run();
       await env.DB.prepare("UPDATE jobs SET step='Extracting content',attempt=NULL,max_attempts=NULL,reason=NULL,attempt_started_at=NULL,attempt_budget_ms=NULL,adapter=?,preview_reason=? WHERE id=? AND status='running'")
         .bind(adapter.name, previewFailed, job.id).run();
     });
-    // A job cancelled meanwhile (FAC-55) stores no content and settles nothing: the cancel already did.
-    const running = "EXISTS (SELECT 1 FROM jobs WHERE id=? AND status='running')";
-    const settle = () => step.do("settle-attention", async () => {
-      if (await env.DB.prepare(`SELECT 1 WHERE ${running}`).bind(job.id).first())
-        await settleAttention(env.DB, link.id, { content: "ok", preview: ctx.progress.preview });
-    });
+    // A job cancelled meanwhile (FAC-55) stores no content or media and settles nothing: every write below
+    // requires the job to be still running, inside the statement itself.
+    const running = jobRunning;
+    const settle = () => step.do("settle-attention", () => settleAttention(env.DB, link.id, { content: "ok", preview: ctx.progress.preview }, job.id));
     if (!adapter.discover) {
       const content = await step.do("extract-content", { retries: CONTENT_RETRIES, timeout: "2 minutes" },
         (ctx) => attempt({ env, job, link }, ctx, { step: "content", label: "Extracting content", limit: CONTENT_RETRIES.limit, adapter: adapter.name },
@@ -203,14 +203,15 @@ export const extractHandler: JobHandler = {
       const statements = discovered.media.map((item) => {
         const prior = oldUrl.get(item.media_key);
         const changedAsset = prior ? mediaAssetIdentity(prior) !== mediaAssetIdentity(item.url) : false;
-        return env.DB.prepare(MEDIA_UPSERT_SQL).bind(link.id, item.media_key, item.position, item.kind, item.url, item.preview_url, "pending", now, Number(changedAsset), Number(changedAsset), Number(changedAsset), Number(changedAsset));
+        return env.DB.prepare(MEDIA_UPSERT_SQL).bind(link.id, item.media_key, item.position, item.kind, item.url, item.preview_url, "pending", now, job.id, Number(changedAsset), Number(changedAsset), Number(changedAsset), Number(changedAsset));
       });
-      if (statements.length) await env.DB.batch(statements);
-      if (discovered.media.length) {
-        await env.DB.prepare(`DELETE FROM media_items WHERE link_id=? AND media_key NOT IN (${discovered.media.map(() => "?").join(",")})`)
-          .bind(link.id, ...discovered.media.map((item) => item.media_key)).run();
-      } else await env.DB.prepare("DELETE FROM media_items WHERE link_id=?").bind(link.id).run();
-      await env.DB.prepare("UPDATE jobs SET step='Reading images' WHERE id=? AND status='running'").bind(job.id).run();
+      // One transaction: the discovered media replace the old ones only while the job runs.
+      await env.DB.batch([
+        ...statements,
+        env.DB.prepare(`DELETE FROM media_items WHERE link_id=?${discovered.media.length ? ` AND media_key NOT IN (${discovered.media.map(() => "?").join(",")})` : ""} AND ${running}`)
+          .bind(link.id, ...discovered.media.map((item) => item.media_key), job.id),
+        env.DB.prepare("UPDATE jobs SET step='Reading images' WHERE id=? AND status='running'").bind(job.id),
+      ]);
     });
     const ocrMedia = discovered.media;
     for (const item of ocrMedia.slice(0, MAX_OCR_PREVIEWS)) {
@@ -222,8 +223,8 @@ export const extractHandler: JobHandler = {
         catch (error) { return { state: "failed" as const, text: "", error: error instanceof Error ? error.message : "OCR failed" }; }
       });
       await step.do(`save-ocr-image-${item.position}`, async () => {
-        await env.DB.prepare("UPDATE media_items SET ocr_state=?,ocr_text=?,ocr_error=?,ocr_model=?,updated_at=? WHERE link_id=? AND media_key=?")
-          .bind(result.state, result.state === "done" ? result.text : null, "error" in result ? result.error : null, OCR_MODEL, new Date().toISOString(), link.id, item.media_key).run();
+        await env.DB.prepare(`UPDATE media_items SET ocr_state=?,ocr_text=?,ocr_error=?,ocr_model=?,updated_at=? WHERE link_id=? AND media_key=? AND ${running}`)
+          .bind(result.state, result.state === "done" ? result.text : null, "error" in result ? result.error : null, OCR_MODEL, new Date().toISOString(), link.id, item.media_key, job.id).run();
       });
     }
     const media = await step.do("load-composed-media", () => storedMedia(env, link.id));

@@ -59,9 +59,9 @@ export const browserEvaluationHandler: BrowserJobHandler = {
       const now = new Date().toISOString();
       await env.DB.batch([
         env.DB.prepare(
-          "UPDATE browser_targets SET answer=?,model=?,evaluated_at=? WHERE id=?",
-        ).bind(JSON.stringify(answer), result.model, now, target.id),
-        env.DB.prepare("UPDATE jobs SET result=? WHERE id=?").bind(
+          "UPDATE browser_targets SET answer=?,model=?,evaluated_at=? WHERE id=? AND EXISTS (SELECT 1 FROM jobs WHERE id=? AND status='running')",
+        ).bind(JSON.stringify(answer), result.model, now, target.id, job.id),
+        env.DB.prepare("UPDATE jobs SET result=? WHERE id=? AND status='running'").bind(
           JSON.stringify({ answer, model: result.model }),
           job.id,
         ),
