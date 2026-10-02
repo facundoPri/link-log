@@ -48,6 +48,7 @@ function LensCell({
   named,
   onRetry,
   onMetadata,
+  blocked,
 }: {
   lens: Lens;
   record: LensRecord | undefined;
@@ -55,6 +56,7 @@ function LensCell({
   named: boolean;
   onRetry: () => void;
   onMetadata: () => void;
+  blocked: string | null;
 }) {
   // Flat, borderless cell: the lens icon (and its name when several lenses are on) + its state.
   return (
@@ -66,7 +68,7 @@ function LensCell({
     >
       {lensIcon(lens.type, "size-3 shrink-0 text-muted-foreground")}
       {named && <span className="max-w-24 truncate text-muted-foreground">{lens.name}</span>}
-      <BrowserLensStatus lens={lens} record={record} tab={tab} size="sm" onRetry={onRetry} onMetadata={onMetadata} />
+      <BrowserLensStatus lens={lens} record={record} tab={tab} size="sm" onRetry={onRetry} onMetadata={onMetadata} blocked={blocked} />
     </span>
   );
 }
@@ -94,6 +96,7 @@ export function TabRow({
   onMove,
   onUngroup,
   onCopy,
+  jevReason,
 }: {
   tab: BrowserTab;
   group: BrowserGroup | undefined;
@@ -117,6 +120,8 @@ export function TabRow({
   onMove: () => void;
   onUngroup: () => void;
   onCopy: () => void;
+  /** Why nothing can be evaluated now (Jev not configured), or null. */
+  jevReason: string | null;
 }) {
   const [faviconFailed, setFaviconFailed] = useState(false);
   const [imgFailed, setImgFailed] = useState(false);
@@ -257,6 +262,7 @@ export function TabRow({
               named={lenses.length > 1}
               onRetry={() => onRetry(lens)}
               onMetadata={() => onMetadata(lens)}
+              blocked={jevReason}
             />
           ))}
         </div>
@@ -300,10 +306,13 @@ export function TabRow({
               <>
                 <DropdownMenuSeparator />
                 {lenses.map((lens) => (
-                  <DropdownMenuItem key={lens.id} onClick={() => onRetry(lens)}>
+                  <DropdownMenuItem key={lens.id} disabled={!!jevReason} onClick={() => onRetry(lens)}>
                     Re-evaluate {lens.name}
                   </DropdownMenuItem>
                 ))}
+                {jevReason && (
+                  <DropdownMenuLabel className="text-2xs font-normal text-muted-foreground">{jevReason}</DropdownMenuLabel>
+                )}
               </>
             )}
             <DropdownMenuSeparator />

@@ -3,6 +3,7 @@ import { readdirSync } from "node:fs";
 import { expect, test } from "bun:test";
 import { lensFingerprint } from "@linklog/browser-protocol";
 import { browserRoute, libraryId } from "../worker/browser";
+import { dispatch, recover } from "../worker/jobs";
 
 // Minimal D1 surface over bun:sqlite.
 function d1(db: Database) {
@@ -26,11 +27,17 @@ async function setup({ failPut = false } = {}) {
     db.exec(await Bun.file(`migrations/${f}`).text());
   const deleted: string[] = [];
   const sent: unknown[] = [];
+  const puts: string[] = [];
+  const created: unknown[] = [];
   const env = {
     DB: d1(db),
+    JEV_PROVIDER: "fixture",
+    ALLOW_FIXTURE_JEV: "1",
+    PROCESS_LINK: { create: async (o: unknown) => void created.push(o) },
     CONTENT: {
-      put: async () => {
+      put: async (key: string) => {
         if (failPut) throw new Error("R2 down");
+        puts.push(key);
       },
       delete: async (keys: string[]) => void deleted.push(...keys),
     },
@@ -43,6 +50,8 @@ async function setup({ failPut = false } = {}) {
     return { status: r.status, data: (await r.json()) as any };
   };
   const fp = lensFingerprint({ type: "noul", question: "Relevant?", options: [], levels: [], criteria: { yes: "", no: "" } } as never);
+  const targets = (keys: string[]) =>
+    keys.map((k) => ({ targetKey: k, url: `https://x.dev/${k}`, title: k, capture: { source: "dom", capturedAt: "2026-10-01T12:00:00.000Z", completeness: "complete", reasons: [], facts: [], markdown: `page ${k}` } }));
   const evaluation = async (requestId: string, keys: string[], lensId = "lens") =>
     route("/api/browser/evaluations", "POST", {
       requestId,
@@ -50,9 +59,19 @@ async function setup({ failPut = false } = {}) {
       sessionId: "s",
       kind: "lens",
       lens: { id: lensId, fingerprint: fp },
-      targets: keys.map((k) => ({ targetKey: k, url: `https://x.dev/${k}`, title: k, capture: { source: "dom", capturedAt: new Date().toISOString(), completeness: "complete", reasons: [], facts: [], markdown: `page ${k}` } })),
+      targets: targets(keys),
     });
-  return { db, env, route, evaluation, deleted, sent };
+  const autogroup = async (requestId: string, keys: string[]) =>
+    route("/api/browser/evaluations", "POST", {
+      requestId,
+      libraryId: await libraryId(env),
+      sessionId: "s",
+      kind: "autogroup",
+      catalogVersion: "v1",
+      destinations: [{ key: "g:1", name: "Work", description: "Work tabs" }],
+      targets: targets(keys),
+    });
+  return { db, env, route, evaluation, autogroup, deleted, sent, puts, created };
 }
 
 test("DELETE cancels only the targets it names (Clean of some tabs)", async () => {
@@ -114,4 +133,34 @@ test("the catalog read doesn't write once the library id exists", async () => {
   await route("/api/browser/catalog", "GET");
   expect((db.query("SELECT total_changes() n").get() as { n: number }).n).toBe(writes.n);
   expect(first.data.libraryId).toBeTruthy();
+});
+
+test("without Jev configured, browser lens and Autogroup requests are refused before any work is created", async () => {
+  const s = await setup();
+  Object.assign(s.env, { JEV_PROVIDER: "typesafe", TYPESAFE_API_KEY: undefined });
+  const count = () =>
+    Object.fromEntries(["batches", "jobs", "browser_requests", "browser_targets", "usage_events"].map((t) => [t, (s.db.query(`SELECT count(*) n FROM ${t}`).get() as { n: number }).n]));
+  const before = count();
+  for (const res of [await s.evaluation("req-lens", ["a", "b"]), await s.autogroup("req-group", ["a", "b"])])
+    expect(res).toEqual({ status: 400, data: { error: "Jev is not configured: API key missing.", code: "jev-unavailable" } });
+  expect(count()).toEqual(before);
+  expect(s.puts).toHaveLength(0);
+  expect(s.sent).toHaveLength(0);
+  // Not even cron recovery has anything to start.
+  await recover(s.env);
+  await dispatch({ messages: s.sent.map((body) => ({ body, ack: () => {}, retry: () => {} })) } as never, s.env);
+  expect(s.created).toHaveLength(0);
+  // Never accepted: a resend by request id is still unknown, not a stored failure.
+  expect((await s.route("/api/browser/evaluations/req-lens", "GET")).status).toBe(404);
+});
+
+test("an evaluation accepted before Jev was unconfigured still replays and reports its status", async () => {
+  const s = await setup();
+  const first = await s.evaluation("req", ["a"]);
+  expect(first.status).toBe(201);
+  Object.assign(s.env, { JEV_PROVIDER: "typesafe", TYPESAFE_API_KEY: undefined });
+  const again = await s.evaluation("req", ["a"]);
+  expect(again.status).toBe(200);
+  expect(again.data.batchId).toBe(first.data.batchId);
+  expect((await s.route("/api/browser/evaluations/req", "GET")).data.batchId).toBe(first.data.batchId);
 });

@@ -15,7 +15,8 @@ import {
 import type { Lens } from "../src/types";
 import { enqueue } from "./jobs";
 import { addLink } from "./links";
-import { json, library, parseLensDefinition, text } from "./store";
+import { capabilities, json, library, parseLensDefinition, text } from "./store";
+import { jevUnavailable } from "../src/attention";
 
 // Browser view API. Requests come from the Linklog page through the existing
 // same-origin boundary; the extension never talks to the backend directly.
@@ -202,6 +203,12 @@ async function createEvaluation(env: Env, body: Obj): Promise<Response> {
     if (existing.payload_hash !== hash)
       return json({ error: "This request ID was already used with different content.", code: "conflict" }, 409);
     return json(await evaluationStatus(env, req.requestId));
+  }
+  // New work only: existing requests above still replay, so their status stays readable.
+  const unavailable = jevUnavailable(capabilities(env));
+  if (unavailable) {
+    console.error(JSON.stringify({ event: "jev_not_configured", kind: `browser-${req.kind}`, provider: capabilities(env).provider, targets: req.targets.length }));
+    return json({ error: unavailable, code: "jev-unavailable" }, 400);
   }
   let lens: Lens, config: Record<string, unknown>, kind: string;
   if (req.kind === "lens") {

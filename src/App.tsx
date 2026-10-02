@@ -709,6 +709,7 @@ export function App() {
       onToggleGroup={ws.toggleGroupFilter}
       onDomainFilter={ws.toggleDomain}
       onSaveRelated={(url) => save(url)}
+      jevReason={ws.jevReason}
     />
   );
   const showInspector = view === "browser" ? !!activeTab : !!activeLink;
@@ -1026,7 +1027,8 @@ export function App() {
           lens={dialog.lens}
           scope={dialog.scope ?? (dialog.lens === "new" ? "library" : dialog.lens.scope)}
           templates={libraryLenses}
-          selectedCount={jevReason ? 0 : picked.length}
+          selectedCount={picked.length}
+          runBlocked={jevReason}
           onClose={() => setDialog(null)}
           onSave={async (draft: LensDraft) => {
             const { runNow, ...body } = draft;

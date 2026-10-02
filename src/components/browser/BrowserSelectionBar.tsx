@@ -30,6 +30,7 @@ export function BrowserSelectionBar({
   onAutogroup,
   onClose,
   onClear,
+  jevReason,
 }: {
   tabs: BrowserTab[];
   destinations: Destination[];
@@ -41,6 +42,8 @@ export function BrowserSelectionBar({
   onAutogroup: () => void;
   onClose: () => void;
   onClear: () => void;
+  /** Why Autogroup can't run (Jev not configured), or null. */
+  jevReason: string | null;
 }) {
   const [moveOpen, setMoveOpen] = useState(false);
   const ungrouped = tabs.filter((t) => t.groupId === null).length;
@@ -93,7 +96,9 @@ export function BrowserSelectionBar({
           </PopoverContent>
         </Popover>
         {(() => {
-          const blocked = !destinations.length
+          const blocked = jevReason
+            ? jevReason
+            : !destinations.length
             ? "Create or pin a group with a description first"
             : !ungrouped
               ? "Autogroup only places tabs that have no group"

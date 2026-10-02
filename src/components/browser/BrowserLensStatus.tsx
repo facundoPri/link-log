@@ -37,7 +37,25 @@ export function isUnreadable(tab: BrowserTab, record: LensRecord | undefined) {
 
 const quiet = "inline-flex items-center gap-1 text-muted-foreground";
 const action =
-  "inline-flex items-center gap-0.5 rounded px-0.5 text-muted-foreground hover:bg-accent hover:text-foreground";
+  "inline-flex items-center gap-0.5 rounded px-0.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-50";
+
+/** An evaluate action; disabled with its reason when Jev can't run. */
+function Action({ label, blocked, onClick, children }: { label: string; blocked?: string | null; onClick: () => void; children: React.ReactNode }) {
+  const button = (
+    <button type="button" aria-label={label} className={action} disabled={!!blocked} onClick={onClick}>
+      {children}
+    </button>
+  );
+  if (!blocked) return button;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-flex">{button}</span>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-64 text-left">{blocked}</TooltipContent>
+    </Tooltip>
+  );
+}
 
 /**
  * One lens's state for one tab: verdict, progress, or a state that is never an answer
@@ -51,6 +69,7 @@ export function BrowserLensStatus({
   size = "sm",
   onRetry,
   onMetadata,
+  blocked,
 }: {
   lens: Lens;
   record: LensRecord | undefined;
@@ -58,6 +77,8 @@ export function BrowserLensStatus({
   size?: "sm" | "md";
   onRetry: () => void;
   onMetadata: () => void;
+  /** Why nothing can be evaluated now (Jev not configured), or null. */
+  blocked?: string | null;
 }) {
   if (isUnreadable(tab, record)) {
     const reason =
@@ -70,18 +91,27 @@ export function BrowserLensStatus({
           </TooltipTrigger>
           <TooltipContent className="max-w-64 text-left">{reason}</TooltipContent>
         </Tooltip>
-        <button type="button" className={action} aria-label={`Use title for ${lens.name}`} onClick={onMetadata}>
+        <Action label={`Use title for ${lens.name}`} blocked={blocked} onClick={onMetadata}>
           Use title
-        </button>
+        </Action>
         {record?.state === "unavailable" && tab.content === "available" && (
-          <button type="button" aria-label={`Retry ${lens.name}`} className={action} onClick={onRetry}>
+          <Action label={`Retry ${lens.name}`} blocked={blocked} onClick={onRetry}>
             <RotateCw className="size-3" />
             Retry
-          </button>
+          </Action>
         )}
       </>
     );
   }
+  if ((!record || record.state === "missing") && blocked)
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="cursor-default text-muted-foreground">Not evaluated</span>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-64 text-left">{blocked}</TooltipContent>
+      </Tooltip>
+    );
   if (!record || record.state === "missing")
     return (
       <span className={quiet}>
@@ -133,10 +163,10 @@ export function BrowserLensStatus({
       ) : (
         status
       )}
-      <button type="button" aria-label={`Retry ${lens.name}`} className={action} onClick={onRetry}>
+      <Action label={`Retry ${lens.name}`} blocked={blocked} onClick={onRetry}>
         <RotateCw className="size-3" />
         Retry
-      </button>
+      </Action>
     </>
   );
 }

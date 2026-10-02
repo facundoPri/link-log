@@ -68,6 +68,8 @@ test("evaluation requests are idempotent by request id and never create links", 
   const { env, db } = await setup();
   const sent: unknown[] = [];
   Object.assign(env, {
+    JEV_PROVIDER: "fixture",
+    ALLOW_FIXTURE_JEV: "1",
     CONTENT: { put: async () => {}, delete: async () => {} },
     JOBS: { sendBatch: async (m: unknown[]) => void sent.push(...m) },
   });

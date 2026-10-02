@@ -16,6 +16,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -69,6 +70,7 @@ export function LensFilterBar({
   onClean,
   onEdit,
   onDeactivate,
+  jevReason,
 }: {
   lenses: Lens[];
   tabs: BrowserTab[];
@@ -82,6 +84,8 @@ export function LensFilterBar({
   onClean: (lens: Lens) => void;
   onEdit: (lens: Lens) => void;
   onDeactivate: (lens: Lens) => void;
+  /** Why nothing can be evaluated now (Jev not configured), or null. */
+  jevReason: string | null;
 }) {
   return (
     <div className="divide-y border-b">
@@ -119,11 +123,12 @@ export function LensFilterBar({
               {lensIcon(lens.type, "size-3.5 text-brand")}
               <span className="max-w-40 truncate text-[13px] font-medium">{lens.name}</span>
               <span className="inline-flex items-center gap-1 text-2xs tabular text-muted-foreground">
-                {progress.pending > 0 && <Loader2 className="size-3 animate-spin" />}
+                {progress.pending > 0 && !jevReason && <Loader2 className="size-3 animate-spin" />}
                 {progress.done}/{progress.total}
                 {progress.unreadable > 0 && <span className="opacity-80">· {progress.unreadable} unreadable</span>}
               </span>
-              {progress.failed > 0 && (
+              {jevReason && <span className="text-2xs text-muted-foreground">{jevReason}</span>}
+              {progress.failed > 0 && !jevReason && (
                 <button
                   type="button"
                   onClick={() => onRetryFailed(lens)}
@@ -175,7 +180,12 @@ export function LensFilterBar({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => onReevaluate(lens)}>Re-evaluate this window</DropdownMenuItem>
+                <DropdownMenuItem disabled={!!jevReason} onClick={() => onReevaluate(lens)}>
+                  Re-evaluate this window
+                </DropdownMenuItem>
+                {jevReason && (
+                  <DropdownMenuLabel className="text-2xs font-normal text-muted-foreground">{jevReason}</DropdownMenuLabel>
+                )}
                 <DropdownMenuItem onClick={() => onEdit(lens)}>Edit lens…</DropdownMenuItem>
                 <DropdownMenuItem onClick={() => onClean(lens)}>Clean results…</DropdownMenuItem>
                 <DropdownMenuSeparator />

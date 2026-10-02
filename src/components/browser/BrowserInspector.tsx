@@ -59,6 +59,7 @@ export function BrowserInspector({
   onToggleGroup,
   onDomainFilter,
   onSaveRelated,
+  jevReason,
 }: {
   tab: BrowserTab;
   group: BrowserGroup | undefined;
@@ -82,6 +83,8 @@ export function BrowserInspector({
   onToggleGroup: (groupId: number) => void;
   onDomainFilter: (domain: string) => void;
   onSaveRelated: (url: string) => Promise<unknown>;
+  /** Why nothing can be evaluated now (Jev not configured), or null. */
+  jevReason: string | null;
 }) {
   const [state, setState] = useState<Read>({ status: "idle" });
   const [imgFailed, setImgFailed] = useState(false);
@@ -136,11 +139,19 @@ export function BrowserInspector({
               size="md"
               onRetry={() => onRetry(lens)}
               onMetadata={() => onMetadata(lens)}
+              blocked={jevReason}
             />
           </span>
-          <Button variant="ghost" size="icon-xs" aria-label={`Re-evaluate ${lens.name}`} onClick={() => onRetry(lens)}>
-            <RotateCw className="size-3" />
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="inline-flex">
+                <Button variant="ghost" size="icon-xs" aria-label={`Re-evaluate ${lens.name}`} disabled={!!jevReason} onClick={() => onRetry(lens)}>
+                  <RotateCw className="size-3" />
+                </Button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>{jevReason ?? "Re-evaluate"}</TooltipContent>
+          </Tooltip>
         </div>
       ))}
     </section>

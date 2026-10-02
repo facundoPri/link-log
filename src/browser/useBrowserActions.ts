@@ -227,7 +227,8 @@ export function useBrowserActions(ws: BrowserWorkspace, setLibrary: (l: Library)
     },
     autogroup: (tabs: BrowserTab[]) => {
       const ungrouped = tabs.filter((t) => t.groupId === null);
-      if (!ws.destinations.length) toast.error("Create or pin a group with a description first.");
+      if (ws.jevReason) toast.error(ws.jevReason);
+      else if (!ws.destinations.length) toast.error("Create or pin a group with a description first.");
       else if (!ungrouped.length) toast("Autogroup only places tabs that have no group.");
       else {
         const run = suggest(ungrouped);
@@ -238,11 +239,15 @@ export function useBrowserActions(ws: BrowserWorkspace, setLibrary: (l: Library)
     requestClean: (lens: Lens) => setDialog({ kind: "clean", lens }),
     /** Re-evaluate: every given tab (default: the window) once, even if it has an answer. */
     reevaluate: (lens: Lens, tabs?: BrowserTab[]) =>
-      void ws.runner
-        .evaluate(lens, (tabs ?? ws.tabs).map((t) => t.tabInstanceId))
-        .catch((e) => toast.error((e as Error).message)),
+      ws.jevReason
+        ? void toast.error(ws.jevReason)
+        : void ws.runner
+            .evaluate(lens, (tabs ?? ws.tabs).map((t) => t.tabInstanceId))
+            .catch((e) => toast.error((e as Error).message)),
     evaluateMetadata: (lens: Lens, tab: BrowserTab) =>
-      void ws.runner.evaluate(lens, [tab.tabInstanceId], "metadata").catch((e) => toast.error((e as Error).message)),
+      ws.jevReason
+        ? void toast.error(ws.jevReason)
+        : void ws.runner.evaluate(lens, [tab.tabInstanceId], "metadata").catch((e) => toast.error((e as Error).message)),
   };
 
   /** What the dialogs do once confirmed. */
