@@ -31,7 +31,10 @@ export async function consume(db: D1Database, key: string, limit: Limit, cost = 
 }
 
 /** Quota taken up front for an operation; `release` gives back what it did not use. */
-export type Charge = { release(cost?: number): Promise<void> };
+export type Charge = {
+  /** Gives back `cost` from every quota, or per key with a map (default: everything taken). */
+  release(cost?: number | Record<string, number>): Promise<void>;
+};
 
 /**
  * Takes every quota or none (earlier ones are given back if a later one is exhausted). The
@@ -39,9 +42,10 @@ export type Charge = { release(cost?: number): Promise<void> };
  */
 export async function charge(db: D1Database, items: { key: string; limit: Limit; cost: number }[], now = Date.now()) {
   const taken: typeof items = [];
-  const release = async (cost?: number) => {
+  const release = async (cost?: number | Record<string, number>) => {
     for (const item of taken) {
-      const amount = Math.min(cost ?? item.cost, item.cost);
+      const wanted = cost === undefined ? item.cost : typeof cost === "number" ? cost : (cost[item.key] ?? 0);
+      const amount = Math.min(wanted, item.cost);
       if (amount <= 0) continue;
       const windowStart = Math.floor(now / 1000 / item.limit.window) * item.limit.window;
       await db
