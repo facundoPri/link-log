@@ -234,14 +234,14 @@ function BatchJobs({ batch }: { batch: Batch }) {
 
 async function cancelBatch(id: string, onLibrary: (l: Library) => void) {
   try {
-    const data = await api<Library & { cancelled?: number }>(
+    const data = await api<Library & { cancelled?: number; dependents?: number }>(
       `/batches/${id}`,
       "DELETE",
     );
     onLibrary(data);
     toast(
       data.cancelled
-        ? `Cancelled ${data.cancelled} queued ${data.cancelled === 1 ? "job" : "jobs"}`
+        ? `Cancelled ${data.cancelled} queued ${data.cancelled === 1 ? "job" : "jobs"}${data.dependents ? `, and ${data.dependents} waiting for that extraction` : ""}`
         : "Nothing left to cancel",
     );
   } catch (e) {

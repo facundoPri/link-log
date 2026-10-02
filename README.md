@@ -157,8 +157,10 @@ Auto-tag and lenses accept links with content or with an extraction on the way a
 skip the rest ("Extract, then auto-tag" extracts them first, only when asked); Jev
 never starts an extraction. If that extraction ends without content, the waiting
 Jev job fails as "Content missing" before any provider call, and stays out of Needs
-attention. A link with a waiting job counts as processing. Cancelling a batch drops
-its queued and waiting jobs. Jev calls are not retried automatically; the
+attention. A link with a waiting job counts as processing, and one-off edits (paste
+content, Use preview, tags, retry) wait for it. Cancelling a batch drops its queued
+and waiting jobs; cancelling a not-yet-started extraction also cancels the auto-tag
+and lens jobs waiting for it. Jev calls are not retried automatically; the
 user can create a new attempt. Browser Rendering → Markdown is retried once on a
 transient failure (each attempt is a row in Usage), and Activity shows the current
 attempt and the reason of the previous one. A failed re-extract keeps the previous

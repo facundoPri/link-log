@@ -2,7 +2,7 @@ import { normalizeUrl, domainOf } from "../src/url";
 import type { LensOption, LensLevel, Link, Tag } from "../src/types";
 
 import { json, library, text, threshold } from "./store";
-import { enqueue, dispatch, recover, promoteWaiting, startNext, LinkWorkflow } from "./jobs";
+import { cancelDependents, enqueue, dispatch, linkIdle, NothingToRun, recover, promoteWaiting, startNext, LinkWorkflow } from "./jobs";
 import { restoredContentStateSql } from "./content-state";
 import type { Job, JobUsage, UsageEvent } from "../src/types";
 import { OCR_USAGE_COLUMNS } from "./usage";
@@ -253,12 +253,20 @@ export default {
           throw new Error("Invalid action.");
         if (body.kind === "lens" && typeof body.lensId !== "string")
           throw new Error("Pick a lens.");
-        const { id: batchId, skipped } = await enqueue(
-          env,
-          body.ids as string[],
-          body.kind as "extract" | "autotag" | "lens",
-          body.lensId as string | undefined,
-        );
+        let queued;
+        try {
+          queued = await enqueue(
+            env,
+            body.ids as string[],
+            body.kind as "extract" | "autotag" | "lens",
+            body.lensId as string | undefined,
+          );
+        } catch (error) {
+          // The client goes on with its other chunks; it needs to know which links were left out.
+          if (error instanceof NothingToRun) return json({ error: error.message, skipped: error.skipped }, 400);
+          throw error;
+        }
+        const { id: batchId, skipped } = queued;
         return json({ ...(await library(env)), batchId, skipped });
       }
       const transcriptMatch = path.match(/^\/api\/links\/([^/]+)\/transcript$/);
@@ -291,12 +299,14 @@ export default {
           .bind(batchId)
           .all<{ link_id: string | null }>();
         const linkIds = pending.results.map((r) => r.link_id).filter((id): id is string => !!id);
+        const now = new Date().toISOString();
         const statements: D1PreparedStatement[] = [
           env.DB.prepare(
             "UPDATE jobs SET status='failed',step='Cancelled',error='Cancelled',completed_at=? WHERE batch_id=? AND status IN ('queued','waiting')",
-          ).bind(new Date().toISOString(), batchId),
-          // Other batches' jobs waiting behind a cancelled one start now. A Jev job left without content then
-          // fails as "content missing" (FAC-55 will cancel it along with its extraction instead).
+          ).bind(now, batchId),
+          // Jev waiting for an extraction cancelled just now goes with it (one that already ran or is running
+          // keeps its dependents). Then whatever else waits behind a cancelled job starts.
+          ...(batch.kind === "extract" ? [cancelDependents(env.DB, "e.batch_id=? AND e.completed_at=?", [batchId, now], now)] : []),
           ...linkIds.map((id) => promoteWaiting(env.DB, id)),
         ];
         if (batch.kind === "extract" && linkIds.length)
@@ -305,11 +315,12 @@ export default {
               `UPDATE links SET content_state=${restoredContentStateSql} WHERE id IN (${linkIds.map(() => "?").join(",")}) AND content_state='queued' AND NOT EXISTS (SELECT 1 FROM jobs j JOIN batches b ON b.id=j.batch_id WHERE j.link_id=links.id AND j.status IN ('queued','running','waiting') AND b.kind='extract')`,
             ).bind(...linkIds),
           );
-        await env.DB.batch(statements);
+        const results = await env.DB.batch(statements);
         await startNext(env, linkIds);
         return json({
           ...(await library(env)),
-          cancelled: pending.results.length,
+          cancelled: results[0]!.meta.changes,
+          dependents: batch.kind === "extract" ? results[1]!.meta.changes : 0,
         });
       }
       if (batchMatch && request.method === "GET") {
@@ -431,7 +442,7 @@ export default {
         }
         if (request.method === "PUT") {
           const active = await env.DB.prepare(
-            "SELECT id FROM jobs WHERE link_id=? AND status IN ('queued','running')",
+            "SELECT id FROM jobs WHERE link_id=? AND status IN ('queued','running','waiting')",
           )
             .bind(link.id)
             .first();
@@ -550,7 +561,7 @@ export default {
         const id = usePreviewMatch[1]!;
         const link = await readPreview(env.DB, id);
         if (!link) return json({ error: "The link no longer exists." }, 404);
-        const idle = "NOT EXISTS (SELECT 1 FROM jobs WHERE link_id=? AND status IN ('queued','running'))";
+        const idle = linkIdle;
         if (!(await env.DB.prepare(`SELECT ${idle} idle`).bind(id).first<{ idle: number }>())?.idle)
           throw new Error("Wait for the running job to finish.");
         if (link.content_key) throw new Error("This link already has content.");
@@ -579,7 +590,7 @@ export default {
         if (!link) return json({ error: "The link no longer exists." }, 404);
         if (request.method !== "GET") {
           const active = await env.DB.prepare(
-            "SELECT id FROM jobs WHERE link_id=? AND status IN ('queued','running')",
+            "SELECT id FROM jobs WHERE link_id=? AND status IN ('queued','running','waiting')",
           )
             .bind(id)
             .first();

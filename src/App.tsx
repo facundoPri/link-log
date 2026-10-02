@@ -25,6 +25,7 @@ import { BrowserInspector } from "./components/browser/BrowserInspector";
 import { BrowserDialogs } from "./components/browser/BrowserDialogs";
 import { useBrowserActions } from "./browser/useBrowserActions";
 import { usd, tokens } from "./lib/format";
+import { submitInChunks, type BatchReply } from "./batches";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
@@ -300,19 +301,16 @@ export function App() {
     ) => {
       setRunning(true);
       try {
-        for (let offset = 0; offset < ids.length; offset += 100) {
-          const data = await api<Library & { batchId?: string; skipped?: string[] }>("/batches", "POST", {
-            kind,
-            ids: ids.slice(offset, offset + 100),
-            lensId,
+        const { batchIds, skipped } = await submitInChunks<Library & BatchReply>(
+          ids,
+          (chunk) => api<Library & BatchReply>("/batches", "POST", { kind, ids: chunk, lensId }),
+          (data) => setLibrary(data),
+        );
+        for (const id of batchIds) sessionBatches.current.add(id);
+        if (skipped.length)
+          toast(`Skipped ${skipped.length} ${skipped.length === 1 ? "link" : "links"} without content`, {
+            description: "Extract the content first.",
           });
-          setLibrary(data);
-          if (data.batchId) sessionBatches.current.add(data.batchId);
-          if (data.skipped?.length)
-            toast(`Skipped ${data.skipped.length} ${data.skipped.length === 1 ? "link" : "links"} without content`, {
-              description: "Extract the content first.",
-            });
-        }
         await refresh();
       } catch (e) {
         toast.error((e as Error).message);
@@ -567,7 +565,8 @@ export function App() {
       const targets = extract ? noContent.filter((l) => !l.processing).map((l) => l.id) : [];
       // The auto-tag jobs of these links wait for their extraction and start when it settles.
       if (targets.length) await runBatch("extract", targets);
-      await runBatch("autotag", picked);
+      // "Auto-tag N with content" sends only those N; the server still skips any that changed meanwhile.
+      await runBatch("autotag", extract ? picked : picked.filter((id) => !noContent.some((l) => l.id === id)));
       setPicked([]);
     } catch {
       /* toasted */
@@ -602,14 +601,14 @@ export function App() {
 
   const cancelBatch = async (id: string) => {
     try {
-      const data = await api<Library & { cancelled?: number }>(
+      const data = await api<Library & { cancelled?: number; dependents?: number }>(
         `/batches/${id}`,
         "DELETE",
       );
       setLibrary(data);
       toast(
         data.cancelled
-          ? `Cancelled ${data.cancelled} queued ${data.cancelled === 1 ? "job" : "jobs"}`
+          ? `Cancelled ${data.cancelled} queued ${data.cancelled === 1 ? "job" : "jobs"}${data.dependents ? `, and ${data.dependents} waiting for that extraction` : ""}`
           : "Nothing left to cancel",
       );
     } catch (e) {

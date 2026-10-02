@@ -38,6 +38,23 @@ export const contentMissing = "Content missing. Extract it first.";
 // A link runs one job at a time. A job enqueued while another is queued, running or waiting on the same link
 // waits in D1 (never in the Queue) and starts when the jobs before it settle, oldest first.
 const busy = "status IN ('queued','running','waiting')";
+/** A link is busy while it has a queued, running or waiting job; one-off link edits wait for it to be idle. */
+export const linkIdle = "NOT EXISTS (SELECT 1 FROM jobs WHERE link_id=? AND status IN ('queued','running','waiting'))";
+/** Jev refused because none of the links in the request has content or an extraction on the way. */
+export class NothingToRun extends Error {
+  constructor(message: string, readonly skipped: string[]) {
+    super(message);
+  }
+}
+/**
+ * Cancels the Jev jobs waiting on links whose extraction was just cancelled: they depended on it.
+ * `cancelled` selects those extract jobs (alias e). Must run, in the same transaction, after they are
+ * marked Cancelled and before promoteWaiting, so no dependent ever starts. Per-link cancel (FAC-55) reuses it.
+ */
+export const cancelDependents = (db: D1Database, cancelled: string, params: unknown[], now: string) =>
+  db.prepare(
+    `UPDATE jobs SET status='failed',step='Cancelled',error='Cancelled: its extraction was cancelled',completed_at=? WHERE status='waiting' AND batch_id IN (SELECT id FROM batches WHERE kind IN ('autotag','lens','query')) AND link_id IN (SELECT e.link_id FROM jobs e JOIN batches eb ON eb.id=e.batch_id WHERE eb.kind='extract' AND e.status='failed' AND e.step='Cancelled' AND ${cancelled})`,
+  ).bind(now, ...params);
 const ahead = (j: string) =>
   `NOT EXISTS (SELECT 1 FROM jobs a WHERE a.link_id=${j}.link_id AND (a.status IN ('queued','running') OR (a.status='waiting' AND (a.created_at<${j}.created_at OR (a.created_at=${j}.created_at AND a.rowid<${j}.rowid)))))`;
 /** Moves the next waiting job of each idle link (or of one link) to queued. Safe to repeat. */
@@ -84,7 +101,7 @@ export async function enqueue(
   // Jev runs on links with content or with an extraction on the way; it never starts an extraction itself.
   const skipped = jev ? links.results.filter((l) => !l.content_key && !l.extracting).map((l) => l.id) : [];
   if (skipped.length === ids.length)
-    throw new Error(ids.length === 1 ? "This link has no content yet. Extract it first." : "None of the selected links have content yet. Extract them first.");
+    throw new NothingToRun(ids.length === 1 ? "This link has no content yet. Extract it first." : "None of the selected links have content yet. Extract them first.", skipped);
   if (!jev && links.results.some((l) => l.busy))
     throw new Error("Some selected links are still processing.");
   ids = ids.filter((id) => !skipped.includes(id));

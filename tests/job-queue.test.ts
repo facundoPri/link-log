@@ -163,19 +163,85 @@ test("cancelling a batch drops its waiting jobs; the extraction they waited for 
   expect(usage(s)).toBe(0);
 });
 
-test("cancelling the extraction a Jev job waits for starts that job, which ends as content missing (FAC-55 will cascade)", async () => {
+const lensOf = async (s: S) =>
+  (await s.api("/lenses", "POST", { name: "Useful", type: "noul", question: "Is it useful?", threshold: 0.8 })).data.lenses[0] as { id: string };
+const results = (s: S, link: string) => ({
+  evaluations: (s.db.query("SELECT count(*) n FROM tag_evaluations WHERE link_id=?").get(link) as { n: number }).n,
+  lens: (s.db.query("SELECT count(*) n FROM lens_results WHERE link_id=?").get(link) as { n: number }).n,
+});
+const runAll = async (s: S) => {
+  while (s.sent.length) await s.runQueued();
+};
+
+test("cancelling an extraction cancels the Jev jobs waiting for it: fresh link, several dependents, nothing runs", async () => {
   const s = await start();
-  const id = await save(s, "https://q.example/cancel-extract");
+  const lens = await lensOf(s);
+  const id = await save(s, "https://q.example/cancel-fresh");
   const extractBatch = batchOf(s, "link_id", id);
   s.sent.splice(0);
-  const batch = (await s.api("/batches", "POST", { kind: "autotag", ids: [id] })).data.batchId;
-  await s.api(`/batches/${extractBatch}`, "DELETE");
-  expect(jobOf(s, batch, id).status).toBe("queued");
-  expect(sentIds(s)).toEqual([jobOf(s, batch, id).id]);
-  await s.runQueued();
-  expect(jobOf(s, batch, id)).toMatchObject({ status: "failed", error: "Content missing. Extract it first." });
+  const tag = (await s.api("/batches", "POST", { kind: "autotag", ids: [id] })).data.batchId;
+  const ask = (await s.api("/batches", "POST", { kind: "lens", ids: [id], lensId: lens.id })).data.batchId;
+  const res = await s.api(`/batches/${extractBatch}`, "DELETE");
+  expect(res.data).toMatchObject({ cancelled: 1, dependents: 2 });
+  for (const b of [tag, ask]) expect(jobOf(s, b, id)).toMatchObject({ status: "failed", step: "Cancelled", error: "Cancelled: its extraction was cancelled" });
+  expect(s.sent).toHaveLength(0);
+  // Recovery does not bring them back.
+  await recover(s.env);
+  expect(s.sent).toHaveLength(0);
+  expect([tag, ask].map((b) => jobOf(s, b, id).status)).toEqual(["failed", "failed"]);
   expect(await s.view(id)).toMatchObject({ processing: false, attention: false, content: "missing" });
   expect(usage(s)).toBe(0);
+  expect(results(s, id)).toEqual({ evaluations: 0, lens: 0 });
+});
+
+test("cancelling a re-extraction cancels its dependents too: the previous content and results stay, no provider call", async () => {
+  const s = await start();
+  const lens = await lensOf(s);
+  const id = await save(s, "https://q.example/cancel-retained");
+  await runAll(s);
+  const before = s.db.query("SELECT content_key,content_version,content_state,attention_kind FROM links WHERE id=?").get(id);
+  const reextract = (await s.api("/batches", "POST", { kind: "extract", ids: [id] })).data.batchId;
+  const tag = (await s.api("/batches", "POST", { kind: "autotag", ids: [id] })).data.batchId;
+  const ask = (await s.api("/batches", "POST", { kind: "lens", ids: [id], lensId: lens.id })).data.batchId;
+  s.sent.splice(0);
+  expect((await s.api(`/batches/${reextract}`, "DELETE")).data).toMatchObject({ cancelled: 1, dependents: 2 });
+  await runAll(s);
+  await recover(s.env);
+  await runAll(s);
+  expect([tag, ask].map((b) => jobOf(s, b, id).step)).toEqual(["Cancelled", "Cancelled"]);
+  expect(s.db.query("SELECT content_key,content_version,content_state,attention_kind FROM links WHERE id=?").get(id)).toEqual(before);
+  expect(fakes.calls.content).toBe(1);
+  expect(usage(s)).toBe(0);
+  expect(results(s, id)).toEqual({ evaluations: 0, lens: 0 });
+});
+
+test("cancel cascades only from extractions it actually cancelled; unrelated waiting work still starts", async () => {
+  const s = await start();
+  const lens = await lensOf(s);
+  const queued = await save(s, "https://q.example/mixed-queued");
+  const running = await save(s, "https://q.example/mixed-running");
+  const ready = await save(s, "https://q.example/mixed-ready");
+  await runAll(s);
+  // One extract batch over two links: one job already running (it finishes, keeps its dependent), one queued.
+  const extract = (await s.api("/batches", "POST", { kind: "extract", ids: [queued, running] })).data.batchId;
+  s.db.run("UPDATE jobs SET status='running' WHERE batch_id=? AND link_id=?", [extract, running]);
+  const tag = (await s.api("/batches", "POST", { kind: "autotag", ids: [queued, running, ready] })).data.batchId;
+  const ask = (await s.api("/batches", "POST", { kind: "lens", ids: [ready], lensId: lens.id })).data.batchId;
+  expect([queued, running, ready].map((l) => jobOf(s, tag, l).status)).toEqual(["waiting", "waiting", "queued"]);
+  expect(jobOf(s, ask, ready).status).toBe("waiting");
+  s.sent.splice(0);
+
+  expect((await s.api(`/batches/${extract}`, "DELETE")).data).toMatchObject({ cancelled: 1, dependents: 1 });
+  expect(jobOf(s, tag, queued).step).toBe("Cancelled");
+  expect(jobOf(s, tag, running).status).toBe("waiting");
+  expect(s.sent).toHaveLength(0);
+
+  // An unrelated cancel: the auto-tag batch drops its jobs and the lens waiting behind it on the ready link starts.
+  expect((await s.api(`/batches/${tag}`, "DELETE")).data).toMatchObject({ cancelled: 2, dependents: 0 });
+  expect(jobOf(s, ask, ready).status).toBe("queued");
+  expect(sentIds(s)).toEqual([jobOf(s, ask, ready).id]);
+  await runAll(s);
+  expect(jobOf(s, ask, ready).status).toBe("done");
 });
 
 test("recover starts an orphaned waiting job once; dispatch ignores waiting jobs and repeats", async () => {
@@ -202,9 +268,19 @@ test("recover starts an orphaned waiting job once; dispatch ignores waiting jobs
   expect([second, third].map((b) => jobOf(s, b, id).status)).toEqual(["queued", "waiting"]);
   expect(active(s, id)).toBe(1);
   expect(new Set(sentIds(s))).toEqual(new Set([waiting]));
-  // Dispatching the promoted job twice creates one workflow.
-  await dispatch({ messages: [{ body: { id: waiting }, ack() {}, retry() {} }] } as never, s.env);
+  // Dispatching the promoted job twice creates one workflow: the second create fails and finds it running.
+  (s.env as any).PROCESS_LINK = {
+    create: async ({ id }: { id: string }) => {
+      if (created.includes(id)) throw new Error("instance already exists");
+      created.push(id);
+    },
+    get: async () => ({ status: async () => ({ status: "running" }) }),
+  };
+  const acks = { n: 0, retries: 0 };
+  const message = { body: { id: waiting }, ack: () => void acks.n++, retry: () => void acks.retries++ };
+  await dispatch({ messages: [message, message] } as never, s.env);
   expect(created).toEqual([waiting]);
+  expect(acks).toEqual({ n: 2, retries: 0 });
 });
 
 test("an interrupted job starts the next waiting job on its link", async () => {
@@ -221,4 +297,86 @@ test("an interrupted job starts the next waiting job on its link", async () => {
   expect(s.db.query("SELECT step FROM jobs WHERE id=?").get(extractJob)).toEqual({ step: "Interrupted" });
   expect(jobOf(s, batch, id).status).toBe("queued");
   expect(sentIds(s)).toEqual([jobOf(s, batch, id).id]);
+});
+
+// Round 2: the client sends a selection in chunks of 100; a chunk with no eligible link must not stop the others.
+async function noContentLinks(s: S, prefix: string, n: number) {
+  const res = await s.api("/import", "POST", { urls: Array.from({ length: n }, (_, i) => `https://${prefix}.example/${i}`) });
+  const ids = (res.data.links as { id: string; url: string }[]).filter((l) => l.url.includes(`${prefix}.example`)).map((l) => l.id);
+  await s.api(`/batches/${batchOf(s, "link_id", ids[0]!)}`, "DELETE");
+  s.sent.splice(0);
+  return ids;
+}
+const sendChunk = (s: S, kind: string, lensId?: string) => async (chunk: string[]) => {
+  const res = await s.api("/batches", "POST", { kind, ids: chunk, lensId });
+  if (res.status !== 200) throw Object.assign(new Error(res.data.error), { data: res.data });
+  return res.data as { batchId?: string; skipped?: string[] };
+};
+
+test("a selection over 100 with a wholly unsupported first or middle chunk still runs its eligible links", async () => {
+  const { submitInChunks } = await import("../src/batches");
+  const s = await start();
+  const lens = await lensOf(s);
+  const first = await save(s, "https://q.example/chunk-first");
+  const last = await save(s, "https://q.example/chunk-last");
+  await runAll(s);
+  const a = await noContentLinks(s, "a", 100);
+  const b = await noContentLinks(s, "b", 99);
+  // Unsupported first chunk: [100 without content], [ready].
+  const firstChunk = await submitInChunks([...a, last], sendChunk(s, "autotag"));
+  expect(firstChunk.batchIds).toHaveLength(1);
+  expect(firstChunk.skipped.toSorted()).toEqual(a.toSorted());
+  // Unsupported middle chunk: [ready + 99], [100], [ready].
+  const middle = await submitInChunks([first, ...b, ...a, last], sendChunk(s, "lens", lens.id));
+  expect(middle.batchIds).toHaveLength(2);
+  expect(middle.skipped).toHaveLength(199);
+  await runAll(s);
+  expect(results(s, last)).toEqual({ evaluations: 1, lens: 1 });
+  expect(results(s, first)).toEqual({ evaluations: 0, lens: 1 });
+
+  // Nothing eligible at all: the refusal is reported. Real errors still stop at once.
+  await expect(submitInChunks([...a, ...b], sendChunk(s, "autotag"))).rejects.toThrow("None of the selected links have content yet. Extract them first.");
+  delete (s.env as any).ALLOW_FIXTURE_JEV;
+  const calls: string[][] = [];
+  await expect(submitInChunks([...a, last], async (chunk) => (calls.push(chunk), sendChunk(s, "autotag")(chunk)))).rejects.toThrow("Jev is not configured.");
+  expect(calls).toHaveLength(1);
+});
+
+// Round 2: one-off link edits treat a waiting job (even an orphan before recovery) as busy.
+const orphanWaiting = (s: S, link: string) => {
+  s.db.run("INSERT INTO batches(id,kind,config,created_at) VALUES('orphan','autotag','{}','now')");
+  s.db.run("INSERT INTO jobs(id,batch_id,link_id,status,created_at) VALUES('orphan-job','orphan',?,'waiting','now')", [link]);
+};
+async function failedWithPreview(s: S, url: string) {
+  fakes.meta = { status: "ready", description: "About." };
+  fakes.content = { throws: "Markdown: HTTP 404" };
+  const id = await save(s, url);
+  await runAll(s);
+  return id;
+}
+
+test("Use preview is refused while an orphan waiting job is on the link", async () => {
+  const s = await start();
+  const id = await failedWithPreview(s, "https://q.example/use-preview-orphan");
+  orphanWaiting(s, id);
+  expect(await s.view(id)).toMatchObject({ processing: true, attention: true, attention_kind: "content" });
+  expect((await s.api(`/links/${id}/use-preview`, "POST")).data.error).toBe("Wait for the running job to finish.");
+  expect(await s.view(id)).toMatchObject({ attention_kind: "content", content: "failed" });
+  // The other one-off edits wait too.
+  expect((await s.api(`/links/${id}/content`, "PUT", { markdown: "pasted" })).data.error).toBe("Wait for the running job to finish.");
+  expect((await s.api(`/links/${id}`, "PATCH", { tags: ["x"] })).data.error).toBe("Wait for the running job to finish.");
+  expect((await s.api(`/links/${id}/retry`, "POST", { step: "content" })).data.error).toBe("Wait for the running job to finish.");
+});
+
+test("Use preview loses to a waiting job that appears between its check and its write", async () => {
+  const s = await start();
+  const id = await failedWithPreview(s, "https://q.example/use-preview-race");
+  fakes.onSql = async (sql, phase) => {
+    if (phase !== "write" || !sql.includes("content_source='preview'")) return;
+    fakes.onSql = undefined;
+    orphanWaiting(s, id);
+  };
+  expect((await s.api(`/links/${id}/use-preview`, "POST")).data.error).toBe("The link changed meanwhile. Try again.");
+  expect(await s.view(id)).toMatchObject({ attention_kind: "content", content: "failed", processing: true });
+  expect(s.db.query("SELECT content_key FROM links WHERE id=?").get(id)).toEqual({ content_key: null });
 });
