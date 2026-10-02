@@ -27,6 +27,8 @@ export const fakes: {
   failSql?: RegExp;
   /** Like failSql, but only the first matching write fails. */
   failSqlOnce?: RegExp;
+  /** Runs after a read and before a write (or a batch's writes), to interleave other requests. */
+  onSql?: (sql: string, phase: "read" | "write") => Promise<void>;
 } = {
   meta: { status: "ready" },
   content: { markdown: "# page" },
@@ -83,15 +85,26 @@ function d1(db: Database) {
   };
   const stmt = (sql: string, params: unknown[] = []) => ({
     bind: (...p: unknown[]) => stmt(sql, p),
-    all: async () => ({ results: db.query(sql).all(...(params as never[])) }),
-    first: async () => db.query(sql).get(...(params as never[])) ?? null,
-    run: async () => (check(sql), { meta: { changes: db.query(sql).run(...(params as never[])).changes } }),
+    sql,
+    all: async () => {
+      const results = db.query(sql).all(...(params as never[]));
+      await fakes.onSql?.(sql, "read");
+      return { results };
+    },
+    first: async () => {
+      const row = db.query(sql).get(...(params as never[])) ?? null;
+      await fakes.onSql?.(sql, "read");
+      return row;
+    },
+    run: async () => (await fakes.onSql?.(sql, "write"), check(sql), { meta: { changes: db.query(sql).run(...(params as never[])).changes } }),
     _exec: () => (check(sql), db.query(sql).run(...(params as never[]))),
   });
   return {
     prepare: (sql: string) => stmt(sql),
-    batch: async (list: { _exec: () => { changes: number } }[]) =>
-      db.transaction(() => list.map((s) => ({ meta: { changes: s._exec().changes } })))(),
+    batch: async (list: { sql: string; _exec: () => { changes: number } }[]) => {
+      for (const s of list) await fakes.onSql?.(s.sql, "write");
+      return db.transaction(() => list.map((s) => ({ meta: { changes: s._exec().changes } })))();
+    },
   };
 }
 
@@ -109,6 +122,7 @@ export async function setup() {
   fakes.browser = undefined;
   fakes.failSql = undefined;
   fakes.failSqlOnce = undefined;
+  fakes.onSql = undefined;
   fakes.discoverError = undefined;
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys=ON");

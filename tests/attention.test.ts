@@ -3,7 +3,7 @@
 import { Database } from "bun:sqlite";
 import { readdirSync } from "node:fs";
 import { afterEach, expect, test } from "bun:test";
-import { nextAttention } from "../worker/attention";
+import { contentFailureAttentionSql, nextAttention } from "../worker/attention";
 import { attentionMessage } from "../src/attention";
 import { dispatch, fakes, resetClock, setup, tick } from "./worker-harness";
 
@@ -243,55 +243,6 @@ test("nextAttention: final failures raise, masked failures and other steps leave
   expect(nextAttention({ ...preview, status: "ready" }, { preview: "ok" })).toEqual(clear);
 });
 
-test("migration 0014 backfills existing failures (no job history) and leaves pending links neutral", async () => {
-  const db = new Database(":memory:");
-  const files = readdirSync("migrations").filter((f) => f.endsWith(".sql")).sort();
-  const last = files.indexOf("0014_attention.sql");
-  for (const f of files.slice(0, last)) db.exec(await Bun.file(`migrations/${f}`).text());
-  const insert = db.query("INSERT INTO links(id,original_url,url,domain,title,description,status,content_state,preview_reason,content_reason,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)");
-  const row = (id: string, status: string, content: string, preview: string | null, reason: string | null) =>
-    insert.run(id, `https://${id}.example/`, `https://${id}.example/`, `${id}.example`, id, "", status, content, preview, reason, "2026-09-01T00:00:00.000Z");
-  row("content", "ready", "failed", null, "timeout");
-  row("both", "failed", "failed", "blocked", "not_found");
-  row("preview", "failed", "ready", "not_html", null);
-  row("legacy", "failed", "missing", null, null);
-  row("pending", "pending", "missing", null, null);
-  row("queued", "pending", "queued", null, null);
-  row("ok", "ready", "ready", null, null);
-  for (const f of files.slice(last)) db.exec(await Bun.file(`migrations/${f}`).text());
-  const rows = Object.fromEntries((db.query("SELECT id,attention_kind,attention_reason,attention_at IS NOT NULL dated FROM links").all() as any[])
-    .map((r) => [r.id, [r.attention_kind, r.attention_reason, r.dated]]));
-  expect(rows).toEqual({
-    content: ["content", "timeout", 1],
-    both: ["content", "not_found", 1],
-    preview: ["preview", "not_html", 1],
-    legacy: ["preview", null, 1],
-    pending: [null, null, 0],
-    queued: [null, null, 0],
-    ok: [null, null, 0],
-  });
-  expect(attentionMessage({ attention_kind: "preview", attention_reason: null })).toBe("Couldn't get the preview: Something went wrong.");
-});
-
-// Round 2 (S4 review).
-
-for (const [label, pattern] of [
-  ["the terminal job write", /^UPDATE jobs SET status='failed',step='Needs attention'/],
-  ["the link's failure and attention write", /^UPDATE links SET content_state=.*attention_kind=/],
-] as const)
-  test(`a one-time D1 failure on ${label} is finished by the retried record-failure`, async () => {
-    const s = await setup();
-    fakes.content = { throws: "Markdown: HTTP 404" };
-    const id = await save(s, "https://replay.example/x");
-    fakes.failSqlOnce = pattern;
-    await s.runQueued();
-    expect(fakes.failSqlOnce).toBeUndefined(); // the fault fired
-    expect(s.steps.find((x) => x.name === "record-failure")?.attempts).toBe(2);
-    expect(await s.view(id)).toMatchObject({ content: "failed", content_reason: "not_found", attention: true, attention_kind: "content", attention_reason: "not_found", job: "failed/Needs attention" });
-    const row = s.db.query("SELECT attention_at FROM links WHERE id=?").get(id) as { attention_at: string };
-    expect(row.attention_at).toBe(new Date().toISOString());
-  });
-
 test("a job interrupted while running leaves the link alone when its own failure is recorded", async () => {
   const s = await setup();
   fakes.content = { throws: "Markdown: HTTP 404" };
@@ -352,55 +303,146 @@ test("a failed re-extract with previous content keeps an unresolved preview fail
   expect(await s.view(id)).toMatchObject({ status: "ready", content: "ready", attention: false });
 });
 
-test("migrations 0014 and 0015 on an existing library: only settled failures need attention", async () => {
+// Round 3 (S4 re-review).
+
+const blockedPreviewWithContent = async (s: S, url: string) => {
+  fakes.meta = { status: "failed" };
+  const id = await save(s, url);
+  await s.runQueued();
+  expect(await s.view(id)).toMatchObject({ content: "ready", attention_kind: "preview", attention_reason: "blocked" });
+  return id;
+};
+
+test("a Dismiss that lands while a failed re-extract settles stays dismissed", async () => {
+  const s = await setup();
+  const id = await blockedPreviewWithContent(s, "https://race.example/x");
+  fakes.content = { throws: "Markdown: HTTP 404" };
+  await reextract(s, id);
+  let dismissed = false;
+  fakes.onSql = async (sql, phase) => {
+    if (dismissed || phase !== "write" || !sql.startsWith("UPDATE links SET content_state=")) return;
+    dismissed = true;
+    expect((await s.api(`/links/${id}/dismiss`, "POST")).status).toBe(200);
+    expect((await s.view(id)).attention).toBe(false);
+  };
+  await s.runQueued();
+  fakes.onSql = undefined;
+  expect(dismissed).toBe(true);
+  expect(await s.view(id)).toMatchObject({ status: "failed", content: "ready", err: "The page no longer exists.", attention: false, attention_kind: null, job: "failed/Needs attention" });
+});
+
+test("a Dismiss between reading and writing a settlement is never overwritten", async () => {
+  const s = await setup();
+  const id = await blockedPreviewWithContent(s, "https://race2.example/x");
+  let dismissed = false;
+  fakes.onSql = async (sql, phase) => {
+    if (dismissed || phase !== "read" || !sql.startsWith("SELECT status,preview_reason,content_key,attention_kind")) return;
+    dismissed = true;
+    await s.api(`/links/${id}/dismiss`, "POST");
+  };
+  // Pasting content settles {content: ok}, which keeps the preview warning as it was read.
+  await s.api(`/links/${id}/content`, "PUT", { markdown: "pasted" });
+  fakes.onSql = undefined;
+  expect(dismissed).toBe(true);
+  expect(await s.view(id)).toMatchObject({ attention: false, attention_kind: null });
+});
+
+test("the content failure SQL settles exactly like nextAttention, on the live row", async () => {
+  const db = new Database(":memory:");
+  for (const f of readdirSync("migrations").filter((f) => f.endsWith(".sql")).sort()) db.exec(await Bun.file(`migrations/${f}`).text());
+  let n = 0;
+  for (const content_key of [null, "k"])
+    for (const [attention_kind, attention_reason] of [[null, null], ["preview", "blocked"], ["content", "timeout"], ["content", "not_found"]] as const)
+      for (const previewOk of [true, false]) {
+        const id = `l${n++}`;
+        db.query("INSERT INTO links(id,original_url,url,domain,title,description,status,content_key,preview_reason,attention_kind,attention_reason,attention_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")
+          .run(id, `https://${id}/`, `https://${id}/`, "x", "x", "", "failed", content_key, "blocked", attention_kind, attention_reason, attention_kind ? "2026-01-01T00:00:00.000Z" : null, "2026-01-01T00:00:00.000Z");
+        const set = contentFailureAttentionSql("not_found", previewOk);
+        db.query(`UPDATE links SET ${set.sql} WHERE id=?`).run(...(set.params as never[]), id);
+        const row = db.query("SELECT attention_kind,attention_reason,attention_at FROM links WHERE id=?").get(id) as any;
+        const expected = nextAttention({ status: "failed", preview_reason: "blocked", content_key, attention_kind, attention_reason },
+          { content: "failed", content_reason: "not_found", preview: previewOk ? "ok" : "failed" });
+        expect({ kind: row.attention_kind, reason: row.attention_reason }).toEqual({ kind: expected.attention_kind, reason: expected.attention_reason });
+        const unchanged = expected.attention_kind === attention_kind && expected.attention_reason === attention_reason;
+        expect(row.attention_at === "2026-01-01T00:00:00.000Z").toBe(unchanged && !!attention_kind);
+      }
+});
+
+// Upgrade fixtures for migration 0014: links and their extract jobs as an older version left them.
+type Fixture = { status: string; content: string; key?: string; source?: string; updated?: string; error?: string; preview?: string; reason?: string; retried?: string };
+type FixtureJob = [status: string, step: string, preview?: string, reason?: string];
+async function upgrade(from: "0012" | "0014", rows: Record<string, [Fixture, FixtureJob[]]>) {
   const db = new Database(":memory:");
   const files = readdirSync("migrations").filter((f) => f.endsWith(".sql")).sort();
-  const at = files.indexOf("0014_attention.sql");
+  const at = files.findIndex((f) => f.startsWith(from));
   for (const f of files.slice(0, at)) db.exec(await Bun.file(`migrations/${f}`).text());
+  const legacy = from === "0012";
   db.exec("INSERT INTO batches(id,kind,config,created_at) VALUES('b','extract','{}','2026-09-01T00:00:00.000Z')");
-  const link = db.query("INSERT INTO links(id,original_url,url,domain,title,description,status,content_state,content_key,content_error,preview_reason,content_reason,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)");
-  const job = db.query("INSERT INTO jobs(id,batch_id,link_id,status,step,reason,preview_reason,created_at) VALUES(?,?,?,?,?,?,?,?)");
-  let t = 0;
-  const add = (id: string, l: { status: string; content: string; key?: string; error?: string; preview?: string; reason?: string },
-    jobs: [status: string, step: string, preview?: string, reason?: string][]) => {
-    link.run(id, `https://${id}.example/`, `https://${id}.example/`, `${id}.example`, id, "", l.status, l.content, l.key ?? null, l.error ?? null, l.preview ?? null, l.reason ?? null, "2026-09-01T00:00:00.000Z");
+  let t = 10;
+  for (const [id, [l, jobs]] of Object.entries(rows)) {
+    db.query(`INSERT INTO links(id,original_url,url,domain,title,description,status,content_state,content_key,content_source,content_updated_at,content_error,metadata_started_at${legacy ? "" : ",preview_reason,content_reason"},created_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?${legacy ? "" : ",?,?"},?)`)
+      .run(...([id, `https://${id}.example/`, `https://${id}.example/`, `${id}.example`, id, "", l.status, l.content, l.key ?? null, l.source ?? (l.key ? "web" : null),
+        l.updated ?? null, l.error ?? null, l.retried ?? null, ...(legacy ? [] : [l.preview ?? null, l.reason ?? null]), "2026-09-01T00:00:00.000Z"] as never[]));
     for (const [i, [status, step, preview, reason]] of jobs.entries())
-      job.run(`${id}-${i}`, "b", id, status, step, reason ?? null, preview ?? null, `2026-09-02T00:00:${String(t++).padStart(2, "0")}.000Z`);
-  };
-  // First extraction still running after its preview failed: not final yet.
-  add("inprogress", { status: "failed", content: "queued", preview: "blocked" }, [["running", "Extracting content", "blocked"]]);
-  // Failed re-extract that kept manual content (preview never fetched before).
-  add("kept", { status: "failed", content: "ready", key: "old.md", error: "The site had a problem.", preview: "blocked", reason: "site_error" },
-    [["failed", "Cancelled"], ["failed", "Needs attention", "blocked", "site_error"]]);
-  // A genuine preview failure, now being retried (the retry already failed its preview again, or not yet).
-  add("retrying", { status: "failed", content: "queued", key: "a.md", preview: "blocked" }, [["done", "Done", "blocked"], ["running", "Extracting content", "blocked"]]);
-  add("waiting", { status: "failed", content: "queued", key: "a.md", preview: "blocked" }, [["done", "Done", "blocked"], ["queued", "En cola"]]);
-  // A genuine preview failure, then a failed re-extract that kept the content: still unresolved.
-  add("genuine", { status: "failed", content: "ready", key: "a.md", error: "The site had a problem.", preview: "blocked" },
-    [["done", "Done", "blocked"], ["failed", "Needs attention", "blocked", "site_error"]]);
-  // Settled failures.
-  add("preview", { status: "failed", content: "ready", key: "a.md", preview: "not_html" }, [["done", "Done", "not_html"]]);
-  add("content", { status: "ready", content: "failed", error: "The page no longer exists.", reason: "not_found" }, [["failed", "Needs attention", undefined, "not_found"]]);
-  // Content that failed for good and is being extracted again.
-  add("recontent", { status: "ready", content: "queued" }, [["failed", "Needs attention", undefined, "timeout"], ["queued", "En cola"]]);
-  // Neutral: cancelled, interrupted, fresh.
-  add("cancelled", { status: "pending", content: "missing" }, [["failed", "Cancelled"]]);
-  add("interrupted", { status: "pending", content: "queued" }, [["failed", "Interrupted"], ["queued", "En cola"]]);
-  add("fresh", { status: "pending", content: "queued" }, [["queued", "En cola"]]);
+      db.query(`INSERT INTO jobs(id,batch_id,link_id,status,step,created_at${legacy ? "" : ",reason,preview_reason,adapter"}) VALUES(?,?,?,?,?,?${legacy ? "" : ",?,?,?"})`)
+        .run(...([`${id}-${i}`, "b", id, status, step, `2026-09-02T00:00:${t++}.000Z`,
+          ...(legacy ? [] : [reason ?? null, preview ?? null, ["done", "failed"].includes(status) && !["Cancelled"].includes(step) ? "web" : null])] as never[]));
+  }
   for (const f of files.slice(at)) db.exec(await Bun.file(`migrations/${f}`).text());
-  const rows = Object.fromEntries((db.query("SELECT id,attention_kind,attention_reason,attention_at IS NOT NULL dated FROM links").all() as any[])
-    .map((r) => [r.id, [r.attention_kind, r.attention_reason, r.dated]]));
-  expect(rows).toEqual({
-    inprogress: [null, null, 0],
-    kept: [null, null, 0],
-    retrying: ["preview", "blocked", 1],
-    waiting: ["preview", "blocked", 1],
-    genuine: ["preview", "blocked", 1],
-    preview: ["preview", "not_html", 1],
-    content: ["content", "not_found", 1],
-    recontent: ["content", "timeout", 1],
-    cancelled: [null, null, 0],
-    interrupted: [null, null, 0],
-    fresh: [null, null, 0],
+  return Object.fromEntries((db.query("SELECT id,attention_kind,attention_reason,attention_at IS NOT NULL dated FROM links").all() as any[])
+    .map((r) => [r.id, r.attention_kind ? `${r.attention_kind}/${r.attention_reason ?? "?"}` : null]));
+}
+// The same histories, in the 0013 schema (with reasons) and in the deployed one (before 0012, no reasons).
+const histories = (legacy: boolean): Record<string, [Fixture, FixtureJob[]]> => {
+  const p = legacy ? undefined : "blocked";
+  const kept = { key: "old.md", source: "manual", updated: "2026-09-02T00:00:00.000Z" };
+  return {
+    // Neutral: nothing settled a final failure.
+    interrupted: [{ status: "failed", content: "missing", preview: p }, [["failed", "Interrupted", p]]],
+    inProgress: [{ status: "failed", content: "queued", preview: p }, [["running", "Extracting content", p]]],
+    keptOnce: [{ status: "failed", content: "ready", ...kept, error: "The site had a problem.", preview: p }, [["failed", "Cancelled"], ["failed", "Needs attention", p, "site_error"]]],
+    keptTwice: [{ status: "failed", content: "ready", ...kept, error: "The site had a problem.", preview: p },
+      [["failed", "Cancelled"], ["failed", "Needs attention", p, "site_error"], ["failed", "Needs attention", p, "site_error"]]],
+    cancelled: [{ status: "pending", content: "missing" }, [["failed", "Cancelled"]]],
+    fresh: [{ status: "pending", content: "queued" }, [["queued", "En cola"]]],
+    contentInterrupted: [{ status: "ready", content: legacy ? "failed" : "missing", error: legacy ? "Extraction was interrupted. Try again." : undefined }, [["failed", "Interrupted"]]],
+    // A genuine earlier preview failure, then retries that did not settle anything new.
+    genuineThenInterrupted: [{ status: "failed", content: "ready", key: "a.md", preview: p }, [["done", "Done", p], ["failed", "Interrupted", p]]],
+    genuineThenKept: [{ status: "failed", content: "ready", key: "a.md", error: "The site had a problem.", preview: p },
+      [["done", "Done", p], ["failed", "Needs attention", p, "site_error"], ["failed", "Needs attention", p, "site_error"]]],
+    genuineRetrying: [{ status: "failed", content: "queued", key: "a.md", preview: p }, [["done", "Done", p], ["running", "Extracting content", p]]],
+    // Settled failures.
+    preview: [{ status: "failed", content: "ready", key: "a.md", preview: p }, [["done", "Done", p]]],
+    content: [{ status: "ready", content: "failed", error: "The page no longer exists.", reason: legacy ? undefined : "not_found" }, [["failed", "Needs attention", undefined, legacy ? undefined : "not_found"]]],
+    contentRetrying: [{ status: "ready", content: "queued" }, [["failed", "Needs attention", undefined, legacy ? undefined : "timeout"], ["queued", "En cola"]]],
+    contentThenInterrupted: [{ status: "ready", content: legacy ? "failed" : "failed", error: "The site took too long to respond." },
+      [["failed", "Needs attention", undefined, legacy ? undefined : "timeout"], ["failed", "Interrupted"]]],
+    retryPreview: [{ status: "failed", content: "ready", key: "a.md", preview: p, retried: "2026-09-03T00:00:00.000Z" }, [["done", "Done"]]],
+    noJobs: [{ status: "failed", content: "missing", preview: p }, []],
+    // Neutral again: a later preview worked, then a re-extract kept content or was interrupted.
+    fixedThenKept: [{ status: "failed", content: "ready", key: "a.md", error: "The site had a problem.", preview: p },
+      [["done", "Done", p], ["done", "Done"], ["failed", "Needs attention", p, "site_error"]]],
+  };
+};
+
+test("migration 0014 on a library from this branch's 0013 schema: only settled failures need attention", async () => {
+  expect(await upgrade("0014", histories(false))).toEqual({
+    interrupted: null, inProgress: null, keptOnce: null, keptTwice: null, cancelled: null, fresh: null, contentInterrupted: null,
+    genuineThenInterrupted: "preview/blocked", genuineThenKept: "preview/blocked", genuineRetrying: "preview/blocked",
+    preview: "preview/blocked", content: "content/not_found", contentRetrying: "content/timeout", contentThenInterrupted: "content/timeout",
+    retryPreview: "preview/blocked", noJobs: "preview/blocked", fixedThenKept: null,
   });
+});
+
+test("migration 0014 on the deployed library (before 0012, no stored reasons): the same, with generic reasons", async () => {
+  expect(await upgrade("0012", histories(true))).toEqual({
+    interrupted: null, inProgress: null, keptOnce: null, keptTwice: null, cancelled: null, fresh: null, contentInterrupted: null,
+    genuineThenInterrupted: "preview/?", genuineThenKept: "preview/?", genuineRetrying: "preview/?",
+    preview: "preview/?", content: "content/?", contentRetrying: "content/?", contentThenInterrupted: "content/?",
+    retryPreview: "preview/?", noJobs: "preview/?",
+    // Ambiguous without reasons: the last settled extraction is taken as the one that failed the preview.
+    fixedThenKept: "preview/?",
+  });
+  expect(attentionMessage({ attention_kind: "preview", attention_reason: null })).toBe("Couldn't get the preview: Something went wrong.");
 });

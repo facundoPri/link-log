@@ -23,20 +23,32 @@ export function nextAttention(link: State, outcome: StepOutcomes): Pick<Link, "a
   return { attention_kind, attention_reason };
 }
 
-export const readAttentionState = (db: D1Database, linkId: string) =>
+const readAttentionState = (db: D1Database, linkId: string) =>
   db.prepare("SELECT status,preview_reason,content_key,attention_kind,attention_reason FROM links WHERE id=?").bind(linkId).first<State>();
 
-// The SET clause for a new attention state; attention_at keeps its time while the state is unchanged.
-export function attentionSet(next: Pick<Link, "attention_kind" | "attention_reason">) {
-  return {
-    sql: "attention_kind=?,attention_reason=?,attention_at=CASE WHEN attention_kind IS ? AND attention_reason IS ? THEN attention_at ELSE ? END",
-    params: [next.attention_kind, next.attention_reason, next.attention_kind, next.attention_reason, next.attention_kind ? new Date().toISOString() : null],
-  };
+// Settles against the live row: a state that only stays the same is never written back, and a change only
+// applies if nobody (Dismiss) changed the attention since it was read; otherwise it is read again.
+export async function settleAttention(db: D1Database, linkId: string, outcome: StepOutcomes) {
+  for (let i = 0; i < 3; i++) {
+    const link = await readAttentionState(db, linkId);
+    if (!link) return;
+    const next = nextAttention(link, outcome);
+    if (next.attention_kind === link.attention_kind && next.attention_reason === link.attention_reason) return;
+    const changed = await db.prepare("UPDATE links SET attention_kind=?,attention_reason=?,attention_at=? WHERE id=? AND attention_kind IS ? AND attention_reason IS ?")
+      .bind(next.attention_kind, next.attention_reason, next.attention_kind ? new Date().toISOString() : null, linkId, link.attention_kind, link.attention_reason).run();
+    if (changed.meta.changes) return;
+  }
 }
 
-export async function settleAttention(db: D1Database, linkId: string, outcome: StepOutcomes) {
-  const link = await readAttentionState(db, linkId);
-  if (!link) return;
-  const set = attentionSet(nextAttention(link, outcome));
-  await db.prepare(`UPDATE links SET ${set.sql} WHERE id=?`).bind(...set.params, linkId).run();
+// nextAttention for a final content failure, written as SQL over the live row so it can share the failure's
+// transaction: without content it raises content attention; with the previous content kept it leaves the
+// attention as it is, except that a preview that worked in this job clears a preview warning.
+export function contentFailureAttentionSql(reason: string | null, previewOk: boolean) {
+  const clears = previewOk ? "attention_kind='preview'" : "0";
+  return {
+    sql: `attention_kind=CASE WHEN content_key IS NULL THEN 'content' WHEN ${clears} THEN NULL ELSE attention_kind END,
+attention_reason=CASE WHEN content_key IS NULL THEN ? WHEN ${clears} THEN NULL ELSE attention_reason END,
+attention_at=CASE WHEN content_key IS NULL THEN CASE WHEN attention_kind IS 'content' AND attention_reason IS ? THEN attention_at ELSE ? END WHEN ${clears} THEN NULL ELSE attention_at END`,
+    params: [reason, reason, new Date().toISOString()],
+  };
 }

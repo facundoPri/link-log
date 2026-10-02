@@ -13,7 +13,7 @@ import {
 import { capabilities, parseLensDefinition } from "./store";
 import { jevUnavailable } from "../src/attention";
 import { preservedContentStateSql, restoredContentStateSql } from "./content-state";
-import { attentionSet, nextAttention, readAttentionState } from "./attention";
+import { contentFailureAttentionSql } from "./attention";
 import { adapterMessage, classify, logResidualFailure, LinkFailure } from "./failures";
 import type { Lens, Link, Tag } from "../src/types";
 const POOL_LIMITS = { browser: 2, jev: 16 } as const;
@@ -283,9 +283,8 @@ export class LinkWorkflow extends WorkflowEntrypoint<Env, { id: string }> {
         const running = "EXISTS (SELECT 1 FROM jobs WHERE id=? AND status='running')";
         const statements: D1PreparedStatement[] = [];
         // The preview axis is owned by save-preview: a preview that never ran stays neutral.
-        const state = job.kind === "extract" && link ? await readAttentionState(env.DB, link.id) : null;
-        if (state) {
-          const set = attentionSet(nextAttention(state, { content: "failed", content_reason: reason, preview: progress.preview }));
+        if (job.kind === "extract" && link) {
+          const set = contentFailureAttentionSql(reason, progress.preview === "ok");
           statements.push(env.DB.prepare(
             `UPDATE links SET content_state=${preservedContentStateSql("failed")},content_error=?,content_reason=?,${set.sql} WHERE id=? AND ${running}`,
           ).bind(message, reason, ...set.params, link!.id, job.id));
