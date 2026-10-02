@@ -30,6 +30,37 @@ export async function consume(db: D1Database, key: string, limit: Limit, cost = 
   return row !== null;
 }
 
+/** Quota taken up front for an operation; `release` gives back what it did not use. */
+export type Charge = { release(cost?: number): Promise<void> };
+
+/**
+ * Takes every quota or none (earlier ones are given back if a later one is exhausted). The
+ * refund targets the same fixed window, so a rollover never inflates the next window.
+ */
+export async function charge(db: D1Database, items: { key: string; limit: Limit; cost: number }[], now = Date.now()) {
+  const taken: typeof items = [];
+  const release = async (cost?: number) => {
+    for (const item of taken) {
+      const amount = Math.min(cost ?? item.cost, item.cost);
+      if (amount <= 0) continue;
+      const windowStart = Math.floor(now / 1000 / item.limit.window) * item.limit.window;
+      await db
+        .prepare("UPDATE app_rate_limits SET count=max(count-?,0) WHERE key=? AND window_start=?")
+        .bind(amount, item.key, windowStart)
+        .run();
+    }
+  };
+  for (const item of items) {
+    if (item.cost <= 0) continue;
+    if (!(await consume(db, item.key, item.limit, item.cost, now))) {
+      await release();
+      return null;
+    }
+    taken.push(item);
+  }
+  return { release } satisfies Charge;
+}
+
 export async function sha256(value: string) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");

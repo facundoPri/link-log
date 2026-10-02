@@ -1,9 +1,8 @@
 import { Hono } from "hono";
-import { domainOf, normalizeUrl } from "../../src/url";
+import { normalizeUrl } from "../../src/url";
 import { contentKeyBelongs, contentPrefix, getOwnedLink, json, library, text } from "../store";
 import { enqueue } from "../jobs";
-import { addLink } from "../links";
-import { consume, LIMITS, LimitError } from "../limits";
+import { addLinks } from "../links";
 import { HttpError, notFound, ownerOf, type AppEnv } from "../http/context";
 import { assertNoActiveJob, enrich, setTags, tagNames } from "./shared";
 
@@ -19,30 +18,21 @@ export const linkRoutes = new Hono<AppEnv>()
       body.urls.some((u) => typeof u !== "string")
     )
       throw new Error("Import up to 100 URLs per batch.");
+    // Every URL must be valid; quotas are admitted before anything is saved (see addLinks).
     const urls = [...new Set((body.urls as string[]).map(normalizeUrl))];
-    if (!(await consume(env.DB, `links:${userId}`, LIMITS.linksPerUser, urls.length)))
-      throw new LimitError("Link limit reached. Try again later.");
-    const now = new Date().toISOString();
-    const proposed = urls.map((url) => ({ id: crypto.randomUUID(), url }));
-    const results = await env.DB.batch(
-      proposed.map((p) =>
-        env.DB.prepare(
-          "INSERT OR IGNORE INTO links(id,user_id,original_url,url,domain,title,created_at) SELECT ?,?,?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM links WHERE user_id=? AND (original_url=? OR url=?))",
-        ).bind(p.id, userId, p.url, p.url, domainOf(p.url), domainOf(p.url), now, userId, p.url, p.url),
-      ),
-    );
-    const ids = proposed.filter((_, i) => results[i]!.meta.changes > 0).map((p) => p.id);
-    if (ids.length) await enqueue(env, userId, ids, "extract");
-    return json({ ...(await library(env, userId)), imported: ids.length, duplicates: urls.length - ids.length });
+    const results = await addLinks(env, userId, urls);
+    const imported = results.filter((r) => "created" in r && r.created).length;
+    return json({ ...(await library(env, userId)), imported, duplicates: urls.length - imported });
   })
   .post("/links", async (c) => {
     const env = c.env, userId = ownerOf(c), body = c.get("body");
     if (typeof body.url !== "string") throw new Error("Missing link.");
     const names = tagNames(body.tags || []);
-    const { id, created } = await addLink(env, userId, body.url);
+    const [result] = await addLinks(env, userId, [body.url]);
+    if (!result || "error" in result) throw new Error(result?.error ?? "Invalid link.");
+    const { id, created } = result;
     const statements = setTags(env.DB, userId, id, names, false);
     if (statements.length) await env.DB.batch(statements);
-    if (created) await enqueue(env, userId, [id], "extract");
     return json({ id, duplicate: !created, ...(await library(env, userId)) }, created ? 201 : 200);
   })
   .post("/links/:id/transcript", async (c) => {

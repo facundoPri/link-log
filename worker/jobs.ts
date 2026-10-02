@@ -33,6 +33,8 @@ export async function enqueue(
   kind: "extract" | "autotag" | "lens",
   lensId?: string,
   track?: string,
+  /** The caller already charged the job quota for these links (see addLinks). */
+  precharged = false,
 ) {
   ids = [...new Set(ids)];
   if (!ids.length || ids.length > 100)
@@ -80,7 +82,7 @@ export async function enqueue(
     config = { lens };
   }
   if (kind === "extract" && track) config = { track };
-  if (!(await consume(env.DB, `jobs:${userId}`, LIMITS.jobsPerUser, ids.length)))
+  if (!precharged && !(await consume(env.DB, `jobs:${userId}`, LIMITS.jobsPerUser, ids.length)))
     throw new LimitError("Processing limit reached. Try again later.");
   const id = crypto.randomUUID(),
     now = new Date().toISOString();

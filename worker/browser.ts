@@ -13,8 +13,8 @@ import {
   type TargetStatus,
 } from "@linklog/browser-protocol";
 import type { Lens } from "../src/types";
-import { enqueue } from "./jobs";
-import { addLink } from "./links";
+import { charge, LIMITS } from "./limits";
+import { addLinks } from "./links";
 import { json, parseLensDefinition, text } from "./store";
 
 // Browser view API. Requests come from the signed-in Linklog page through the same-origin
@@ -234,6 +234,10 @@ export async function createEvaluation(env: Env, userId: string, body: Obj): Pro
     config = { lens, destinations: built.map, catalogVersion: req.catalogVersion, browser: true };
     kind = "browser-autogroup";
   }
+  // Browser evaluations share the owner's job quota with the library; it is taken before any
+  // receipt, snapshot or queue message exists, and only a new request is charged.
+  const charged = await charge(env.DB, [{ key: `jobs:${userId}`, limit: LIMITS.jobsPerUser, cost: req.targets.length }]);
+  if (!charged) return json({ error: "Processing limit reached. Try again later.", code: "rate-limited" }, 429);
   const now = new Date().toISOString();
   const batchId = crypto.randomUUID();
   const targets = req.targets.map((t) => ({
@@ -261,6 +265,8 @@ export async function createEvaluation(env: Env, userId: string, body: Obj): Pro
       }),
     ]);
   } catch (error) {
+    // Nothing was created: a concurrent duplicate won (or the write failed).
+    await charged.release();
     const again = await receipt();
     if (!again) throw error;
     return replay(again);
@@ -278,6 +284,7 @@ export async function createEvaluation(env: Env, userId: string, body: Obj): Pro
     // Never leave a receipt whose jobs can't run: those targets fail visibly (no provider
     // call was made) and the user can evaluate them again explicitly.
     console.error(`Could not store ${lost.length} browser snapshot(s)`);
+    await charged.release(lost.length); // those jobs never reach a provider
     await env.DB.batch(
       lost.map((t) =>
         env.DB.prepare(
@@ -324,20 +331,13 @@ export async function saveUrls(env: Env, userId: string, body: Obj): Promise<Sav
     body.urls.some((u) => typeof u !== "string")
   )
     throw new Error(`Save between 1 and ${BROWSER_LIMITS.maxSaveItems} tabs at a time.`);
-  const results: SaveResult[] = [];
-  for (const url of body.urls as string[]) {
-    try {
-      const { id, created } = await addLink(env, userId, url);
-      results.push({ url, status: created ? "created" : "duplicate", id });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "";
-      results.push({ url, status: "rejected", error: /D1_|SQLITE/i.test(message) ? "Could not save." : message || "Could not save." });
-    }
-  }
-  // One extraction batch per request, like an import.
-  const created = [...new Set(results.filter((r) => r.status === "created").map((r) => r.id!))];
-  if (created.length) await enqueue(env, userId, created, "extract");
-  return results;
+  // One extraction batch per request, like an import; quotas admitted before anything is saved.
+  const results = await addLinks(env, userId, body.urls as string[]);
+  return results.map((r) =>
+    "error" in r
+      ? { url: r.input, status: "rejected", error: r.error }
+      : { url: r.input, status: r.created ? "created" : "duplicate", id: r.id },
+  );
 }
 
 /** Idempotent retention sweep; safe to run from cron or recovery. */
