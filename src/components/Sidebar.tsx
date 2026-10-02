@@ -9,6 +9,7 @@ import {
   Inbox,
   Link2,
   ListChecks,
+  LogOut,
   Plus,
   Tag,
 } from "lucide-react";
@@ -62,6 +63,8 @@ export function Sidebar({
   onEditLens,
   onDeleteLens,
   onActivity,
+  account,
+  onSignOut,
 }: {
   library: Library;
   view: View;
@@ -77,6 +80,8 @@ export function Sidebar({
   onEditLens: (lens: Lens) => void;
   onDeleteLens: (lens: Lens) => void;
   onActivity: () => void;
+  account: { email: string };
+  onSignOut: () => void;
 }) {
   const untaggedCount = library.links.filter((l) => !l.tags.length).length;
   const attentionCount = library.links.filter(
@@ -301,6 +306,22 @@ export function Sidebar({
             </span>
           )}
         </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" className={item} title={account.email}>
+              <span className="flex size-4 items-center justify-center rounded-full bg-muted text-2xs font-medium uppercase">
+                {account.email.slice(0, 1)}
+              </span>
+              <span className="truncate">{account.email}</span>
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent side="top" align="start" className="w-56">
+            <DropdownMenuItem onClick={onSignOut}>
+              <LogOut className="size-4" />
+              Sign out
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </div>
   );

@@ -59,7 +59,13 @@ function isInput(target: EventTarget | null) {
   );
 }
 
-export function App() {
+export function App({
+  account,
+  onSignOut,
+}: {
+  account: { email: string };
+  onSignOut: () => void;
+}) {
   const [library, setLibrary] = useState<Library>({
     links: [],
     tags: [],
@@ -609,6 +615,8 @@ export function App() {
         setActivityOpen(true);
         setMenuOpen(false);
       }}
+      account={account}
+      onSignOut={onSignOut}
     />
   );
 
