@@ -1,7 +1,7 @@
 # FAC-48 — Mapa de “Needs attention”
 
 Base: `main` @ `32fc90f` (incluye PR #4). Solo diagnóstico; no hay cambios de producto.
-Repro: `bun test ./planning/research/needs-attention.repro.ts` (10/10 pass, SQLite en memoria, red mockeada; no toca `.wrangler/state`, no despliega). La suite existente (`bun test`) sigue en 102/102.
+Repro: `bun test ./planning/research/needs-attention.repro.ts` (11/11 pass, escenarios A–J, SQLite en memoria, red mockeada; no toca `.wrangler/state`, no despliega). La suite existente (`bun test`) sigue en 102/102.
 
 Leyenda de confianza: **R** = reproducido ejecutando el código real del Worker · **C** = leído en código, no ejecutado · **H** = hipótesis · **L** = observado en vivo (fetch público desde Bun local, aproximación al egress de Workers).
 
@@ -37,6 +37,7 @@ Leyenda de confianza: **R** = reproducido ejecutando el código real del Worker 
 | 14 | Redelivery encuentra el workflow `errored/terminated/complete` | = (puede quedar `pending`) / `failed` “Extraction was interrupted” | **A** | `worker/jobs.ts:136-157` | R (H), invocando `dispatch` con instancia mockeada |
 | 15 | Autotag / lens falla | nada en `links`; job `failed/Needs attention` | = (solo toast “N failed — see Activity”) | `worker/jobs.ts:262-267`, `App.tsx:236-245` | C |
 | 16 | Recarga / polling | Sin estado en el cliente: todo sale de `GET /api/library` + `Date.now()` del servidor. El polling (1.8 s) corre mientras haya links `pending` o batches activos | La vista cambia **solo por tiempo** (filas 2 y 13) sin ningún evento | `App.tsx:163-200`, `store.ts:143-147` | R (tick de reloj + recarga en A, F, H, I) |
+| 16b | Autotag o lens sin `TYPESAFE_API_KEY` | `POST /api/batches` 200. Cada job toma un slot `jev`, inserta una fila en `usage_events` y falla “TYPESAFE_API_KEY is not configured.” sin llamar al proveedor | = | `worker/jobs.ts:61-85`, `worker/ai/jev.ts:185-194`, `worker/usage.ts:36-52` | R (escenario J) |
 | 17 | Cron `recover()` reenvía jobs `queued/running` (5 min; 30 s en dev) | `dispatch` es idempotente por ID del workflow; no repite pasos pagos | = (salvo fila 14) | `worker/jobs.ts:114-121, 122-163`, `scripts/dev.ts` | C. La hipótesis de “reprocesamiento repetido” queda **débil** |
 
 ## 3. Casos representativos (reproducidos)
@@ -144,8 +145,8 @@ Resumen de las respuestas a §6. “Jev” corresponde a lo transcrito como shep
 ### 8.2 Reintentos visibles y acotados
 
 - Workflows expone `ctx.attempt` dentro de `step.do` (`worker-configuration.d.ts:14005-14010`), así que alcanzan los reintentos nativos con `backoff: "exponential"`. Al empezar cada intento se escribe `jobs.attempt/max_attempts/attempt_started_at`. Antes de relanzar el error se escribe `jobs.retry_reason`. Activity muestra, por ejemplo, “Contenido · intento 2/2 · 40 s de 2 min · el sitio tardó demasiado”.
-- **Preview** (`extract.ts:48`): hoy un no-2xx **no lanza**, sino que devuelve `status:'failed'` (`metadata.ts:78-92`), así que los reintentos nunca aplican. Hay que clasificar: lanzar (reintentable) en timeout, DNS, 5xx, 429 y 408; devolver el fallo final sin reintentar en no-HTML, 404 y 410. Límite 2 con espera exponencial (por ejemplo 5 s → 20 s).
-- **Browser Rendering → Markdown** (`extract.ts:56`, `web.ts`): límite 1 solo para errores transitorios. Sin reintento en “no content”, en >2 MB ni en hosts no públicos.
+- **Preview** (`extract.ts:48`): hoy un no-2xx **no lanza**, sino que devuelve `status:'failed'` (`metadata.ts:78-92`), así que los reintentos nunca aplican. Hay que clasificar: lanzar (reintentable) en timeout, DNS, 5xx, 429 y 408; devolver el fallo final sin reintentar en no-HTML, 404, 410 y **401/403 o firma anti-bot** (decidido: falla rápido, §8.7). Límite 2 con espera exponencial (por ejemplo 5 s → 20 s).
+- **Browser Rendering → Markdown** (`extract.ts:56`, `web.ts`): límite 1 solo para errores transitorios. Sin reintento en “no content”, en >2 MB, en hosts no públicos, en bloqueo anti-bot ni en muro de login.
 - **Interrupción** (`jobs.ts:136-157`): hoy marca fallo directo. Propuesta: contarla como intento y re-crear el job una vez antes de darlo por fallido.
 - Códigos de motivo con texto para el usuario: `timeout` “El sitio tardó demasiado”, `unreachable`, `site_error` (5xx), `rate_limited`, `blocked` (401/403) “El sitio bloquea el acceso automático”, `not_found`, `not_html` “Es un PDF/archivo, no una página”, `empty`, `too_large`, `login_wall`, `interrupted`, `no_transcript`.
 
@@ -159,9 +160,41 @@ Propuesta:
 2. **Promoción por link, no por batch.** En el mismo step `complete`/`record-failure` (`jobs.ts:249-274`), promover el `waiting` más antiguo de ese link a `queued` y enviarlo. Los pools siguen separados (`browser` 2, `jev` 16, `jobs.ts:16`): extraer otros links no frena el Jev de un link ya listo. `recover()` (`jobs.ts:114-121`) también promueve los huérfanos (`waiting` sin predecesor activo), así una promoción perdida no deja nada colgado.
 3. **Chequeo previo dentro del job de Jev** antes de pedir slot del pool: si no hay `content_key` o el contenido quedó `failed`/`blocked`, el job falla sin costo con “Falta el contenido; extraelo primero”. No entra en atención y **no** dispara la extracción, así que no hay loops.
 4. **Validación por link en `enqueue`.** Se aceptan los links con contenido o con extracción activa/en espera. Los demás se devuelven como “omitidos: necesitan contenido”. La UI ofrece una acción **explícita** “Extraer y luego auto-taggear”, que encadena un extract y un autotag en `waiting`. Es una decisión del usuario, no algo automático.
-5. **Reintentos de Jev: 2, solo ante 429, 5xx o error de red antes de recibir respuesta.** Sin reintento en errores deterministas (contexto excedido, respuesta inválida repetible). La espera por contenido **no** consume reintentos, porque no es un fallo. Cada intento queda medido en `usage_events`. Esto cambia la política del README (“Paid steps are not silently retried”) a “reintentos acotados y visibles”, y hay que documentarlo.
+5. **Reintentos de Jev según la fase (decidido, §8.7).** La regla separa **antes de enviar** de **después de enviar**:
+   - **Antes de enviar** (lectura de R2, slot del pool, D1 transitorio): se reintenta hasta 2 veces, solo con motivos conocidos y acotados.
+   - **Después de enviar** (HTTP de error, timeout, respuesta inválida, saldo insuficiente): **nunca** se reintenta automáticamente; el usuario puede reintentar a mano desde Activity.
+   - **Errores de red sin respuesta:** se tratan como “después de enviar”, porque en Workers no se puede probar que la petición no salió.
+   - La espera por contenido no es un fallo y no consume reintentos.
+   - La política del README (“Paid steps are not silently retried”) se mantiene.
+
+   Implementación: marcar `meter.sent = true` justo antes del `fetch`/`env.AI.run` (`worker/ai/jev.ts:195, 229`) y guardar la fase en `usage_events` (columna `phase`). Mejor todavía, crear la fila de uso recién al enviar: hoy `measured()` la inserta antes de cualquier chequeo (`worker/usage.ts:36-52`). Activity muestra “Falló antes de llamar a Jev (sin costo)” o “Jev respondió con error (puede haberse cobrado)”.
+6. **Corte por batch ante errores de cuenta o configuración.** Si el proveedor responde 401/402/403 o “saldo insuficiente”, los jobs restantes del mismo batch fallan sin llamar, con el mismo motivo. Así no se repiten N llamadas destinadas a fallar.
 
 Por qué D1 `waiting` y no `step.waitForEvent`: no deja instancias de Workflow vivas esperando, no requiere que el extract sepa a quién notificar, sigue el patrón existente (D1 como outbox, cron como red de seguridad) y respeta el índice único sin cambiarlo.
+
+### 8.3b Validar la configuración de Jev antes de encolar
+
+Hecho reproducido (escenario J del repro): sin `TYPESAFE_API_KEY`, `POST /api/batches` (autotag) devuelve **200**. Cada link arranca un workflow, toma un slot del pool `jev`, inserta una fila en `usage_events` y recién entonces falla con “TYPESAFE_API_KEY is not configured.” (`worker/ai/jev.ts:193`, dentro de `measured()`). No llega ninguna petición al proveedor, pero se crean N workflows y N filas de uso fallidas. `capabilities(env).jev` ya existe (`worker/store.ts:14-26`), pero ni `enqueue` (`worker/jobs.ts:61-85`) ni la UI lo usan (solo aparece como valor inicial en `src/App.tsx:75`).
+
+Propuesta:
+
+- En `enqueue`, para `autotag`/`lens`: si `!capabilities(env).jev`, rechazar el pedido completo con “Jev no está configurado (falta la API key)”. Es una condición global, así que rechazar todo es correcto.
+- En la UI, deshabilitar Auto-tag, Lens y Re-evaluate con ese mismo motivo en el tooltip, usando `library.capabilities.jev`.
+- Mantener el chequeo dentro del job como defensa (la key puede cambiar entre encolar y correr), pero **antes** de `measured()`, para no ensuciar Usage.
+- Límite conocido: con el proveedor `cloudflare`, `capabilities.jev` solo verifica que exista el binding `AI`; el saldo no se puede verificar antes. Ese caso lo cubre el corte por batch (punto 6 de §8.3).
+
+### 8.3c Muro de login, Dismiss y “preview como contenido”
+
+- **Muro de login o bloqueo detectado en el contenido extraído:** el texto **se descarta** (no se guarda en R2 ni cambia `content_key`).
+  - Sin contenido previo: `content_state` queda sin contenido, con `attention_kind='blocked'` y el mensaje “Se obtuvo una página de login, no el contenido”.
+  - Con contenido previo: se mantiene la versión anterior y el fallo queda en Activity.
+  - El preview (título, descripción, imagen) se conserva.
+- **Dismiss** solo saca el link de la lista (`attention_kind = NULL`) y no cambia nada más. Un fallo final posterior vuelve a levantar la marca. Sin contenido, Jev sigue sin poder correr en ese link.
+- **Opción “Usar el preview como contenido”**, ofrecida junto a Dismiss en el menú de la fila de Needs attention:
+  - Escribe título + descripción como contenido con `content_source='preview'` y `content_state='partial'`, para que quede visible que es limitado. El inspector ya etiqueta por fuente (`Inspector.tsx:64-72`), así que solo hay que agregar “Solo preview”.
+  - Saca el link de la lista y habilita Jev.
+  - Se podría agregar una configuración global opcional (tabla `settings`, ya existe en `migrations/0003`): “Si no se puede obtener el contenido, usar el preview automáticamente”, apagada por defecto.
+  - Queda por definir el texto, dónde se muestra y si los resultados de Jev sobre contenido de solo-preview se marcan como de menor confianza.
 
 ### 8.4 Cancelar un link individual
 
@@ -170,7 +203,7 @@ Por qué D1 `waiting` y no `step.waitForEvent`: no deja instancias de Workflow v
 - **`queued`/`waiting`:** se marca `Cancelled`.
 - **`running`:** `PROCESS_LINK.get(id).terminate()` y luego `Cancelled`. Se restaura `content_state` con `preservedContentStateSql("missing")`, se libera el lease y no se toca `attention_*`.
 
-Los dependientes en `waiting` del mismo link se cancelan en cascada, con aviso. Una llamada paga en vuelo puede cobrarse igual: `recover()` ya la registra como `failed` (`jobs.ts:115`).
+Los dependientes en `waiting` del mismo link se cancelan en cascada (decidido: si se cancela la extracción, se cancela todo lo que depende de ella). Lo mismo aplica al cancelar un batch de extract. Una llamada paga en vuelo puede cobrarse igual: `recover()` ya la registra como `failed` (`jobs.ts:115`).
 
 ### 8.5 Telemetría
 
@@ -179,16 +212,30 @@ Los dependientes en `waiting` del mismo link se cancelan en cascada, con aviso. 
 ### 8.6 Orden sugerido (cada parte se puede entregar sola)
 
 1. Quitar el `failed` virtual de 30 s y dejar neutros los cancelados. Ataca directamente el síntoma reportado.
-2. Clasificación de motivos, reintentos del preview y del Markdown, intento visible en Activity, telemetría.
-3. `attention_*` persistido, con Retry del paso fallido (preview por la cola) y Dismiss.
-4. Cola serial por link para Jev, validación por link y reintentos de Jev.
-5. Cancelación por link en Activity.
-6. Detección de muro de login, calibrada con los datos de telemetría de la parte 2.
+2. Validar la configuración de Jev al encolar y en la UI (§8.3b). Es chico, evita trabajo inútil y no depende de nada.
+3. Clasificación de motivos (incluye 401/403 y anti-bot, que fallan rápido), reintentos del preview y del Markdown, intento visible en Activity, telemetría.
+4. `attention_*` persistido, con Retry del paso fallido (preview por la cola), Dismiss y “usar el preview como contenido”.
+5. Cola serial por link para Jev, validación por link, reintentos de Jev según la fase y corte por batch.
+6. Cancelación por link en Activity, con cascada.
+7. Detección de muro de login (descartar el texto), calibrada con los datos de telemetría de la parte 3.
 
-### 8.7 Puntos a confirmar
+### 8.7 Decisiones de la segunda ronda (2026-10-01)
 
-1. **403/401:** ¿falla rápido (un muro anti-bot rara vez se abre en segundos) o se reintenta igual? Propuesta: falla rápido con el motivo `blocked`.
-2. **Reintentos de Jev:** ¿se aceptan con costo potencial ante 429/5xx, o solo los que ocurren antes de enviar la llamada? En un timeout no siempre se sabe si se cobró.
-3. **Muro de login:** ¿se guarda igual el texto (visible, pero excluido de Jev) o se descarta? Los falsos positivos son el riesgo: conviene una heurística conservadora (texto corto más patrones como “sign in”, “captcha”, “Just a moment”, “Access denied”) y ajustarla con la telemetría.
-4. **Dismiss:** ¿oculta solo ese fallo (vuelve a aparecer si un intento posterior falla) o silencia el link para siempre?
-5. **Cancelar un extract con un Jev esperando:** ¿se cancela en cascada (propuesta) o el Jev falla con “falta contenido”?
+1. **401/403 y anti-bot: falla rápido, sin reintentos.** Si había contenido previo, se muestra la versión anterior con el motivo del fallo (“el sitio bloquea el acceso automático”), que queda en el historial de Activity. Si no había contenido, entra en Needs attention con ese motivo. El usuario puede reintentar más adelante.
+2. **Reintentos de Jev según la fase:**
+   - **Antes de enviar:** solo en casos borde conocidos.
+   - **Después de enviar:** nunca automático. Si la API de Jev falla, no se reintenta y se avisa.
+   - El usuario siempre puede reintentar a mano.
+   - Implementación en §8.3, punto 5.
+3. **Sin API key, nada debe llegar a correr:** validar antes de encolar y en la UI (§8.3b). Reproducido: hoy se acepta y falla link por link.
+4. **Muro de login:** se descarta el texto y se muestra “se obtuvo una página de login”. Cuenta como sin contenido; el preview se conserva.
+5. **Dismiss** solo saca el link de la lista. Junto a Dismiss puede ofrecerse “usar el preview como contenido”, opcionalmente también como configuración global, para habilitar Jev (§8.3c). Las dos acciones lo sacan de la lista.
+6. **Cancelar una extracción cancela todo lo que depende de ella** (los Jev en espera de ese link).
+
+**Ticket futuro, fuera de FAC-48 (a redactar después):** obtener el contenido con la extensión del navegador del usuario, para esquivar bloqueos anti-bot y leer páginas que requieren login. Antecedente técnico: la extensión ya captura Markdown de pestañas para los lenses de Browser (`browser_targets`, `worker/browser.ts`). Habría que reutilizar esa captura como fuente de contenido de un link guardado, con consentimiento explícito.
+
+### 8.8 Puntos que siguen abiertos
+
+1. **Casos borde concretos que justifican reintentar antes de enviar a Jev.** Propuesta: R2 `get` con error transitorio, conflicto o timeout de D1. Nada más hasta tener datos de telemetría.
+2. **Detector de muro de login:** ¿cuán conservador? Un falso positivo descarta contenido válido. Propuesta: texto corto más patrones (“sign in”, “log in to continue”, “captcha”, “Just a moment”, “Access denied”, “verify you are human”), solo para el adapter web al principio.
+3. **“Usar el preview como contenido”:** ¿solo por link, o también como configuración global desde el inicio? ¿Los resultados de Jev sobre ese contenido llevan una marca visible?
