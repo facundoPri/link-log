@@ -1,4 +1,4 @@
-# FAC-40 + FAC-41: correcciones del review (R1–R9)
+# FAC-40 + FAC-41: correcciones del review (R1–R10)
 
 **Fecha:** 02-10-2026. **Rama:** `facundoPri/research-auth-cloudflare`, sin push ni PR. **Snapshot revisado:** `73bf1250555cced0d4b7057a2b77d1e128f24b91`. **Fuentes de los findings:** [code review](auth-code-review.md) y [validación](auth-validation-report.md). Esos dos informes son ajenos a esta ronda: se conservan sin cambios y no están en mis commits.
 
@@ -72,3 +72,36 @@ Fuentes: secciones R3 y R9 del re-review en [auth-code-review.md](auth-code-revi
 | Probe R3 del reviewer (copia, evidencia en el scratchpad) | Preserva estado y bridge, Retry → 401 (ver tabla) |
 
 Puertos verificados libres antes de cada corrida. Los stacks propios se detuvieron (3010/8790/3197/8897/3099/3098 libres al terminar). No se tocaron `.wrangler/state`, `.cache` previos, procesos ajenos ni la evidencia de `/tmp/linklog-auth-validation-*`. La evidencia nueva no está en Git.
+
+## Ronda 3: R10 sobre `9dd9feef8a4e2323fcbca9d0ee7ca280ee6c216f`
+
+Fuente: sección R10 del re-review final en [auth-code-review.md](auth-code-review.md) y el probe de Luna `/tmp/linklog-auth-r9-bindings-evidence/r9-bindings.ts` (leído, no modificado). Luna midió import HTTP en Miniflare/D1 local: 96 URLs → 200; 97/99/100 → 500 con rollback y cuotas 0/0. Regla oficial: D1 admite como máximo **100 parámetros enlazados por query**, y "Limits for individual queries … apply to each individual statement contained within a batch statement" ([D1 limits](https://developers.cloudflare.com/d1/platform/limits/), acceso 02-10-2026).
+
+| ID | Veredicto | Causa confirmada | Fix | Commits | Prueba (antes → después) |
+| --- | --- | --- | --- | --- | --- |
+| R10 (P2) | **Aceptado** | El fix de R9 (`ea5b75c`) creó la fila de `batches` con un `INSERT … WHERE EXISTS(… l.id IN (${N marcas}))` que enlaza **N+4** valores, así que desde 97 candidatos (nuevos + huérfanos) excede 100. La auditoría del mismo patrón encontró dos sentencias más introducidas por FAC-41: `enqueue` (`user_id=? AND id IN (N)`, 101 con 100 links) y la cancelación de batch (`user_id=? AND id IN (pendientes)`, hasta 101). | `addLinks`: la fila de batch se crea con 3 parámetros constantes **dentro del mismo `D1.batch`**, y una sentencia final con 3 parámetros constantes la borra si quedó sin jobs (llamada 100 % deduplicada). Toda sentencia del batch enlaza una cantidad constante (link 10, batch 3, job 5, estado 2, limpieza 3), así que hasta 100 URLs siguen siendo **una sola transacción** sin chunks parciales. Se conservan owner-scope, dedupe, refunds por clave, huérfanos, outbox y Queue best effort. `enqueue`: las lecturas de validación se dividen en chunks de dueño + 99 ids (son solo lecturas; la escritura sigue siendo un batch). Cancelación: los links se eligen por subquery (`id IN (SELECT link_id FROM jobs WHERE batch_id=? …)`) antes de marcar los jobs, en el mismo batch. `TestD1` aplica ahora el límite de 100 de D1; antes los tests no podían ver este error porque SQLite admite muchos más. | `c558f58`, `d433a8a` | `tests/link-bindings.test.ts` (11 tests): import y Browser save con 96/97/99/100 URLs (éxito, 1 job por link, 1 batch, cuotas exactas, mensajes Queue = N; retry duplicado sin cambios ni batch vacío); 60 huérfanos + 40 nuevas = 100 candidatos (cuota links 40, jobs 100); falla inyectada en el insert número 100 → todo revertido, cuotas 0/0, luego éxito; batch de 100 links + cancelación. **Antes (`9dd9fee` con el límite real en el shim):** 9 fail, solo pasan los dos casos de 96 (igual que lo observado por Luna). **Después:** 11 pass. **E2E en D1 local real (Miniflare):** import de 100 URLs → 200 (`imported=100`), retry → `0/100`, Browser save de 97 → 200; 197 links, 197 jobs, 0 batches vacíos (`scripts/e2e-auth.ts` paso 6d). |
+
+### Observado y no corregido (fuera de alcance, heredado de main)
+
+El mismo patrón N+k existe en código de Browser que viene de `main` 32fc90f (la refactorización a Hono lo conservó igual):
+- `POST /api/browser/evaluations/:id/ack` enlaza `request_id` + hasta 100 `targetKeys` (101) en el SELECT y `now` + `request_id` + keys (102) en el UPDATE.
+- `DELETE /api/browser/evaluations/:id` enlaza `now` + `request_id` + hasta 100 keys (102). `cancelTargets` del cliente envía de a 100.
+- `worker/handlers/extract.ts:92` (`media_key NOT IN (…)`) enlaza `link_id` + la cantidad de media descubierta.
+
+No fueron parte de R10 ni del alcance de esta ronda; quedan señalados para un ticket aparte.
+
+### Límites del contrato
+
+- **Queries por invocación:** D1 cuenta cada sentencia de un `batch()` contra el límite de queries por invocación del Worker (1000 en Workers Paid, 50 en Free). Un import de 100 URLs nuevas usa unas 320: ~100 lecturas de dedupe, 203 sentencias de batch, 2 consumos de cuota y las lecturas de `library()`. Entra en Paid pero **no** en Free; el código de main ya excedía 50 con 100 URLs. Si el despliegue fuera Free, habría que agrupar el dedupe y los inserts (cambio de arquitectura no pedido).
+- **Flake observado en el E2E:** una corrida falló en la lectura de verificación por `wrangler d1 execute` (salida vacía) mientras el Worker escribía. Antes del fallo, los asserts de import (100) y save (97) ya habían pasado, y la repetición pasó. El helper ahora reintenta esa lectura hasta 3 veces y conserva la salida completa si falla. Es un fallo del harness, no de la ruta.
+- Sigue sin validación remota (D1 de producción, edge).
+
+### Gates de la ronda 3
+
+| Comando | Resultado |
+| --- | --- |
+| `bun run typecheck` | OK |
+| `bun test` | **198 pass, 0 fail**, 27 archivos (con el límite de 100 parámetros activo en el shim) |
+| `bun run test:e2e` (UI 3197 / API 8897, estado tmp) | **12/12**, incluye el paso 6d de R10 |
+
+No se repitieron la suite Browser de 45 checks ni los probes de UI R2/R3/R7: el cambio no toca extensión, auth ni UI. Puertos verificados libres antes y después; no se tocaron `.wrangler/state`, `.cache` previos ni la evidencia ajena.
