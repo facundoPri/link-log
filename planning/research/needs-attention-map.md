@@ -190,11 +190,14 @@ Propuesta:
   - Con contenido previo: se mantiene la versión anterior y el fallo queda en Activity.
   - El preview (título, descripción, imagen) se conserva.
 - **Dismiss** solo saca el link de la lista (`attention_kind = NULL`) y no cambia nada más. Un fallo final posterior vuelve a levantar la marca. Sin contenido, Jev sigue sin poder correr en ese link.
-- **Opción “Usar el preview como contenido”**, ofrecida junto a Dismiss en el menú de la fila de Needs attention:
-  - Escribe título + descripción como contenido con `content_source='preview'` y `content_state='partial'`, para que quede visible que es limitado. El inspector ya etiqueta por fuente (`Inspector.tsx:64-72`), así que solo hay que agregar “Solo preview”.
-  - Saca el link de la lista y habilita Jev.
-  - Se podría agregar una configuración global opcional (tabla `settings`, ya existe en `migrations/0003`): “Si no se puede obtener el contenido, usar el preview automáticamente”, apagada por defecto.
-  - Queda por definir el texto, dónde se muestra y si los resultados de Jev sobre contenido de solo-preview se marcan como de menor confianza.
+- **Fallback “contenido desde el preview”** (decidido, §8.8):
+  - **Cuándo aplica:** solo cuando la extracción del contenido terminó en fallo final (reintentos agotados, bloqueo o muro de login) **y** el preview sí se obtuvo. Nunca mientras el link está en cola, procesándose o esperando. Si también falló el preview, no hay nada que usar y el link entra en Needs attention normalmente.
+  - **Dos formas de activarlo:**
+    - **Global**, en un panel de Configuración nuevo (tabla `settings`, ya existe en `migrations/0003`): “Si no se puede obtener el contenido, usar el preview para Jev”. Apagado por defecto. Se aplica automáticamente en el paso de fallo final.
+    - **Por link**, como acción junto a Dismiss en la fila de Needs attention.
+  - **Qué guarda:** título + descripción como contenido, con `content_source='preview'` y `content_state='partial'`. Jev recibe **solo ese texto**. La etiqueta “Contenido obtenido del preview” **no** forma parte del texto enviado a Jev: se deriva de `content_source` y es solo para el usuario (el inspector ya etiqueta por fuente, `Inspector.tsx:64-72`).
+  - **Qué ve el usuario:** en el inspector, “Contenido obtenido del preview” más el botón **“Reintentar obtener contenido”** (corre una extracción normal; si funciona, reemplaza el fallback). Los resultados de Jev **no** llevan ninguna marca especial.
+  - **Lista:** con contenido de fallback, el link sale (o no entra) en Needs attention, porque ya tiene un camino de uso. El motivo original del fallo queda en Activity.
 
 ### 8.4 Cancelar un link individual
 
@@ -214,7 +217,7 @@ Los dependientes en `waiting` del mismo link se cancelan en cascada (decidido: s
 1. Quitar el `failed` virtual de 30 s y dejar neutros los cancelados. Ataca directamente el síntoma reportado.
 2. Validar la configuración de Jev al encolar y en la UI (§8.3b). Es chico, evita trabajo inútil y no depende de nada.
 3. Clasificación de motivos (incluye 401/403 y anti-bot, que fallan rápido), reintentos del preview y del Markdown, intento visible en Activity, telemetría.
-4. `attention_*` persistido, con Retry del paso fallido (preview por la cola), Dismiss y “usar el preview como contenido”.
+4. `attention_*` persistido, con Retry del paso fallido (preview por la cola), Dismiss y “usar el preview como contenido” por link. El panel de Configuración con el fallback global puede ir acá o en una parte propia justo después.
 5. Cola serial por link para Jev, validación por link, reintentos de Jev según la fase y corte por batch.
 6. Cancelación por link en Activity, con cascada.
 7. Detección de muro de login (descartar el texto), calibrada con los datos de telemetría de la parte 3.
@@ -234,8 +237,16 @@ Los dependientes en `waiting` del mismo link se cancelan en cascada (decidido: s
 
 **Ticket futuro, fuera de FAC-48 (a redactar después):** obtener el contenido con la extensión del navegador del usuario, para esquivar bloqueos anti-bot y leer páginas que requieren login. Antecedente técnico: la extensión ya captura Markdown de pestañas para los lenses de Browser (`browser_targets`, `worker/browser.ts`). Habría que reutilizar esa captura como fuente de contenido de un link guardado, con consentimiento explícito.
 
-### 8.8 Puntos que siguen abiertos
+### 8.8 Decisiones de la tercera ronda (2026-10-01)
 
-1. **Casos borde concretos que justifican reintentar antes de enviar a Jev.** Propuesta: R2 `get` con error transitorio, conflicto o timeout de D1. Nada más hasta tener datos de telemetría.
-2. **Detector de muro de login:** ¿cuán conservador? Un falso positivo descarta contenido válido. Propuesta: texto corto más patrones (“sign in”, “log in to continue”, “captcha”, “Just a moment”, “Access denied”, “verify you are human”), solo para el adapter web al principio.
-3. **“Usar el preview como contenido”:** ¿solo por link, o también como configuración global desde el inicio? ¿Los resultados de Jev sobre ese contenido llevan una marca visible?
+1. **Reintentos antes de enviar a Jev: mínimos.** Solo R2 `get` con error transitorio y conflicto o timeout de D1, con **1 reintento** (dentro del tope de 2 decidido antes). Nada más hasta tener telemetría.
+2. **Detector de muro de login:** arranca con la heurística propuesta (texto corto más patrones: “sign in”, “log in to continue”, “captcha”, “Just a moment”, “Access denied”, “verify you are human”), solo en el adapter web. Cada detección emite telemetría (`event:"login_wall_detected"`, dominio, patrón que coincidió, largo del texto) para medir la frecuencia y los falsos positivos, y reevaluar si hay muchos casos.
+3. **Fallback “contenido desde el preview”:** configuración global en un panel de Configuración nuevo, más la acción por link. Solo aplica ante fallo final de la extracción del contenido. El contenido se identifica como “Contenido obtenido del preview”, con la opción “Reintentar obtener contenido”. Esa etiqueta no se envía a Jev y los resultados de Jev no llevan marca (§8.3c).
+
+**Ideas para después (fuera del alcance inicial de FAC-48):**
+
+- **Marcar contenido como inválido:** acción del usuario que borra el contenido guardado (R2 y `content_key`), deja el link sin contenido y registra un evento con el dominio y el motivo. Sirve como telemetría para mejorar el detector.
+- **Control de calidad con Jev:** durante el autotag, una pregunta extra que evalúe si el contenido es una extracción fallida (login, bloqueo, página vacía). Tiene costo por link; conviene evaluarlo solo si la heurística resulta insuficiente.
+- **Extensión del navegador como fuente de contenido** (ticket aparte; ver §8.7).
+
+Con esto no quedan decisiones de diseño abiertas para FAC-48. Lo que falta definir es de implementación: textos finales de la UI, nombres de columnas y migración.
