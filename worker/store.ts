@@ -29,9 +29,9 @@ export async function library(env: Env) {
   const [links, tags, joins, evaluations, batches, lensRows, lensResults, usageRows, mediaRows, hiddenRows] =
     await Promise.all([
     env.DB.prepare(
-      "SELECT l.*,EXISTS(SELECT 1 FROM jobs j WHERE j.link_id=l.id AND j.status IN ('queued','running')) active_job FROM links l ORDER BY l.created_at DESC",
+      "SELECT l.*,(SELECT b.kind FROM jobs j JOIN batches b ON b.id=j.batch_id WHERE j.link_id=l.id AND j.status IN ('queued','running') LIMIT 1) active_kind FROM links l ORDER BY l.created_at DESC",
     ).all<
-      Omit<Link, "processing"> & { metadata_started_at: string | null; active_job: number }
+      Omit<Link, "processing" | "previewing"> & { metadata_started_at: string | null; active_kind: string | null }
     >(),
     env.DB.prepare(
       "SELECT * FROM tags ORDER BY name COLLATE NOCASE",
@@ -141,20 +141,23 @@ export async function library(env: Env) {
     ]);
   }
   return {
-    links: links.results.map(({ active_job, ...l }) => ({
-      ...l,
+    links: links.results.map(({ active_kind, ...l }) => {
       // "Retry preview" runs outside the queue; if the Worker dies mid-fetch the link turns neutral.
-      processing:
-        !!active_job ||
-        (l.status === "pending" &&
-          !!l.metadata_started_at &&
-          Date.now() - Date.parse(l.metadata_started_at) < PREVIEW_RETRY_WINDOW_MS),
-      tags: membership.get(l.id) || [],
-      evaluations: scores.get(l.id) || [],
-      lens_results: lensByLink.get(l.id) || [],
-      media: mediaByLink.get(l.id) || [],
-      hidden_related_urls: hiddenByLink.get(l.id) || [],
-    })),
+      const retrying =
+        l.status === "pending" &&
+        !!l.metadata_started_at &&
+        Date.now() - Date.parse(l.metadata_started_at) < PREVIEW_RETRY_WINDOW_MS;
+      return {
+        ...l,
+        processing: !!active_kind || retrying,
+        previewing: retrying || (l.status === "pending" && active_kind === "extract"),
+        tags: membership.get(l.id) || [],
+        evaluations: scores.get(l.id) || [],
+        lens_results: lensByLink.get(l.id) || [],
+        media: mediaByLink.get(l.id) || [],
+        hidden_related_urls: hiddenByLink.get(l.id) || [],
+      };
+    }),
     tags: tags.results,
     lenses,
     batches: batches.results.map((b) => ({

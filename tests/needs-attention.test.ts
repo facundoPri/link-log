@@ -78,7 +78,7 @@ test("I: while queued, the preview retry is not offered and the API still refuse
   const id = (await s.api("/links", "POST", { url: "https://i.example/x" })).data.id;
   tick(31_000);
   const link = (await s.api("/library")).data.links.find((l: { id: string }) => l.id === id);
-  expect(link).toMatchObject({ status: "pending", processing: true });
+  expect(link).toMatchObject({ status: "pending", processing: true, previewing: true });
   expect(canRetryPreview(link)).toBe(false);
   const r = await s.api(`/links/${id}/retry`, "POST");
   expect(r.status).toBe(400);
@@ -97,4 +97,34 @@ test("I: a neutral link offers the preview retry; an orphaned retry turns neutra
   expect(await s.view(id)).toMatchObject({ status: "pending", processing: true, attention: false });
   tick(31_000);
   expect(await s.view(id)).toMatchObject({ status: "pending", processing: false, attention: false });
+});
+
+test("I: a failed preview is not offered for retry while a job is active, and is again once it ends", async () => {
+  const s = await setup();
+  fakes.meta = { status: "failed" };
+  const id = (await s.api("/links", "POST", { url: "https://i.example/doc.pdf" })).data.id;
+  await s.runQueued();
+  const linkOf = async () => (await s.api("/library")).data.links.find((l: { id: string }) => l.id === id);
+  expect(canRetryPreview(await linkOf())).toBe(true);
+  await s.api("/batches", "POST", { kind: "extract", ids: [id] });
+  const active = await linkOf();
+  expect(active).toMatchObject({ status: "failed", processing: true, previewing: false });
+  expect(canRetryPreview(active)).toBe(false);
+  expect((await s.api(`/links/${id}/retry`, "POST")).status).toBe(400);
+  await s.runQueued();
+  expect(await linkOf()).toMatchObject({ status: "failed", processing: false });
+  expect(canRetryPreview(await linkOf())).toBe(true);
+});
+
+test("a pending link busy with a non-extract job is processing but not fetching its preview", async () => {
+  const s = await setup();
+  (s.env as any).ALLOW_FIXTURE_JEV = "1";
+  const imp = await s.api("/import", "POST", { urls: ["https://p.example/1"] });
+  const id = imp.data.links[0].id;
+  s.sent.splice(0);
+  await s.api(`/batches/${imp.data.batches[0].id}`, "DELETE");
+  await s.api(`/links/${id}/content`, "PUT", { markdown: "pasted" });
+  await s.api("/tags", "POST", { name: "topic" });
+  expect((await s.api("/batches", "POST", { kind: "autotag", ids: [id] })).status).toBe(200);
+  expect(await s.view(id)).toMatchObject({ status: "pending", processing: true, previewing: false, attention: false });
 });

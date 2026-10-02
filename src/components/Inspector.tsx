@@ -937,7 +937,7 @@ export function Inspector({
                 {link.status === "ready"
                   ? "Ready"
                   : link.status === "pending"
-                    ? link.processing
+                    ? link.previewing
                       ? "Fetching…"
                       : "Not fetched yet"
                     : "Failed"}

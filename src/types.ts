@@ -41,6 +41,8 @@ export type Link = {
   status: "pending" | "ready" | "failed";
   /** Derived by the API: an active job (or an out-of-queue preview retry) is working on the link. */
   processing: boolean;
+  /** Derived by the API: the pending preview is being fetched (extract job or preview retry). */
+  previewing: boolean;
   created_at: string;
   tags: Tag[];
   evaluations: Evaluation[];

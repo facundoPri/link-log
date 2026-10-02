@@ -138,7 +138,7 @@ export function LinkRow({
         <p className="truncate text-xs text-muted-foreground">
           {link.description ||
             (link.status === "pending"
-              ? link.processing
+              ? link.previewing
                 ? "Fetching title and preview…"
                 : "No preview yet"
               : link.status === "failed"

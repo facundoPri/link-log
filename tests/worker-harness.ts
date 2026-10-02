@@ -119,6 +119,7 @@ export async function setup() {
       status: l.status,
       content: l.content_state,
       processing: l.processing,
+      previewing: l.previewing,
       attention: needsAttention(l),
       err: l.content_error,
       job: job ? `${job.status}/${job.step}` : null,
