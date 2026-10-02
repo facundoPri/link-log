@@ -243,6 +243,25 @@ test("nextAttention: final failures raise, masked failures and other steps leave
   expect(nextAttention({ ...preview, status: "ready" }, { preview: "ok" })).toEqual(clear);
 });
 
+// Round 2 (S4 review).
+
+for (const [label, pattern] of [
+  ["the terminal job write", /^UPDATE jobs SET status='failed',step='Needs attention'/],
+  ["the link's failure and attention write", /^UPDATE links SET content_state=.*attention_kind=/],
+] as const)
+  test(`a one-time D1 failure on ${label} is finished by the retried record-failure`, async () => {
+    const s = await setup();
+    fakes.content = { throws: "Markdown: HTTP 404" };
+    const id = await save(s, "https://replay.example/x");
+    fakes.failSqlOnce = pattern;
+    await s.runQueued();
+    expect(fakes.failSqlOnce).toBeUndefined(); // the fault fired
+    expect(s.steps.find((x) => x.name === "record-failure")?.attempts).toBe(2);
+    expect(await s.view(id)).toMatchObject({ content: "failed", content_reason: "not_found", attention: true, attention_kind: "content", attention_reason: "not_found", job: "failed/Needs attention" });
+    const row = s.db.query("SELECT attention_at FROM links WHERE id=?").get(id) as { attention_at: string };
+    expect(row.attention_at).toBe(new Date().toISOString());
+  });
+
 test("a job interrupted while running leaves the link alone when its own failure is recorded", async () => {
   const s = await setup();
   fakes.content = { throws: "Markdown: HTTP 404" };
@@ -369,7 +388,9 @@ test("the content failure SQL settles exactly like nextAttention, on the live ro
 });
 
 // Upgrade fixtures for migration 0014: links and their extract jobs as an older version left them.
-type Fixture = { status: string; content: string; key?: string; source?: string; updated?: string; error?: string; preview?: string; reason?: string; retried?: string };
+type Fixture = { status: string; content: string; key?: string; source?: string; updated?: string; error?: string; preview?: string; reason?: string; retried?: string;
+  /** The content was saved during this job (by index), just after it started. */
+  savedBy?: number };
 type FixtureJob = [status: string, step: string, preview?: string, reason?: string];
 async function upgrade(from: "0012" | "0014", rows: Record<string, [Fixture, FixtureJob[]]>) {
   const db = new Database(":memory:");
@@ -388,6 +409,8 @@ async function upgrade(from: "0012" | "0014", rows: Record<string, [Fixture, Fix
       db.query(`INSERT INTO jobs(id,batch_id,link_id,status,step,created_at${legacy ? "" : ",reason,preview_reason,adapter"}) VALUES(?,?,?,?,?,?${legacy ? "" : ",?,?,?"})`)
         .run(...([`${id}-${i}`, "b", id, status, step, `2026-09-02T00:00:${t++}.000Z`,
           ...(legacy ? [] : [reason ?? null, preview ?? null, ["done", "failed"].includes(status) && !["Cancelled"].includes(step) ? "web" : null])] as never[]));
+    if (l.savedBy !== undefined)
+      db.query("UPDATE links SET content_updated_at=(SELECT replace(created_at,'.000Z','.500Z') FROM jobs WHERE id=?) WHERE id=?").run(`${id}-${l.savedBy}`, id);
   }
   for (const f of files.slice(at)) db.exec(await Bun.file(`migrations/${f}`).text());
   return Object.fromEntries((db.query("SELECT id,attention_kind,attention_reason,attention_at IS NOT NULL dated FROM links").all() as any[])
@@ -404,6 +427,11 @@ const histories = (legacy: boolean): Record<string, [Fixture, FixtureJob[]]> => 
     keptOnce: [{ status: "failed", content: "ready", ...kept, error: "The site had a problem.", preview: p }, [["failed", "Cancelled"], ["failed", "Needs attention", p, "site_error"]]],
     keptTwice: [{ status: "failed", content: "ready", ...kept, error: "The site had a problem.", preview: p },
       [["failed", "Cancelled"], ["failed", "Needs attention", p, "site_error"], ["failed", "Needs attention", p, "site_error"]]],
+    // Web content saved by an extraction that was then interrupted, kept by failed re-extracts.
+    savedThenKeptOnce: [{ status: "failed", content: "ready", key: "web.md", savedBy: 0, error: "The site had a problem.", preview: p },
+      [["failed", "Interrupted", p], ["failed", "Needs attention", p, "site_error"]]],
+    savedThenKeptTwice: [{ status: "failed", content: "ready", key: "web.md", savedBy: 0, error: "The site had a problem.", preview: p },
+      [["failed", "Interrupted", p], ["failed", "Needs attention", p, "site_error"], ["failed", "Needs attention", p, "site_error"]]],
     cancelled: [{ status: "pending", content: "missing" }, [["failed", "Cancelled"]]],
     fresh: [{ status: "pending", content: "queued" }, [["queued", "En cola"]]],
     contentInterrupted: [{ status: "ready", content: legacy ? "failed" : "missing", error: legacy ? "Extraction was interrupted. Try again." : undefined }, [["failed", "Interrupted"]]],
@@ -420,6 +448,9 @@ const histories = (legacy: boolean): Record<string, [Fixture, FixtureJob[]]> => 
       [["failed", "Needs attention", undefined, legacy ? undefined : "timeout"], ["failed", "Interrupted"]]],
     retryPreview: [{ status: "failed", content: "ready", key: "a.md", preview: p, retried: "2026-09-03T00:00:00.000Z" }, [["done", "Done"]]],
     noJobs: [{ status: "failed", content: "missing", preview: p }, []],
+    // Genuine earlier failure, then content saved by an interrupted retry and kept by a failed one.
+    genuineThenSavedThenKept: [{ status: "failed", content: "ready", key: "web.md", savedBy: 1, error: "The site had a problem.", preview: p },
+      [["done", "Done", p], ["failed", "Interrupted", p], ["failed", "Needs attention", p, "site_error"]]],
     // Neutral again: a later preview worked, then a re-extract kept content or was interrupted.
     fixedThenKept: [{ status: "failed", content: "ready", key: "a.md", error: "The site had a problem.", preview: p },
       [["done", "Done", p], ["done", "Done"], ["failed", "Needs attention", p, "site_error"]]],
@@ -429,6 +460,7 @@ const histories = (legacy: boolean): Record<string, [Fixture, FixtureJob[]]> => 
 test("migration 0014 on a library from this branch's 0013 schema: only settled failures need attention", async () => {
   expect(await upgrade("0014", histories(false))).toEqual({
     interrupted: null, inProgress: null, keptOnce: null, keptTwice: null, cancelled: null, fresh: null, contentInterrupted: null,
+    savedThenKeptOnce: null, savedThenKeptTwice: null, genuineThenSavedThenKept: "preview/blocked",
     genuineThenInterrupted: "preview/blocked", genuineThenKept: "preview/blocked", genuineRetrying: "preview/blocked",
     preview: "preview/blocked", content: "content/not_found", contentRetrying: "content/timeout", contentThenInterrupted: "content/timeout",
     retryPreview: "preview/blocked", noJobs: "preview/blocked", fixedThenKept: null,
@@ -438,6 +470,7 @@ test("migration 0014 on a library from this branch's 0013 schema: only settled f
 test("migration 0014 on the deployed library (before 0012, no stored reasons): the same, with generic reasons", async () => {
   expect(await upgrade("0012", histories(true))).toEqual({
     interrupted: null, inProgress: null, keptOnce: null, keptTwice: null, cancelled: null, fresh: null, contentInterrupted: null,
+    savedThenKeptOnce: null, savedThenKeptTwice: null, genuineThenSavedThenKept: "preview/?",
     genuineThenInterrupted: "preview/?", genuineThenKept: "preview/?", genuineRetrying: "preview/?",
     preview: "preview/?", content: "content/?", contentRetrying: "content/?", contentThenInterrupted: "content/?",
     retryPreview: "preview/?", noJobs: "preview/?",

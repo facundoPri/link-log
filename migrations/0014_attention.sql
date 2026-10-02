@@ -4,7 +4,8 @@ ALTER TABLE links ADD COLUMN attention_reason TEXT;
 ALTER TABLE links ADD COLUMN attention_at TEXT;
 
 -- Backfill from settled extractions only. Cancelled and interrupted jobs settled nothing, and neither did a
--- failed re-extract that kept earlier content (from a finished extraction or a paste). The latest extraction
+-- failed re-extract that kept earlier content: a finished extraction before it, or the stored content saved
+-- before it started (a paste, or an extraction interrupted after saving it). The latest extraction
 -- that did settle decides: content attention when it failed without content, preview attention when its
 -- preview failed. Jobs from before 0012 have no preview_reason; for them the link's failed preview is
 -- attributed to that extraction (re-extracts rewrote it). Work still running settles later by itself.
@@ -16,7 +17,7 @@ WITH ext AS (
   FROM ext s JOIN links l ON l.id=s.link_id
   WHERE s.status='done' OR (s.status='failed' AND s.step NOT IN ('Cancelled','Interrupted') AND NOT (
     EXISTS (SELECT 1 FROM ext d WHERE d.link_id=s.link_id AND d.status='done' AND (d.created_at<s.created_at OR (d.created_at=s.created_at AND d.r<s.r)))
-    OR coalesce(l.content_source='manual' AND l.content_updated_at<s.created_at,0)))
+    OR coalesce(l.content_key IS NOT NULL AND l.content_updated_at<s.created_at,0)))
 )
 UPDATE links SET attention_kind='content',
   attention_reason=coalesce((SELECT s.reason FROM settled s WHERE s.link_id=links.id AND s.n=1),content_reason),
@@ -33,7 +34,7 @@ WITH ext AS (
   FROM ext s JOIN links l ON l.id=s.link_id
   WHERE s.status='done' OR (s.status='failed' AND s.step NOT IN ('Cancelled','Interrupted') AND NOT (
     EXISTS (SELECT 1 FROM ext d WHERE d.link_id=s.link_id AND d.status='done' AND (d.created_at<s.created_at OR (d.created_at=s.created_at AND d.r<s.r)))
-    OR coalesce(l.content_source='manual' AND l.content_updated_at<s.created_at,0)))
+    OR coalesce(l.content_key IS NOT NULL AND l.content_updated_at<s.created_at,0)))
 )
 UPDATE links SET attention_kind='preview',attention_reason=preview_reason,attention_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
 WHERE attention_kind IS NULL AND status='failed' AND (
