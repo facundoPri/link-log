@@ -1,4 +1,6 @@
-// R3: a sign-out the server did not confirm is reported, never disguised as a reload.
+// R3: a sign-out the server did not confirm is reported, never disguised as a reload, and cleans
+// up nothing (the extension's cache, group metadata and handshake stay); cleanup runs only after a
+// confirmed sign-out or a 401 (session already gone).
 // R7: the auth screen stays mounted while Better Auth re-checks an anonymous session.
 import { describe, expect, test } from "bun:test";
 import { gateView, signOutFlow, SignOutError } from "../src/session";
@@ -9,8 +11,8 @@ describe("sign-out (R3)", () => {
     return {
       calls,
       deps: {
-        beforeSignOut: async () => void calls.push("before"),
         signOut: async () => (calls.push("signOut"), signOut()),
+        afterSignOut: async () => void calls.push("cleanup"),
         clearLocal: () => void calls.push("clear"),
         reload: () => void calls.push("reload"),
       },
@@ -20,7 +22,7 @@ describe("sign-out (R3)", () => {
   test("confirmed: clears this browser's account state and reloads", async () => {
     const { calls, deps: d } = deps(async () => ({ error: null }));
     await signOutFlow(d);
-    expect(calls).toEqual(["before", "signOut", "clear", "reload"]);
+    expect(calls).toEqual(["signOut", "cleanup", "clear", "reload"]);
   });
 
   for (const [name, signOut] of [
@@ -31,17 +33,18 @@ describe("sign-out (R3)", () => {
     test(`${name}: rejects with a visible error and keeps the page (no silent reload)`, async () => {
       const { calls, deps: d } = deps(signOut);
       await expect(signOutFlow(d)).rejects.toBeInstanceOf(SignOutError);
-      expect(calls).toEqual(["before", "signOut"]);
+      // Nothing was cleaned up: no extension forget, no local storage cleared, no reload.
+      expect(calls).toEqual(["signOut"]);
       // A retry that succeeds then completes the sign-out.
       d.signOut = async () => (calls.push("signOut"), { error: null });
       await signOutFlow(d);
-      expect(calls.slice(-3)).toEqual(["signOut", "clear", "reload"]);
+      expect(calls.slice(-4)).toEqual(["signOut", "cleanup", "clear", "reload"]);
     });
 
   test("401: the session was already gone, so the page resets", async () => {
     const { calls, deps: d } = deps(async () => ({ error: { status: 401 } }));
     await signOutFlow(d);
-    expect(calls).toContain("reload");
+    expect(calls).toEqual(["signOut", "cleanup", "clear", "reload"]);
   });
 });
 

@@ -910,10 +910,41 @@ try {
     const before = await kept(scopeA);
     assert(before > 0, "no cached results for the first account before sign-out");
     const cookieA = (await ctx.cookies()).find((c) => c.name === "linklog.session_token")!.value;
-    // Real UI path: account menu -> Sign out (asks the extension to forget, then ends the session).
+    const groupMetaOf = (s: string) =>
+      inSw(ctx, async (scope: string) => {
+        const meta = Object.values(((await chrome.storage.session.get("groups")).groups ?? {}) as Record<string, { scope?: string }>);
+        const hints = Object.values(((await chrome.storage.local.get("pinnedHints")).pinnedHints ?? {}) as Record<string, { scope?: string }>);
+        return { meta: meta.filter((m) => m.scope === scope).length, hints: hints.filter((h) => h.scope === scope).length };
+      }, s);
+    const metaBefore = await groupMetaOf(scopeA);
+    // A page command through the bridge (the connection's handshake must still be there).
+    const bridgeSnapshot = () =>
+      L.evaluate(
+        () =>
+          new Promise<string>((resolve) => {
+            const id = `probe-${Math.random()}`;
+            addEventListener("message", (e) => e.data?.from === "extension" && e.data.response?.id === id && resolve(e.data.response.ok ? "ok" : e.data.response.error));
+            postMessage({ channel: "linklog-bridge", from: "page", request: { id, command: "snapshot", args: {} } }, location.origin);
+            setTimeout(() => resolve("timeout"), 3000);
+          }),
+      );
+    // 1) The server refuses the sign-out once (503): error + Retry, and nothing is cleaned up.
     await L.bringToFront();
+    await L.route("**/api/auth/sign-out", (route) => route.fulfill({ status: 503, contentType: "application/json", body: '{"message":"unavailable"}' }), { times: 1 });
     await L.locator("aside").getByRole("button", { name: /browser-test@linklog\.test/ }).click();
     await L.getByRole("menuitem", { name: "Sign out" }).click();
+    await waitFor("sign-out error", async () => (await L.getByText(/Could not sign out/).count()) > 0, 10000);
+    const keptAfterFailure = await kept(scopeA);
+    assert(keptAfterFailure === before, `failed sign-out cleaned the cache: ${before} → ${keptAfterFailure}`);
+    const metaAfterFailure = await groupMetaOf(scopeA);
+    assert(JSON.stringify(metaAfterFailure) === JSON.stringify(metaBefore), `failed sign-out cleaned group metadata: ${JSON.stringify(metaBefore)} → ${JSON.stringify(metaAfterFailure)}`);
+    const bridge = await bridgeSnapshot();
+    assert(bridge === "ok", `bridge after failed sign-out: ${bridge}`);
+    const stillA = await fetch(`${API}/library`, { headers: { Cookie: `linklog.session_token=${cookieA}` } });
+    assert(stillA.status === 200, `session should still be active after the refused sign-out (${stillA.status})`);
+    await shot(L, "15b-signout-refused");
+    // 2) Retry: confirmed sign-out, then the extension forgets A and the page reloads anonymous.
+    await L.getByRole("button", { name: "Retry" }).click();
     await waitFor("sign-in screen", async () => (await L.getByLabel("Password").count()) > 0, 15000);
     const after = await kept(scopeA);
     assert(after === 0, `${after} entries left in the first account's scope`);
@@ -946,7 +977,7 @@ try {
     assert(leaked.length === 0, `first account's lenses listed: ${leaked.join(", ")}`);
     assert((await kept(`local:${catB.libraryId}`)) === 0, "second account inherited cached results");
     await shot(L, "16-second-account");
-    return `${before} cached entries + group metadata/hints forgotten at sign-out; old cookie 401; second account: new library id, 0 groups, 0 lens cells, none of ${lensNamesA.length} lenses`;
+    return `refused sign-out (503) kept ${before} cached entries, metadata ${JSON.stringify(metaBefore)} and the bridge; retry: forgotten, old cookie 401; second account: new library id, 0 groups, 0 lens cells, none of ${lensNamesA.length} lenses`;
   });
 } finally {
   meta.finishedAt = new Date().toISOString();

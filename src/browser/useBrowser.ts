@@ -11,7 +11,7 @@ import {
 } from "@linklog/browser-protocol";
 import { BridgeClient, BridgeTimeout, compatibleBrowser } from "./bridge";
 import { fetchCatalog } from "./api";
-import { onBeforeSignOut } from "../auth-client";
+import { onSignedOut } from "../auth-client";
 
 export type Connection =
   | "checking"
@@ -113,7 +113,7 @@ export function useBrowser() {
   helloRef.current = hello;
   useEffect(
     () =>
-      onBeforeSignOut(async () => {
+      onSignedOut(async () => {
         if (helloRef.current?.capabilities.includes("forget")) await request("forget", {}, 1000);
       }),
     [request],

@@ -61,7 +61,7 @@ test("Queue unavailable after the commit: the request succeeds and cron recovery
   expect(saved.every((r) => "created" in r && r.created)).toBe(true);
   expect(state()).toMatchObject({ links: 2, jobs: 2, withoutJob: 0, queued: 0 });
   const sent: { id: string }[] = [];
-  env.JOBS.sendBatch = async (messages: { body: { id: string } }[]) => void sent.push(...messages.map((m) => m.body));
+  env.JOBS.sendBatch = (async (messages: { body: { id: string } }[]) => void sent.push(...messages.map((m) => m.body))) as never;
   await recover(env);
   expect(sent.length).toBe(2);
 });

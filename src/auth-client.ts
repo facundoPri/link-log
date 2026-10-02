@@ -15,27 +15,29 @@ export function onUnauthorized(listener: () => void) {
   return () => window.removeEventListener(UNAUTHORIZED, listener);
 }
 
-// Work that must run while the session is still valid, e.g. the Browser view asking the extension
-// to forget this account's cached results. Each hook gets a short deadline; sign-out never waits on it.
-const beforeSignOut = new Set<() => Promise<unknown>>();
-export function onBeforeSignOut(hook: () => Promise<unknown>) {
-  beforeSignOut.add(hook);
-  return () => void beforeSignOut.delete(hook);
+// Cleanup that must only happen once the server confirmed the sign-out, e.g. the Browser view
+// asking the extension to forget this account's cached results and group metadata. Each hook gets
+// a short deadline; the reload never waits longer. Privacy across accounts does not depend on it
+// (the extension reads per account scope); this just leaves nothing behind.
+const signedOut = new Set<() => Promise<unknown>>();
+export function onSignedOut(hook: () => Promise<unknown>) {
+  signedOut.add(hook);
+  return () => void signedOut.delete(hook);
 }
 
 /**
- * Signs out on the server, then drops everything this browser kept for the account and reloads
- * from a clean slate. Rejects (SignOutError) without clearing anything if the server did not
- * confirm, so the caller can show it and retry.
+ * Signs out on the server, then (only if confirmed) runs the signed-out hooks, drops what this
+ * browser kept for the account and reloads from a clean slate. Rejects (SignOutError) without
+ * touching anything if the server did not confirm, so the caller can show it and retry.
  */
 export function signOutAndReset() {
   return signOutFlow({
-    beforeSignOut: () =>
+    signOut: () => authClient.signOut(),
+    afterSignOut: () =>
       Promise.race([
-        Promise.allSettled([...beforeSignOut].map((hook) => hook())),
+        Promise.allSettled([...signedOut].map((hook) => hook())),
         new Promise((resolve) => setTimeout(resolve, 1500)),
       ]),
-    signOut: () => authClient.signOut(),
     clearLocal: () => {
       try {
         for (const key of Object.keys(localStorage)) if (key.startsWith("linklog.")) localStorage.removeItem(key);

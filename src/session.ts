@@ -17,17 +17,18 @@ export function gateView(state: { isPending: boolean; hasSession: boolean; settl
 export class SignOutError extends Error {}
 
 /**
- * Ends the session on the server, then clears this browser's account state and reloads. If the
- * server did not confirm (HTTP error or network failure) nothing is cleared and the error is
- * thrown, so the UI can say so and offer a retry. 401 means the session was already gone.
+ * Ends the session on the server first. Only once it is confirmed (or the server answers 401: the
+ * session was already gone) does any cleanup run: the signed-out hooks (e.g. the extension forgets
+ * this account's cached results and group metadata), then this browser's local state, then a
+ * reload. If the server did not confirm (HTTP error or network failure), nothing at all is
+ * cleared, the extension stays connected, and the error is thrown so the UI can offer a retry.
  */
 export async function signOutFlow(deps: {
-  beforeSignOut: () => Promise<unknown>;
   signOut: () => Promise<{ error?: { status?: number; message?: string } | null }>;
+  afterSignOut: () => Promise<unknown>;
   clearLocal: () => void;
   reload: () => void;
 }) {
-  await deps.beforeSignOut();
   let error: { status?: number; message?: string } | null | undefined;
   try {
     ({ error } = await deps.signOut());
@@ -35,6 +36,7 @@ export async function signOutFlow(deps: {
     throw new SignOutError("Could not reach Linklog to sign out. Check your connection and try again.");
   }
   if (error && error.status !== 401) throw new SignOutError("Could not sign out. You are still signed in; try again.");
+  await deps.afterSignOut();
   deps.clearLocal();
   deps.reload();
 }
