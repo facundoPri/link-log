@@ -52,14 +52,43 @@ export const requireSession = createMiddleware<AppEnv>(async (c, next) => {
   await next();
 });
 
+export const MAX_BODY_BYTES = 2_100_000;
+
+/**
+ * Reads at most `max` bytes of the body (counted as bytes, not characters, and without trusting
+ * Content-Length, which chunked requests omit); larger bodies stop reading and answer 413.
+ */
+export async function readBounded(request: Request, max: number) {
+  if (!request.body) return "";
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel().catch(() => {});
+      throw new HttpError(413, "Request too large.");
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+}
+
 /** Per-user write quota, then a bounded JSON object body. */
 export const writeQuotaAndBody = createMiddleware<AppEnv>(async (c, next) => {
   let body: Record<string, unknown> = {};
   if (c.req.method !== "GET" && c.req.method !== "HEAD") {
     if (!(await consume(c.env.DB, `writes:${c.get("principal").userId}`, LIMITS.writesPerUser))) throw new LimitError();
-    if (Number(c.req.header("content-length") || 0) > 2100000) throw new HttpError(413, "Request too large.");
-    const raw = await c.req.text();
-    if (raw.length > 2100000) throw new HttpError(413, "Request too large.");
+    if (Number(c.req.header("content-length") || 0) > MAX_BODY_BYTES) throw new HttpError(413, "Request too large.");
+    const raw = await readBounded(c.req.raw, MAX_BODY_BYTES);
     try {
       body = raw ? JSON.parse(raw) : {};
     } catch {
