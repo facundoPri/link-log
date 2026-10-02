@@ -13,6 +13,7 @@ export const FAILURE_MESSAGES = {
   empty: "The page returned no content. You can paste it manually.",
   too_large: "The content is larger than 2 MB. You can upload a manual version.",
   service_unavailable: "The page reader is unavailable right now. Try again later.",
+  login_wall: "Got a login page instead of the content.",
   unknown: "Something went wrong.",
 } as const;
 export type FailureReason = keyof typeof FAILURE_MESSAGES;

@@ -181,7 +181,13 @@ calling. Jev failures never put a link in Needs attention and are logged as
 `jev_step_failed` (phase, reason, provider, HTTP status, attempt). Browser Rendering → Markdown is retried once on a
 transient failure (each attempt is a row in Usage), and Activity shows the current
 attempt and the reason of the previous one. A failed re-extract keeps the previous
-content. Each failed attempt is logged as a `link_step_failed` JSON line (step,
+content. If the Markdown is a short login wall, captcha or block page
+("Sign in", "Log in to continue", "Just a moment", "Access denied", "Verify you are
+human" and similar), it is discarded without a retry and never stored: a link with
+no content fails with "Got a login page instead of the content." (Needs attention,
+or the preview as content when that setting is on), while a link with content keeps
+the previous version and the failure stays in Activity. Each detection is logged as
+`login_wall_detected` (domain, matched pattern, text length). Each failed attempt is logged as a `link_step_failed` JSON line (step,
 reason, HTTP status, content type, domain, attempt) in Workers Logs. There are two shared provider slots via five-minute
 D1 leases; steps have a two-minute timeout. Cron recovers pending jobs;
 `scripts/dev.ts` simulates this cron every 30 seconds because Wrangler does not
