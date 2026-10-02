@@ -160,7 +160,15 @@ Jev job fails as "Content missing" before any provider call, and stays out of Ne
 attention. A link with a waiting job counts as processing, and one-off edits (paste
 content, Use preview, tags, retry) wait for it. Cancelling a batch drops its queued
 and waiting jobs; cancelling a not-yet-started extraction also cancels the auto-tag
-and lens jobs waiting for it. Paid steps are not silently retried. A Jev failure
+and lens jobs waiting for it. A single job can also be cancelled from Activity
+(`DELETE /api/jobs/:id`), whether queued, waiting or running: a running job's
+Workflow is terminated first. The job ends as Cancelled (not counted as failed),
+the link keeps whatever already ran (previous content, a fetched preview) and goes
+back to how it was otherwise, Needs attention is never touched, a cancelled
+extraction takes the Jev jobs waiting for it along, and the link's next waiting
+job starts. A late write from the terminated job (content, completion, failure,
+preview fallback) is ignored. A Jev job cancelled after sending may still be billed
+("Cancelled after calling Jev"); its Usage row is kept and it is never resent. Paid steps are not silently retried. A Jev failure
 is split by phase: before the request is sent ("Failed before calling Jev (no cost)",
 no Usage row) only a known transient R2 read or D1 conflict/timeout is retried, once;
 a job sends at most one Jev request, authorized by an atomic claim (`jobs.jev_call`)

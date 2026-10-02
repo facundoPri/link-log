@@ -29,6 +29,7 @@ export const JEV_FAILURE_MESSAGES = {
   invalid_response: "Jev returned an invalid answer (may have been billed).",
   too_long: "Jev rejected the content for exceeding its token window. The full document is still saved and its tags were not changed. To classify it, split the content or paste a shorter version.",
   interrupted: "The Jev call was interrupted (may have been billed).",
+  cancelled_sent: "Cancelled after calling Jev (may have been billed).",
 } as const;
 export type JevReason = keyof typeof JEV_FAILURE_MESSAGES;
 

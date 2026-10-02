@@ -130,6 +130,11 @@ export async function setup() {
     db.exec(await Bun.file(`migrations/${f}`).text());
   const r2 = new Map<string, string>();
   const sent: { body: { id: string } }[] = [];
+  // Workflow instances as cancel sees them. `terminate`: "stop" ends the instance after its current step
+  // (the step's own writes still land, nothing after it runs); "ignore" lets the workflow carry on, like a
+  // terminate that came too late; "ended" and "throw" make terminate fail with an ended or a live instance.
+  const workflows = { terminate: "stop" as "stop" | "ignore" | "ended" | "throw", terminated: [] as string[] };
+  const stopped = new Set<string>();
   const env = {
     DB: d1(db),
     CONTENT: {
@@ -141,6 +146,18 @@ export async function setup() {
     JOBS: { sendBatch: async (m: { body: { id: string } }[]) => void sent.push(...m) },
     JEV_PROVIDER: "fixture",
     BROWSER: { quickAction: async () => (fakes.calls.browser++, fakes.browser!()) },
+    PROCESS_LINK: {
+      create: async () => {},
+      get: async (id: string) => ({
+        terminate: async () => {
+          if (workflows.terminate === "ended") throw new Error("Cannot terminate instance since its on a finite state");
+          if (workflows.terminate === "throw") throw new Error("Network connection lost");
+          workflows.terminated.push(id);
+          if (workflows.terminate === "stop") stopped.add(id);
+        },
+        status: async () => ({ status: workflows.terminate === "ended" ? "complete" : stopped.has(id) ? "terminated" : "running" }),
+      }),
+    },
   } as unknown as Env;
   const api = async (path: string, method = "GET", body?: unknown) => {
     const waits: Promise<unknown>[] = [];
@@ -184,7 +201,17 @@ export async function setup() {
   const runJob = async (jobId: string) => {
     const wf = new (LinkWorkflow as any)();
     wf.env = env;
-    try { await wf.run({ payload: { id: jobId } }, step); } catch { /* record-failure already ran */ }
+    const ended = () => Object.assign(new Error("Workflow terminated"), { name: "Terminated" });
+    const own = {
+      do: async (name: string, a: unknown, b?: unknown) => {
+        if (stopped.has(jobId)) throw ended();
+        const result = await step.do(name, a, b);
+        if (stopped.has(jobId)) throw ended();
+        return result;
+      },
+      sleep: step.sleep,
+    };
+    try { await wf.run({ payload: { id: jobId } }, own); } catch { /* record-failure already ran */ }
   };
   const runQueued = async () => {
     const ids = sent.splice(0).map((m) => m.body.id);
@@ -209,5 +236,5 @@ export async function setup() {
       job: job ? `${job.status}/${job.step}` : null,
     };
   };
-  return { db, env, api, runQueued, runJob, view, sent, steps, engine, r2 };
+  return { db, env, api, runQueued, runJob, view, sent, steps, engine, r2, workflows };
 }

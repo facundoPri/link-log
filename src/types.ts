@@ -147,6 +147,8 @@ export type Batch = {
   total: number;
   done: number;
   failed: number;
+  /** Jobs cancelled before they finished (not counted as failed). */
+  cancelled: number;
   /** Queued, running or waiting jobs; `waiting` counts the last ones. */
   active: number;
   waiting: number;

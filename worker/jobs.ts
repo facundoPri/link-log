@@ -76,6 +76,62 @@ export async function startNext(env: Env, linkIds: (string | null)[]) {
     console.error("Queue dispatch deferred to outbox recovery");
   }
 }
+/** The job finished (done, failed or cancelled) before the cancel could stop it. */
+export class JobFinished extends Error {}
+// Stops a running job's workflow. An instance that already ended (or never existed) has nothing to stop;
+// anything else unknown keeps the job running rather than cancelling it under a live workflow.
+async function stopWorkflow(env: Env, id: string) {
+  try {
+    await (await env.PROCESS_LINK.get(id)).terminate();
+  } catch (error) {
+    const status = await env.PROCESS_LINK.get(id).then((i) => i.status()).catch((e: unknown) => (/not.?found/i.test(String(e)) ? null : undefined));
+    console.log(JSON.stringify({ event: "job_terminate_failed", job_id: id, instance: status === undefined ? "unknown" : status?.status ?? "missing", detail: String(error).slice(0, 300) }));
+    if (status === undefined || (status && !["complete", "errored", "terminated"].includes(status.status)))
+      throw new Error("Could not stop this job. Try again.");
+  }
+}
+/**
+ * Cancels one job (FAC-55). A queued or waiting job is dropped; a running one has its workflow terminated first.
+ * Either way it ends as Cancelled, as if it had never been requested: what already ran is kept, a queued
+ * extraction's link goes back to how it was, the slot is released, Needs attention is never touched, and the
+ * link's next waiting job starts. Cancelling an extraction also cancels the Jev jobs waiting for it.
+ * Every write is guarded by the status read here, so a job settling at the same time either finishes first
+ * (JobFinished) or finds itself cancelled and leaves it alone.
+ */
+export async function cancelJob(env: Env, id: string) {
+  for (let round = 0; round < 3; round++) {
+    const job = await env.DB.prepare("SELECT j.id,j.batch_id,j.link_id,j.status,b.kind FROM jobs j JOIN batches b ON b.id=j.batch_id WHERE j.id=?")
+      .bind(id).first<JobRow & { kind: string }>();
+    if (!job) return null;
+    if (job.status === "done" || job.status === "failed") throw new JobFinished("This job already finished.");
+    if (job.status === "running") await stopWorkflow(env, id);
+    const now = new Date().toISOString();
+    const won = "EXISTS (SELECT 1 FROM jobs WHERE id=? AND step='Cancelled' AND completed_at=?)";
+    const extract = job.kind === "extract" && !!job.link_id;
+    const results = await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE jobs SET status='failed',step='Cancelled',error=CASE WHEN jev_call IS NOT NULL THEN ? ELSE 'Cancelled' END,reason=NULL,attempt_started_at=NULL,completed_at=? WHERE id=? AND status IN (${job.status === "running" ? "'running'" : "'queued','waiting'"})`,
+      ).bind(JEV_FAILURE_MESSAGES.cancelled_sent, now, id),
+      ...(extract ? [cancelDependents(env.DB, "e.id=? AND e.completed_at=?", [id, now], now)] : []),
+      // A provider call cut short may still be billed; Usage records it like recover() does.
+      env.DB.prepare(`UPDATE usage_events SET status='failed',error='Provider call interrupted before completion' WHERE job_id=? AND status='started' AND ${won}`).bind(id, id, now),
+      env.DB.prepare(`DELETE FROM provider_leases WHERE job_id=? AND ${won}`).bind(id, id, now),
+      ...(extract
+        ? [env.DB.prepare(
+            `UPDATE links SET content_state=${restoredContentStateSql} WHERE id=? AND content_state='queued' AND ${won} AND NOT EXISTS (SELECT 1 FROM jobs j JOIN batches b ON b.id=j.batch_id WHERE j.link_id=links.id AND j.status IN ('queued','running','waiting') AND b.kind='extract')`,
+          ).bind(job.link_id, id, now)]
+        : []),
+      ...(job.link_id ? [promoteWaiting(env.DB, job.link_id)] : []),
+    ]);
+    // The job moved on meanwhile (queued to running, or settled): look again.
+    if (!results[0]!.meta.changes) continue;
+    const dependents = extract ? results[1]!.meta.changes : 0;
+    console.log(JSON.stringify({ event: "job_cancelled", job_id: id, batch_id: job.batch_id, kind: job.kind, from: job.status, dependents }));
+    if (job.link_id && results.at(-1)!.meta.changes) await startNext(env, [job.link_id]);
+    return { from: job.status, dependents };
+  }
+  throw new Error("The job changed meanwhile. Try again.");
+}
 export async function enqueue(
   env: Env,
   ids: string[],
@@ -250,11 +306,13 @@ export class LinkWorkflow extends WorkflowEntrypoint<Env, { id: string }> {
             ? "The browser capture no longer exists."
             : "The link no longer exists.",
         );
-      await env.DB.prepare(
+      const started = await env.DB.prepare(
         "UPDATE jobs SET status='running',step='Preparing content' WHERE id=? AND status='queued'",
       )
         .bind(row.id)
         .run();
+      // Cancelled between the read and the start.
+      if (!started.meta.changes) throw new Error("The job was cancelled before it started.");
       return { job: row, link, target };
     });
     const { job, link, target } = data;
@@ -314,7 +372,7 @@ export class LinkWorkflow extends WorkflowEntrypoint<Env, { id: string }> {
           .bind(Date.now(), job.id).run();
         await env.DB.batch([
           env.DB.prepare(
-            "UPDATE jobs SET status='done',step='Done',completed_at=? WHERE id=?",
+            "UPDATE jobs SET status='done',step='Done',completed_at=? WHERE id=? AND status='running'",
           ).bind(new Date().toISOString(), job.id),
           ...(job.link_id ? [promoteWaiting(env.DB, job.link_id)] : []),
         ]);

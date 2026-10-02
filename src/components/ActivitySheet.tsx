@@ -107,9 +107,21 @@ async function retryFailed(id: string, ids: string[] | undefined, onLibrary: (l:
   }
 }
 
+// One job, whether queued, waiting or running. Cancelling an extraction also cancels the jobs waiting for it.
+async function cancelJob(job: Job, onLibrary: (l: Library) => void) {
+  try {
+    const data = await api<Library & { dependents?: number }>(`/jobs/${job.id}`, "DELETE");
+    onLibrary(data);
+    toast(data.dependents ? `Cancelled, and ${data.dependents} waiting for that extraction` : "Cancelled");
+  } catch (e) {
+    toast.error((e as Error).message);
+  }
+}
+
 function BatchJobs({ batch, onLibrary }: { batch: Batch; onLibrary: (l: Library) => void }) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [error, setError] = useState("");
+  const [reload, setReload] = useState(0);
   useEffect(() => {
     let alive = true;
     const load = () =>
@@ -127,7 +139,7 @@ function BatchJobs({ batch, onLibrary }: { batch: Batch; onLibrary: (l: Library)
       alive = false;
       clearInterval(timer);
     };
-  }, [batch.id, batch.active]);
+  }, [batch.id, batch.active, reload]);
   const lens = configLens(batch);
   return (
     <div className="space-y-1 px-2 pb-2">
@@ -196,6 +208,24 @@ function BatchJobs({ batch, onLibrary }: { batch: Batch; onLibrary: (l: Library)
                 <Clock className="size-3.5 text-muted-foreground" />
               ) : (
                 <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+              )}
+              {["queued", "running", "waiting"].includes(j.status) && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      className="-my-0.5 shrink-0"
+                      aria-label="Cancel"
+                      onClick={() => void cancelJob(j, (l) => (onLibrary(l), setReload((n) => n + 1)))}
+                    >
+                      <X className="size-3" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {batch.kind === "extract" ? "Cancel (also cancels what waits for it)" : "Cancel"}
+                  </TooltipContent>
+                </Tooltip>
               )}
             </div>
             {batch.kind === "extract" && j.usage?.ocr && (
@@ -343,7 +373,7 @@ export function ActivitySheet({
                   {b.active ? (
                     <span className="flex items-center gap-1.5 text-2xs text-muted-foreground tabular">
                       <Loader2 className="size-3 animate-spin" />
-                      {b.done + b.failed}/{b.total}
+                      {b.done + b.failed + b.cancelled}/{b.total}
                       <Button
                         variant="ghost"
                         size="icon-sm"
@@ -381,6 +411,8 @@ export function ActivitySheet({
                         </Tooltip>
                       )}
                     </span>
+                  ) : b.cancelled === b.total ? (
+                    <span className="text-2xs text-muted-foreground">Cancelled</span>
                   ) : (
                     <span className="flex items-center gap-1 text-2xs text-muted-foreground">
                       <Check className="size-3" />
@@ -406,7 +438,7 @@ export function ActivitySheet({
                 </CollapsibleTrigger>
                 {!!b.active && (
                   <Progress
-                    value={((b.done + b.failed) / Math.max(b.total, 1)) * 100}
+                    value={((b.done + b.failed + b.cancelled) / Math.max(b.total, 1)) * 100}
                     className="mx-3 h-1 w-auto"
                   />
                 )}

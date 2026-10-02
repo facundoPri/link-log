@@ -45,7 +45,7 @@ export async function library(env: Env) {
       Evaluation & { link_id: string }
     >(),
     env.DB.prepare(
-      "SELECT b.*,count(j.id) total,coalesce(sum(j.status='done'),0) done,coalesce(sum(j.status='failed'),0) failed,coalesce(sum(j.status IN ('queued','running','waiting')),0) active,coalesce(sum(j.status='waiting'),0) waiting FROM batches b LEFT JOIN jobs j ON j.batch_id=b.id GROUP BY b.id HAVING count(j.id)>0 ORDER BY b.created_at DESC LIMIT 30",
+      "SELECT b.*,count(j.id) total,coalesce(sum(j.status='done'),0) done,coalesce(sum(j.status='failed' AND j.step IS NOT 'Cancelled'),0) failed,coalesce(sum(j.status='failed' AND j.step IS 'Cancelled'),0) cancelled,coalesce(sum(j.status IN ('queued','running','waiting')),0) active,coalesce(sum(j.status='waiting'),0) waiting FROM batches b LEFT JOIN jobs j ON j.batch_id=b.id GROUP BY b.id HAVING count(j.id)>0 ORDER BY b.created_at DESC LIMIT 30",
     ).all<Batch>(),
     env.DB.prepare("SELECT * FROM lenses ORDER BY name COLLATE NOCASE").all<
       Omit<Lens, "options" | "levels"> & { options: string }

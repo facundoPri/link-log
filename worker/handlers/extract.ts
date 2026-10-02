@@ -72,7 +72,7 @@ async function attempt<R, T = R>(
   const killed = !!prior?.attempt_started_at && prior.attempt === ctx.attempt - 1;
   if (killed) logFailure(new LinkFailure("timeout", { technical: "Attempt ended by the Workflow engine" }), { ...where, attempt: ctx.attempt - 1, final: false });
   await env.DB.batch([
-    env.DB.prepare(`UPDATE jobs SET step=?,attempt=?,max_attempts=?,attempt_started_at=?,attempt_budget_ms=?,adapter=?${ctx.attempt === 1 ? ",reason=NULL" : killed ? ",reason='timeout'" : ""} WHERE id=?`)
+    env.DB.prepare(`UPDATE jobs SET step=?,attempt=?,max_attempts=?,attempt_started_at=?,attempt_budget_ms=?,adapter=?${ctx.attempt === 1 ? ",reason=NULL" : killed ? ",reason='timeout'" : ""} WHERE id=? AND status='running'`)
       .bind(at.label, ctx.attempt, max, Date.now(), budget, at.adapter, job.id),
     // Retries and backoff run while holding the slot; keep the lease alive.
     env.DB.prepare("UPDATE provider_leases SET expires_at=? WHERE job_id=?").bind(Date.now() + 300000, job.id),
@@ -95,7 +95,7 @@ async function attempt<R, T = R>(
     const failure = classify(error);
     const final = !failure.retryable || ctx.attempt >= max;
     logFailure(failure, { ...where, attempt: ctx.attempt, final });
-    await env.DB.prepare("UPDATE jobs SET reason=?,attempt=?,attempt_started_at=NULL WHERE id=?").bind(failure.reason, final ? ctx.attempt : ctx.attempt + 1, job.id).run();
+    await env.DB.prepare("UPDATE jobs SET reason=?,attempt=?,attempt_started_at=NULL WHERE id=? AND status='running'").bind(failure.reason, final ? ctx.attempt : ctx.attempt + 1, job.id).run();
     if (final) return { failed: failure.reason };
     throw failure;
   } finally {
@@ -132,7 +132,7 @@ export const previewHandler: JobHandler = {
     await step.do("save-preview", async () => {
       await env.DB.batch([
         savePreview(env, link.id, preview),
-        env.DB.prepare("UPDATE jobs SET attempt_started_at=NULL WHERE id=?").bind(job.id),
+        env.DB.prepare("UPDATE jobs SET attempt_started_at=NULL WHERE id=? AND status='running'").bind(job.id),
       ]);
       await settleAttention(env.DB, link.id, { preview: ctx.progress.preview });
     });
@@ -154,10 +154,15 @@ export const extractHandler: JobHandler = {
     const adapter = adapterFor(metadata.url);
     await step.do("save-preview", async () => {
       if (preview) await savePreview(env, link.id, preview).run();
-      await env.DB.prepare("UPDATE jobs SET step='Extracting content',attempt=NULL,max_attempts=NULL,reason=NULL,attempt_started_at=NULL,attempt_budget_ms=NULL,adapter=?,preview_reason=? WHERE id=?")
+      await env.DB.prepare("UPDATE jobs SET step='Extracting content',attempt=NULL,max_attempts=NULL,reason=NULL,attempt_started_at=NULL,attempt_budget_ms=NULL,adapter=?,preview_reason=? WHERE id=? AND status='running'")
         .bind(adapter.name, previewFailed, job.id).run();
     });
-    const settle = () => step.do("settle-attention", () => settleAttention(env.DB, link.id, { content: "ok", preview: ctx.progress.preview }));
+    // A job cancelled meanwhile (FAC-55) stores no content and settles nothing: the cancel already did.
+    const running = "EXISTS (SELECT 1 FROM jobs WHERE id=? AND status='running')";
+    const settle = () => step.do("settle-attention", async () => {
+      if (await env.DB.prepare(`SELECT 1 WHERE ${running}`).bind(job.id).first())
+        await settleAttention(env.DB, link.id, { content: "ok", preview: ctx.progress.preview });
+    });
     if (!adapter.discover) {
       const content = await step.do("extract-content", { retries: CONTENT_RETRIES, timeout: "2 minutes" },
         (ctx) => attempt({ env, job, link }, ctx, { step: "content", label: "Extracting content", limit: CONTENT_RETRIES.limit, adapter: adapter.name },
@@ -175,9 +180,9 @@ export const extractHandler: JobHandler = {
       if ("failed" in content) throw new LinkFailure(content.failed);
       await step.do("save-content", async () => {
         await env.DB.batch([
-          env.DB.prepare("DELETE FROM media_items WHERE link_id=?").bind(link.id),
-          env.DB.prepare("UPDATE links SET content_key=?,content_version=content_version+1,content_source=?,content_state='ready',content_error=NULL,content_reason=NULL,content_details=NULL,content_updated_at=? WHERE id=?")
-            .bind(content.key, content.source, new Date().toISOString(), link.id),
+          env.DB.prepare(`DELETE FROM media_items WHERE link_id=? AND ${running}`).bind(link.id, job.id),
+          env.DB.prepare(`UPDATE links SET content_key=?,content_version=content_version+1,content_source=?,content_state='ready',content_error=NULL,content_reason=NULL,content_details=NULL,content_updated_at=? WHERE id=? AND ${running}`)
+            .bind(content.key, content.source, new Date().toISOString(), link.id, job.id),
         ]);
       });
       await settle();
@@ -205,7 +210,7 @@ export const extractHandler: JobHandler = {
         await env.DB.prepare(`DELETE FROM media_items WHERE link_id=? AND media_key NOT IN (${discovered.media.map(() => "?").join(",")})`)
           .bind(link.id, ...discovered.media.map((item) => item.media_key)).run();
       } else await env.DB.prepare("DELETE FROM media_items WHERE link_id=?").bind(link.id).run();
-      await env.DB.prepare("UPDATE jobs SET step='Reading images' WHERE id=?").bind(job.id).run();
+      await env.DB.prepare("UPDATE jobs SET step='Reading images' WHERE id=? AND status='running'").bind(job.id).run();
     });
     const ocrMedia = discovered.media;
     for (const item of ocrMedia.slice(0, MAX_OCR_PREVIEWS)) {
@@ -231,8 +236,8 @@ export const extractHandler: JobHandler = {
       await env.CONTENT.put(key, content.markdown, { httpMetadata: { contentType: "text/markdown; charset=utf-8" } });
     });
     await step.do("save-composed-content", async () => {
-      await env.DB.prepare("UPDATE links SET content_key=?,content_version=content_version+1,content_source=?,content_state=?,content_error=?,content_reason=NULL,content_details=?,content_updated_at=? WHERE id=?")
-        .bind(key, discovered.source, content.state, content.details.issues[0] || null, JSON.stringify(content.details), new Date().toISOString(), link.id).run();
+      await env.DB.prepare(`UPDATE links SET content_key=?,content_version=content_version+1,content_source=?,content_state=?,content_error=?,content_reason=NULL,content_details=?,content_updated_at=? WHERE id=? AND ${running}`)
+        .bind(key, discovered.source, content.state, content.details.issues[0] || null, JSON.stringify(content.details), new Date().toISOString(), link.id, job.id).run();
     });
     await settle();
   },

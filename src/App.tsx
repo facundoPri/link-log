@@ -222,16 +222,20 @@ export function App() {
       if (b.active > 0) {
         toast.loading(`${verb} ${n} ${n === 1 ? "link" : "links"}…`, {
           id: b.id,
-          description: `${b.done + b.failed} of ${n} done`,
+          description: `${b.done + b.failed + b.cancelled} of ${n} done`,
           action: { label: "Cancel", onClick: () => void cancelBatch(b.id) },
         });
+      } else if (b.cancelled === n) {
+        toast("Cancelled", { id: b.id });
+        sessionBatches.current.delete(b.id);
       } else if (b.failed === 0) {
+        const ran = n - b.cancelled;
         toast.success(
           b.kind === "autotag"
-            ? `Auto-tagged ${n} ${n === 1 ? "link" : "links"}`
+            ? `Auto-tagged ${ran} ${ran === 1 ? "link" : "links"}`
             : b.kind === "extract"
-              ? `Extracted ${n} ${n === 1 ? "link" : "links"}`
-              : `Lens applied to ${n} ${n === 1 ? "link" : "links"}`,
+              ? `Extracted ${ran} ${ran === 1 ? "link" : "links"}`
+              : `Lens applied to ${ran} ${ran === 1 ? "link" : "links"}`,
           {
             id: b.id,
             description:
@@ -637,7 +641,7 @@ export function App() {
                     : activeBatch.kind === "preview"
                       ? "Fetching preview"
                       : "Applying lens",
-              done: activeBatch.done + activeBatch.failed,
+              done: activeBatch.done + activeBatch.failed + activeBatch.cancelled,
               total: activeBatch.total,
             }
           : null

@@ -70,7 +70,7 @@ export async function evaluateWithJev(
       else {
         await env.DB.batch([
           // Activity only counts attempts once a retry happens.
-          env.DB.prepare(`UPDATE jobs SET step='Evaluating with Jev',attempt=?,max_attempts=?,attempt_started_at=?,attempt_budget_ms=?${ctx.attempt === 1 ? ",reason=NULL" : ""} WHERE id=?`)
+          env.DB.prepare(`UPDATE jobs SET step='Evaluating with Jev',attempt=?,max_attempts=?,attempt_started_at=?,attempt_budget_ms=?${ctx.attempt === 1 ? ",reason=NULL" : ""} WHERE id=? AND status='running'`)
             .bind(ctx.attempt, ctx.attempt > 1 ? max : null, ctx.attempt > 1 ? Date.now() : null, ctx.attempt > 1 ? 120_000 : null, job.id),
           env.DB.prepare("UPDATE provider_leases SET expires_at=? WHERE job_id=?").bind(Date.now() + 300000, job.id),
         ]);
@@ -89,7 +89,7 @@ export async function evaluateWithJev(
     const final = !failure.retryable || ctx.attempt >= max;
     logJevFailure(env, failure, job, ctx.attempt, final);
     if (!final) {
-      await env.DB.prepare("UPDATE jobs SET reason=?,attempt=?,max_attempts=?,attempt_started_at=NULL WHERE id=?")
+      await env.DB.prepare("UPDATE jobs SET reason=?,attempt=?,max_attempts=?,attempt_started_at=NULL WHERE id=? AND status='running'")
         .bind(failure.reason, ctx.attempt + 1, max, job.id).run().catch(() => {});
       throw failure;
     }

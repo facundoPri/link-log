@@ -2,7 +2,7 @@ import { normalizeUrl, domainOf } from "../src/url";
 import type { LensOption, LensLevel, Link, Tag } from "../src/types";
 
 import { json, library, text, threshold } from "./store";
-import { cancelDependents, enqueue, dispatch, linkIdle, NothingToRun, recover, promoteWaiting, startNext, LinkWorkflow } from "./jobs";
+import { cancelDependents, cancelJob, enqueue, dispatch, JobFinished, linkIdle, NothingToRun, recover, promoteWaiting, startNext, LinkWorkflow } from "./jobs";
 import { restoredContentStateSql } from "./content-state";
 import type { Job, JobUsage, UsageEvent } from "../src/types";
 import { OCR_USAGE_COLUMNS } from "./usage";
@@ -301,6 +301,18 @@ export default {
           return json({ ...(await library(env)), batchId, skipped });
         } catch (error) {
           if (error instanceof NothingToRun) return json({ error: error.message, skipped: error.skipped }, 400);
+          throw error;
+        }
+      }
+      // Cancel one job from Activity, whether queued, waiting or running (see cancelJob).
+      const jobMatch = path.match(/^\/api\/jobs\/([^/]+)$/);
+      if (jobMatch && request.method === "DELETE") {
+        try {
+          const cancelled = await cancelJob(env, jobMatch[1]!);
+          if (!cancelled) return json({ error: "The job no longer exists." }, 404);
+          return json({ ...(await library(env)), ...cancelled });
+        } catch (error) {
+          if (error instanceof JobFinished) return json({ ...(await library(env)), error: error.message }, 409);
           throw error;
         }
       }
