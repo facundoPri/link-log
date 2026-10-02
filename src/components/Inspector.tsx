@@ -117,6 +117,7 @@ export function Inspector({
   savedUrls,
   running,
   focusTags,
+  jevReason,
 }: {
   link: Link;
   tags: Tag[];
@@ -135,6 +136,8 @@ export function Inspector({
   savedUrls: string[];
   running?: "extract" | "autotag" | "lens" | "query" | null;
   focusTags?: boolean;
+  /** Why Auto-tag and lenses can't run (Jev not configured), or null. */
+  jevReason?: string | null;
 }) {
   const [markdown, setMarkdown] = useState("");
   const [draft, setDraft] = useState("");
@@ -760,15 +763,23 @@ export function Inspector({
                       Tagging…
                     </span>
                   ) : (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 gap-1 px-2 text-2xs"
-                      onClick={onAutoTag}
-                    >
-                      <Sparkles className="size-3" />
-                      Re-evaluate
-                    </Button>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 gap-1 px-2 text-2xs"
+                            disabled={!!jevReason}
+                            onClick={onAutoTag}
+                          >
+                            <Sparkles className="size-3" />
+                            Re-evaluate
+                          </Button>
+                        </span>
+                      </TooltipTrigger>
+                      {jevReason && <TooltipContent>{jevReason}</TooltipContent>}
+                    </Tooltip>
                   )}
                 </div>
               </div>
@@ -860,17 +871,19 @@ export function Inspector({
                         </Tooltip>
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              className="opacity-0 group-hover/lens:opacity-100"
-                              aria-label="Run again"
-                              onClick={() => onRunLens(lens)}
-                            >
-                              <RotateCw className="size-3" />
-                            </Button>
+                            <span className="opacity-0 group-hover/lens:opacity-100">
+                              <Button
+                                variant="ghost"
+                                size="icon-sm"
+                                aria-label="Run again"
+                                disabled={!!jevReason}
+                                onClick={() => onRunLens(lens)}
+                              >
+                                <RotateCw className="size-3" />
+                              </Button>
+                            </span>
                           </TooltipTrigger>
-                          <TooltipContent>Run again</TooltipContent>
+                          <TooltipContent>{jevReason ?? "Run again"}</TooltipContent>
                         </Tooltip>
                         <Button
                           variant="ghost"

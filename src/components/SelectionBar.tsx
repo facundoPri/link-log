@@ -35,6 +35,7 @@ export function SelectionBar({
   tags,
   lenses,
   running,
+  jevReason,
   onAutoTag,
   onLens,
   onNewLens,
@@ -45,6 +46,8 @@ export function SelectionBar({
   tags: Tag[];
   lenses: Lens[];
   running: boolean;
+  /** Why Auto-tag and lenses can't run (Jev not configured), or null. */
+  jevReason: string | null;
   onAutoTag: () => void;
   onLens: (lens: Lens) => void;
   onNewLens: () => void;
@@ -57,20 +60,24 @@ export function SelectionBar({
   const missing = links.filter(
     (l) => !l.content_key || l.content_state === "queued",
   ).length;
-  const tagDisabled = !ready || !tags.length || running;
-  const lensDisabled = !ready || running;
-  const tagReason = !ready
-    ? `${missing} of ${links.length} links need context first`
-    : !tags.length
-      ? "Create a tag first"
+  const tagDisabled = !!jevReason || !ready || !tags.length || running;
+  const lensDisabled = !!jevReason || !ready || running;
+  const tagReason =
+    jevReason ??
+    (!ready
+      ? `${missing} of ${links.length} links need context first`
+      : !tags.length
+        ? "Create a tag first"
+        : running
+          ? "Some links are still processing"
+          : null);
+  const lensReason =
+    jevReason ??
+    (!ready
+      ? `${missing} of ${links.length} links need context first`
       : running
         ? "Some links are still processing"
-        : null;
-  const lensReason = !ready
-    ? `${missing} of ${links.length} links need context first`
-    : running
-      ? "Some links are still processing"
-      : null;
+        : null);
   const copy = async (withTitles: boolean) => {
     const text = links
       .map((link) =>

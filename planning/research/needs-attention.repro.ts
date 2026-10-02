@@ -292,7 +292,7 @@ test("I: while queued, the link is processing so the row no longer offers 'Retry
   expect(r.status).toBe(400);
 });
 
-test("J: without TYPESAFE_API_KEY, autotag is accepted and fails per link inside the job (no HTTP call)", async () => {
+test("J: without TYPESAFE_API_KEY, autotag is refused up front: no job, workflow or usage row (fixed in FAC-52)", async () => {
   const s = await setup();
   const id = (await s.api("/links", "POST", { url: "https://j.example/x" })).data.id;
   await s.runQueued();
@@ -301,20 +301,17 @@ test("J: without TYPESAFE_API_KEY, autotag is accepted and fails per link inside
   env.JEV_PROVIDER = "typesafe";
   delete env.TYPESAFE_API_KEY;
   const lib = await s.api("/library");
-  log.push(`J | capabilities.jev=${lib.data.capabilities.jev} (computed, unused by enqueue/UI)`);
+  log.push(`J | capabilities.jev=${lib.data.capabilities.jev} (UI disables Auto-tag, Lens and Re-evaluate)`);
+  expect(lib.data.capabilities.jev).toBe(false);
   const res = await s.api("/batches", "POST", { kind: "autotag", ids: [id] });
-  log.push(`J | POST /batches autotag | HTTP ${res.status}`);
-  expect(res.status).toBe(200);
-  const realFetch = globalThis.fetch;
-  let providerCalls = 0;
-  globalThis.fetch = (async (...a: Parameters<typeof fetch>) => { providerCalls++; return realFetch(...a); }) as typeof fetch;
-  try { await s.runQueued(); } finally { globalThis.fetch = realFetch; }
-  const job = s.db.query("SELECT j.status,j.step,j.error FROM jobs j JOIN batches b ON b.id=j.batch_id WHERE b.kind='autotag'").get() as any;
+  log.push(`J | POST /batches autotag | HTTP ${res.status} "${res.data.error}"`);
+  expect(res).toEqual({ status: 400, data: { error: "Jev is not configured: API key missing." } });
+  const jobs = s.db.query("SELECT count(*) n FROM jobs j JOIN batches b ON b.id=j.batch_id WHERE b.kind='autotag'").get() as any;
   const usage = s.db.query("SELECT service,status,error FROM usage_events WHERE service='jev'").all();
-  log.push(`J | job ${job.status}/${job.step} "${job.error}" | usage_events=${JSON.stringify(usage)} | provider fetches=${providerCalls}`);
-  expect(job).toMatchObject({ status: "failed", step: "Needs attention", error: "TYPESAFE_API_KEY is not configured." });
-  expect(usage).toHaveLength(1);
-  expect(providerCalls).toBe(0);
+  log.push(`J | autotag jobs=${jobs.n} | usage_events=${JSON.stringify(usage)} | queued messages=${s.sent.length}`);
+  expect(jobs.n).toBe(0);
+  expect(usage).toHaveLength(0);
+  expect(s.sent).toHaveLength(0);
   expect((await s.view(id)).attention).toBe(false);
 });
 

@@ -10,7 +10,8 @@ import {
   type JobConfig,
   type Pool,
 } from "./handlers";
-import { parseLensDefinition } from "./store";
+import { capabilities, parseLensDefinition } from "./store";
+import { jevUnavailable } from "../src/attention";
 import { preservedContentStateSql } from "./content-state";
 import type { Lens, Link, Tag } from "../src/types";
 const POOL_LIMITS = { browser: 2, jev: 16 } as const;
@@ -40,6 +41,11 @@ export async function enqueue(
   ids = [...new Set(ids)];
   if (!ids.length || ids.length > 100)
     throw new Error("Select between 1 and 100 links per batch.");
+  const unavailable = kind === "extract" ? null : jevUnavailable(capabilities(env));
+  if (unavailable) {
+    console.error(JSON.stringify({ event: "jev_not_configured", kind, provider: capabilities(env).provider, links: ids.length }));
+    throw new Error(unavailable);
+  }
   const links = await env.DB.prepare(
     `SELECT * FROM links WHERE id IN (${ids.map(() => "?").join(",")})`,
   )

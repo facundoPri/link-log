@@ -1,5 +1,7 @@
 import type { Answer, Lens, LensOption, Question, Tag } from "../../src/types";
 import { measured } from "../usage";
+import { capabilities } from "../store";
+import { jevUnavailable } from "../../src/attention";
 import { fixtureJev } from "./fixture";
 export type { Answer, Question } from "../../src/types";
 export function probability(n: unknown): n is number {
@@ -182,16 +184,17 @@ export async function judge(
   // the provider's tokenizer still enforces the real context window.
   const input = { state: truncateState(state), questions };
   const provider = env.JEV_PROVIDER || "cloudflare";
+  // The configuration can change between enqueue and run; fail before Usage records a call.
+  const unavailable = jevUnavailable(capabilities(env));
+  if (unavailable) {
+    console.error(JSON.stringify({ event: "jev_not_configured", provider, job: job.id }));
+    throw new Error(unavailable);
+  }
   return measured(env, job, "jev", provider, "classify", async (meter) => {
     let raw: Record<string, unknown>;
-    if (provider === "fixture") {
-      // Deterministic, unpaid answers for automated tests. Never enabled by default.
-      if (env.ALLOW_FIXTURE_JEV !== "1")
-        throw new Error("The fixture Jev provider is only available in tests.");
-      raw = await fixtureJev(input);
-    } else if (provider === "typesafe") {
-      if (!env.TYPESAFE_API_KEY)
-        throw new Error("TYPESAFE_API_KEY is not configured.");
+    // Fixture: deterministic, unpaid answers for automated tests, only with ALLOW_FIXTURE_JEV.
+    if (provider === "fixture") raw = await fixtureJev(input);
+    else if (provider === "typesafe") {
       const response = await fetch("https://api.typesafe.ai/v1/systemone", {
         method: "POST",
         headers: {

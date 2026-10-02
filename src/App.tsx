@@ -3,7 +3,7 @@ import { Link2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "./api";
 import type { Job, Lens, LensResult, LensScope, Library, Link, Tag } from "./types";
-import { needsAttention } from "./attention";
+import { jevUnavailable, needsAttention } from "./attention";
 import { pastedUrls } from "./url";
 import { Sidebar, type View } from "./components/Sidebar";
 import { Toolbar, type ContextFilter } from "./components/Toolbar";
@@ -138,6 +138,7 @@ export function App() {
     () => library.lenses.filter((l) => l.scope !== "browser"),
     [library.lenses],
   );
+  const jevReason = jevUnavailable(library.capabilities);
 
   useEffect(() => {
     localStorage.setItem(
@@ -729,6 +730,7 @@ export function App() {
       onToggleTag={toggleTagFilter}
       onAutoTag={() => void runBatch("autotag", [activeLink.id])}
       running={jobsByLink.get(activeLink.id)?.kind ?? null}
+      jevReason={jevReason}
       onExtract={() => requestExtract([activeLink.id])}
       onSelectTrack={async (language) => {
         try {
@@ -998,6 +1000,7 @@ export function App() {
           tags={library.tags}
           lenses={libraryLenses}
           running={running}
+          jevReason={jevReason}
           onAutoTag={() => {
             if (manualTagged) setConfirmAutoTag(true);
             else void doAutoTag();
@@ -1023,7 +1026,7 @@ export function App() {
           lens={dialog.lens}
           scope={dialog.scope ?? (dialog.lens === "new" ? "library" : dialog.lens.scope)}
           templates={libraryLenses}
-          selectedCount={picked.length}
+          selectedCount={jevReason ? 0 : picked.length}
           onClose={() => setDialog(null)}
           onSave={async (draft: LensDraft) => {
             const { runNow, ...body } = draft;
