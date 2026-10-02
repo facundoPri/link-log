@@ -108,3 +108,87 @@ Los pasos 1–5 a mano **no se ejecutaron** en esta sesión (requieren Browser R
 9. Tras cancelar un batch, ¿los links deben quedar como “sin contexto” neutros (no atención), o marcados para reintentar?
 10. ¿Los fallos de autotag/lens (hoy `step='Needs attention'` pero invisibles en la vista) deberían entrar en Needs attention o quedarse solo en Activity?
 11. ¿“Needs attention” sigue siendo una vista derivada, o querés que pase a ser un estado persistido con historial de intentos (para auditar “se repite”)?
+
+## 7. Decisiones del dueño (grilling, 2026-10-01)
+
+Resumen de las respuestas a §6. “Jev” corresponde a lo transcrito como shep/Jeff/jeb.
+
+| Tema | Decisión |
+|---|---|
+| Cuándo entra | **Solo cuando se agotaron todos los reintentos.** Mientras un link está en cola, procesándose o reintentando, no entra. El síntoma reportado coincide con la causa 1 (batch → algunos entran → salen poco a poco). |
+| Preview falla pero el contenido sale bien | Entra (debería ser raro). El preview se reintenta automáticamente con espera progresiva y límite, y el usuario puede reintentarlo a mano. |
+| Contenido falla | Es el caso más probable. Entra al agotar los reintentos. |
+| Contenido que en realidad es un muro de login o bloqueo | Cuenta como fallo y entra. |
+| Activity | Mostrar el intento actual (“2 de 3”), el motivo del reintento en lenguaje simple (“No se pudo extraer el contenido”, “No se pudo obtener el preview”) e info de timeout. Permitir **cancelar un link individual** mientras corre. |
+| Re-extract falla con contenido previo | No entra. Se ve en Activity, y en el inspector como “falló, se muestra la versión anterior”. Sin historial complejo en la UI. |
+| Transitorio vs. acción del usuario | Lo transitorio solo se espera (reintentos). Al final, si sigue sin resolverse: entra con un motivo entendible, no técnico. |
+| Reintentos | Preview: 2. Browser Rendering → Markdown: 1. Jev: 2 por link, contando con que casi siempre falla **antes** de llamar a la API (por ejemplo, contenido aún no listo). |
+| Jev sobre links sin contenido listo | Que espere encolado **por link** hasta que el contenido esté listo, sin pedirle nada al usuario. Un batch de extracción no bloquea Jev de otros links. Jev **nunca** dispara la extracción automáticamente (evitar loops y pedidos duplicados). |
+| Cómo se limpia | Cuando el paso que falló se vuelve a correr y funciona. Botón **Retry** del paso fallido dentro de Needs attention, y **Dismiss**. |
+| Motivo técnico del fallo | No se muestra crudo al usuario. Se loguea en Cloudflare para detectar patrones (por ejemplo, demanda de PDFs o sitios que requieren una API). |
+| Cancelar un batch | “Como si no hubiera pasado nada”: lo que ya corrió se conserva y lo no corrido no deja estado. |
+| Fallos de autotag o lens | No entran en Needs attention. Si falta contenido, se pide buscarlo, pero no automáticamente. |
+| Modelo | Persistido y robusto, ligado a Activity, para seguir dónde y cuándo corre cada cosa. |
+
+## 8. Propuesta de implementación (para revisar, no implementada)
+
+### 8.1 Estado persistido en lugar de vista derivada
+
+- **Quitar** el `pending → failed` virtual (`worker/store.ts:143-147`). “Procesando” pasa a significar que existe un job `queued/running/waiting` para el link. Un `pending` sin job (cancelado o nunca corrido) es neutro: “Preview no obtenido” (`LinkRow.tsx:139-143`), no atención.
+- Agregar a `links`: `attention_kind` (`preview|content|blocked`), `attention_reason` (código), `attention_job_id`, `attention_at`. La vista pasa a ser `attention_kind IS NOT NULL` (servidor y `Sidebar`/`App` leen el mismo campo).
+- **Se setea** solo en `record-failure` del intento final (`worker/jobs.ts:258-273`) y en el muro de login detectado. **No se setea** en: cancelación, re-extract fallido con contenido previo bueno, ni fallos de Jev o lens.
+- **Se limpia** cuando el paso del mismo tipo tiene éxito (preview OK limpia `preview`; contenido OK limpia `content`/`blocked`), con Dismiss o al borrar el link. Un fallo final posterior lo vuelve a levantar.
+- El Retry de la vista corre **solo el paso fallido**, y la marca se mantiene hasta el éxito. Así se evita el parpadeo del escenario D: hoy `jobs.ts:101` limpia al encolar. Mientras tanto, la fila muestra “Reintentando…”.
+- “Retry preview” deja de usar `ctx.waitUntil(enrich)` (`worker/index.ts:578`) y pasa a ser un job `preview` por la cola. Queda visible en Activity, se recupera por cron y respeta los mismos reintentos.
+
+### 8.2 Reintentos visibles y acotados
+
+- Workflows expone `ctx.attempt` dentro de `step.do` (`worker-configuration.d.ts:14005-14010`), así que alcanzan los reintentos nativos con `backoff: "exponential"`. Al empezar cada intento se escribe `jobs.attempt/max_attempts/attempt_started_at`. Antes de relanzar el error se escribe `jobs.retry_reason`. Activity muestra, por ejemplo, “Contenido · intento 2/2 · 40 s de 2 min · el sitio tardó demasiado”.
+- **Preview** (`extract.ts:48`): hoy un no-2xx **no lanza**, sino que devuelve `status:'failed'` (`metadata.ts:78-92`), así que los reintentos nunca aplican. Hay que clasificar: lanzar (reintentable) en timeout, DNS, 5xx, 429 y 408; devolver el fallo final sin reintentar en no-HTML, 404 y 410. Límite 2 con espera exponencial (por ejemplo 5 s → 20 s).
+- **Browser Rendering → Markdown** (`extract.ts:56`, `web.ts`): límite 1 solo para errores transitorios. Sin reintento en “no content”, en >2 MB ni en hosts no públicos.
+- **Interrupción** (`jobs.ts:136-157`): hoy marca fallo directo. Propuesta: contarla como intento y re-crear el job una vez antes de darlo por fallido.
+- Códigos de motivo con texto para el usuario: `timeout` “El sitio tardó demasiado”, `unreachable`, `site_error` (5xx), `rate_limited`, `blocked` (401/403) “El sitio bloquea el acceso automático”, `not_found`, `not_html` “Es un PDF/archivo, no una página”, `empty`, `too_large`, `login_wall`, `interrupted`, `no_transcript`.
+
+### 8.3 Jev esperando contenido: cola serial por link
+
+Restricciones actuales: `enqueue` rechaza **todo el batch** si algún link no tiene contenido (`jobs.ts:50-53`) o si alguno está procesando (`jobs.ts:54-60`). El índice único `jobs_active_link` (`migrations/0001`) impide dos jobs activos en el mismo link.
+
+Propuesta:
+
+1. **Nuevo estado `waiting`** (fuera del índice único, que solo cubre `queued/running`). Al encolar cualquier job para un link que ya tiene uno activo, el nuevo queda en `waiting` y no se envía a la Queue. Funciona como una FIFO por link: autotag y lens sobre el mismo link corren uno después del otro, nunca en paralelo.
+2. **Promoción por link, no por batch.** En el mismo step `complete`/`record-failure` (`jobs.ts:249-274`), promover el `waiting` más antiguo de ese link a `queued` y enviarlo. Los pools siguen separados (`browser` 2, `jev` 16, `jobs.ts:16`): extraer otros links no frena el Jev de un link ya listo. `recover()` (`jobs.ts:114-121`) también promueve los huérfanos (`waiting` sin predecesor activo), así una promoción perdida no deja nada colgado.
+3. **Chequeo previo dentro del job de Jev** antes de pedir slot del pool: si no hay `content_key` o el contenido quedó `failed`/`blocked`, el job falla sin costo con “Falta el contenido; extraelo primero”. No entra en atención y **no** dispara la extracción, así que no hay loops.
+4. **Validación por link en `enqueue`.** Se aceptan los links con contenido o con extracción activa/en espera. Los demás se devuelven como “omitidos: necesitan contenido”. La UI ofrece una acción **explícita** “Extraer y luego auto-taggear”, que encadena un extract y un autotag en `waiting`. Es una decisión del usuario, no algo automático.
+5. **Reintentos de Jev: 2, solo ante 429, 5xx o error de red antes de recibir respuesta.** Sin reintento en errores deterministas (contexto excedido, respuesta inválida repetible). La espera por contenido **no** consume reintentos, porque no es un fallo. Cada intento queda medido en `usage_events`. Esto cambia la política del README (“Paid steps are not silently retried”) a “reintentos acotados y visibles”, y hay que documentarlo.
+
+Por qué D1 `waiting` y no `step.waitForEvent`: no deja instancias de Workflow vivas esperando, no requiere que el extract sepa a quién notificar, sigue el patrón existente (D1 como outbox, cron como red de seguridad) y respeta el índice único sin cambiarlo.
+
+### 8.4 Cancelar un link individual
+
+`DELETE /api/jobs/:id`:
+
+- **`queued`/`waiting`:** se marca `Cancelled`.
+- **`running`:** `PROCESS_LINK.get(id).terminate()` y luego `Cancelled`. Se restaura `content_state` con `preservedContentStateSql("missing")`, se libera el lease y no se toca `attention_*`.
+
+Los dependientes en `waiting` del mismo link se cancelan en cascada, con aviso. Una llamada paga en vuelo puede cobrarse igual: `recover()` ya la registra como `failed` (`jobs.ts:115`).
+
+### 8.5 Telemetría
+
+`observability.enabled` ya está activo (`wrangler.jsonc:30`). Se emite un `console.log` JSON por intento fallido: `{event:"link_step_failed", step, attempt, final, reason, http_status, content_type, domain, adapter}`. Solo el dominio, sin la URL completa. Sirve para medir la demanda de PDFs, los sitios con muros y la tasa de 429.
+
+### 8.6 Orden sugerido (cada parte se puede entregar sola)
+
+1. Quitar el `failed` virtual de 30 s y dejar neutros los cancelados. Ataca directamente el síntoma reportado.
+2. Clasificación de motivos, reintentos del preview y del Markdown, intento visible en Activity, telemetría.
+3. `attention_*` persistido, con Retry del paso fallido (preview por la cola) y Dismiss.
+4. Cola serial por link para Jev, validación por link y reintentos de Jev.
+5. Cancelación por link en Activity.
+6. Detección de muro de login, calibrada con los datos de telemetría de la parte 2.
+
+### 8.7 Puntos a confirmar
+
+1. **403/401:** ¿falla rápido (un muro anti-bot rara vez se abre en segundos) o se reintenta igual? Propuesta: falla rápido con el motivo `blocked`.
+2. **Reintentos de Jev:** ¿se aceptan con costo potencial ante 429/5xx, o solo los que ocurren antes de enviar la llamada? En un timeout no siempre se sabe si se cobró.
+3. **Muro de login:** ¿se guarda igual el texto (visible, pero excluido de Jev) o se descarta? Los falsos positivos son el riesgo: conviene una heurística conservadora (texto corto más patrones como “sign in”, “captcha”, “Just a moment”, “Access denied”) y ajustarla con la telemetría.
+4. **Dismiss:** ¿oculta solo ese fallo (vuelve a aparecer si un intento posterior falla) o silencia el link para siempre?
+5. **Cancelar un extract con un Jev esperando:** ¿se cancela en cascada (propuesta) o el Jev falla con “falta contenido”?
