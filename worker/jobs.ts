@@ -13,7 +13,7 @@ import {
 import { capabilities, parseLensDefinition } from "./store";
 import { jevUnavailable } from "../src/attention";
 import { preservedContentStateSql } from "./content-state";
-import { classify, logFailure, LinkFailure } from "./failures";
+import { adapterMessage, classify, logResidualFailure, LinkFailure } from "./failures";
 import type { Lens, Link, Tag } from "../src/types";
 const POOL_LIMITS = { browser: 2, jev: 16 } as const;
 function poolLimit(env: Env, pool: Pool) {
@@ -267,12 +267,12 @@ export class LinkWorkflow extends WorkflowEntrypoint<Env, { id: string }> {
       await step.do("record-failure", async () => {
         await env.DB.prepare("UPDATE usage_events SET status='failed',error='Provider call interrupted before completion' WHERE job_id=? AND status='started'").bind(job.id).run();
         const raw = error instanceof Error ? error.message : "Could not process";
-        // Extraction failures carry a plain reason; adapter messages without one are already user-facing.
+        // Extraction shows a plain reason, or an adapter message written for users; raw detail goes to the logs.
         const failure = job.kind === "extract" && link ? classify(error) : null;
         if (failure && !(error instanceof LinkFailure))
-          logFailure(failure, { link_id: link!.id, job_id: job.id, step: "extract", url: link!.url, attempt: 1, max_attempts: 1, final: true });
-        const reason = failure && (error instanceof LinkFailure || failure.reason !== "unknown") ? failure.reason : null;
-        const message = reason ? failure!.message : raw;
+          await logResidualFailure(env, failure, { link_id: link!.id, job_id: job.id, url: link!.url });
+        const reason = failure?.reason ?? null;
+        const message = failure ? (adapterMessage(raw) ?? failure.message) : raw;
         await env.DB.prepare(
           "UPDATE jobs SET status='failed',step='Needs attention',error=?,reason=?,completed_at=? WHERE id=? AND status='running'",
         )

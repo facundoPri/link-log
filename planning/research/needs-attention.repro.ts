@@ -25,6 +25,7 @@ mock.module("../../worker/metadata", () => ({
 }));
 mock.module("../../worker/adapters", () => ({
   adapterFor: () => ({
+    name: "web",
     extract: async () => {
       if ("throws" in content) throw new Error(content.throws);
       return { markdown: content.markdown, source: "web" };

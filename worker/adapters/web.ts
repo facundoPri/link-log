@@ -1,8 +1,9 @@
 import { validateDestination } from "../metadata";
 import { measured } from "../usage";
-import { LinkFailure } from "../failures";
+import { browserFailure, LinkFailure } from "../failures";
 import type { ContentAdapter } from "./types";
 export const webAdapter: ContentAdapter = {
+  name: "web",
   matches: () => true,
   async extract(env, url, job) {
     await validateDestination(new URL(url), AbortSignal.timeout(10000));
@@ -17,15 +18,14 @@ export const webAdapter: ContentAdapter = {
         const used = response.headers.get("x-browser-ms-used");
         if (used !== null && Number.isFinite(Number(used)))
           meter.browser_ms = Number(used);
-        const data = (await response.json()) as {
+        // A JSON envelope from the Browser API, never the page itself: no HTML content-type check here.
+        const data = (await response.json().catch(() => ({}))) as {
           success?: boolean;
           result?: string;
           errors?: { message: string }[];
         };
         if (!response.ok || data.success === false)
-          throw new Error(
-            data.errors?.[0]?.message || `Markdown: HTTP ${response.status}`,
-          );
+          throw browserFailure(response.status, data.errors?.[0]?.message);
         if (typeof data.result !== "string" || !data.result.trim())
           throw new LinkFailure("empty");
         return { markdown: data.result, source: "web" };

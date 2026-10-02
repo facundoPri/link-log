@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { classify, LinkFailure, responseFailure } from "../worker/failures";
+import { adapterMessage, ADAPTER_MESSAGES, browserFailure, classify, LinkFailure, responseFailure } from "../worker/failures";
 import { FAILURE_MESSAGES, jobProgress } from "../src/failures";
 
 const res = (status: number, type = "text/html", headers: Record<string, string> = {}) =>
@@ -38,14 +38,36 @@ test("thrown errors: timeouts, network and Markdown HTTP errors map to plain rea
   expect(classify(new Error("boom")).detail.technical).toBe("Error: boom");
 });
 
-test("Activity shows the current attempt and the previous reason only while retrying", () => {
-  const base = { status: "running" as const, step: "Fetching preview", attempt: 1, max_attempts: 3, reason: null, preview_reason: null };
-  expect(jobProgress(base)).toEqual({ step: "Fetching preview", note: null });
-  expect(jobProgress({ ...base, attempt: 2, reason: "timeout" })).toEqual({
-    step: "Fetching preview · Attempt 2 of 3",
+test("Browser Rendering error envelopes keep their HTTP status; a 2xx failure is classified by its message", () => {
+  expect(pick(browserFailure(403, "Authentication error"))).toMatchObject({ reason: "blocked", retryable: false, http_status: 403 });
+  expect(browserFailure(403, "Authentication error").detail.technical).toBe("Browser Rendering HTTP 403: Authentication error");
+  expect(pick(browserFailure(404, "Not found"))).toMatchObject({ reason: "not_found", retryable: false });
+  expect(pick(browserFailure(429, "Rate limit exceeded"))).toMatchObject({ reason: "rate_limited", retryable: true, http_status: 429 });
+  expect(pick(browserFailure(503, "Service unavailable"))).toMatchObject({ reason: "site_error", retryable: true });
+  expect(pick(browserFailure(422, "Unprocessable"))).toMatchObject({ reason: "unknown", retryable: false });
+  expect(pick(browserFailure(200, "Navigation timeout of 30000 ms exceeded"))).toMatchObject({ reason: "timeout", retryable: true });
+});
+
+test("only allowlisted adapter messages reach users, even with technical detail appended", () => {
+  expect(adapterMessage(`${ADAPTER_MESSAGES.instagramLogin} Rendered retry: Rendered post: HTTP 500`)).toBe(ADAPTER_MESSAGES.instagramLogin);
+  expect(adapterMessage("D1_ERROR: database unavailable (SQLITE_BUSY)")).toBeNull();
+});
+
+test("Activity shows the attempt, elapsed time against the budget, and the previous reason while retrying", () => {
+  const t0 = 1_000_000;
+  const base = { status: "running" as const, step: "Extracting content", attempt: 1, max_attempts: 2, reason: null, preview_reason: null, attempt_started_at: t0, attempt_budget_ms: 100_000 };
+  expect(jobProgress(base, t0 + 40_000)).toEqual({ step: "Extracting content · Attempt 1 of 2 · 40s of 1m 40s", note: null });
+  expect(jobProgress(base, t0 + 500_000).step).toBe("Extracting content · Attempt 1 of 2 · 1m 40s of 1m 40s");
+  // Between attempts (backoff) there is no running attempt.
+  expect(jobProgress({ ...base, attempt: 2, reason: "timeout", attempt_started_at: null }, t0)).toEqual({
+    step: "Extracting content · Attempt 2 of 2 · Waiting to retry",
     note: "Previous attempt: The site took too long to respond.",
   });
-  expect(jobProgress({ ...base, status: "queued", step: "En cola", attempt: null, max_attempts: null })).toEqual({ step: "En cola", note: null });
+  expect(jobProgress({ ...base, attempt: 2, reason: "timeout" }, t0 + 5_000)).toEqual({
+    step: "Extracting content · Attempt 2 of 2 · 5s of 1m 40s",
+    note: "Previous attempt: The site took too long to respond.",
+  });
+  expect(jobProgress({ ...base, status: "queued", step: "En cola", attempt: null, max_attempts: null, attempt_started_at: null, attempt_budget_ms: null })).toEqual({ step: "En cola", note: null });
   expect(jobProgress({ ...base, status: "done", preview_reason: "blocked" })).toEqual({ step: null, note: "No preview: The site blocks automated access." });
   expect(jobProgress({ ...base, status: "failed", reason: "timeout" })).toEqual({ step: null, note: null });
 });

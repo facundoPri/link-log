@@ -48,7 +48,7 @@ async function enrich(db: D1Database, id: string, url: string) {
       .run();
   } catch (error) {
     const failure = classify(error);
-    logFailure(failure, { link_id: id, job_id: null, step: "preview-retry", url, attempt: 1, max_attempts: 1, final: true });
+    logFailure(failure, { link_id: id, job_id: null, step: "preview-retry", adapter: "preview", url, attempt: 1, max_attempts: 1, final: true });
     await db
       .prepare("UPDATE links SET status='failed', preview_reason=? WHERE id=?")
       .bind(failure.reason, id)

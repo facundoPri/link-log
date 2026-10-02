@@ -4,7 +4,7 @@ import type { Discovered } from "../adapters/types";
 import { transcribeImage, OCR_MODEL } from "../ocr";
 import type { MediaItem, ContentDetails } from "../../src/types";
 import type { WorkflowStepContext } from "cloudflare:workers";
-import { classify, logFailure, LinkFailure } from "../failures";
+import { classify, logFailure, logResidualFailure, LinkFailure } from "../failures";
 import type { FailureReason } from "../../src/failures";
 import type { JobContext, JobHandler } from "./index";
 
@@ -47,6 +47,8 @@ async function storedMedia(env: Env, linkId: string): Promise<MediaItem[]> {
 // non-HTML answers fail fast. The backoff only runs for transient reasons.
 const PREVIEW_RETRIES = { limit: 2, delay: "5 seconds", backoff: "exponential" } as const;
 const CONTENT_RETRIES = { limit: 1, delay: "10 seconds", backoff: "exponential" } as const;
+// Each attempt gives up before the step's own timeout, so a hang is recorded and classified like any failure.
+export const ATTEMPT_BUDGET_MS = { preview: 20_000, content: 100_000 };
 type Failed = { failed: FailureReason };
 
 // One attempt of a retried step. A transient failure with attempts left rethrows so Workflows retries it;
@@ -54,25 +56,40 @@ type Failed = { failed: FailureReason };
 async function attempt<T>(
   { env, job, link }: Pick<JobContext, "env" | "job" | "link">,
   ctx: WorkflowStepContext,
-  at: { step: "preview" | "content"; label: string; limit: number },
+  at: { step: "preview" | "content"; label: string; limit: number; adapter: string },
   run: () => Promise<T>,
 ): Promise<T | Failed> {
-  const max = at.limit + 1;
+  const max = at.limit + 1, budget = ATTEMPT_BUDGET_MS[at.step];
+  const where = { link_id: link.id, job_id: job.id, step: at.step, adapter: at.adapter, url: link.url || link.original_url, max_attempts: max };
+  // A previous attempt that never reached its catch was ended by the engine (step timeout or eviction).
+  const prior = ctx.attempt > 1
+    ? await env.DB.prepare("SELECT attempt,attempt_started_at FROM jobs WHERE id=?").bind(job.id).first<{ attempt: number | null; attempt_started_at: number | null }>()
+    : null;
+  const killed = !!prior?.attempt_started_at && prior.attempt === ctx.attempt - 1;
+  if (killed) logFailure(new LinkFailure("timeout", { technical: "Attempt ended by the Workflow engine" }), { ...where, attempt: ctx.attempt - 1, final: false });
   await env.DB.batch([
-    env.DB.prepare(`UPDATE jobs SET step=?,attempt=?,max_attempts=?${ctx.attempt === 1 ? ",reason=NULL" : ""} WHERE id=?`)
-      .bind(at.label, ctx.attempt, max, job.id),
+    env.DB.prepare(`UPDATE jobs SET step=?,attempt=?,max_attempts=?,attempt_started_at=?,attempt_budget_ms=?,adapter=?${ctx.attempt === 1 ? ",reason=NULL" : killed ? ",reason='timeout'" : ""} WHERE id=?`)
+      .bind(at.label, ctx.attempt, max, Date.now(), budget, at.adapter, job.id),
     // Retries and backoff run while holding the slot; keep the lease alive.
     env.DB.prepare("UPDATE provider_leases SET expires_at=? WHERE job_id=?").bind(Date.now() + 300000, job.id),
   ]);
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    return await run();
+    return await Promise.race([
+      run(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new LinkFailure("timeout", { technical: `Attempt exceeded ${budget} ms` })), budget);
+      }),
+    ]);
   } catch (error) {
     const failure = classify(error);
     const final = !failure.retryable || ctx.attempt >= max;
-    logFailure(failure, { link_id: link.id, job_id: job.id, step: at.step, url: link.url || link.original_url, attempt: ctx.attempt, max_attempts: max, final });
-    await env.DB.prepare("UPDATE jobs SET reason=?,attempt=? WHERE id=?").bind(failure.reason, final ? ctx.attempt : ctx.attempt + 1, job.id).run();
+    logFailure(failure, { ...where, attempt: ctx.attempt, final });
+    await env.DB.prepare("UPDATE jobs SET reason=?,attempt=?,attempt_started_at=NULL WHERE id=?").bind(failure.reason, final ? ctx.attempt : ctx.attempt + 1, job.id).run();
     if (final) return { failed: failure.reason };
     throw failure;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -81,15 +98,17 @@ export const extractHandler: JobHandler = {
   pool: () => "browser",
   async run({ env, step, job, link, config }) {
     const linkJob = { id: job.id, batch_id: job.batch_id, link_id: link.id };
-    const preview = await step.do("resolve-and-preview", { retries: PREVIEW_RETRIES },
-      (ctx) => attempt({ env, job, link }, ctx, { step: "preview", label: "Fetching preview", limit: PREVIEW_RETRIES.limit }, () => extractMetadata(link.original_url)))
-      .catch((error): Failed => {
-        // Only reached when the step itself fails (for example its bookkeeping write); treat it as a final failure.
+    const preview = await step.do("resolve-and-preview", { retries: PREVIEW_RETRIES, timeout: "30 seconds" },
+      (ctx) => attempt({ env, job, link }, ctx, { step: "preview", label: "Fetching preview", limit: PREVIEW_RETRIES.limit, adapter: "preview" }, () => extractMetadata(link.original_url)))
+      // Only reached when the step itself fails (engine timeout, bookkeeping write): a final preview failure.
+      .catch((error) => step.do("record-preview-failure", async (): Promise<Failed> => {
         const failure = classify(error);
-        logFailure(failure, { link_id: link.id, job_id: job.id, step: "preview", url: link.url, attempt: PREVIEW_RETRIES.limit + 1, max_attempts: PREVIEW_RETRIES.limit + 1, final: true });
+        await logResidualFailure(env, failure, { link_id: link.id, job_id: job.id, url: link.url });
         return { failed: failure.reason };
-      });
+      }));
     const previewFailed = "failed" in preview ? preview.failed : null;
+    const metadata = { url: "failed" in preview ? link.url : preview.url };
+    const adapter = adapterFor(metadata.url);
     await step.do("save-preview", async () => {
       if ("failed" in preview)
         // A preview that worked before is kept, like content: the failure is only recorded in Activity.
@@ -98,13 +117,12 @@ export const extractHandler: JobHandler = {
       else
         await env.DB.prepare("UPDATE links SET url=?,domain=?,title=?,description=?,image=?,favicon=?,status='ready',preview_reason=NULL WHERE id=?")
           .bind(preview.url, preview.domain, preview.title, preview.description, preview.image, preview.favicon, link.id).run();
-      await env.DB.prepare("UPDATE jobs SET step='Extracting content',attempt=NULL,max_attempts=NULL,reason=NULL,preview_reason=? WHERE id=?").bind(previewFailed, job.id).run();
+      await env.DB.prepare("UPDATE jobs SET step='Extracting content',attempt=NULL,max_attempts=NULL,reason=NULL,attempt_started_at=NULL,attempt_budget_ms=NULL,adapter=?,preview_reason=? WHERE id=?")
+        .bind(adapter.name, previewFailed, job.id).run();
     });
-    const metadata = { url: "failed" in preview ? link.url : preview.url };
-    const adapter = adapterFor(metadata.url);
     if (!adapter.discover) {
       const content = await step.do("extract-content", { retries: CONTENT_RETRIES, timeout: "2 minutes" },
-        (ctx) => attempt({ env, job, link }, ctx, { step: "content", label: "Extracting content", limit: CONTENT_RETRIES.limit }, async () => {
+        (ctx) => attempt({ env, job, link }, ctx, { step: "content", label: "Extracting content", limit: CONTENT_RETRIES.limit, adapter: adapter.name }, async () => {
           const result = await adapter.extract(env, metadata.url, linkJob);
           if (new TextEncoder().encode(result.markdown).length > 2_000_000) throw new LinkFailure("too_large");
           const key = `links/${link.id}/${job.id}.md`;

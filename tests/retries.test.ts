@@ -1,8 +1,9 @@
 // FAC-48 S3: classified failure reasons, bounded retries with backoff, visible attempts and telemetry.
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
-import { fakes, resetClock, setup } from "./worker-harness";
+import { fakes, resetClock, setup, tick } from "./worker-harness";
 import { FAILURE_MESSAGES, jobProgress } from "../src/failures";
-import { LinkFailure } from "../worker/failures";
+import { ADAPTER_MESSAGES, LinkFailure } from "../worker/failures";
+import { ATTEMPT_BUDGET_MS } from "../worker/handlers/extract";
 import type { Job } from "../src/types";
 
 let logs: Record<string, unknown>[] = [];
@@ -13,7 +14,8 @@ beforeEach(() => {
     try { const v = JSON.parse(String(line)); if (v.event === "link_step_failed") logs.push(v); } catch { /* not JSON */ }
   });
 });
-afterEach(() => { spy.mockRestore(); resetClock(); });
+const budgets = { ...ATTEMPT_BUDGET_MS };
+afterEach(() => { spy.mockRestore(); resetClock(); Object.assign(ATTEMPT_BUDGET_MS, budgets); });
 
 type S = Awaited<ReturnType<typeof setup>>;
 const save = async (s: S, url: string) => (await s.api("/links", "POST", { url })).data.id as string;
@@ -47,7 +49,7 @@ for (const [label, meta, reason] of [
     expect(await s.view(id)).toMatchObject({ status: "failed", content: "ready", job: "done/Done", preview_reason: reason });
     expect(lastJob(s, id).preview_reason).toBe(reason);
     expect(logs).toHaveLength(1);
-    expect(logs[0]).toMatchObject({ event: "link_step_failed", link_id: id, job_id: lastJob(s, id).id, step: "preview", attempt: 1, max_attempts: 3, final: true, reason, domain: "fast.example" });
+    expect(logs[0]).toMatchObject({ event: "link_step_failed", link_id: id, job_id: lastJob(s, id).id, step: "preview", adapter: "preview", attempt: 1, max_attempts: 3, final: true, reason, domain: "fast.example" });
     if (label === "PDF") expect(logs[0]).toMatchObject({ http_status: 200, content_type: "application/pdf" });
   });
 
@@ -64,7 +66,7 @@ for (const [label, meta, reason] of [
     await s.runQueued();
     expect(fakes.calls.meta).toBe(3);
     expect(await s.view(id)).toMatchObject({ status: "failed", content: "ready", job: "done/Done", preview_reason: reason });
-    expect(logs.map((l) => [l.attempt, l.final, l.reason])).toEqual([[1, false, reason], [2, false, reason], [3, true, reason]]);
+    expect(logs.map((l) => [l.adapter, l.attempt, l.final, l.reason])).toEqual([["preview", 1, false, reason], ["preview", 2, false, reason], ["preview", 3, true, reason]]);
   });
 
 test("transient preview failure → retry → success never shows Needs attention; Activity shows attempt 2 of 3", async () => {
@@ -81,7 +83,8 @@ test("transient preview failure → retry → success never shows Needs attentio
   await s.runQueued();
   expect(during).toMatchObject({ status: "pending", processing: true, previewing: true, attention: false, job: "running/Fetching preview" });
   expect(job).toMatchObject({ attempt: 2, max_attempts: 3, reason: "site_error" });
-  expect(jobProgress(job!)).toEqual({ step: "Fetching preview · Attempt 2 of 3", note: `Previous attempt: ${FAILURE_MESSAGES.site_error}` });
+  expect(job).toMatchObject({ attempt_budget_ms: 20_000, adapter: "preview" });
+  expect(jobProgress(job!)).toEqual({ step: "Fetching preview · Attempt 2 of 3 · 0s of 20s", note: `Previous attempt: ${FAILURE_MESSAGES.site_error}` });
   expect(await s.view(id)).toMatchObject({ status: "ready", content: "ready", attention: false, preview_reason: null, job: "done/Done" });
   expect(lastJob(s, id).preview_reason).toBeNull();
 });
@@ -99,7 +102,7 @@ test("transient Markdown failure → 1 retry → success never shows Needs atten
   await s.runQueued();
   expect(fakes.calls.content).toBe(2);
   expect(during).toMatchObject({ content: "queued", processing: true, attention: false, job: "running/Extracting content" });
-  expect(jobProgress(job!)).toEqual({ step: "Extracting content · Attempt 2 of 2", note: `Previous attempt: ${FAILURE_MESSAGES.site_error}` });
+  expect(jobProgress(job!)).toEqual({ step: "Extracting content · Attempt 2 of 2 · 0s of 1m 40s", note: `Previous attempt: ${FAILURE_MESSAGES.site_error}` });
   expect(await s.view(id)).toMatchObject({ content: "ready", attention: false, err: null, content_reason: null, job: "done/Done" });
 });
 
@@ -111,7 +114,7 @@ test("Markdown keeps failing: 2 attempts, then the link fails with a plain reaso
   expect(fakes.calls.content).toBe(2);
   expect(await s.view(id)).toMatchObject({ content: "failed", attention: true, err: FAILURE_MESSAGES.timeout, content_reason: "timeout", job: "failed/Needs attention" });
   expect(lastJob(s, id)).toMatchObject({ reason: "timeout", error: FAILURE_MESSAGES.timeout });
-  expect(logs.map((l) => [l.step, l.attempt, l.final])).toEqual([["content", 1, false], ["content", 2, true]]);
+  expect(logs.map((l) => [l.step, l.adapter, l.attempt, l.final])).toEqual([["content", "web", 1, false], ["content", "web", 2, true]]);
 });
 
 for (const [label, content, reason] of [
@@ -164,8 +167,127 @@ test("a later successful preview clears the reason; Retry preview records its ow
   fakes.meta = { http: 200, type: "application/pdf" };
   await s.api(`/links/${id}/retry`, "POST");
   expect(await s.view(id)).toMatchObject({ status: "failed", preview_reason: "not_html" });
-  expect(logs.at(-1)).toMatchObject({ step: "preview-retry", reason: "not_html", final: true, job_id: null });
+  expect(logs.at(-1)).toMatchObject({ step: "preview-retry", adapter: "preview", reason: "not_html", final: true, job_id: null });
   fakes.meta = { status: "ready" };
   await s.api(`/links/${id}/retry`, "POST");
   expect(await s.view(id)).toMatchObject({ status: "ready", preview_reason: null, attention: false });
+});
+
+// Round 2 (S3 review).
+
+const envelope = (status: number, body: unknown) =>
+  () => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+const failedEnvelope = (status: number, message: string) => envelope(status, { success: false, errors: [{ code: 10000, message }] });
+// A public IP literal skips DNS in validateDestination, so the real web adapter runs offline.
+const PUBLIC_URL = "https://93.184.216.34/page";
+
+for (const [status, message, reason, calls] of [
+  [403, "Authentication error", "blocked", 1],
+  [404, "Not found", "not_found", 1],
+  [429, "Rate limit exceeded", "rate_limited", 2],
+  [503, "Service unavailable", "site_error", 2],
+] as const)
+  test(`real web adapter: a JSON ${status} error envelope is ${reason} with ${calls} Browser call(s)`, async () => {
+    const s = await setup();
+    fakes.browser = failedEnvelope(status, message);
+    const id = await save(s, PUBLIC_URL);
+    await s.runQueued();
+    expect(fakes.calls.browser).toBe(calls);
+    expect(s.db.query("SELECT count(*) n FROM usage_events WHERE link_id=? AND service='browser-markdown' AND status='failed'").get(id)).toEqual({ n: calls });
+    expect(await s.view(id)).toMatchObject({ content: "failed", content_reason: reason, err: FAILURE_MESSAGES[reason] });
+    expect(logs.at(-1)).toMatchObject({ step: "content", adapter: "web", reason, http_status: status, final: true, attempt: calls });
+    expect(String(logs.at(-1)!.detail)).toContain(message);
+  });
+
+test("real web adapter: a successful envelope is saved; an empty one fails fast", async () => {
+  const s = await setup();
+  fakes.browser = envelope(200, { success: true, result: "# Real page" });
+  const id = await save(s, PUBLIC_URL);
+  await s.runQueued();
+  expect(await s.view(id)).toMatchObject({ content: "ready", err: null });
+  fakes.browser = envelope(200, { success: true, result: "  " });
+  await reextract(s, id);
+  await s.runQueued();
+  expect(fakes.calls.browser).toBe(2);
+  expect(lastJob(s, id)).toMatchObject({ status: "failed", reason: "empty" });
+});
+
+test("a failed preview stays out of Needs attention while Markdown is retrying, including after a reload", async () => {
+  const s = await setup();
+  fakes.meta = { http: 403 };
+  fakes.content = [{ throws: "Markdown: HTTP 503" }, { throws: "Markdown: HTTP 503" }];
+  const id = await save(s, "https://mixed.example/x");
+  let during: Awaited<ReturnType<S["view"]>> | undefined;
+  fakes.onContent = async () => {
+    if (fakes.calls.content === 2) during = await s.view(id); // view() reloads GET /api/library
+  };
+  await s.runQueued();
+  expect(during).toMatchObject({ status: "failed", preview_reason: "blocked", content: "queued", processing: true, attention: false, job: "running/Extracting content" });
+  // Settled: both axes failed for good, with readable reasons.
+  expect(await s.view(id)).toMatchObject({ status: "failed", preview_reason: "blocked", content: "failed", content_reason: "site_error", processing: false, attention: true });
+});
+
+test("a hanging Markdown call fails inside the attempt at its time budget and is retried once", async () => {
+  const s = await setup();
+  ATTEMPT_BUDGET_MS.content = 20;
+  fakes.content = { pending: true };
+  const id = await save(s, "https://hang.example/x");
+  await s.runQueued();
+  expect(fakes.calls.content).toBe(2);
+  expect(logs.map((l) => [l.step, l.adapter, l.attempt, l.final, l.reason])).toEqual([["content", "web", 1, false, "timeout"], ["content", "web", 2, true, "timeout"]]);
+  expect(await s.view(id)).toMatchObject({ content: "failed", content_reason: "timeout", err: FAILURE_MESSAGES.timeout });
+});
+
+test("an attempt ended by the engine's step timeout is still recorded, with the persisted step and attempt", async () => {
+  const s = await setup();
+  ATTEMPT_BUDGET_MS.content = 60_000; // the engine gives up first
+  s.engine.timeoutMs = 20;
+  fakes.content = { pending: true };
+  const id = await save(s, "https://engine.example/x");
+  await s.runQueued();
+  expect(fakes.calls.content).toBe(2);
+  expect(logs.map((l) => [l.step, l.adapter, l.attempt, l.max_attempts, l.final, l.reason])).toEqual([
+    ["content", "web", 1, 2, false, "timeout"], // noticed when attempt 2 starts
+    ["content", "web", 2, 2, true, "timeout"], // the step's final rejection, from record-failure
+  ]);
+  expect(lastJob(s, id)).toMatchObject({ status: "failed", reason: "timeout", error: FAILURE_MESSAGES.timeout });
+});
+
+test("a long-running attempt shows elapsed time against its budget, also after a reload", async () => {
+  const s = await setup();
+  const id = await save(s, "https://long.example/x");
+  const batch = (s.db.query("SELECT batch_id FROM jobs WHERE link_id=?").get(id) as { batch_id: string }).batch_id;
+  let shown: string | null = null;
+  fakes.onContent = async () => {
+    tick(40_000);
+    const job = (await s.api(`/batches/${batch}`)).data.jobs[0] as Job; // what Activity polls after a reload
+    shown = jobProgress(job).step;
+  };
+  await s.runQueued();
+  expect(shown!).toBe("Extracting content · Attempt 1 of 2 · 40s of 1m 40s");
+});
+
+test("a bookkeeping failure after extraction shows the plain reason; the raw error goes only to the logs", async () => {
+  const s = await setup();
+  fakes.failSql = /content_state='ready'/; // the save-content write
+  const id = await save(s, "https://busy.example/x");
+  await s.runQueued();
+  const v = await s.view(id);
+  expect(v).toMatchObject({ content: "failed", err: FAILURE_MESSAGES.unknown, content_reason: "unknown" });
+  expect(lastJob(s, id)).toMatchObject({ status: "failed", error: FAILURE_MESSAGES.unknown, reason: "unknown" });
+  expect(logs.at(-1)).toMatchObject({ final: true, reason: "unknown", adapter: "web" });
+  expect(String(logs.at(-1)!.detail)).toContain("SQLITE_BUSY");
+});
+
+test("an allowlisted adapter message is kept for users; the appended technical detail is not", async () => {
+  const s = await setup();
+  fakes.discoverError = `${ADAPTER_MESSAGES.instagramLogin} Rendered retry: Rendered post: HTTP 500`;
+  const id = await save(s, "https://social.example/p/1");
+  await s.runQueued();
+  expect(await s.view(id)).toMatchObject({ content: "failed", err: ADAPTER_MESSAGES.instagramLogin });
+  expect(logs.at(-1)).toMatchObject({ step: "content", adapter: "x", final: true });
+  fakes.discoverError = "TypeError: Cannot read properties of undefined (reading 'text')";
+  await reextract(s, id);
+  await s.runQueued();
+  expect(await s.view(id)).toMatchObject({ content: "failed", err: FAILURE_MESSAGES.unknown });
 });

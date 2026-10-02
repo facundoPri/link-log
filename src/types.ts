@@ -93,6 +93,11 @@ export type Job = {
   /** The current attempt of a retried step, and how many it may take. */
   attempt: number | null;
   max_attempts: number | null;
+  /** When the current attempt started (ms) and how long it may run; null while waiting to retry. */
+  attempt_started_at: number | null;
+  attempt_budget_ms: number | null;
+  /** The content adapter chosen for the job ("preview" while fetching the preview). */
+  adapter: string | null;
   /** The previous failed attempt's reason while retrying; the final reason once failed. */
   reason: string | null;
   /** A preview that failed while the job still extracted the content. */

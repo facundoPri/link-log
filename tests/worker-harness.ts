@@ -7,21 +7,28 @@ import * as metadata from "../worker/metadata";
 import * as adapters from "../worker/adapters";
 import { needsAttention } from "../src/attention";
 import { responseFailure } from "../worker/failures";
+import { webAdapter } from "../worker/adapters/web";
 import type { Link } from "../src/types";
 
 type Meta = { status: "ready" | "failed" } | { throws: string } | { http: number; type?: string; headers?: Record<string, string> };
-type Content = { markdown: string } | { throws: string } | { error: unknown };
+type Content = { markdown: string } | { throws: string } | { error: unknown } | { pending: true };
 // A list is consumed one item per call (the last item sticks), to script transient failures.
 export const fakes: {
   meta: Meta | Meta[];
   content: Content | Content[];
-  calls: { meta: number; content: number };
+  calls: { meta: number; content: number; browser: number };
   onMeta?: () => Promise<void>;
   onContent?: () => Promise<void>;
+  /** Run the real web adapter against this Browser Rendering answer instead of the fake content. */
+  browser?: () => Response;
+  /** Make the link's adapter a discovering (social-style) one that throws this error. */
+  discoverError?: string;
+  /** Make D1 statements matching this pattern fail like a busy database. */
+  failSql?: RegExp;
 } = {
   meta: { status: "ready" },
   content: { markdown: "# page" },
-  calls: { meta: 0, content: 0 },
+  calls: { meta: 0, content: 0, browser: 0 },
 };
 const next = <T>(v: T | T[]): T => (Array.isArray(v) ? (v.length > 1 ? v.shift()! : v[0]!) : v);
 mock.module("../worker/metadata", () => ({
@@ -43,13 +50,18 @@ mock.module("../worker/metadata", () => ({
 }));
 mock.module("../worker/adapters", () => ({
   ...adapters,
-  adapterFor: () => ({
+  adapterFor: () => fakes.browser ? webAdapter : fakes.discoverError ? ({
+    name: "x",
+    discover: async () => { throw new Error(fakes.discoverError); },
+  }) : ({
+    name: "web",
     extract: async () => {
       fakes.calls.content++;
       await fakes.onContent?.();
       const content = next(fakes.content);
       if ("throws" in content) throw new Error(content.throws);
       if ("error" in content) throw content.error;
+      if ("pending" in content) return new Promise(() => {});
       return { markdown: content.markdown, source: "web" };
     },
   }),
@@ -59,12 +71,15 @@ const { default: worker, LinkWorkflow } = await import("../worker/index");
 export const { dispatch } = await import("../worker/jobs");
 
 function d1(db: Database) {
+  const check = (sql: string) => {
+    if (fakes.failSql?.test(sql)) throw new Error("D1_ERROR: database unavailable (SQLITE_BUSY)");
+  };
   const stmt = (sql: string, params: unknown[] = []) => ({
     bind: (...p: unknown[]) => stmt(sql, p),
     all: async () => ({ results: db.query(sql).all(...(params as never[])) }),
     first: async () => db.query(sql).get(...(params as never[])) ?? null,
-    run: async () => ({ meta: { changes: db.query(sql).run(...(params as never[])).changes } }),
-    _exec: () => db.query(sql).run(...(params as never[])),
+    run: async () => (check(sql), { meta: { changes: db.query(sql).run(...(params as never[])).changes } }),
+    _exec: () => (check(sql), db.query(sql).run(...(params as never[]))),
   });
   return {
     prepare: (sql: string) => stmt(sql),
@@ -81,9 +96,12 @@ export async function setup() {
   tick(0);
   fakes.meta = { status: "ready" };
   fakes.content = { markdown: "# page" };
-  fakes.calls = { meta: 0, content: 0 };
+  fakes.calls = { meta: 0, content: 0, browser: 0 };
   fakes.onMeta = undefined;
   fakes.onContent = undefined;
+  fakes.browser = undefined;
+  fakes.failSql = undefined;
+  fakes.discoverError = undefined;
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys=ON");
   for (const f of readdirSync("migrations").filter((f) => f.endsWith(".sql")).sort())
@@ -100,6 +118,7 @@ export async function setup() {
     },
     JOBS: { sendBatch: async (m: { body: { id: string } }[]) => void sent.push(...m) },
     JEV_PROVIDER: "fixture",
+    BROWSER: { quickAction: async () => (fakes.calls.browser++, fakes.browser!()) },
   } as unknown as Env;
   const api = async (path: string, method = "GET", body?: unknown) => {
     const waits: Promise<unknown>[] = [];
@@ -116,7 +135,9 @@ export async function setup() {
     return { status: res.status, data: (await res.json()) as any };
   };
   // Minimal Workflow step: runs callbacks inline with ctx.attempt (1-based), honouring an explicit retry
-  // limit and NonRetryableError. It records each retried step's config and attempts.
+  // limit and NonRetryableError. It records each retried step's config and attempts. With
+  // `engine.timeoutMs`, a step with a timeout races its callback like the engine does (outside the callback).
+  const engine: { timeoutMs?: number } = {};
   const steps: { name: string; retries?: { limit: number; delay: unknown; backoff?: string }; attempts: number }[] = [];
   const step = {
     do: async (name: string, a: unknown, b?: unknown) => {
@@ -127,7 +148,12 @@ export async function setup() {
       steps.push(record);
       for (let i = 0; ; i++) {
         record.attempts++;
-        try { return await fn({ step: { name, count: 1 }, attempt: i + 1, config }); }
+        try {
+          const run = fn({ step: { name, count: 1 }, attempt: i + 1, config });
+          if (!engine.timeoutMs || !config.timeout) return await run;
+          return await Promise.race([run, new Promise((_, reject) => setTimeout(() => reject(Object.assign(
+            new Error(`Execution timed out after ${engine.timeoutMs}ms`), { name: "WorkflowTimeoutError" })), engine.timeoutMs))]);
+        }
         catch (e) { if (i >= limit || (e as Error)?.name === "NonRetryableError") throw e; }
       }
     },
@@ -159,5 +185,5 @@ export async function setup() {
       job: job ? `${job.status}/${job.step}` : null,
     };
   };
-  return { db, env, api, runQueued, runJob, view, sent, steps };
+  return { db, env, api, runQueued, runJob, view, sent, steps, engine };
 }
