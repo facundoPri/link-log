@@ -76,7 +76,7 @@ test("Activity shows the attempt, elapsed time against the budget, and the previ
     step: "Extracting content · Attempt 2 of 2 · 5s of 1m 40s",
     note: "Previous attempt: The site took too long to respond.",
   });
-  expect(jobProgress({ ...base, status: "queued", step: "En cola", attempt: null, max_attempts: null, attempt_started_at: null, attempt_budget_ms: null })).toEqual({ step: "En cola", note: null });
+  expect(jobProgress({ ...base, status: "queued", step: "En cola", attempt: null, max_attempts: null, attempt_started_at: null, attempt_budget_ms: null })).toEqual({ step: "Queued", note: null });
   expect(jobProgress({ ...base, status: "done", preview_reason: "blocked" })).toEqual({ step: null, note: "No preview: The site blocks automated access." });
   expect(jobProgress({ ...base, status: "failed", reason: "timeout" })).toEqual({ step: null, note: null });
 });

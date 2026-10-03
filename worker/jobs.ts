@@ -59,10 +59,10 @@ export const cancelDependents = (db: D1Database, cancelled: string, params: unkn
   ).bind(now, ...params);
 const ahead = (j: string) =>
   `NOT EXISTS (SELECT 1 FROM jobs a WHERE a.link_id=${j}.link_id AND (a.status IN ('queued','running') OR (a.status='waiting' AND (a.created_at<${j}.created_at OR (a.created_at=${j}.created_at AND a.rowid<${j}.rowid)))))`;
-/** Moves the next waiting job of each idle link (or of one link) to queued. Safe to repeat. */
-export const promoteWaiting = (db: D1Database, linkId?: string) =>
-  db.prepare(`UPDATE jobs SET status='queued' WHERE status='waiting' AND link_id IS NOT NULL${linkId ? " AND link_id=?" : ""} AND ${ahead("jobs")}`)
-    .bind(...(linkId ? [linkId] : []));
+/** Moves the next waiting job of each idle link (or of one link) to queued. Safe to repeat. `guard` adds a condition. */
+export const promoteWaiting = (db: D1Database, linkId?: string, guard?: { sql: string; params: unknown[] }) =>
+  db.prepare(`UPDATE jobs SET status='queued' WHERE status='waiting' AND link_id IS NOT NULL${linkId ? " AND link_id=?" : ""} AND ${ahead("jobs")}${guard ? ` AND ${guard.sql}` : ""}`)
+    .bind(...(linkId ? [linkId] : []), ...(guard?.params ?? []));
 /** Sends the queued jobs of these links. A lost send is resent by recover(), and dispatch ignores repeats. */
 export async function startNext(env: Env, linkIds: (string | null)[]) {
   const ids = [...new Set(linkIds.filter((id): id is string => !!id))];
@@ -247,26 +247,29 @@ export async function dispatch(batch: MessageBatch<{ id: string }>, env: Env) {
         const status = await instance.status();
         if (!status) throw error;
         if (["errored", "terminated", "complete"].includes(status.status)) {
-          await env.DB.batch([
+          // Every write is guarded by this invocation having settled the job as Interrupted: a job cancelled
+          // (or settled) while the status was read is left alone, and so is whatever runs on its link now.
+          const now = new Date().toISOString();
+          const won = "EXISTS (SELECT 1 FROM jobs WHERE id=? AND step='Interrupted' AND completed_at=?)";
+          const results = await env.DB.batch([
             env.DB.prepare(
               "UPDATE jobs SET status='failed',step='Interrupted',error=?,completed_at=? WHERE id=? AND status IN ('queued','running')",
             ).bind(
               job.target_id
                 ? "The evaluation was interrupted. Retry it explicitly."
                 : "Extraction was interrupted. Try again.",
-              new Date().toISOString(),
+              now,
               job.id,
             ),
-            // Not a final failure: the link goes back to how it was, like a cancelled job.
+            // Not a final failure: the link goes back to how it was, like a cancelled job, unless another
+            // extraction owns its queued state.
             env.DB.prepare(
-              `UPDATE links SET content_state=${restoredContentStateSql},content_error=CASE WHEN content_key IS NULL THEN content_error ELSE 'Extraction was interrupted. Try again.' END WHERE id=? AND content_state='queued'`,
-            ).bind(job.link_id),
-            env.DB.prepare("DELETE FROM provider_leases WHERE job_id=?").bind(
-              job.id,
-            ),
-            ...(job.link_id ? [promoteWaiting(env.DB, job.link_id)] : []),
+              `UPDATE links SET content_state=${restoredContentStateSql},content_error=CASE WHEN content_key IS NULL THEN content_error ELSE 'Extraction was interrupted. Try again.' END WHERE id=? AND content_state='queued' AND ${won} AND NOT EXISTS (SELECT 1 FROM jobs j JOIN batches b ON b.id=j.batch_id WHERE j.link_id=links.id AND j.${busy} AND b.kind='extract')`,
+            ).bind(job.link_id, job.id, now),
+            env.DB.prepare(`DELETE FROM provider_leases WHERE job_id=? AND ${won}`).bind(job.id, job.id, now),
+            ...(job.link_id ? [promoteWaiting(env.DB, job.link_id, { sql: won, params: [job.id, now] })] : []),
           ]);
-          await startNext(env, [job.link_id]);
+          if (results[0]!.meta.changes) await startNext(env, [job.link_id]);
         }
       }
       m.ack();

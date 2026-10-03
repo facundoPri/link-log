@@ -3,7 +3,7 @@
 // stored for what didn't, Needs attention is never touched, and an extraction takes its waiting Jev jobs with it.
 import { afterEach, expect, test } from "bun:test";
 import { fakes, resetClock, setup } from "./worker-harness";
-import { recover } from "../worker/jobs";
+import { dispatch, recover } from "../worker/jobs";
 import { JEV_FAILURE_MESSAGES } from "../src/failures";
 
 afterEach(resetClock);
@@ -458,4 +458,45 @@ test("a slot acquisition in flight when its job is cancelled leaves no lease; th
   await s.runQueued();
   expect(s.steps.some((x) => x.name.startsWith("waiting-for-slot"))).toBe(false);
   expect(await s.view(second)).toMatchObject({ content: "ready", job: "done/Done" });
+});
+
+test("stale Queue recovery after a cancel leaves the successor extraction's queued state alone", async () => {
+  const s = await start();
+  const id = await save(s, "https://c.example/stale");
+  const ex = await runningExtraction(s, id);
+  // A redelivered message for the running job finds its instance and waits on its status.
+  const real = (s.env as any).PROCESS_LINK;
+  const held = gate<{ status: string }>();
+  let asked = false;
+  (s.env as any).PROCESS_LINK = {
+    create: async () => { throw new Error("instance already exists"); },
+    get: async (j: string) => ({ ...(await real.get(j)), status: () => ((asked = true), held.opened) }),
+  };
+  const acked: string[] = [];
+  const recovery = dispatch({ messages: [{ body: { id: ex.id }, ack: () => void acked.push(ex.id), retry() {} }] } as never, s.env);
+  await until(() => asked);
+  (s.env as any).PROCESS_LINK = real;
+
+  expect((await cancel(s, ex.id)).status).toBe(200);
+  const next = (await s.api("/batches", "POST", { kind: "extract", ids: [id] })).data.batchId;
+  const pending = s.sent.splice(0);
+  const successor = jobOf(s, next, id);
+  expect(successor.status).toBe("queued");
+  expect(linkRow(s, id).content_state).toBe("queued");
+
+  held.open({ status: "terminated" });
+  await recovery;
+  expect(acked).toEqual([ex.id]);
+  expect(job(s, ex.id).step).toBe("Cancelled");
+  expect(jobOf(s, next, id).status).toBe("queued");
+  const l = (await s.api("/library")).data.links.find((x: { id: string }) => x.id === id);
+  expect(l).toMatchObject({ content_state: "queued", processing: true, attention_kind: null });
+  // Jev (SelectionBar, App) still counts it as an extraction on the way.
+  expect(!l.content_key && l.content_state !== "queued").toBe(false);
+  // Nothing settled here, so nothing is resent.
+  expect(s.sent).toEqual([]);
+  await ex.release();
+  s.sent.push(...pending);
+  await runAll(s);
+  expect(await s.view(id)).toMatchObject({ content: "ready", processing: false, job: "done/Done" });
 });
