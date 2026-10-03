@@ -149,10 +149,12 @@ public access without login or personal cookies. A blocked image remains visible
 as a partial result when useful text was obtained.
 
 D1 acts as the outbox, Queue delivers IDs and each Workflow uses a stable ID so
-work is not duplicated on redelivery. A link runs one job at a time: a job requested
-while another is queued, running or waiting on the same link is stored as `waiting`
-(never sent to the Queue) and starts, oldest first, in the same transaction that
-settles the job ahead of it; cron also starts any waiting job left without one ahead.
+work is not duplicated on redelivery. A link runs one job at a time: an auto-tag or
+lens job requested while another is queued, running or waiting on the same link is
+stored as `waiting` (never sent to the Queue) and starts, oldest first, in the same
+transaction that settles the job ahead of it; cron also starts any waiting job left
+without one ahead. An explicit extraction or preview is refused instead ("Some
+selected links are still processing.") while its link is busy.
 Auto-tag and lenses accept links with content or with an extraction on the way and
 skip the rest ("Extract, then auto-tag" extracts them first, only when asked); Jev
 never starts an extraction. If that extraction ends without content, the waiting
@@ -188,19 +190,24 @@ no content fails with "Got a login page instead of the content." (Needs attentio
 or the preview as content when that setting is on), while a link with content keeps
 the previous version and the failure stays in Activity. Each detection is logged as
 `login_wall_detected` (domain, matched pattern, text length). Each failed attempt is logged as a `link_step_failed` JSON line (step,
-reason, HTTP status, content type, domain, attempt) in Workers Logs. There are two shared provider slots via five-minute
-D1 leases; steps have a two-minute timeout. Cron recovers pending jobs;
+reason, HTTP status, content type, domain, attempt) in Workers Logs. Provider slots are shared through five-minute D1 leases, in two
+pools: Browser Rendering 2 and Jev 16 by default, configurable with
+`BROWSER_CONCURRENCY` and `JEV_CONCURRENCY`. The preview step times out after 30
+seconds (each attempt gives up after 20) and the Markdown step after two minutes
+(each attempt gives up after 100 seconds). Cron recovers pending jobs;
 `scripts/dev.ts` simulates this cron every 30 seconds because Wrangler does not
 run cron automatically in local dev.
 
 The full content is stored in R2 (maximum 2 MB; manual upload 500,000 characters).
-Classification sends the full content and lets the provider's tokenizer validate
-the real window, without confusing bytes with tokens. TypeSafe documents 32,000
-tokens for `state` plus the longest question and 64,000 for the complete request.
-If the provider rejects the size, the job fails with a clear message and preserves
-content, tags and previous scores. It is not truncated and no per-fragment
-probabilities are added automatically; the strategy for documents that truly
-exceed the window is still pending.
+Classification sends the content up to 160,000 characters (`MAX_STATE_CHARS`);
+longer content is cut there and ends with "[Content truncated for classification]",
+so the end of a long document does not reach Jev. The provider's tokenizer still
+validates the real window, without confusing bytes with tokens. TypeSafe documents
+32,000 tokens for `state` plus the longest question and 64,000 for the complete
+request. If the provider rejects the size, the job fails with a clear message and
+preserves content, tags and previous scores. No per-fragment probabilities are
+added automatically; the strategy for documents that truly exceed the window is
+still pending.
 Processing uses full context per link, not embeddings or a vector index.
 
 ### Verification
