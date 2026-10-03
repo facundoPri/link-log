@@ -35,6 +35,8 @@ const FIXTURES: [string, string, string][] = [
   ["robot check", "not a robot", "# Robot or human?\n\nConfirm that you are not a robot by clicking the box below.\n\nPress & Hold"],
   ["unusual traffic", "unusual traffic", "Our systems have detected unusual traffic from your computer network. This page checks to see if it's really you sending the requests, and not a robot."],
   ["block page", "blocked", "# Sorry, you have been blocked\n\nYou are unable to access example.com\n\n## Why have I been blocked?\n\nThis website is using a security service to protect itself from online attacks."],
+  ["passwordless sign-in", "sign in", "# Welcome back\n\n[Sign in with Google](https://example.com/g)\n\n[Sign in with Apple](https://example.com/a)\n\n[Sign in with email](https://example.com/e)"],
+  ["Just a moment heading", "just a moment", "# www.example.com\n\n## Just a moment"],
   ["JavaScript wall", "enable javascript", "# example.com\n\nPlease enable JavaScript and cookies to continue."],
   ["PerimeterX", "blocked", "# Pardon Our Interruption\n\nAs you were browsing something about your browser made us think you were a bot."],
 ];
@@ -42,6 +44,13 @@ const FIXTURES: [string, string, string][] = [
 const paragraph = "The city council approved the new transit plan on Tuesday after months of public hearings, with members citing ridership growth, shorter commutes and the cost of maintaining the existing bus fleet as the main reasons for the change. ";
 const LONG_ARTICLE = `# Transit plan approved\n\n${paragraph.repeat(12)}\n\nReaders can sign in to save this article for later.\n\n${paragraph.repeat(8)}`;
 const SHORT_POST = "# Release notes 2.4\n\nThis release improves startup time, fixes the export dialog on small screens and adds keyboard shortcuts for the editor. Thanks to everyone who reported issues.\n\n[Home](https://example.com) · [Docs](https://example.com/docs) · [Sign in](https://example.com/login) · [Sign up](https://example.com/join)";
+// Short complete pages whose prose mentions a wall phrase (S9 review): the page itself is not a wall.
+const SHORT_LEGIT: [string, string][] = [
+  ["access denied article", "# Fixing a file permission error\n\nYesterday our deploy printed access denied when the cache directory was read-only. Giving the build user ownership fixed it. Here are the three steps we used: inspect the permissions, change the owner, and restart the service."],
+  ["CAPTCHA setup guide", "# Adding a CAPTCHA to your signup form\n\nCreate a site key in the dashboard, load the widget script on the page, and verify the response token on your server before creating the account."],
+  ["request blocked release notes", "# Release notes 3.1\n\nThe proxy formerly said \"request blocked\" for large attachments. Uploads up to 50 MB now go through."],
+  ["account settings help", "# Changing your password\n\nTo change your password, sign in and open Settings, then choose Security. Enter the new password twice and save."],
+];
 const ARTICLE_ABOUT_CAPTCHAS = `# Why CAPTCHAs keep getting harder\n\n${"Researchers say the puzzles meant to verify you are human now trip up people more often than bots, and some sites show an access denied page to whole networks. ".repeat(14)}`;
 
 for (const [name, pattern, text] of FIXTURES)
@@ -55,6 +64,20 @@ test("a long article that mentions sign in once, a short page with a Sign in lin
   expect(detectLoginWall(SHORT_POST)).toBeNull();
   expect(detectLoginWall(ARTICLE_ABOUT_CAPTCHAS)).toBeNull();
 });
+
+for (const [name, text] of SHORT_LEGIT)
+  test(`a short legitimate page (${name}) is not a wall and is saved as ready content`, async () => {
+    expect(text.length).toBeLessThan(300);
+    expect(detectLoginWall(text)).toBeNull();
+    const s = await setup();
+    fakes.browser = markdown(text);
+    const id = await save(s, PUBLIC_URL);
+    await s.runQueued();
+    const link = linkRow(s, id);
+    expect(link).toMatchObject({ content_state: "ready", content_source: "web", content_reason: null, attention_kind: null });
+    expect(s.r2.get(link.content_key!)).toBe(text);
+    expect(events.filter((e) => e.event === "login_wall_detected")).toEqual([]);
+  });
 
 for (const [name, pattern, text] of FIXTURES)
   test(`${name}: discarded without retry; with no content the link needs attention with login_wall and keeps its preview`, async () => {

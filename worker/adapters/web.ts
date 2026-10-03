@@ -44,34 +44,44 @@ export const webAdapter: ContentAdapter = {
 
 // Only short pages are considered: a real article can mention signing in, captchas or access denied.
 const WALL_MAX_CHARS = 1500;
-// Checked in order; the label is what telemetry reports. Plain "sign in" also needs a password field.
-const WALL_PATTERNS: [string, RegExp][] = [
-  ["verify you are human", /\bverify(ing)? (that )?you('re| are) (a )?human\b/],
-  ["just a moment", /^just a moment\b|\bjust a moment(\.\.\.|…)/],
-  ["captcha", /\b(re|h)?captcha\b/],
-  ["access denied", /\baccess (is )?denied\b/],
-  ["log in to continue", /\b(log ?in|sign ?in) to continue\b/],
-  ["sign in required", /\b(log ?in|sign ?in) (is )?required\b|\b(log ?in|sign ?in) to (view|see|read|access)\b|\byou (must|need to) (be logged in|be signed in|log ?in|sign ?in)\b|\bplease (log ?in|sign ?in)\b/],
-  ["unusual traffic", /\bunusual traffic\b/],
-  ["not a robot", /\b(not a robot|are you a robot|robot or human)\b/],
-  ["blocked", /\byou (have been|are|were) blocked\b|\bpardon our interruption\b|\battention required\b|\brequest (was )?blocked\b/],
-  ["enable javascript", /\benable (javascript|cookies)( and (javascript|cookies))? to continue\b/],
+// The page itself must present the wall: each pattern matches a whole Markdown line (a heading or a
+// standalone instruction) from its start, never a phrase quoted inside a sentence. Checked in order; the
+// label is what telemetry reports.
+const WALL_LINES: [string, RegExp][] = [
+  ["verify you are human", /^(please )?(verify(ing)?|confirm) (that )?you('re| are) (a )?human\b/],
+  ["just a moment", /^just a moment( ?(\.\.\.|…))?$/],
+  ["captcha", /^(please )?(complete|solve|enter|type|fill in|answer) (the |this )?(following |security |below )?(re|h)?captcha\b/],
+  ["access denied", /^(error \d+ )?access (is )?denied[.!]?$/],
+  ["log in to continue", /^(please )?(log ?in|sign ?in) to continue\b/],
+  ["sign in required", /^(please )?(log ?in|sign ?in) (is )?required\b|^(please )?(log ?in|sign ?in) to (view|see|read|access)\b|^you (must|need to) (be logged in|be signed in|log ?in|sign ?in)\b/],
+  ["unusual traffic", /^our systems have detected unusual traffic\b/],
+  ["not a robot", /^(robot or human\??|are you a robot\??)$|^(please )?(confirm|verify) (that )?(you('re| are)|i'?m|i am) not a robot\b/],
+  ["blocked", /^(sorry, )?(you have been|you are|you were) blocked[.!]?$|^(the )?request (was )?blocked[.!]?$|^pardon our interruption[.!]?$|^attention required!?( \| cloudflare)?$/],
+  ["enable javascript", /^(please )?enable (javascript|cookies)( and (javascript|cookies))? to continue\b/],
 ];
-const SIGN_IN = /\b(sign ?in|log ?in)\b/;
-// A login form asks for a password; a navigation bar's "Sign in · Sign up" does not.
-const CREDENTIALS = /\bpassword\b/;
+// A plain "sign in" counts only on a sign-in form: a short sign-in line plus a standalone password field,
+// or several "Sign in with …" provider buttons. A word in prose or a navigation link is not enough.
+const SIGN_IN_LINE = /^(sign ?in|log ?in|login)\b.{0,30}$/;
+const PASSWORD_FIELD = /^((enter )?(your )?password|forgot (your )?password\??)$/;
+const PROVIDER_BUTTON = /^(sign ?in|log ?in|continue) with (google|apple|facebook|microsoft|github|email|phone)$/;
+
+const plainLines = (markdown: string) => markdown.split("\n")
+  .map((line) => line
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/https?:\/\/\S+/g, "")
+    .replace(/^\s*(#{1,6}|>|[-*+]|\d+\.)\s+/, "")
+    .replace(/[*_`]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase())
+  .filter(Boolean);
 
 /** A short extracted text that is a login wall, captcha or block page instead of the page's content. */
 export function detectLoginWall(markdown: string): { pattern: string } | null {
-  const text = markdown
-    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/https?:\/\/\S+/g, "")
-    .replace(/[#*_>`|]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
-  if (text.length > WALL_MAX_CHARS) return null;
-  const found = WALL_PATTERNS.find(([, re]) => re.test(text));
+  const lines = plainLines(markdown);
+  if (lines.join(" ").length > WALL_MAX_CHARS) return null;
+  const found = WALL_LINES.find(([, re]) => lines.some((line) => re.test(line)));
   if (found) return { pattern: found[0] };
-  return SIGN_IN.test(text) && CREDENTIALS.test(text) ? { pattern: "sign in" } : null;
+  const form = lines.some((l) => PASSWORD_FIELD.test(l)) || lines.filter((l) => PROVIDER_BUTTON.test(l)).length >= 2;
+  return form && lines.some((l) => SIGN_IN_LINE.test(l)) ? { pattern: "sign in" } : null;
 }
