@@ -272,6 +272,42 @@ try {
   assert.deepEqual([r10!.links, r10!.jobs, r10!.empty_batches], [197, 197, 0]);
   pass("100-URL import and 97-URL Browser save succeed on real D1 (bound-parameter limit); retry is a pure duplicate, no empty batches");
 
+  // 6e. A full 100-tab evaluation can be acknowledged and cancelled on real local D1 (the target
+  //     keys travel as one JSON parameter, not 100+ bound parameters); B can do neither.
+  await d1("DELETE FROM app_rate_limits WHERE key LIKE 'jobs:%'"); // earlier steps used most of the hourly job quota
+  const tabs = Array.from({ length: 100 }, (_, i) => `tab-${i}`);
+  const fullEvaluation = (requestId: string) => ({
+    ...evaluation,
+    requestId,
+    targets: tabs.map((targetKey) => ({ ...evaluation.targets[0]!, targetKey, url: `https://example.com/${requestId}/${targetKey}` })),
+  });
+  assert.equal((await A.send("/api/browser/evaluations", fullEvaluation("e2e-full-ack"))).status, 201);
+  let full: { targets: { state: string }[] } = { targets: [] };
+  for (let i = 0; i < 180; i++) {
+    full = (await (await A.get("/api/browser/evaluations/e2e-full-ack")).json()) as typeof full;
+    if (full.targets.length === 100 && full.targets.every((t) => t.state === "done" || t.state === "failed")) break;
+    await Bun.sleep(1000);
+  }
+  const answered = full.targets.filter((t) => t.state === "done").length;
+  assert.equal(answered, 100, JSON.stringify(full.targets.map((t) => t.state)));
+  assert.equal((await B.send("/api/browser/evaluations/e2e-full-ack/ack", { targetKeys: tabs })).status, 404);
+  const fullAck = await A.send("/api/browser/evaluations/e2e-full-ack/ack", { targetKeys: tabs });
+  assert.equal(fullAck.status, 200, `ack of 100 (${fullAck.status})`);
+  assert.deepEqual(await fullAck.json(), { acked: 100 });
+  assert.equal((await A.send("/api/browser/evaluations", fullEvaluation("e2e-full-cancel"))).status, 201);
+  assert.equal((await B.send("/api/browser/evaluations/e2e-full-cancel", { targetKeys: tabs }, "DELETE")).status, 404);
+  const fullCancel = await A.send("/api/browser/evaluations/e2e-full-cancel", { targetKeys: tabs }, "DELETE");
+  assert.equal(fullCancel.status, 200, `cancel of 100 (${fullCancel.status})`);
+  const { cancelled } = (await fullCancel.json()) as { cancelled: number };
+  const [full6e] = await d1(
+    `SELECT (SELECT count(*) FROM browser_targets WHERE request_id='e2e-full-ack' AND acked_at IS NOT NULL AND answer IS NULL AND capture_key IS NULL) acked,
+            (SELECT count(*) FROM jobs j JOIN browser_targets bt ON bt.id=j.target_id WHERE bt.request_id='e2e-full-cancel' AND j.error='Cancelled') cancelled,
+            (SELECT count(*) FROM browser_requests WHERE request_id LIKE 'e2e-full-%' AND user_id IS NOT '${ownerA}') foreign_requests`,
+  );
+  assert.deepEqual([full6e!.acked, full6e!.cancelled, full6e!.foreign_requests], [100, cancelled, 0]);
+  assert.ok(cancelled > 0, "the cancel reached queued jobs");
+  pass(`100-target ack (100 acked, snapshots purged) and cancel (${cancelled} queued jobs cancelled) on real D1; B gets 404 on both`);
+
   // 7. Password reset revokes A's sessions; logout ends B's.
   since = Date.now();
   assert.equal((await viaUi("/api/auth/request-password-reset", { body: { email: "a@e2e.test", redirectTo: "/reset-password" } })).status, 200);
