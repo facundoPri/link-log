@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Tag } from "../../src/types";
 import { json, library, text, threshold } from "../store";
-import { HttpError, notFound, ownerOf, type AppEnv } from "../http/context";
+import { badRequest, HttpError, notFound, ownerOf, type AppEnv } from "../http/context";
 import { lensFields, tagNames } from "./shared";
 
 /** Tags and lenses: names are unique per owner, never across owners. */
@@ -9,7 +9,7 @@ export const taxonomyRoutes = new Hono<AppEnv>()
   .post("/tags", async (c) => {
     const userId = ownerOf(c);
     const name = tagNames([c.get("body").name])[0];
-    if (!name) throw new Error("Enter a name.");
+    if (!name) throw badRequest("Enter a name.");
     await c.env.DB.prepare("INSERT OR IGNORE INTO tags (id,user_id,name) VALUES (?,?,?)")
       .bind(crypto.randomUUID(), userId, name).run();
     return json(await library(c.env, userId));
@@ -26,7 +26,7 @@ export const taxonomyRoutes = new Hono<AppEnv>()
       .bind(c.req.param("id"), userId).first<Tag>();
     if (!current) throw notFound("tag");
     const name = tagNames([body.name])[0];
-    if (!name) throw new Error("Enter a name.");
+    if (!name) throw badRequest("Enter a name.");
     const same = await env.DB.prepare("SELECT id FROM tags WHERE user_id=? AND name=? AND id<>?").bind(userId, name, current.id).first();
     if (same) throw new HttpError(409, "A tag with that name already exists.");
     await env.DB.prepare("UPDATE tags SET name=?,description=?,threshold=?,version=version+1 WHERE id=? AND user_id=?")
@@ -46,7 +46,7 @@ export const taxonomyRoutes = new Hono<AppEnv>()
     const existing = await env.DB.prepare("SELECT id FROM lenses WHERE user_id=? AND name=?").bind(userId, f.name).first();
     if (existing) throw new HttpError(409, "A lens with that name already exists.");
     const scope = body.scope === undefined ? "library" : String(body.scope);
-    if (scope !== "library" && scope !== "browser") throw new Error("Invalid lens scope.");
+    if (scope !== "library" && scope !== "browser") throw badRequest("Invalid lens scope.");
     await env.DB.prepare(
       "INSERT INTO lenses(id,user_id,name,type,question,options,threshold,created_at,scope) VALUES(?,?,?,?,?,?,?,?,?)",
     )

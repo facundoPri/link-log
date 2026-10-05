@@ -1,3 +1,4 @@
+import { isAPIError } from "better-auth/api";
 import { createMiddleware } from "hono/factory";
 import { createAuth } from "../auth";
 import { ConfigError, hostAllowed, readConfig } from "../config";
@@ -39,13 +40,21 @@ export const sameOriginWrites = createMiddleware<AppEnv>(async (c, next) => {
   await next();
 });
 
-/** Every private route: a valid D1 session becomes the request Principal. */
+/**
+ * Every private route: a valid D1 session becomes the request Principal. Only a missing, expired
+ * or revoked session is 401 (the UI then shows sign-in). A lookup that failed (D1 outage, timeout)
+ * says nothing about the session: 503, so the client keeps the user, the page and the extension.
+ */
 export const requireSession = createMiddleware<AppEnv>(async (c, next) => {
   let session;
   try {
     session = await c.get("auth").api.getSession({ headers: c.req.raw.headers });
-  } catch {
-    console.error(JSON.stringify({ event: "session_lookup_failed" }));
+  } catch (error) {
+    // Better Auth answers 401 itself when the session vanished mid-refresh (concurrent revocation).
+    if (!(isAPIError(error) && error.statusCode === 401)) {
+      console.error(JSON.stringify({ event: "session_lookup_failed" }));
+      return json({ error: "Could not check your session. Try again.", code: "session-unavailable" }, 503);
+    }
   }
   if (!session) return json({ error: "Sign in to continue." }, 401);
   c.set("principal", { kind: "session", userId: session.user.id, sessionId: session.session.id });

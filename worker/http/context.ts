@@ -31,6 +31,8 @@ export class HttpError extends Error {
     super(message);
   }
 }
+/** Invalid input from the caller: its message is shown to the user. Any other error answers 500. */
+export const badRequest = (message: string) => new HttpError(400, message);
 // Foreign, legacy (unassigned) and deleted IDs all answer the same way: existence is not revealed.
 export const notFound = (what = "link") => new HttpError(404, `The ${what} no longer exists.`);
 

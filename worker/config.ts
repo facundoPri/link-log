@@ -54,8 +54,9 @@ export function readConfig(env: Env): AppConfig {
   if (!/^(?:[^<>@\s][^<>@]*<)?[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+>?$/.test(emailFrom))
     throw new ConfigError("EMAIL_FROM is missing or invalid.");
 
-  // The deterministic test provider answers without a model: never in a deployed Worker.
-  if (!local && (env.JEV_PROVIDER === "fixture" || env.ALLOW_FIXTURE_JEV))
+  // The deterministic test provider answers without a model: never in a deployed Worker. Only an
+  // explicit "off" (unset, "", "0", "false") passes; "1" or anything ambiguous fails closed.
+  if (!local && (env.JEV_PROVIDER === "fixture" || !["", "0", "false"].includes(String(env.ALLOW_FIXTURE_JEV ?? "").trim().toLowerCase())))
     throw new ConfigError("The fixture Jev provider is only available in local and test environments.");
 
   const limit = Number(env.AUTH_EMAIL_DAILY_LIMIT ?? 200);

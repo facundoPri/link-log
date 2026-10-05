@@ -4,7 +4,7 @@ import { json, library } from "../store";
 import { enqueue } from "../jobs";
 import { preservedContentStateSql } from "../content-state";
 import { OCR_USAGE_COLUMNS } from "../usage";
-import { ownerOf, type AppEnv } from "../http/context";
+import { badRequest, ownerOf, type AppEnv } from "../http/context";
 import { ownedBatch } from "./shared";
 
 type JobUsageRow = {
@@ -39,9 +39,9 @@ const OWNED_TITLE_JOINS =
 export const activityRoutes = new Hono<AppEnv>()
   .post("/batches", async (c) => {
     const env = c.env, userId = ownerOf(c), body = c.get("body");
-    if (!Array.isArray(body.ids) || body.ids.some((id) => typeof id !== "string")) throw new Error("Invalid selection.");
-    if (!["extract", "autotag", "lens"].includes(String(body.kind))) throw new Error("Invalid action.");
-    if (body.kind === "lens" && typeof body.lensId !== "string") throw new Error("Pick a lens.");
+    if (!Array.isArray(body.ids) || body.ids.some((id) => typeof id !== "string")) throw badRequest("Invalid selection.");
+    if (!["extract", "autotag", "lens"].includes(String(body.kind))) throw badRequest("Invalid action.");
+    if (body.kind === "lens" && typeof body.lensId !== "string") throw badRequest("Pick a lens.");
     const batchId = await enqueue(env, userId, body.ids as string[], body.kind as "extract" | "autotag" | "lens", body.lensId as string | undefined);
     return json({ ...(await library(env, userId)), batchId });
   })

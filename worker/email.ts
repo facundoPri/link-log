@@ -1,5 +1,5 @@
 import type { AppConfig } from "./config";
-import { consume, LIMITS, sha256 } from "./limits";
+import { charge, LIMITS, sha256 } from "./limits";
 
 export type AuthEmailKind = "verify" | "magic" | "reset";
 export type AuthEmail = { kind: AuthEmailKind; to: string; url: string };
@@ -49,9 +49,11 @@ export function renderAuthEmail({ kind, to, url }: AuthEmail) {
 export function createMailer(env: Env, config: AppConfig, waitUntil: (p: Promise<unknown>) => void) {
   async function deliver(email: AuthEmail) {
     const recipient = email.to.trim().toLowerCase();
-    const allowed =
-      (await consume(env.DB, `email:to:${await sha256(recipient)}`, LIMITS.emailPerRecipient)) &&
-      (await consume(env.DB, "email:day", { window: 86400, max: config.emailDailyLimit }));
+    // Both budgets or neither: a send refused by one cap must not use up the other.
+    const allowed = await charge(env.DB, [
+      { key: "email:day", limit: { window: 86400, max: config.emailDailyLimit }, cost: 1 },
+      { key: `email:to:${await sha256(recipient)}`, limit: LIMITS.emailPerRecipient, cost: 1 },
+    ]);
     if (!allowed) {
       console.warn(JSON.stringify({ event: "auth_email", kind: email.kind, outcome: "suppressed_limit" }));
       return;

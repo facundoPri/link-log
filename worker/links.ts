@@ -31,14 +31,25 @@ export async function addLinks(env: Env, userId: string, inputs: string[]): Prom
     }
   });
   type Existing = { id: string; orphan: number };
-  const find = (url: string) =>
-    env.DB.prepare(
-      "SELECT id,(content_key IS NULL AND NOT EXISTS(SELECT 1 FROM jobs WHERE link_id=links.id)) orphan FROM links WHERE user_id=? AND (original_url=? OR url=?)",
-    )
-      .bind(userId, url, url)
-      .first<Existing>();
-  const known = new Map<string, Existing | null>();
-  for (const p of parsed) if ("url" in p && !known.has(p.url)) known.set(p.url, await find(p.url));
+  // Every URL in ONE owner-scoped statement: the list is a single JSON parameter (D1 allows 100
+  // bound parameters per statement), not one query per URL. A link saved under that original URL
+  // wins over one whose resolved URL matches.
+  const findAll = async (urls: string[]) => {
+    const rows = urls.length
+      ? (
+          await env.DB.prepare(
+            "SELECT id,original_url,url,(content_key IS NULL AND NOT EXISTS(SELECT 1 FROM jobs WHERE link_id=links.id)) orphan FROM links WHERE user_id=?1 AND (original_url IN (SELECT value FROM json_each(?2)) OR url IN (SELECT value FROM json_each(?2)))",
+          )
+            .bind(userId, JSON.stringify(urls))
+            .all<Existing & { original_url: string; url: string }>()
+        ).results
+      : [];
+    return urls.map((url) => {
+      const row = rows.find((r) => r.original_url === url) ?? rows.find((r) => r.url === url);
+      return [url, row ? { id: row.id, orphan: row.orphan } : null] as const;
+    });
+  };
+  const known = new Map<string, Existing | null>(await findAll([...new Set(parsed.flatMap((p) => ("url" in p ? [p.url] : [])))]));
   const fresh = [...known].filter(([, row]) => !row).map(([url]) => ({ url, id: crypto.randomUUID(), jobId: crypto.randomUUID() }));
   const orphans = [...new Set([...known.values()].filter((row) => row?.orphan).map((row) => row!.id))].map((id) => ({ id, jobId: crypto.randomUUID() }));
 
@@ -97,7 +108,7 @@ export async function addLinks(env: Env, userId: string, inputs: string[]): Prom
     }
   }
   // Concurrent inserts of the same URL by this owner: the winner's row is the result.
-  for (const f of fresh) if (!createdLinks.has(f.id)) known.set(f.url, await find(f.url));
+  for (const [url, row] of await findAll(fresh.filter((f) => !createdLinks.has(f.id)).map((f) => f.url))) known.set(url, row);
   const idOf = (url: string) => fresh.find((f) => f.url === url && createdLinks.has(f.id))?.id ?? known.get(url)?.id;
   const seen = new Set<string>();
   return parsed.map((p) => {

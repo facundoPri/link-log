@@ -16,6 +16,7 @@ import type { Lens } from "../src/types";
 import { charge, LIMITS } from "./limits";
 import { addLinks } from "./links";
 import { json, parseLensDefinition, text } from "./store";
+import { badRequest } from "./http/context";
 
 // Browser view API. Requests come from the signed-in Linklog page through the same-origin
 // boundary; the extension never talks to the backend directly. Every read and write is scoped
@@ -59,7 +60,7 @@ export async function catalog(env: Env, userId: string): Promise<BrowserCatalog>
 }
 
 function capture(v: unknown): EvaluationCapture {
-  if (!isObj(v)) throw new Error("Invalid capture.");
+  if (!isObj(v)) throw badRequest("Invalid capture.");
   const strings = (a: unknown, max: number, len: number) =>
     Array.isArray(a) && a.length <= max && a.every((s) => typeof s === "string" && s.length <= len);
   if (
@@ -73,9 +74,9 @@ function capture(v: unknown): EvaluationCapture {
     !v.facts.every((f) => isObj(f) && [f.key, f.label, f.value].every((s) => typeof s === "string" && s.length <= 200)) ||
     typeof v.markdown !== "string"
   )
-    throw new Error("Invalid capture.");
+    throw badRequest("Invalid capture.");
   if (v.markdown.length > BROWSER_LIMITS.maxCaptureChars)
-    throw new Error(`A capture exceeds ${BROWSER_LIMITS.maxCaptureChars.toLocaleString("en")} characters; the extension must trim it and mark it partial.`);
+    throw badRequest(`A capture exceeds ${BROWSER_LIMITS.maxCaptureChars.toLocaleString("en")} characters; the extension must trim it and mark it partial.`);
   return {
     source: v.source,
     completeness: v.completeness,
@@ -90,14 +91,14 @@ function capture(v: unknown): EvaluationCapture {
 
 function evaluationRequest(body: Obj): EvaluationRequest {
   if (!idOk(body.requestId) || !idOk(body.libraryId) || !idOk(body.sessionId))
-    throw new Error("Invalid evaluation request.");
+    throw badRequest("Invalid evaluation request.");
   if (!Array.isArray(body.targets) || !body.targets.length || body.targets.length > BROWSER_LIMITS.maxTargets)
-    throw new Error(`Send between 1 and ${BROWSER_LIMITS.maxTargets} tabs per request.`);
+    throw badRequest(`Send between 1 and ${BROWSER_LIMITS.maxTargets} tabs per request.`);
   const seen = new Set<string>();
   // URLs are stored as data only; this route never fetches them.
   const targets = body.targets.map((t) => {
     if (!isObj(t) || typeof t.targetKey !== "string" || !t.targetKey || t.targetKey.length > 400 || seen.has(t.targetKey))
-      throw new Error("Invalid target.");
+      throw badRequest("Invalid target.");
     seen.add(t.targetKey);
     return {
       targetKey: t.targetKey,
@@ -108,7 +109,7 @@ function evaluationRequest(body: Obj): EvaluationRequest {
   });
   const base = { requestId: body.requestId, libraryId: body.libraryId, sessionId: body.sessionId, targets };
   if (body.kind === "lens") {
-    if (!isObj(body.lens) || !idOk(body.lens.id) || !idOk(body.lens.fingerprint)) throw new Error("Pick a lens.");
+    if (!isObj(body.lens) || !idOk(body.lens.id) || !idOk(body.lens.fingerprint)) throw badRequest("Pick a lens.");
     return { ...base, kind: "lens", lens: { id: body.lens.id, fingerprint: body.lens.fingerprint } };
   }
   if (body.kind === "autogroup") {
@@ -119,17 +120,17 @@ function evaluationRequest(body: Obj): EvaluationRequest {
       typeof body.catalogVersion !== "string" ||
       body.catalogVersion.length > 100
     )
-      throw new Error(`Autogroup needs between 1 and ${BROWSER_LIMITS.maxDestinations} groups.`);
+      throw badRequest(`Autogroup needs between 1 and ${BROWSER_LIMITS.maxDestinations} groups.`);
     const keys = new Set<string>();
     const destinations: Destination[] = body.destinations.map((d) => {
       if (!isObj(d) || typeof d.key !== "string" || !/^[A-Za-z0-9:_-]{1,80}$/.test(d.key) || keys.has(d.key))
-        throw new Error("Invalid group.");
+        throw badRequest("Invalid group.");
       keys.add(d.key);
       return { key: d.key, name: text(d.name, 80), description: text(d.description ?? "", 2000) };
     });
     return { ...base, kind: "autogroup", destinations, catalogVersion: body.catalogVersion };
   }
-  throw new Error("Invalid evaluation kind.");
+  throw badRequest("Invalid evaluation kind.");
 }
 
 async function sha256(value: string) {
@@ -304,7 +305,7 @@ export async function createEvaluation(env: Env, userId: string, body: Obj): Pro
 }
 
 export function color(v: unknown): GroupColor {
-  if (typeof v !== "string" || !(GROUP_COLORS as string[]).includes(v)) throw new Error("Pick a group color.");
+  if (typeof v !== "string" || !(GROUP_COLORS as string[]).includes(v)) throw badRequest("Pick a group color.");
   return v as GroupColor;
 }
 
@@ -330,7 +331,7 @@ export async function saveUrls(env: Env, userId: string, body: Obj): Promise<Sav
     body.urls.length > BROWSER_LIMITS.maxSaveItems ||
     body.urls.some((u) => typeof u !== "string")
   )
-    throw new Error(`Save between 1 and ${BROWSER_LIMITS.maxSaveItems} tabs at a time.`);
+    throw badRequest(`Save between 1 and ${BROWSER_LIMITS.maxSaveItems} tabs at a time.`);
   // One extraction batch per request, like an import; quotas admitted before anything is saved.
   const results = await addLinks(env, userId, body.urls as string[]);
   return results.map((r) =>

@@ -1,10 +1,9 @@
 import { Hono } from "hono";
-import { normalizeUrl } from "../../src/url";
 import { contentKeyBelongs, contentPrefix, getOwnedLink, json, library, text } from "../store";
 import { enqueue } from "../jobs";
 import { addLinks } from "../links";
-import { HttpError, notFound, ownerOf, type AppEnv } from "../http/context";
-import { assertNoActiveJob, enrich, setTags, tagNames } from "./shared";
+import { badRequest, HttpError, notFound, ownerOf, type AppEnv } from "../http/context";
+import { assertNoActiveJob, enrich, setTags, tagNames, urlInput } from "./shared";
 
 /** Library, links and their content. Every handler runs behind requireSession. */
 export const linkRoutes = new Hono<AppEnv>()
@@ -17,19 +16,19 @@ export const linkRoutes = new Hono<AppEnv>()
       body.urls.length > 100 ||
       body.urls.some((u) => typeof u !== "string")
     )
-      throw new Error("Import up to 100 URLs per batch.");
+      throw badRequest("Import up to 100 URLs per batch.");
     // Every URL must be valid; quotas are admitted before anything is saved (see addLinks).
-    const urls = [...new Set((body.urls as string[]).map(normalizeUrl))];
+    const urls = [...new Set((body.urls as string[]).map(urlInput))];
     const results = await addLinks(env, userId, urls);
     const imported = results.filter((r) => "created" in r && r.created).length;
     return json({ ...(await library(env, userId)), imported, duplicates: urls.length - imported });
   })
   .post("/links", async (c) => {
     const env = c.env, userId = ownerOf(c), body = c.get("body");
-    if (typeof body.url !== "string") throw new Error("Missing link.");
+    if (typeof body.url !== "string") throw badRequest("Missing link.");
     const names = tagNames(body.tags || []);
     const [result] = await addLinks(env, userId, [body.url]);
-    if (!result || "error" in result) throw new Error(result?.error ?? "Invalid link.");
+    if (!result || "error" in result) throw badRequest(result?.error ?? "Invalid link.");
     const { id, created } = result;
     const statements = setTags(env.DB, userId, id, names, false);
     if (statements.length) await env.DB.batch(statements);
@@ -39,14 +38,14 @@ export const linkRoutes = new Hono<AppEnv>()
     const env = c.env, userId = ownerOf(c), body = c.get("body");
     const language = String(body.language || "");
     if (language !== "auto" && !/^[a-zA-Z]{2,3}(?:-[a-zA-Z0-9]{2,8})?$/.test(language))
-      throw new Error("Choose an available subtitle language.");
+      throw badRequest("Choose an available subtitle language.");
     const link = await getOwnedLink(env.DB, userId, c.req.param("id"));
     if (!link) throw notFound();
     const details = link.content_details
       ? (JSON.parse(link.content_details) as { transcript?: { tracks?: { languageCode: string }[] } })
       : {};
     if (!details.transcript?.tracks || (language !== "auto" && !details.transcript.tracks.some((track) => track.languageCode === language)))
-      throw new Error("That subtitle track is not available for this video.");
+      throw badRequest("That subtitle track is not available for this video.");
     const batchId = await enqueue(env, userId, [link.id], "extract", undefined, language);
     return json({ ...(await library(env, userId)), batchId });
   })
@@ -56,7 +55,7 @@ export const linkRoutes = new Hono<AppEnv>()
     if (!link) throw notFound();
     if (typeof body.url !== "string" || !/^https?:\/\//i.test(body.url) || typeof body.hidden !== "boolean")
       throw new HttpError(400, "Invalid related link.");
-    const url = normalizeUrl(body.url);
+    const url = urlInput(body.url);
     if (body.hidden)
       await env.DB.prepare("INSERT OR IGNORE INTO hidden_related_links(link_id,url,hidden_at) VALUES(?,?,?)")
         .bind(link.id, url, new Date().toISOString()).run();
@@ -81,7 +80,7 @@ export const linkRoutes = new Hono<AppEnv>()
     if (!link) throw notFound();
     await assertNoActiveJob(env.DB, link.id);
     const markdown = text(body.markdown, 500000);
-    if (!markdown) throw new Error("Paste the content.");
+    if (!markdown) throw badRequest("Paste the content.");
     const key = `${contentPrefix(userId, link.id)}${crypto.randomUUID()}.md`;
     await env.CONTENT.put(key, markdown, { httpMetadata: { contentType: "text/markdown; charset=utf-8" } });
     await env.DB.prepare("UPDATE links SET content_key=?,content_version=content_version+1,content_source='manual',content_state=CASE WHEN content_state='partial' THEN 'partial' ELSE 'ready' END,content_error=NULL,content_updated_at=? WHERE id=? AND user_id=?")

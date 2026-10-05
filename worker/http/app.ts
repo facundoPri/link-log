@@ -45,7 +45,9 @@ export function createApp() {
   app.all("/api/*", () => json({ error: "Not found." }, 404));
   app.all("*", (c) => c.env.ASSETS.fetch(c.req.raw));
 
-  app.onError((error) => {
+  // Only deliberate errors (HttpError, LimitError) reach the client with their message. Anything
+  // else is a server fault: a generic 500, logged by type only (messages can quote stored data).
+  app.onError((error, c) => {
     if (error instanceof HttpError) return json({ error: error.message, ...(error.code ? { code: error.code } : {}) }, error.status);
     if (error instanceof LimitError) return json({ error: error.message }, 429);
     const message = error instanceof Error ? error.message : "";
@@ -53,7 +55,8 @@ export function createApp() {
       console.error("Database operation failed");
       return json({ error: "Could not save. Try again." }, 500);
     }
-    return json({ error: message || "Invalid request." }, 400);
+    console.error(JSON.stringify({ event: "unhandled_error", type: error instanceof Error ? error.name : typeof error, method: c.req.method, route: c.req.routePath }));
+    return json({ error: "Something went wrong. Try again." }, 500);
   });
   return app;
 }

@@ -1,7 +1,8 @@
 import type { JobConfig, Pool } from "./handlers";
 import { parseLensDefinition } from "./store";
 import { preservedContentStateSql } from "./content-state";
-import { consume, LIMITS, LimitError } from "./limits";
+import { charge, LIMITS, LimitError } from "./limits";
+import { badRequest } from "./http/context";
 import type { Lens, Link, Tag } from "../src/types";
 const POOL_LIMITS = { browser: 2, jev: 16 } as const;
 export function poolLimit(env: Env, pool: Pool) {
@@ -33,12 +34,10 @@ export async function enqueue(
   kind: "extract" | "autotag" | "lens",
   lensId?: string,
   track?: string,
-  /** The caller already charged the job quota for these links (see addLinks). */
-  precharged = false,
 ) {
   ids = [...new Set(ids)];
   if (!ids.length || ids.length > 100)
-    throw new Error("Select between 1 and 100 links per batch.");
+    throw badRequest("Select between 1 and 100 links per batch.");
   // Reads stay under D1's 100 bound parameters per statement (owner + 99 ids per chunk).
   const chunks = Array.from({ length: Math.ceil(ids.length / 99) }, (_, i) => ids.slice(i * 99, i * 99 + 99));
   const links = {
@@ -53,37 +52,38 @@ export async function enqueue(
     ).flatMap((r) => r.results),
   };
   if (links.results.length !== ids.length)
-    throw new Error("One of the links no longer exists.");
+    throw badRequest("One of the links no longer exists.");
   if (kind !== "extract" && links.results.some((l) => !l.content_key))
-    throw new Error(
+    throw badRequest(
       "All selected links need context first.",
     );
-  const active = (
-    await Promise.all(
-      chunks.map((chunk) =>
-        env.DB.prepare(`SELECT id FROM jobs WHERE status IN ('queued','running') AND link_id IN (${chunk.map(() => "?").join(",")}) LIMIT 1`)
-          .bind(...chunk)
-          .first(),
-      ),
-    )
-  ).some(Boolean);
-  if (active)
-    throw new Error("Some selected links are still processing.");
+  const busy = () => badRequest("Some selected links are still processing.");
+  const active = async () =>
+    (
+      await Promise.all(
+        chunks.map((chunk) =>
+          env.DB.prepare(`SELECT id FROM jobs WHERE status IN ('queued','running') AND link_id IN (${chunk.map(() => "?").join(",")}) LIMIT 1`)
+            .bind(...chunk)
+            .first(),
+        ),
+      )
+    ).some(Boolean);
+  if (await active()) throw busy();
   let config: Config = {};
   if (kind === "autotag") {
     const tags = await env.DB.prepare(
       "SELECT id,name,description,threshold,version FROM tags WHERE user_id=? ORDER BY name",
     ).bind(userId).all<Tag>();
-    if (!tags.results.length) throw new Error("Create at least one tag.");
+    if (!tags.results.length) throw badRequest("Create at least one tag.");
     config = { tags: tags.results };
   }
   if (kind === "lens") {
     const row = await env.DB.prepare("SELECT id,name,type,question,options,threshold,version,created_at,scope FROM lenses WHERE id=? AND user_id=?")
       .bind(lensId ?? "", userId)
       .first<Record<string, unknown>>();
-    if (!row) throw new Error("The lens no longer exists.");
+    if (!row) throw badRequest("The lens no longer exists.");
     if (row.scope === "browser")
-      throw new Error("Browser lenses evaluate open tabs, not saved links.");
+      throw badRequest("Browser lenses evaluate open tabs, not saved links.");
     const lens = {
       ...(row as unknown as Lens),
       ...parseLensDefinition(
@@ -94,28 +94,36 @@ export async function enqueue(
     config = { lens };
   }
   if (kind === "extract" && track) config = { track };
-  if (!precharged && !(await consume(env.DB, `jobs:${userId}`, LIMITS.jobsPerUser, ids.length)))
-    throw new LimitError("Processing limit reached. Try again later.");
+  const charged = await charge(env.DB, [{ key: `jobs:${userId}`, limit: LIMITS.jobsPerUser, cost: ids.length }]);
+  if (!charged) throw new LimitError("Processing limit reached. Try again later.");
   const id = crypto.randomUUID(),
     now = new Date().toISOString();
   const jobs = ids.map((link_id) => ({ id: crypto.randomUUID(), link_id }));
-  await env.DB.batch([
-    env.DB.prepare(
-      "INSERT INTO batches(id,user_id,kind,config,created_at) VALUES(?,?,?,?,?)",
-    ).bind(id, userId, kind, JSON.stringify(config), now),
-    ...jobs.map((j) =>
+  try {
+    await env.DB.batch([
       env.DB.prepare(
-        "INSERT INTO jobs(id,batch_id,link_id,created_at) VALUES(?,?,?,?)",
-      ).bind(j.id, id, j.link_id, now),
-    ),
-    ...(kind === "extract"
-      ? ids.map((link) =>
-          env.DB.prepare(
-            "UPDATE links SET content_state='queued',content_error=NULL WHERE id=? AND user_id=?",
-          ).bind(link, userId),
-        )
-      : []),
-  ]);
+        "INSERT INTO batches(id,user_id,kind,config,created_at) VALUES(?,?,?,?,?)",
+      ).bind(id, userId, kind, JSON.stringify(config), now),
+      ...jobs.map((j) =>
+        env.DB.prepare(
+          "INSERT INTO jobs(id,batch_id,link_id,created_at) VALUES(?,?,?,?)",
+        ).bind(j.id, id, j.link_id, now),
+      ),
+      ...(kind === "extract"
+        ? ids.map((link) =>
+            env.DB.prepare(
+              "UPDATE links SET content_state='queued',content_error=NULL WHERE id=? AND user_id=?",
+            ).bind(link, userId),
+          )
+        : []),
+    ]);
+  } catch (error) {
+    // Rolled back as a whole: nothing was queued, so nothing stays charged. A concurrent request
+    // that queued one of these links first (jobs_active_link) is reported like the check above.
+    await charged.release();
+    if (await active()) throw busy();
+    throw error;
+  }
   // D1 is the durable outbox. If dispatch fails, scheduled recovery resends these IDs.
   try {
     await env.JOBS.sendBatch(jobs.map((j) => ({ body: { id: j.id } })));
@@ -126,9 +134,12 @@ export async function enqueue(
 }
 export async function recover(env: Env) {
   const now = Date.now();
-  // Housekeeping for app counters and expired auth verification rows.
+  // Housekeeping for app counters and expired auth verification rows. Better Auth prunes its own
+  // rateLimit rows only when some key's window rolls over; rows idle for a day (windows are at
+  // most 60 s; lastRequest is epoch milliseconds) are dead and go here too.
   await env.DB.batch([
     env.DB.prepare("DELETE FROM app_rate_limits WHERE window_start<?").bind(Math.floor(now / 1000) - 2 * 86400),
+    env.DB.prepare('DELETE FROM "rateLimit" WHERE "lastRequest"<?').bind(now - 86400_000),
     env.DB.prepare('DELETE FROM "verification" WHERE "expiresAt"<?').bind(new Date(now).toISOString()),
     env.DB.prepare('DELETE FROM "session" WHERE "expiresAt"<?').bind(new Date(now).toISOString()),
   ]);

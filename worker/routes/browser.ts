@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { BROWSER_LIMITS, type PinnedGroup } from "@linklog/browser-protocol";
 import { catalog, color, createEvaluation, evaluationStatus, idOk, saveUrls } from "../browser";
 import { json, library, text } from "../store";
-import { HttpError, ownerOf, type AppEnv } from "../http/context";
+import { badRequest, HttpError, ownerOf, type AppEnv } from "../http/context";
 
 const REQUEST_ID = "[A-Za-z0-9_-]{1,80}";
 
@@ -15,6 +15,9 @@ function targetKeys(body: Record<string, unknown>) {
     ? (body.targetKeys as string[]).slice(0, BROWSER_LIMITS.maxTargets)
     : null;
 }
+// The keys travel as ONE JSON-array parameter: D1 allows at most 100 bound parameters per
+// statement, and a full evaluation has 100 targets plus the request id (and a timestamp).
+const KEYS_IN = "(SELECT value FROM json_each(?))";
 const unknownRequest = () => new HttpError(404, "Unknown request.", "unknown-request");
 
 /** Browser view API (contracts from @linklog/browser-protocol), scoped to the session owner. */
@@ -29,21 +32,21 @@ export const browserRoutes = new Hono<AppEnv>()
   .post(`/browser/evaluations/:requestId{${REQUEST_ID}}/ack`, async (c) => {
     const env = c.env, userId = ownerOf(c), requestId = c.req.param("requestId");
     const keys = targetKeys(c.get("body"));
-    if (!keys?.length) throw new Error("Nothing to confirm.");
+    if (!keys?.length) throw badRequest("Nothing to confirm.");
     if (!(await ownedRequest(env.DB, userId, requestId))) throw unknownRequest();
     // Stored in the extension: the payload can go; the receipt and usage stay. Only answered
     // targets are confirmed; the rest keep their snapshot until retention.
     const rows = await env.DB.prepare(
-      `SELECT id,capture_key FROM browser_targets WHERE request_id=? AND answer IS NOT NULL AND target_key IN (${keys.map(() => "?").join(",")})`,
+      `SELECT id,capture_key FROM browser_targets WHERE request_id=? AND answer IS NOT NULL AND target_key IN ${KEYS_IN}`,
     )
-      .bind(requestId, ...keys)
+      .bind(requestId, JSON.stringify(keys))
       .all<{ id: string; capture_key: string | null }>();
     const captureKeys = rows.results.map((r) => r.capture_key).filter((k): k is string => !!k);
     if (captureKeys.length) await env.CONTENT.delete(captureKeys);
     await env.DB.prepare(
-      `UPDATE browser_targets SET acked_at=coalesce(acked_at,?),answer=NULL,capture_key=NULL WHERE request_id=? AND answer IS NOT NULL AND target_key IN (${keys.map(() => "?").join(",")})`,
+      `UPDATE browser_targets SET acked_at=coalesce(acked_at,?),answer=NULL,capture_key=NULL WHERE request_id=? AND answer IS NOT NULL AND target_key IN ${KEYS_IN}`,
     )
-      .bind(new Date().toISOString(), requestId, ...keys)
+      .bind(new Date().toISOString(), requestId, JSON.stringify(keys))
       .run();
     return json({ acked: rows.results.length });
   })
@@ -53,11 +56,11 @@ export const browserRoutes = new Hono<AppEnv>()
     // Clean, close or navigation: cancel work that has not started. A call already sent to the
     // provider may still be billed and stays in Activity.
     const keys = targetKeys(c.get("body"));
-    const filter = keys?.length ? ` AND target_key IN (${keys.map(() => "?").join(",")})` : "";
+    const filter = keys?.length ? ` AND target_key IN ${KEYS_IN}` : "";
     const result = await env.DB.prepare(
       `UPDATE jobs SET status='failed',step='Cancelled',error='Cancelled',completed_at=? WHERE status='queued' AND target_id IN (SELECT id FROM browser_targets WHERE request_id=?${filter})`,
     )
-      .bind(new Date().toISOString(), requestId, ...(keys ?? []))
+      .bind(new Date().toISOString(), requestId, ...(keys?.length ? [JSON.stringify(keys)] : []))
       .run();
     return json({ cancelled: result.meta.changes });
   })

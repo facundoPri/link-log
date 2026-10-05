@@ -1,8 +1,9 @@
 // Validation and owner-scoped helpers shared by the route modules.
 import type { LensLevel, LensOption } from "../../src/types";
+import { normalizeUrl } from "../../src/url";
 import { extractMetadata } from "../metadata";
 import { text, threshold } from "../store";
-import { notFound } from "../http/context";
+import { badRequest, notFound } from "../http/context";
 
 export async function enrich(db: D1Database, userId: string, id: string, url: string) {
   try {
@@ -18,13 +19,22 @@ export async function enrich(db: D1Database, userId: string, id: string, url: st
   }
 }
 
+/** Normalized public URL, or a 400 with the reason (src/url.ts is shared with the UI). */
+export function urlInput(value: string) {
+  try {
+    return normalizeUrl(value);
+  } catch (error) {
+    throw badRequest(error instanceof Error && error.message ? error.message : "Invalid link.");
+  }
+}
+
 export function tagNames(value: unknown): string[] {
   if (
     !Array.isArray(value) ||
     value.length > 20 ||
     value.some((t) => typeof t !== "string" || t.trim().length > 40)
   )
-    throw new Error("Use up to 20 tags of 40 characters.");
+    throw badRequest("Use up to 20 tags of 40 characters.");
   return [
     ...new Set(
       value
@@ -36,29 +46,29 @@ export function tagNames(value: unknown): string[] {
 
 export function lensFields(body: Record<string, unknown>) {
   const name = text(body.name, 60);
-  if (!name) throw new Error("Name the lens.");
+  if (!name) throw badRequest("Name the lens.");
   const type = String(body.type);
   if (!["noul", "choice", "multi", "score"].includes(type))
-    throw new Error("Invalid lens type.");
+    throw badRequest("Invalid lens type.");
   const question = text(body.question, 2000);
-  if (!question) throw new Error("Write a question.");
+  if (!question) throw badRequest("Write a question.");
   let options: LensOption[] = [];
   let levels: LensLevel[] = [];
   const criteria = { yes: "", no: "" };
   if (type === "choice" || type === "multi") {
     if (!Array.isArray(body.options))
-      throw new Error("Invalid options.");
+      throw badRequest("Invalid options.");
     if (body.options.length < 2 || body.options.length > 11)
-      throw new Error("Use between 2 and 11 options.");
+      throw badRequest("Use between 2 and 11 options.");
     const seen = new Set<string>();
     for (const raw of body.options as Record<string, unknown>[]) {
       const key = String(raw?.key ?? "");
       if (!/^[a-z0-9_]{1,40}$/.test(key) || key === "other")
-        throw new Error("Invalid option.");
-      if (seen.has(key)) throw new Error("Duplicate option.");
+        throw badRequest("Invalid option.");
+      if (seen.has(key)) throw badRequest("Duplicate option.");
       seen.add(key);
       const label = text(raw?.label, 60);
-      if (!label) throw new Error("Fill in the options.");
+      if (!label) throw badRequest("Fill in the options.");
       const description =
         raw?.description === undefined || raw?.description === null
           ? ""
@@ -78,10 +88,10 @@ export function lensFields(body: Record<string, unknown>) {
       body.levels.length < 2 ||
       body.levels.length > 10
     )
-      throw new Error("Use between 2 and 10 levels.");
+      throw badRequest("Use between 2 and 10 levels.");
     for (const raw of body.levels as Record<string, unknown>[]) {
       const label = text(raw?.label, 60);
-      if (!label) throw new Error("Fill in the levels.");
+      if (!label) throw badRequest("Fill in the levels.");
       const description =
         raw?.description === undefined || raw?.description === null
           ? ""
@@ -138,7 +148,7 @@ export async function assertNoActiveJob(db: D1Database, linkId: string) {
     .prepare("SELECT id FROM jobs WHERE link_id=? AND status IN ('queued','running')")
     .bind(linkId)
     .first();
-  if (active) throw new Error("Wait for the running job to finish.");
+  if (active) throw badRequest("Wait for the running job to finish.");
 }
 
 export async function ownedBatch(db: D1Database, userId: string, id: string) {

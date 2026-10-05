@@ -10,6 +10,7 @@ import type {
 } from "../src/types";
 import { OCR_USAGE_COLUMNS } from "./usage";
 import { fixtureJevAllowed } from "./config";
+import { badRequest } from "./http/context";
 export const json = (body: unknown, status = 200) =>
   Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
 export function capabilities(env: Env) {
@@ -229,7 +230,7 @@ export function parseLensDefinition(
 }
 export function text(value: unknown, max = 1000) {
   if (typeof value !== "string" || value.trim().length > max)
-    throw new Error("Invalid or too-long text.");
+    throw badRequest("Invalid or too-long text.");
   return value.trim();
 }
 export function threshold(value: unknown) {
@@ -239,6 +240,6 @@ export function threshold(value: unknown) {
     value < 0 ||
     value > 1
   )
-    throw new Error("The threshold must be between 0 and 100%.");
+    throw badRequest("The threshold must be between 0 and 100%.");
   return value;
 }
