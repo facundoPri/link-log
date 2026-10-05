@@ -125,6 +125,34 @@ test("a provider 5xx is not retried; Activity says it may have been billed and a
   expect(s.db.query("SELECT count(*) n FROM tag_evaluations WHERE link_id=?").get(ids[0]!)).toEqual({ n: 1 });
 });
 
+test("a batch Retry skips links a later run already recovered or is running; a double click sends nothing twice", async () => {
+  const { s, ids } = await start(3);
+  const calls = provider((q) => (calls.n <= 3 ? new Response("upstream", { status: 503 }) : answer(q)));
+  const batch = await autotag(s, ids);
+  await s.runQueued();
+  expect(jobs(s, batch).map((j) => j.status)).toEqual(["failed", "failed", "failed"]);
+  // A double click: both requests arrive before anything runs; only the first enqueues.
+  const [first, second] = await Promise.all([s.api(`/batches/${batch}/retry`, "POST", {}), s.api(`/batches/${batch}/retry`, "POST", {})]);
+  const ok = [first, second].filter((r) => r.status === 200);
+  expect(ok).toHaveLength(1);
+  expect([first, second].find((r) => r.status !== 200)!.data.error).toBe("These links were already retried.");
+  expect(jobs(s, ok[0]!.data.batchId)).toHaveLength(3);
+  await s.runQueued();
+  expect(calls.n).toBe(6);
+  // The original batch still lists its failures, but every link has been recovered since: nothing to resend.
+  const again = await s.api(`/batches/${batch}/retry`, "POST", {});
+  expect(again.status).toBe(400);
+  expect(again.data.error).toBe("These links were already retried.");
+  expect(calls.n).toBe(6);
+  expect(s.db.query("SELECT count(*) n FROM batches WHERE kind='autotag'").get()).toEqual({ n: 2 });
+  // A retry that failed again doesn't count: that link can still be retried from either batch.
+  provider(() => new Response("upstream", { status: 503 }));
+  s.db.query("UPDATE jobs SET status='failed',step='Failed' WHERE batch_id=? AND link_id=?").run(ok[0]!.data.batchId, ids[0]!);
+  const one = await s.api(`/batches/${batch}/retry`, "POST", {});
+  expect(one.status).toBe(200);
+  expect(jobs(s, one.data.batchId).map((j) => j.link_id)).toEqual([ids[0]!]);
+});
+
 test("network errors and timeouts after sending are not retried", async () => {
   for (const fail of [() => Promise.reject(new TypeError("fetch failed")), () => Promise.reject(Object.assign(new Error("signal timed out"), { name: "TimeoutError" }))]) {
     const { s, ids } = await start();

@@ -297,7 +297,7 @@ export default {
         if (!ids.length) throw new Error("Nothing to retry.");
         const lensId = batch.kind === "lens" ? (JSON.parse(batch.config) as { lens?: { id: string } }).lens?.id : undefined;
         try {
-          const { id: batchId, skipped } = await enqueue(env, ids, batch.kind, lensId);
+          const { id: batchId, skipped } = await enqueue(env, ids, batch.kind, lensId, {}, retryMatch[1]);
           return json({ ...(await library(env)), batchId, skipped });
         } catch (error) {
           if (error instanceof NothingToRun) return json({ error: error.message, skipped: error.skipped }, 400);

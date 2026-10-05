@@ -138,6 +138,7 @@ export async function enqueue(
   kind: "extract" | "preview" | "autotag" | "lens",
   lensId?: string,
   extract: Pick<Config, "track" | "step"> = {},
+  retryOf?: string,
 ) {
   const jev = kind === "autotag" || kind === "lens";
   ids = [...new Set(ids)];
@@ -190,6 +191,11 @@ export async function enqueue(
   if (kind === "extract") config = { ...(extract.track && { track: extract.track }), ...(extract.step && { step: extract.step }) };
   const id = crypto.randomUUID(),
     now = new Date().toISOString();
+  // A retry skips links that a later run of the same kind (and lens) already recovered or is still running,
+  // checked in each insert, so a repeated or double-clicked Retry never pays for the same link twice.
+  const redone = retryOf
+    ? " AND NOT EXISTS (SELECT 1 FROM batches ob, jobs r JOIN batches rb ON rb.id=r.batch_id WHERE ob.id=? AND r.link_id=? AND rb.kind=ob.kind AND rb.rowid>ob.rowid AND r.status IN ('queued','running','waiting','done') AND json_extract(rb.config,'$.lens.id') IS json_extract(ob.config,'$.lens.id'))"
+    : "";
   await env.DB.batch([
     env.DB.prepare(
       "INSERT INTO batches(id,kind,config,created_at) VALUES(?,?,?,?)",
@@ -197,8 +203,8 @@ export async function enqueue(
     // Decided inside the transaction, so a concurrent enqueue can't put two active jobs on one link.
     ...ids.map((link_id) =>
       env.DB.prepare(
-        `INSERT INTO jobs(id,batch_id,link_id,status,created_at) VALUES(?,?,?,CASE WHEN EXISTS (SELECT 1 FROM jobs WHERE link_id=? AND ${busy}) THEN 'waiting' ELSE 'queued' END,?)`,
-      ).bind(crypto.randomUUID(), id, link_id, link_id, now),
+        `INSERT INTO jobs(id,batch_id,link_id,status,created_at) SELECT ?,?,?,CASE WHEN EXISTS (SELECT 1 FROM jobs WHERE link_id=? AND ${busy}) THEN 'waiting' ELSE 'queued' END,? WHERE 1${redone}`,
+      ).bind(crypto.randomUUID(), id, link_id, link_id, now, ...(retryOf ? [retryOf, link_id] : [])),
     ),
     ...(kind === "extract"
       ? ids.map((link) =>
@@ -209,6 +215,10 @@ export async function enqueue(
         )
       : []),
   ]);
+  if (retryOf && !(await env.DB.prepare("SELECT 1 FROM jobs WHERE batch_id=?").bind(id).first())) {
+    await env.DB.prepare("DELETE FROM batches WHERE id=? AND NOT EXISTS (SELECT 1 FROM jobs WHERE batch_id=?)").bind(id, id).run();
+    throw new Error("These links were already retried.");
+  }
   // D1 is the durable outbox. If dispatch fails, scheduled recovery resends these IDs.
   const queued = await env.DB.prepare("SELECT id FROM jobs WHERE batch_id=? AND status='queued'").bind(id).all<{ id: string }>();
   try {
