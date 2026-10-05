@@ -175,6 +175,27 @@ export const FIXTURES = {
         `bridges and the people who build them, and it keeps going so the whole text is well past the length a login wall would have.`).join("\n\n"),
     },
   },
+  // Chapter 4 (FAC-53): pages whose content tells the fixture Jev "yes" (`jev:yes`), so auto-tag applies the tag.
+  "slow-yes": {
+    about: "HTML preview after 2 s, Browser Markdown after 16 s with a `jev:yes` marker: holds the single browser slot, then tags",
+    preview: { kind: "html", title: "Slow tagged article {path}", description: "A slow page that Jev tags.", delayMs: 2_000 },
+    browser: { kind: "markdown", markdown: article("Slow tagged article {path}", "jev:yes"), delayMs: 16_000, browserMs: 16_000 },
+  },
+  "article-yes": {
+    about: "HTML preview and Markdown with a `jev:yes` marker, both immediate",
+    preview: { kind: "html", title: "Taggable article {path}", description: "A normal page that Jev tags." },
+    browser: { kind: "markdown", markdown: article("Taggable article {path}", "jev:yes") },
+  },
+  "held-yes": {
+    about: "HTML preview OK; Browser Markdown with a `jev:yes` marker after 10 s (time to cancel or to queue Jev behind it)",
+    preview: { kind: "html", title: "Held article {path}", description: "A page that takes 10 s to read." },
+    browser: { kind: "markdown", markdown: article("Held article {path}", "jev:yes"), delayMs: 10_000, browserMs: 10_000 },
+  },
+  "wall-jam-slow": {
+    about: "HTML preview OK; Browser Markdown returns the “Just a moment...” challenge after 10 s (login_wall)",
+    preview: { kind: "html", title: "QA slow wall {path}", description: "An article behind a browser challenge." },
+    browser: { kind: "markdown", markdown: "# Just a moment...\n\nChecking your browser before accessing the site.", delayMs: 10_000, browserMs: 10_000 },
+  },
   // Jev account / provider errors. Only effective with the fake TypeSafe provider (QA_JEV=fake-typesafe):
   // the fake answers the HTTP status named by the `qa:jev-http=<status>` marker in the content.
   "jev-401": {

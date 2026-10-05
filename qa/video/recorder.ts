@@ -27,6 +27,8 @@ export type ScenarioContext = {
   step: (caption: string, expected?: string) => Promise<void>;
   /** Glides the cursor to the target, ripples, clicks. A string is a Playwright selector. */
   click: (target: Target) => Promise<void>;
+  /** Glides the cursor to the target and rests on it (shows tooltips). */
+  hover: (target: Target) => Promise<void>;
   /** Clicks the target, then types like a person. */
   type: (target: Target, text: string) => Promise<void>;
   /** Clicks the target, then fills it at once (reads as a paste; use for long text). */
@@ -237,6 +239,10 @@ export async function record(browser: Browser, ch: Chapter, sc: Scenario, ui: st
       await page.evaluate(([a, b]) => (window as any).__qa?.ripple(a, b), [x, y] as const);
       await page.mouse.click(x, y);
       await page.waitForTimeout(350);
+    },
+    async hover(target) {
+      await move(target);
+      await page.waitForTimeout(700);
     },
     async type(target, text) {
       await ctx.click(target);
