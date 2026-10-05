@@ -170,6 +170,8 @@ test("turning the setting off while the failure settles applies nothing: the che
   expect(raced).toBe(true);
   expect(await fallbackView(s, id)).toEqual({ source: null, content: "failed", attention: "content", reason: "not_found", has_key: false });
   expect(lastJob(s, id)).toMatchObject({ status: "failed", step: "Needs attention" });
+  // The preview text stored for it is removed, not left in R2 without a reference.
+  expect([...s.r2.keys()].filter((k) => k.endsWith("-preview.md"))).toEqual([]);
 });
 
 test("a repeated record-failure after a D1 fault applies the preview exactly once", async () => {
@@ -183,6 +185,8 @@ test("a repeated record-failure after a D1 fault applies the preview exactly onc
   expect(await fallbackView(s, id)).toMatchObject({ source: "preview", content: "partial", attention: null });
   expect((await linkOf(s, id)).content_version).toBe(1);
   expect(lastJob(s, id)).toMatchObject({ status: "failed", step: "Used the preview" });
+  // The replayed settlement doesn't remove the object the link now uses.
+  expect(s.r2.get((await linkOf(s, id)).content_key)).toBe("Title of fb.example");
 });
 
 test("a cancelled or interrupted job never applies the preview", async () => {

@@ -20,7 +20,7 @@ export const fakes: {
   onMeta?: () => Promise<void>;
   onContent?: () => Promise<void>;
   /** Run the real web adapter against this Browser Rendering answer instead of the fake content. */
-  browser?: () => Response | Promise<Response>;
+  browser?: (action: string, options: Record<string, any>) => Response | Promise<Response>;
   /** Make the link's adapter a discovering (social-style) one that throws this error. */
   discoverError?: string;
   /** Make the link's adapter a discovering one that finds this. */
@@ -144,11 +144,11 @@ export async function setup() {
       put: async (k: string, v: string) => void r2.set(k, v),
       get: async (k: string) => (r2.has(k) ? { text: async () => r2.get(k)! } : null),
       list: async () => ({ objects: [], truncated: false }),
-      delete: async () => {},
+      delete: async (keys: string | string[]) => void [keys].flat().forEach((k) => r2.delete(k)),
     },
     JOBS: { sendBatch: async (m: { body: { id: string } }[]) => void sent.push(...m) },
     JEV_PROVIDER: "fixture",
-    BROWSER: { quickAction: async () => (fakes.calls.browser++, fakes.browser!()) },
+    BROWSER: { quickAction: async (action: string, options: Record<string, any>) => (fakes.calls.browser++, fakes.browser!(action, options)) },
     PROCESS_LINK: {
       create: async () => {},
       get: async (id: string) => ({

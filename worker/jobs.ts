@@ -14,7 +14,7 @@ import { capabilities, parseLensDefinition } from "./store";
 import { jevUnavailable } from "../src/attention";
 import { preservedContentStateSql, restoredContentStateSql } from "./content-state";
 import { contentFailureAttentionSql } from "./attention";
-import { canUsePreview, previewFallbackOn, previewFallbackSetting, readPreview, storePreview, usePreviewStatement } from "./preview-content";
+import { canUsePreview, dropUnusedPreview, previewFallbackOn, previewFallbackSetting, readPreview, storePreview, usePreviewStatement } from "./preview-content";
 import { adapterMessage, classify, logResidualFailure, LinkFailure } from "./failures";
 import type { Lens, Link, Tag } from "../src/types";
 import { JevFailure } from "./ai/jev";
@@ -447,7 +447,11 @@ export class LinkWorkflow extends WorkflowEntrypoint<Env, { id: string }> {
           );
           console.log(JSON.stringify({ event: "jev_batch_stopped", batch_id: job.batch_id, job_id: job.id, http_status: jev.detail.http_status ?? null, stopped: stopped.length }));
         }
-        await env.DB.batch(statements);
+        try {
+          await env.DB.batch(statements);
+        } finally {
+          if (usedPreview) await dropUnusedPreview(env, link!.id, fallbackKey);
+        }
         return stopped;
       });
     } finally {

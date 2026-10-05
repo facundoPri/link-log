@@ -29,6 +29,17 @@ export async function storePreview(env: Env, key: string, link: Preview, where: 
   }
 }
 
+// The stored text is removed when the link didn't take it (the job was settled elsewhere, the setting went
+// off or the row changed), so no object is left without a reference. Best effort: a failure is only logged.
+export async function dropUnusedPreview(env: Env, linkId: string, key: string) {
+  try {
+    if (await env.DB.prepare("SELECT 1 FROM links WHERE id=? AND content_key=?").bind(linkId, key).first()) return;
+    await env.CONTENT.delete(key);
+  } catch (error) {
+    console.error(JSON.stringify({ event: "preview_fallback_cleanup_failed", link_id: linkId, key, detail: String(error).slice(0, 300) }));
+  }
+}
+
 // Applies the stored preview text as the link's content, only if the row is still the one it was made from
 // (no content yet, the same preview) and `guard` holds. Content attention goes away: the link has a usable path.
 export const usePreviewStatement = (db: D1Database, linkId: string, key: string, link: Preview, guard: string, ...guardParams: unknown[]) =>
