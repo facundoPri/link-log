@@ -66,12 +66,19 @@ const groups = new Map<string, Chapter[]>();
 for (const c of selected) groups.set(envKey(c.env), [...(groups.get(envKey(c.env)) ?? []), c]);
 for (const group of groups.values()) {
   console.log(`\nStarting QA environment ${envKey(group[0]!.env)}`);
-  const env = await startEnv(group[0]!.env);
+  let env = await startEnv(group[0]!.env);
   const browser = await launchBrowser();
   try {
     for (const ch of group)
       for (const sc of ch.scenarios) {
-        await resetLibrary(env);
+        // A scenario may need another Worker configuration (e.g. Jev without a key): restart, keeping state if asked.
+        const want = sc.meta.env ?? ch.env;
+        if (envKey(want) !== envKey(env.options)) {
+          console.log(`  Restarting QA environment ${envKey(want)}${sc.meta.keepState ? " (keeping state)" : ""}`);
+          await env.stop();
+          env = await startEnv(want, { keepState: !!sc.meta.keepState });
+        }
+        if (!sc.meta.keepState) await resetLibrary(env);
         console.log(`  ▶ ${sc.id} ${sc.title}`);
         // The full chapter, not the --scenario subset: the manifest keeps every scenario of the chapter.
         const r = await record(browser, chapters.find((c) => c.id === ch.id)!, sc, env.ui);

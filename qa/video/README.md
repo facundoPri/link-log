@@ -111,6 +111,8 @@ Current catalog: `pool`, `article`, `pdf`, `gone`, `flaky`, `down`, `slow`, `blo
 - `jev: "fixture" | "fake-typesafe"`: see the Jev row above.
 - `fastRetries: true`: the QA Workflow wrapper rewrites every `step.do` retry config to a 1 s constant backoff. Product timing is preview 5 s → 10 s and content 10 s. The number of attempts, the timeouts and the attempt budgets are unchanged. Only QA config changes; product code does not.
 - `vars: { BROWSER_CONCURRENCY: "1", … }`: extra Worker vars.
+- Per scenario: `scenario(id, title, { env, keepState }, fn)`. `env` overrides the chapter's options for that scenario only, and the runner restarts the stack when the options change. With `keepState: true` the runner skips the library reset and the restart keeps D1/R2, like the plan's "restart the same persist dir under another profile" (chapter 5: configured → no key → bad key → configured). Run such a chain as a whole chapter; a lone `--scenario` of a `keepState` scenario has nothing to continue from.
+- Jev profiles with the fake TypeSafe: no key is `{ jev: "fake-typesafe", vars: { TYPESAFE_API_KEY: "" } }`; a wrong key is `vars: { TYPESAFE_API_KEY: "qa-fake-invalid" }`, which the fake answers with 401 for every call. Each fake call logs `{"event":"qa_fake_typesafe","status":…}`.
 
 Chapters with the same options share one environment. A different set of options restarts the stack, which takes about 10 s.
 
@@ -124,3 +126,4 @@ Chapters with the same options share one environment. A different set of options
 - The UI polls the library, so it can lag the API by a second or two. Assert the UI with `expect.visible` / `expect.hidden`, which wait, rather than right after an API check.
 - The caption bar takes the bottom 84 px. The app is shrunk by that height so nothing is hidden. Dialogs are centered in the full viewport.
 - Cron recovery runs every 30 s, as in `bun run dev`.
+- `qa/out/logs/dev.log` holds the current stack's output only; each start moves the previous one to `dev.prev.log` (and `dev.prev.err.log`). Wrangler colours `console.error` lines, so strip ANSI codes before parsing JSON log lines.

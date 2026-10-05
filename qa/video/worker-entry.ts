@@ -81,10 +81,13 @@ async function browserResponse(spec: BrowserSpec, url: URL): Promise<Response> {
   }
 }
 
-/** Fake TypeSafe Jev: a `qa:jev-http=<status>` marker in the content picks the error; otherwise fixture answers. */
+/** Fake TypeSafe Jev: the key `qa-fake-invalid` gets 401 (a wrong key); otherwise a `qa:jev-http=<status>` marker
+ * in the content picks the error, and anything else gets fixture answers. Each call is logged (`qa_fake_typesafe`). */
 async function fakeTypesafe(request: Request): Promise<Response> {
   const body = (await request.json()) as { state: unknown; questions: Parameters<typeof fixtureJev>[0]["questions"] };
-  const status = Number(JSON.stringify(body.state).match(/qa:jev-http=(\d{3})/)?.[1] ?? 0);
+  const badKey = request.headers.get("authorization") === "Bearer qa-fake-invalid";
+  const status = badKey ? 401 : Number(JSON.stringify(body.state).match(/qa:jev-http=(\d{3})/)?.[1] ?? 0);
+  console.log(JSON.stringify({ event: "qa_fake_typesafe", status: status || 200 }));
   if (status) {
     const message = status === 402 ? "Insufficient balance: out of credits" : status === 401 ? "Unauthorized: invalid API key" : "Internal provider error";
     return Response.json({ error: { message } }, { status });

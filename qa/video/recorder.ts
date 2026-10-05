@@ -19,6 +19,10 @@ export type ScenarioMeta = {
   covers?: string;
   /** The expected result, in one or two sentences (title card). */
   expected?: string;
+  /** Worker configuration for this scenario only (default: the chapter's). The runner restarts the stack when it changes. */
+  env?: EnvOptions;
+  /** Continue from the previous scenario's state: no library reset, and a restart for `env` keeps D1/R2. */
+  keepState?: boolean;
 };
 export type Target = Locator | string;
 export type ScenarioContext = {

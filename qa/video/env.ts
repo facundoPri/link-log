@@ -1,7 +1,7 @@
 // Starts and stops the isolated QA environment: the product dev stack (scripts/dev.ts) on the QA ports,
 // with the QA Worker entry (worker-entry.ts) and its own D1/R2 state. Never touches your data.
 import { existsSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -55,7 +55,9 @@ async function writeConfig(options: EnvOptions) {
 
 export type QaEnv = { ui: string; api: string; options: EnvOptions; stop: () => Promise<void> };
 
-export async function startEnv(options: EnvOptions = {}): Promise<QaEnv> {
+/** `keepState`: restart on the previous run's D1/R2 instead of wiping it (a scenario that changes the Worker
+ * configuration mid-chapter, like the plan's "restart the same persist dir under another profile"). */
+export async function startEnv(options: EnvOptions = {}, { keepState = false } = {}): Promise<QaEnv> {
   for (const port of [UI_PORT, API_PORT])
     if (await portBusy(port)) throw new Error(`Port ${port} is in use. Stop that process or set QA_UI_PORT / QA_API_PORT.`);
   await mkdir(resolve(OUT, "logs"), { recursive: true });
@@ -63,11 +65,17 @@ export async function startEnv(options: EnvOptions = {}): Promise<QaEnv> {
     const build = Bun.spawn(["bun", "scripts/build.ts"], { cwd: ROOT, stdout: "inherit", stderr: "inherit" });
     if ((await build.exited) !== 0) throw new Error("bun scripts/build.ts failed");
   }
-  // Our own subfolder of the persist root, wiped per start: every run begins with an empty library.
+  // Our own subfolder of the persist root, wiped per start (unless keepState): every run begins with an empty library.
   const persist = resolve(process.env.LINKLOG_PERSIST_TO || resolve(tmpdir(), "linklog-qa"), "qa-video");
-  await rm(persist, { recursive: true, force: true });
+  if (!keepState) await rm(persist, { recursive: true, force: true });
   const config = await writeConfig(options);
   const log = resolve(OUT, "logs/dev.log");
+  // Bun.file() as stdout writes from offset 0 without truncating: a previous run's longer log would leave stale
+  // lines behind. Keep the previous run's logs as dev.prev*.log and start empty ones.
+  for (const name of ["dev.log", "dev.err.log"]) {
+    const path = resolve(OUT, "logs", name);
+    if (existsSync(path)) await rename(path, path.replace(/\.log$/, ".prev.log").replace("dev.err.prev", "dev.prev.err"));
+  }
   const proc = Bun.spawn(["bun", "scripts/dev.ts"], {
     cwd: ROOT,
     env: {
