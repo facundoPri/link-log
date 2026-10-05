@@ -196,6 +196,13 @@ export const FIXTURES = {
     preview: { kind: "html", title: "QA slow wall {path}", description: "An article behind a browser challenge." },
     browser: { kind: "markdown", markdown: "# Just a moment...\n\nChecking your browser before accessing the site.", delayMs: 10_000, browserMs: 10_000 },
   },
+  // Chapter 6 (U-SLOW, like httpbin /delay/10): the preview takes 8 s (under the 10 s fetch timeout), so a ✕ lands
+  // while Activity reads "Fetching preview"; the page reader then answers after 10 s with a `jev:yes` marker.
+  "slow-preview": {
+    about: "HTML preview after 8 s, Browser Markdown with a `jev:yes` marker after 10 s (time to cancel during “Fetching preview”)",
+    preview: { kind: "html", title: "Slow preview article {path}", description: "A page whose preview takes 8 s.", delayMs: 8_000 },
+    browser: { kind: "markdown", markdown: article("Slow preview article {path}", "jev:yes"), delayMs: 10_000, browserMs: 10_000 },
+  },
   // Jev account / provider errors. Only effective with the fake TypeSafe provider (QA_JEV=fake-typesafe):
   // the fake answers the HTTP status named by the `qa:jev-http=<status>` marker in the content.
   "jev-401": {
