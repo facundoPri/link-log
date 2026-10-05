@@ -57,6 +57,15 @@ test("Browser Rendering envelopes: service failures are told apart from the dest
   expect(pick(browserFailure(200, { message: "Navigation timeout of 30000 ms exceeded" }))).toMatchObject({ reason: "timeout", retryable: true });
 });
 
+test("auth words inside a quoted URL or host are the destination's, not a Browser API credentials failure", () => {
+  expect(pick(browserFailure(500, { message: "net::ERR_NAME_NOT_RESOLVED at https://my-account.example.com/" }))).toMatchObject({ reason: "unreachable", retryable: true });
+  expect(pick(browserFailure(422, { message: "Navigation to https://site.com/account/login timed out" }))).toMatchObject({ reason: "timeout", retryable: true });
+  expect(pick(browserFailure(500, { message: "net::ERR_CONNECTION_REFUSED at accounts.example.org/unauthorized" }))).toMatchObject({ reason: "unreachable", retryable: true });
+  // The service's own wording still fails fast.
+  expect(pick(browserFailure(403, { message: "Account is not authorized to use Browser Rendering" }))).toMatchObject({ reason: "service_unavailable", retryable: false });
+  expect(pick(browserFailure(400, { message: "Invalid API token" }))).toMatchObject({ reason: "service_unavailable", retryable: false });
+});
+
 test("only allowlisted adapter messages reach users, even with technical detail appended", () => {
   expect(adapterMessage(`${ADAPTER_MESSAGES.instagramLogin} Rendered retry: Rendered post: HTTP 500`)).toBe(ADAPTER_MESSAGES.instagramLogin);
   expect(adapterMessage("D1_ERROR: database unavailable (SQLITE_BUSY)")).toBeNull();

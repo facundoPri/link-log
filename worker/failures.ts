@@ -46,7 +46,9 @@ export function browserFailure(status: number, error: { code?: number; message?:
   const message = error.message ?? "";
   const technical = `Browser Rendering HTTP ${status}${error.code ? ` code ${error.code}` : ""}${message ? `: ${message}` : ""}`;
   const base = { technical, http_status: status };
-  if (status === 401 || error.code === 10000 || /authenticat|unauthori[sz]ed|not authorized|invalid (api )?token|account/i.test(message))
+  // The message may quote the destination (its URL or host): only the service's own words count as auth.
+  const own = message.replace(/\b(?:[a-z][\w+.-]*:\/\/)?[\w-]+(?:\.[\w-]+)+\S*/gi, "");
+  if (status === 401 || error.code === 10000 || /authenticat|unauthori[sz]ed|not authorized|invalid (api )?token|account/i.test(own))
     return new LinkFailure("service_unavailable", { ...base, retryable: false });
   const found = message ? classify(new Error(message)) : null;
   if (found && found.reason !== "unknown") return new LinkFailure(found.reason, { ...base, retryable: found.retryable });
