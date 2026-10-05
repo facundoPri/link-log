@@ -47,6 +47,7 @@ export async function settleAttention(db: D1Database, linkId: string, outcome: S
 // nextAttention for a final content failure, written as SQL over the live row so it can share the failure's
 // transaction: without content it raises content attention; with the previous content kept it leaves the
 // attention as it is, except that a preview that worked in this job clears a preview warning.
+// Any change to nextAttention's content failure branch must be mirrored here: tests/attention.test.ts compares both.
 export function contentFailureAttentionSql(reason: string | null, previewOk: boolean) {
   const clears = previewOk ? "attention_kind='preview'" : "0";
   return {

@@ -204,6 +204,19 @@ for (const [status, message, code, reason, calls] of [
     expect(String(logs.at(-1)!.detail)).toContain(message);
   });
 
+test("the Markdown call bounds its own navigation and action below the attempt budget (the binding takes no abort signal)", async () => {
+  const s = await setup();
+  let options: Record<string, any> = {};
+  fakes.browser = (_action, o) => ((options = o), envelope(200, { success: true, result: "# Page" })());
+  await save(s, PUBLIC_URL);
+  await s.runQueued();
+  expect(options.gotoOptions.timeout).toBeGreaterThan(0);
+  expect(options.actionTimeout).toBeGreaterThan(0);
+  // Navigation is capped at 60 s by the API; both bounds together leave room for the call's own overhead.
+  expect(options.gotoOptions.timeout).toBeLessThanOrEqual(60_000);
+  expect(options.gotoOptions.timeout + options.actionTimeout).toBeLessThan(ATTEMPT_BUDGET_MS.content * 0.8);
+});
+
 test("a timed-out Markdown call that answers during the next attempt can't replace its content or count as a success", async () => {
   const s = await setup();
   ATTEMPT_BUDGET_MS.content = 20;

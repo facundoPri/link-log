@@ -367,24 +367,30 @@ test("a Dismiss between reading and writing a settlement is never overwritten", 
 });
 
 test("the content failure SQL settles exactly like nextAttention, on the live row", async () => {
+  // Every input nextAttention reads is varied, so a change to either copy that the other misses fails here.
   const db = new Database(":memory:");
   for (const f of readdirSync("migrations").filter((f) => f.endsWith(".sql")).sort()) db.exec(await Bun.file(`migrations/${f}`).text());
   let n = 0;
+  for (const status of ["ready", "failed"] as const)
+  for (const preview_reason of [null, "blocked"])
   for (const content_key of [null, "k"])
-    for (const [attention_kind, attention_reason] of [[null, null], ["preview", "blocked"], ["content", "timeout"], ["content", "not_found"]] as const)
-      for (const previewOk of [true, false]) {
+    for (const [attention_kind, attention_reason] of [[null, null], ["preview", "blocked"], ["preview", null], ["content", "timeout"], ["content", "not_found"], ["content", null]] as const)
+      for (const previewOk of [true, false])
+      for (const reason of ["not_found", null]) {
         const id = `l${n++}`;
         db.query("INSERT INTO links(id,original_url,url,domain,title,description,status,content_key,preview_reason,attention_kind,attention_reason,attention_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")
-          .run(id, `https://${id}/`, `https://${id}/`, "x", "x", "", "failed", content_key, "blocked", attention_kind, attention_reason, attention_kind ? "2026-01-01T00:00:00.000Z" : null, "2026-01-01T00:00:00.000Z");
-        const set = contentFailureAttentionSql("not_found", previewOk);
+          .run(id, `https://${id}/`, `https://${id}/`, "x", "x", "", status, content_key, preview_reason, attention_kind, attention_reason, attention_kind ? "2026-01-01T00:00:00.000Z" : null, "2026-01-01T00:00:00.000Z");
+        const set = contentFailureAttentionSql(reason, previewOk);
         db.query(`UPDATE links SET ${set.sql} WHERE id=?`).run(...(set.params as never[]), id);
         const row = db.query("SELECT attention_kind,attention_reason,attention_at FROM links WHERE id=?").get(id) as any;
-        const expected = nextAttention({ status: "failed", preview_reason: "blocked", content_key, attention_kind, attention_reason },
-          { content: "failed", content_reason: "not_found", preview: previewOk ? "ok" : "failed" });
+        const expected = nextAttention({ status, preview_reason, content_key, attention_kind, attention_reason },
+          { content: "failed", content_reason: reason, preview: previewOk ? "ok" : "failed" });
         expect({ kind: row.attention_kind, reason: row.attention_reason }).toEqual({ kind: expected.attention_kind, reason: expected.attention_reason });
         const unchanged = expected.attention_kind === attention_kind && expected.attention_reason === attention_reason;
         expect(row.attention_at === "2026-01-01T00:00:00.000Z").toBe(unchanged && !!attention_kind);
+        expect(row.attention_at === null).toBe(!expected.attention_kind);
       }
+  expect(n).toBe(192);
 });
 
 // Upgrade fixtures for migration 0014: links and their extract jobs as an older version left them.
