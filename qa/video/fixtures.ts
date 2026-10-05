@@ -130,6 +130,27 @@ export const FIXTURES = {
     preview: { kind: "html", title: "Hanging article {path}" },
     browser: { kind: "hang" },
   },
+  // Chapter 2 (U-503): only the preview fails, with an 8 s answer (under the 10 s fetch timeout) so each attempt's timing shows in Activity;
+  // the page reader still gets the content, so the link ends with preview attention.
+  "preview-down": {
+    about: "Preview answers 503 after 8 s every time (site_error, 3 attempts); Browser Markdown works",
+    preview: { kind: "status", status: 503, delayMs: 8_000 },
+    browser: { kind: "markdown", markdown: article("Readable despite the 503 {path}") },
+  },
+  // Chapter 2 (U-FILE, like httpbin /robots.txt): a file link whose preview fails fast with not_html while the
+  // page reader returns its text. The 3 s answer keeps a preview retry on screen long enough to film.
+  file: {
+    about: "Preview answers application/pdf after 3 s (fail-fast not_html); Browser Markdown returns the file's text",
+    preview: { kind: "pdf", delayMs: 3_000 },
+    browser: { kind: "markdown", markdown: "# QA file {path}\n\nPlain text read from a file link. It is long enough to count as content, so only the preview fails." },
+  },
+  // Chapter 2 (U-EMPTY): a working preview, and a page reader that answers an empty page after 15 s, so a
+  // content retry stays running long enough to film the guard (NA-26) and its "Extracting content" step.
+  "empty-slow": {
+    about: "HTML preview OK; Browser Markdown answers an empty result after 15 s (empty, fail fast)",
+    preview: { kind: "html", title: "Blank page {path}", description: "The preview works; the page itself is empty." },
+    browser: { kind: "markdown", markdown: "  ", delayMs: 15_000, browserMs: 15_000 },
+  },
   // Jev account / provider errors. Only effective with the fake TypeSafe provider (QA_JEV=fake-typesafe):
   // the fake answers the HTTP status named by the `qa:jev-http=<status>` marker in the content.
   "jev-401": {
