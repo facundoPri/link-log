@@ -32,7 +32,7 @@ async function resetLibrary(env: QaEnv) {
     if (!lib.links.length) return;
     for (const b of lib.batches.filter((b: any) => b.active > 0)) {
       const detail = await call("GET", `/batches/${b.id}`);
-      for (const j of detail.jobs ?? []) if (["queued", "running", "waiting"].includes(j.status)) await call("DELETE", `/jobs/${j.id}`).catch(() => {});
+      for (const j of detail.jobs ?? []) if (["queued", "running", "waiting"].includes(j.status)) await call("DELETE", `/jobs/${j.id}`, {}).catch(() => {}); // the API wants a JSON body on writes (415 otherwise)
     }
     for (const l of lib.links) if (!l.processing) await call("DELETE", `/links/${l.id}`, {}).catch(() => {});
     await Bun.sleep(1000);
@@ -43,14 +43,14 @@ async function resetLibrary(env: QaEnv) {
 const chapters = await loadChapters();
 if (args.includes("--list")) {
   for (const c of chapters) {
-    console.log(`${c.id} — ${c.title}`);
+    console.log(`${c.id} — ${c.title}${c.optional ? " (optional: only with --chapter)" : ""}`);
     for (const s of c.scenarios) console.log(`  ${s.id}  ${s.title}`);
   }
   process.exit(0);
 }
 const wantChapters = opt("--chapter"), wantScenarios = opt("--scenario");
 const selected = chapters
-  .filter((c) => !wantChapters || wantChapters.includes(c.id))
+  .filter((c) => (wantChapters ? wantChapters.includes(c.id) : !c.optional))
   .map((c) => ({ ...c, scenarios: c.scenarios.filter((s) => !wantScenarios || wantScenarios.includes(s.id)) }))
   .filter((c) => c.scenarios.length);
 if (!selected.length) {
@@ -71,7 +71,8 @@ for (const group of groups.values()) {
       for (const sc of ch.scenarios) {
         await resetLibrary(env);
         console.log(`  ▶ ${sc.id} ${sc.title}`);
-        const r = await record(browser, ch, sc, env.ui);
+        // The full chapter, not the --scenario subset: the manifest keeps every scenario of the chapter.
+        const r = await record(browser, chapters.find((c) => c.id === ch.id)!, sc, env.ui);
         results.push(r);
         console.log(`    ${r.status === "passed" ? "✓" : "✗"} ${r.status} — ${r.assertions.filter((a) => a.ok).length}/${r.assertions.length} checks${r.error ? ` — ${r.error}` : ""}`);
       }

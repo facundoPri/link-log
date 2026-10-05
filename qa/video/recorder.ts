@@ -49,6 +49,8 @@ export type Chapter = {
   /** What the chapter shows, one line each (intro card). */
   summary: string[];
   env?: EnvOptions;
+  /** Left out of the default run and of full.mp4; recorded only when named with --chapter. */
+  optional?: boolean;
   scenarios: Scenario[];
 };
 
@@ -86,6 +88,8 @@ export type Api = {
 
 function makeApi(base: string): Api {
   const send = async (method: string, path: string, body?: unknown): Promise<any> => {
+    // The Worker refuses a write without a JSON body (415), like the app's own client never sends.
+    if (method !== "GET" && body === undefined) body = {};
     const r = await fetch(`${base}/api${path}`, { method, headers: body === undefined ? {} : { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(`${method} ${path} → ${r.status}: ${JSON.stringify(data).slice(0, 200)}`);

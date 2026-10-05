@@ -53,6 +53,13 @@ export const FIXTURES = {
     preview: { kind: "html", title: "Pooled article {path}", description: "A normal page that only takes a while to render." },
     browser: { kind: "markdown", markdown: article("Pooled article {path}"), delayMs: 12_000, browserMs: 12_000 },
   },
+  // Chapter 1 (U-SLOW): a slow but healthy page. With one browser slot it holds the slot ~28 s, so the links
+  // behind it wait well past 30 s (the preview fetch stays under the product's 10 s fetch timeout).
+  "slow-ok": {
+    about: "HTML preview after 4 s, Browser Markdown after 24 s: slow but healthy, holds a browser slot ~28 s",
+    preview: { kind: "html", title: "Slow but fine {path}", description: "A healthy page that takes a while.", delayMs: 4_000 },
+    browser: { kind: "markdown", markdown: article("Slow but fine {path}"), delayMs: 24_000, browserMs: 24_000 },
+  },
   article: {
     about: "HTML preview and Markdown, both immediate",
     preview: { kind: "html", title: "QA article {path}", description: "A normal page." },

@@ -8,6 +8,8 @@ export default chapter({
   id: "pilot",
   title: "Needs attention only after a real failure",
   ticket: "FAC-48",
+  // Superseded by ch1-waiting (P1 = NA-01) and chapter 2 (fail-fast reasons); kept as the harness smoke test.
+  optional: true,
   summary: [
     "Eight links wait behind the 2-slot browser pool for more than 30 s and never show as failed",
     "A preview that fails fast (HTTP 404) lands in Needs attention with its plain reason, Retry and Dismiss",

@@ -47,7 +47,7 @@ export async function writeManifest(m: Manifest) {
 }
 export async function updateManifest(ch: Chapter, result: ScenarioResult) {
   const m = await readManifest();
-  m.chapters[ch.id] = { id: ch.id, title: ch.title, ticket: ch.ticket, summary: ch.summary, scenarios: ch.scenarios.map((s) => s.id) };
+  m.chapters[ch.id] = { id: ch.id, title: ch.title, ticket: ch.ticket, summary: ch.summary, optional: ch.optional, scenarios: ch.scenarios.map((s) => s.id) };
   m.scenarios[result.id] = result;
   await writeManifest(m);
 }

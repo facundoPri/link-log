@@ -101,7 +101,7 @@ export async function compose(only?: string[]): Promise<Manifest["videos"]> {
     for (const ch of Object.values(m.chapters)) {
       const scs = ch.scenarios.map((id) => m.scenarios[id]).filter((s): s is ScenarioResult => !!s);
       if (!scs.length) continue;
-      all.push(...scs);
+      if (!ch.optional) all.push(...scs);
       const intro = await cardVideo(browser, introCard(ch.title, `Chapter ${ch.id} · ${ch.ticket}`, ch.summary, scs), `chapter-${ch.id}-intro`, CARD_SECONDS.intro);
       const parts = [intro];
       for (const s of scs) {
@@ -111,7 +111,7 @@ export async function compose(only?: string[]): Promise<Manifest["videos"]> {
         await concat(segment, seg);
         s.segment = `segments/${s.id}.mp4`;
       }
-      chapterParts.push(...parts.slice());
+      if (!ch.optional) chapterParts.push(...parts.slice());
       const outro = await cardVideo(browser, outroCard(`${ch.title}: results`, scs), `chapter-${ch.id}-outro`, CARD_SECONDS.outro);
       parts.push(outro);
       if (only && !only.includes(ch.id)) continue;
@@ -121,7 +121,7 @@ export async function compose(only?: string[]): Promise<Manifest["videos"]> {
       console.log(`  chapter ${ch.id} → qa/out/${videos.chapters[ch.id]}`);
     }
     if (all.length) {
-      const intro = await cardVideo(browser, introCard("FAC-48 · QA walkthrough", "Full video", Object.values(m.chapters).map((c) => `${c.id}: ${c.title}`), all), "full-intro", CARD_SECONDS.intro);
+      const intro = await cardVideo(browser, introCard("FAC-48 · QA walkthrough", "Full video", Object.values(m.chapters).filter((c) => !c.optional).map((c) => `${c.id}: ${c.title}`), all), "full-intro", CARD_SECONDS.intro);
       const outro = await cardVideo(browser, outroCard("All scenarios", all), "full-outro", CARD_SECONDS.outro);
       await concat([intro, ...chapterParts, outro], resolve(OUT, "videos", "full.mp4"));
       videos.full = "videos/full.mp4";
@@ -135,4 +135,8 @@ export async function compose(only?: string[]): Promise<Manifest["videos"]> {
   return videos;
 }
 
-if (import.meta.main) await compose(process.argv.slice(2).filter((a) => !a.startsWith("-")));
+if (import.meta.main) {
+  // No chapter ids means every chapter (an empty list would skip them all).
+  const ids = process.argv.slice(2).filter((a) => !a.startsWith("-"));
+  await compose(ids.length ? ids : undefined);
+}
