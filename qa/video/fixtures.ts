@@ -151,6 +151,30 @@ export const FIXTURES = {
     preview: { kind: "html", title: "Blank page {path}", description: "The preview works; the page itself is empty." },
     browser: { kind: "markdown", markdown: "  ", delayMs: 15_000, browserMs: 15_000 },
   },
+  // Chapter 3 (U-EMPTY, immediate): a working preview with a description and an empty page. The preview text
+  // (title + description) is what the FAC-56 fallback stores as content.
+  "empty-page": {
+    about: "HTML preview with a description; Browser Markdown returns an empty result at once (empty, fail fast)",
+    preview: { kind: "html", title: "Empty page {path}", description: "Its preview works, but the page has no text." },
+    browser: { kind: "markdown", markdown: "  " },
+  },
+  // Chapter 3 (U-WALL-JAM): a Cloudflare-style challenge page instead of the article (FAC-57 "just a moment").
+  "wall-jam": {
+    about: "HTML preview OK; Browser Markdown returns a Cloudflare challenge page “Just a moment...” (login_wall)",
+    preview: { kind: "html", title: "QA wall {path}", description: "An article behind a browser challenge." },
+    browser: { kind: "markdown", markdown: "# Just a moment...\n\nChecking your browser before accessing the site." },
+  },
+  // Chapter 3 (U-LONG-SIGNIN): a real article whose header has a "Sign in" link; long, so it is not a wall.
+  "long-signin": {
+    about: "HTML preview OK; Browser Markdown returns a >1,500-character article with a “[Sign in](/login)” header link (kept)",
+    preview: { kind: "html", title: "Long read {path}", description: "A long article with a Sign in link in its header." },
+    browser: {
+      kind: "markdown",
+      markdown: "[Home](/) [Sign in](/login)\n\n# Long read {path}\n\n" + Array.from({ length: 8 }, (_, i) =>
+        `Paragraph ${i + 1}. This deterministic QA article is long enough to be a real page: it talks about gardens, rivers, ` +
+        `bridges and the people who build them, and it keeps going so the whole text is well past the length a login wall would have.`).join("\n\n"),
+    },
+  },
   // Jev account / provider errors. Only effective with the fake TypeSafe provider (QA_JEV=fake-typesafe):
   // the fake answers the HTTP status named by the `qa:jev-http=<status>` marker in the content.
   "jev-401": {

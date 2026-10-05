@@ -23,10 +23,12 @@ async function loadChapters(): Promise<Chapter[]> {
   return Promise.all(files.map(async (f) => (await import(resolve(dir, f))).default as Chapter));
 }
 
-/** Empties the library between scenarios so each clip starts clean: cancels leftovers, deletes every link. */
+/** Empties the library between scenarios so each clip starts clean: resets settings, cancels leftovers, deletes every link. */
 async function resetLibrary(env: QaEnv) {
   const call = (method: string, path: string, body?: unknown) =>
     fetch(`${env.ui}/api${path}`, { method, headers: body === undefined ? {} : { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) }).then((r) => r.json() as Promise<any>);
+  // Settings are library-wide and survive link deletion: put them back to the product default (FAC-56 fallback off).
+  await call("PUT", "/settings", { preview_fallback: false }).catch(() => {});
   for (let round = 0; round < 60; round++) {
     const lib = await call("GET", "/library");
     if (!lib.links.length) return;
