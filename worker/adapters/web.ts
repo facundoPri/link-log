@@ -1,9 +1,11 @@
 import { validateDestination } from "../metadata";
 import { measured } from "../usage";
 import type { ContentAdapter } from "./types";
+import { requireBrowserRun } from "./browser-run";
 export const webAdapter: ContentAdapter = {
   matches: () => true,
   async extract(env, url, job) {
+    requireBrowserRun(env);
     await validateDestination(new URL(url), AbortSignal.timeout(10000));
     return measured(
       env,

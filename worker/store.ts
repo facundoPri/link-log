@@ -11,13 +11,14 @@ import type {
 import { OCR_USAGE_COLUMNS } from "./usage";
 import { fixtureJevAllowed } from "./config";
 import { badRequest } from "./http/context";
+import { browserRunAvailable } from "./adapters/browser-run";
 export const json = (body: unknown, status = 200) =>
   Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
 export function capabilities(env: Env) {
   const provider = env.JEV_PROVIDER || "cloudflare";
   return {
     provider,
-    markdown: !!env.BROWSER,
+    markdown: browserRunAvailable(env),
     jev:
       provider === "typesafe"
         ? !!env.TYPESAFE_API_KEY

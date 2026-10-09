@@ -16,6 +16,7 @@ Open http://127.0.0.1:3000 (localhost redirects there: cookies and the trusted o
 Every library is private to its account (Better Auth on D1). Sign up with email + password (an emailed link verifies the address), or ask for a one-time magic link (5 minutes). "Forgot password" sends a reset link; resetting ends the other sessions. Locally, emails are **simulated**: Wrangler writes them under `.wrangler/tmp/email/` (they contain live sign-in links for that local state).
 
 - `bun run demo` → isolated A/B demo at http://127.0.0.1:3100 (API 8800, state `.wrangler/demo-state`, local-only bindings). It creates `demo-a@linklog.test` and `demo-b@linklog.test` through the real sign-up flow and offers them on the sign-in screen. Never available in a built/deployed bundle.
+- `bun run demo:connected` → the same local accounts and storage, with real Cloudflare Browser Run/AI bindings. Requires `wrangler login` and may incur cloud usage charges. Use this to test automatic page extraction: `quickAction` is not supported by Wrangler's local Browser simulator. Stop the other demo first; keep the same `LINKLOG_PERSIST_TO` to preserve its data. Email remains locally simulated in both modes; real delivery requires the hosted preview.
 - Data created before accounts existed stays in D1/R2 but belongs to nobody and is invisible until you assign it with the local tool `bun run legacy:adjudicate` (inventory → backup → assign to a verified user). See `planning/research/auth-implementation-report.md`.
 
 - **Add link** button or `⌘/Ctrl K`: one URL or a list, with optional tags.

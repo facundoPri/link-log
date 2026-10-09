@@ -27,7 +27,8 @@ function localEnvFile() {
   const envPath = join(stateDir, "linklog-local.env");
   // Automated runs (APP_ENV=test) use the deterministic Jev fixture: no paid model calls.
   const testVars = appEnv === "test" ? "JEV_PROVIDER=fixture\nALLOW_FIXTURE_JEV=1\n" : "";
-  writeFileSync(envPath, `APP_ENV=${appEnv}\nBETTER_AUTH_URL=${origin}\nBETTER_AUTH_SECRET=${secret}\n${testVars}`, { mode: 0o600 });
+  const localServicesOnly = process.env.LINKLOG_WRANGLER_LOCAL === "1" ? "1" : "0";
+  writeFileSync(envPath, `APP_ENV=${appEnv}\nBETTER_AUTH_URL=${origin}\nBETTER_AUTH_SECRET=${secret}\nLOCAL_SERVICES_ONLY=${localServicesOnly}\n${testVars}`, { mode: 0o600 });
   return envPath;
 }
 
