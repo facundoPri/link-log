@@ -1,0 +1,15 @@
+# Final auth review disposition — 2026-10-09
+
+This disposition supersedes the unconditional F1/P2 merge gate in [the initial review](auth-final-review-2026-10-09.md), after the owner requested stronger evidence and alignment with standard Better Auth behavior. The original report remains an unchanged historical record.
+
+| Area | Current conclusion | Evidence |
+| --- | --- | --- |
+| Authentication boundary | All 30 registered application routes require a valid session. Public SPA assets and auth entry points remain public by design. | [268 passing assertions](auth-route-protection-evidence-2026-10-09.md), including 120 local HTTP requests; other cases use TestD1. |
+| F1 session-cookie renewal | The missed renewal header is real, but matches the official Better Auth Hono example. P3 persistence/UX follow-up, not an auth bypass or unconditional merge blocker under the owner's stated requirement. No auth patch applied. | [17 controlled browser observations](auth-cookie-evidence-2026-10-09.md), real Chromium/Bun/workerd/D1, explicit time manipulation and controls. |
+| F2 extension Clean | Ordinary B Clean preserves A. Crafted same-profile calls with already-known foreign lens IDs can remove local cache/pending records. Foreign server operations are rejected; no server deletion demonstrated. Informational local hardening, non-blocking. No extension patch applied. | [6 focused real MV3 cases](extension-clean-evidence-2026-10-09.md), 7 foreign operations rejected with 404, full business-row and R2 equality. |
+| Login redesign | Auth-only redesign and async form fixes implemented by Claude Code Opus 5.5 in Orca; local visual and functional checks passed. | [Report and portable screenshots](login-redesign-2026-10-09.md). |
+| Demo extraction | `--local` disabled the remote Browser binding needed by Quick Actions. Explicit connected demo command and offline Browser guard added; independent review approved. | [Actual-service comparison and UI Retry](browser-rpc-evidence-2026-10-09.md), [independent review](demo-connected-review-2026-10-09.md). |
+
+The user's demo remains at `http://127.0.0.1:3100`, API8800, with `.wrangler/demo-review-2026-10-09` preserved. Browser Run/AI use real Cloudflare services in connected mode; accounts/D1/R2 remain local and auth email remains simulated. Only the user's GPUI failed extraction was explicitly retried through the UI; historical failures were retained. Screenshot capture of that recheck timed out twice in Ego CDP; the rendered inspector content was observed directly, without claiming a saved after-image.
+
+This disposition supports code review of auth/isolation and the scoped local fix. It does not certify production, full QA-matrix completion, email delivery, or hosted cookies. Preview infrastructure has a separate implementation/review and activation requirements; merging or enabling it is not evidence of successful hosted behavior. The owner requested a preview before final testing, so the PR remains open for that next verification.
