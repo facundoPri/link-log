@@ -116,7 +116,7 @@ const COPY: Record<Mode, { title: string; subtitle: string; submit: string }> = 
   "sign-in": { title: "Sign in", subtitle: "Welcome back to your link library.", submit: "Sign in" },
   "sign-up": { title: "Create your account", subtitle: "Start a library for everything worth keeping.", submit: "Create account" },
   magic: { title: "Email me a sign-in link", subtitle: "We'll email you a link that signs you in.", submit: "Send link" },
-  forgot: { title: "Reset your password", subtitle: "Enter your account email and we'll send you a link to choose a new one.", submit: "Send reset link" },
+  forgot: { title: "Set or reset your password", subtitle: "Use your account email to request a password link. This also works if you signed up with an email sign-in link.", submit: "Send password link" },
 };
 // [prompt, button, target] under the form.
 const SWITCH: Record<Mode, [string, string, Mode]> = {
@@ -161,8 +161,11 @@ export function AuthScreen({ onSignedIn }: { onSignedIn: () => void }) {
         callbackURL: "/",
       });
       if (error) return { tone: "error", text: message(error, "Could not create the account.") };
-      // Same answer whether or not the address already has an account.
-      return { tone: "info", text: `Check ${email} for a confirmation link. It expires in 1 hour.` };
+      // Same answer for new and existing accounts; do not promise mail for duplicate sign-ups.
+      return {
+        tone: "info",
+        text: `If ${email} is new to Linklog, check your inbox for a confirmation link. It expires in 1 hour. Already have an account, including through an email sign-in link? This form won't send another email. Sign in or choose a password below.`,
+      };
     }
     if (mode === "magic") {
       const { error } = await authClient.signIn.magicLink({
@@ -245,6 +248,11 @@ export function AuthScreen({ onSignedIn }: { onSignedIn: () => void }) {
           )}
         </div>
         <Notices notice={notice} />
+        {mode === "sign-up" && notice?.tone === "info" && (
+          <Button type="button" variant="link" className={cn(inlineLink, "mt-3")} onClick={() => go("forgot")}>
+            Set or reset your password
+          </Button>
+        )}
         <Submit busy={busy}>{copy.submit}</Submit>
       </form>
 
