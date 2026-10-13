@@ -1,0 +1,119 @@
+name: Isolated PR preview
+
+on:
+  pull_request_target:
+    types: [labeled, unlabeled, synchronize, reopened, closed]
+
+# Never cancel an in-flight resource mutation. Every run reconciles live PR state;
+# GitHub may replace a pending run, so event payload labels are not authoritative.
+concurrency:
+  group: pr-preview-${{ github.repository_id }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pull-requests: read
+
+env:
+  PR_NUMBER: ${{ github.event.pull_request.number }}
+  WRANGLER_SEND_METRICS: 'false'
+  CI: 'true'
+
+jobs:
+  plan:
+    # Reconcile even unrelated label events: a skipped latest run could otherwise
+    # replace a pending cleanup in GitHub's concurrency queue.
+    if: github.event.pull_request.head.repo.id == github.repository_id
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      action: ${{ steps.plan.outputs.action }}
+      sha: ${{ steps.plan.outputs.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+      - id: plan
+        run: bun scripts/preview/github.ts
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  build:
+    needs: plan
+    if: needs.plan.outputs.action == 'deploy'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          path: control
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          path: source
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+      - name: Install pinned build tool (no lifecycle scripts)
+        run: npm install --prefix "$RUNNER_TEMP/preview-tools" --ignore-scripts --no-audit --no-fund wrangler@4.136.1
+      # This runner has NO Cloudflare/auth secrets, write token, environment, or cache.
+      - name: Build immutable artifact
+        run: |
+          export WRANGLER_BIN="$RUNNER_TEMP/preview-tools/node_modules/.bin/wrangler"
+          bun control/scripts/preview/build.ts source artifact
+        env:
+          PREVIEW_SHA: ${{ needs.plan.outputs.sha }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: preview-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 1
+
+  reconcile:
+    needs: [plan, build]
+    if: >-
+      always() && needs.plan.result == 'success' &&
+      (needs.plan.outputs.action == 'cleanup' ||
+       needs.plan.outputs.action == 'deploy' && needs.build.result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: pr-preview
+    steps:
+      # Only the trusted base revision is executable in this job.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+      - name: Install pinned deployment tool (no lifecycle scripts)
+        if: needs.plan.outputs.action == 'deploy'
+        run: npm install --prefix "$RUNNER_TEMP/preview-tools" --ignore-scripts --no-audit --no-fund wrangler@4.136.1
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: needs.plan.outputs.action == 'deploy'
+        with:
+          name: preview-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/preview-artifact
+      - name: Reconcile current PR state
+        run: |
+          export WRANGLER_BIN="$RUNNER_TEMP/preview-tools/node_modules/.bin/wrangler"
+          export PREVIEW_ARTIFACT="$RUNNER_TEMP/preview-artifact"
+          bun scripts/preview/run.ts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIEW_ACTION: ${{ needs.plan.outputs.action }}
+          PREVIEW_SHA: ${{ needs.plan.outputs.sha }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PREVIEW_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_PREVIEW_ACCOUNT_ID }}
+          PREVIEW_AUTH_SEED: ${{ secrets.PREVIEW_AUTH_SEED }}
+          PREVIEW_WORKERS_SUBDOMAIN: ${{ vars.PREVIEW_WORKERS_SUBDOMAIN }}
+          PREVIEW_EMAIL_FROM: ${{ vars.PREVIEW_EMAIL_FROM }}
