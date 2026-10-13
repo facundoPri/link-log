@@ -13,8 +13,9 @@ async function run(args: string[]) {
 }
 await rm(output, { recursive: true, force: true });
 await mkdir(output, { recursive: true });
-await run(["bun", "install", "--frozen-lockfile", "--ignore-scripts"]);
-await run(["bun", "run", "build"]);
+await run([process.execPath, "install", "--frozen-lockfile", "--ignore-scripts"]);
+// Dependency-provided bun shims have no postinstall in CI; retain the setup-bun runtime.
+await run([process.execPath, "run", "--bun", "build"]);
 const cfg = config("1", "1", "00000000-0000-0000-0000-000000000001", "offline", "preview@example.com");
 const buildConfig = { ...cfg, main: `${source}/worker/index.ts`, no_bundle: false,
   assets: { ...cfg.assets, directory: `${source}/dist` },
