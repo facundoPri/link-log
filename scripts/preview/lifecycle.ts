@@ -36,7 +36,13 @@ export async function resources(cf: Cloudflare, repositoryId: string, pr: string
     const detail = (await cf.api(`/queues/${queue.queue_id}`)).result;
     if (detail.queue_name !== n.queue) throw new Error("Queue identity mismatch");
     for (const consumer of detail.consumers ?? []) {
-      if (consumer.script_name !== n.worker) throw new Error("Queue has a foreign consumer; refusing to mutate");
+      // Live Queue responses use script; the documented API shape uses script_name.
+      // Require every supplied name to match, so conflicting identities fail closed.
+      const scripts = [consumer.script, consumer.script_name].filter(name => name !== undefined);
+      if (!scripts.length || scripts.some(name => name !== n.worker) ||
+        consumer.type !== undefined && consumer.type !== "worker") {
+        throw new Error("Queue has a foreign consumer; refusing to mutate");
+      }
     }
     queue = detail;
   }
