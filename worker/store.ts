@@ -32,7 +32,7 @@ export async function library(env: Env, userId: string) {
   const ownedLinks = "SELECT id FROM links WHERE user_id=?1";
   const [links, tags, joins, evaluations, batches, lensRows, lensResults, usageRows, mediaRows, hiddenRows] =
     await Promise.all([
-    env.DB.prepare("SELECT * FROM links WHERE user_id=?1 ORDER BY created_at DESC").bind(userId).all<
+    env.DB.prepare("SELECT * FROM links WHERE user_id=?1 ORDER BY coalesce(last_saved_at,created_at) DESC,created_at DESC,id DESC").bind(userId).all<
       Link & { metadata_started_at: string | null; user_id?: string }
     >(),
     env.DB.prepare(

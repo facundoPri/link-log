@@ -40,6 +40,7 @@ export type Link = {
   favicon: string | null;
   status: "pending" | "ready" | "failed";
   created_at: string;
+  last_saved_at?: string | null;
   tags: Tag[];
   evaluations: Evaluation[];
   content_key: string | null;

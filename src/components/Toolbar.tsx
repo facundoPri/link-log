@@ -241,7 +241,7 @@ export function Toolbar({
               <Button
                 variant="ghost"
                 size="icon-sm"
-                aria-label={ascending ? "Oldest first" : "Newest first"}
+                aria-label={ascending ? "Least recently saved first" : "Recently saved first"}
                 className="hidden @2xl:inline-flex"
                 onClick={onToggleSort}
               >
@@ -253,7 +253,7 @@ export function Toolbar({
               </Button>
             </TooltipTrigger>
             <TooltipContent>
-              {ascending ? "Oldest first" : "Newest first"}
+              {ascending ? "Least recently saved first" : "Recently saved first"}
             </TooltipContent>
           </Tooltip>
           <Button size="sm" onClick={onAdd} aria-label="Add link">

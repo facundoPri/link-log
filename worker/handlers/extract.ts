@@ -1,4 +1,4 @@
-import { extractMetadata } from "../metadata";
+import { extractMetadata, saveMetadata } from "../metadata";
 import { adapterFor } from "../adapters";
 import type { Discovered } from "../adapters/types";
 import { transcribeImage, OCR_MODEL } from "../ocr";
@@ -48,8 +48,7 @@ export const extractHandler: JobHandler = {
     const linkJob = { id: job.id, batch_id: job.batch_id, link_id: link.id };
     const metadata = await step.do("resolve-and-preview", { retries: { limit: 1, delay: "2 seconds", backoff: "constant" } }, () => extractMetadata(link.original_url));
     await step.do("save-preview", async () => {
-      await env.DB.prepare("UPDATE links SET url=?,domain=?,title=?,description=?,image=?,favicon=?,status=? WHERE id=? AND user_id=?")
-        .bind(metadata.url, metadata.domain, metadata.title, metadata.description, metadata.image, metadata.favicon, metadata.status, link.id, job.user_id).run();
+      await saveMetadata(env.DB, job.user_id, link.id, metadata);
       await env.DB.prepare("UPDATE jobs SET step='Extracting content' WHERE id=?").bind(job.id).run();
     });
     const adapter = adapterFor(metadata.url);

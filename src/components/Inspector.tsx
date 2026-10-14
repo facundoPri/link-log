@@ -417,7 +417,7 @@ export function Inspector({
             </button>
           )}
           <p className="mt-1.5 text-2xs text-muted-foreground">
-            Saved {relativeTime(link.created_at)} ·{" "}
+            Saved {relativeTime(link.last_saved_at ?? link.created_at)} ·{" "}
             {sourceLabel[link.content_source ?? ""] ?? "Page"}
             {link.content_state === "partial" && <> · <span className="text-destructive">Partial</span></>}
           </p>
@@ -929,8 +929,12 @@ export function Inspector({
               )}
               <dt className="text-muted-foreground">Domain</dt>
               <dd>{link.domain}</dd>
-              <dt className="text-muted-foreground">Saved</dt>
+              <dt className="text-muted-foreground">First saved</dt>
               <dd>{new Date(link.created_at).toLocaleString()}</dd>
+              {link.last_saved_at && link.last_saved_at !== link.created_at && <>
+                <dt className="text-muted-foreground">Last saved</dt>
+                <dd>{new Date(link.last_saved_at).toLocaleString()}</dd>
+              </>}
               <dt className="text-muted-foreground">Preview</dt>
               <dd>
                 {link.status === "ready"

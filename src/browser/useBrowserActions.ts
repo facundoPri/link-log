@@ -190,7 +190,7 @@ export function useBrowserActions(ws: BrowserWorkspace, setLibrary: (l: Library)
         const created = results.filter((r) => r.status === "created").length;
         const dup = results.filter((r) => r.status === "duplicate").length;
         const rejected = results.filter((r) => r.status === "rejected");
-        const summary = [created && `${plural(created, "link")} saved`, dup && `${dup} already in your library`, rejected.length && `${rejected.length} can't be saved`].filter(Boolean);
+        const summary = [created && `${plural(created, "link")} saved`, dup && `${plural(dup, "link")} moved to the top`, rejected.length && `${rejected.length} can't be saved`].filter(Boolean);
         toast[created || dup ? "success" : "error"](summary.join(" · ") || "Nothing saved", {
           description: rejected.length
             ? [...new Set(rejected.map((r) => r.error))].join(" ")

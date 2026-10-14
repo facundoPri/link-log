@@ -44,7 +44,7 @@ const counts = (db: TestD1) =>
 const snapshot = (db: TestD1) =>
   // prepare(), not query(): query() caches statements and would reuse the pre-rebuild column list.
   TABLES.filter((t) => t !== "settings").map((t) => db.sqlite.prepare(`SELECT * FROM ${t} ORDER BY 1`).all()).map((rows) =>
-    (rows as Record<string, unknown>[]).map(({ user_id: _u, ...rest }) => rest),
+    (rows as Record<string, unknown>[]).map(({ user_id: _u, last_saved_at: _saved, ...rest }) => rest),
   );
 
 describe("0012 + 0013 on existing data", () => {
@@ -54,6 +54,7 @@ describe("0012 + 0013 on existing data", () => {
     const rowsBefore = JSON.stringify(snapshot(db));
     await db.migrate(undefined, "0011");
     expect(counts(db)).toEqual(before);
+    expect(db.sqlite.query("SELECT count(*) n FROM links WHERE last_saved_at IS NOT NULL").get()).toEqual({ n: 0 });
     expect(JSON.stringify(snapshot(db))).toBe(rowsBefore);
     expect(db.sqlite.query("PRAGMA foreign_key_check").all()).toEqual([]);
     expect(db.sqlite.query("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });

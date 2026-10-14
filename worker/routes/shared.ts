@@ -1,21 +1,16 @@
 // Validation and owner-scoped helpers shared by the route modules.
 import type { LensLevel, LensOption } from "../../src/types";
 import { normalizeUrl } from "../../src/url";
-import { extractMetadata } from "../metadata";
+import { extractMetadata, saveMetadata } from "../metadata";
 import { text, threshold } from "../store";
 import { badRequest, notFound } from "../http/context";
 
 export async function enrich(db: D1Database, userId: string, id: string, url: string) {
   try {
     const m = await extractMetadata(url);
-    await db
-      .prepare(
-        "UPDATE links SET url=?, domain=?, title=?, description=?, image=?, favicon=?, status=? WHERE id=? AND user_id=?",
-      )
-      .bind(m.url, m.domain, m.title, m.description, m.image, m.favicon, m.status, id, userId)
-      .run();
+    await saveMetadata(db, userId, id, m);
   } catch {
-    await db.prepare("UPDATE links SET status='failed' WHERE id=? AND user_id=?").bind(id, userId).run();
+    await db.prepare("UPDATE links SET status=CASE WHEN status='ready' THEN 'ready' ELSE 'failed' END WHERE id=? AND user_id=?").bind(id, userId).run();
   }
 }
 

@@ -1,4 +1,5 @@
 import ipaddr from "ipaddr.js";
+import { youtubeId } from "./adapters/youtube";
 import { decodeHTML } from "entities";
 import { normalizeUrl, domainOf } from "../src/url";
 export function publicAddress(address: string): boolean {
@@ -51,11 +52,68 @@ function safeAsset(raw: string | undefined, base: string) {
     return null;
   }
 }
-export async function extractMetadata(input: string) {
+export type Metadata = { url: string; domain: string; title: string; description: string; image: string | null; favicon: string | null; status: "ready" | "failed" };
+
+function failedPreview(input: string): Metadata {
+  return { url: input, domain: domainOf(input), title: domainOf(input), description: "", image: null, favicon: null, status: "failed" };
+}
+
+function accessInterstitial(url: URL) {
+  return ["consent.youtube.com", "consent.google.com", "accounts.google.com"].includes(url.hostname) ||
+    (url.hostname === "www.google.com" && url.pathname.startsWith("/sorry/"));
+}
+
+/** oEmbed is independent of watch-page/caption access; a missing transcript must not erase a preview. */
+async function youtubePreview(input: string, videoId: string): Promise<Metadata | null> {
+  try {
+    const signal = AbortSignal.timeout(4000);
+    const endpoint = new URL("https://www.youtube.com/oembed");
+    endpoint.searchParams.set("url", `https://www.youtube.com/watch?v=${videoId}`);
+    endpoint.searchParams.set("format", "json");
+    await validateDestination(endpoint, signal);
+    const response = await fetch(endpoint, { signal, redirect: "manual" });
+    if (!response.ok) { await response.body?.cancel(); return null; }
+    const reader = response.body?.getReader();
+    if (!reader) return null;
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        size += value.length;
+        if (size > 64_000) return null;
+        chunks.push(value);
+      }
+    } finally { await reader.cancel(); }
+    const data = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) { data.set(chunk, offset); offset += chunk.length; }
+    const body = JSON.parse(new TextDecoder().decode(data));
+    if (body.type !== "video" || typeof body.title !== "string" || !body.title.trim()) return null;
+    return { url: input, domain: "youtube.com", title: decodeHTML(body.title).trim().slice(0,500), description: "",
+      image: safeAsset(typeof body.thumbnail_url === "string" ? body.thumbnail_url : undefined, input),
+      favicon: "https://www.youtube.com/favicon.ico", status: "ready" };
+  } catch { return null; }
+}
+
+export async function extractMetadata(input: string): Promise<Metadata> {
+  const original = normalizeUrl(input);
+  const videoId = youtubeId(original);
+  if (videoId) {
+    const preview = await youtubePreview(original, videoId);
+    if (preview) return preview;
+  }
+  try { return await pageMetadata(original); }
+  catch { return failedPreview(original); }
+}
+
+async function pageMetadata(input: string): Promise<Metadata> {
   const signal = AbortSignal.timeout(10000);
-  let url = new URL(normalizeUrl(input));
+  let url = new URL(input);
   let response: Response | undefined;
   for (let n = 0; n < 6; n++) {
+    if (accessInterstitial(url)) return failedPreview(input);
     await validateDestination(url, signal);
     response = await fetch(url.href, {
       redirect: "manual",
@@ -80,15 +138,7 @@ export async function extractMetadata(input: string) {
     !response.headers.get("content-type")?.includes("text/html")
   ) {
     await response?.body?.cancel();
-    return {
-      url: url.href,
-      domain: domainOf(url.href),
-      title: domainOf(url.href),
-      description: "",
-      image: null,
-      favicon: null,
-      status: "failed" as const,
-    };
+    return failedPreview(input);
   }
   const reader = response.body?.getReader();
   if (!reader) throw new Error("Empty page");
@@ -135,6 +185,9 @@ export async function extractMetadata(input: string) {
     })
     .transform(new Response(data))
     .text();
+  // YouTube sometimes returns only its app shell, with no video metadata.
+  if (youtubeId(input) && !meta["og:title"] && !meta["twitter:title"] && /^\s*(?:-\s*)?YouTube\s*$/i.test(title))
+    return failedPreview(input);
   return {
     status: "ready" as const,
     url: url.href,
@@ -150,4 +203,18 @@ export async function extractMetadata(input: string) {
     image: safeAsset(meta["og:image"] || meta["twitter:image"], url.href),
     favicon: safeAsset(icon || "/favicon.ico", url.href),
   };
+}
+
+/** A failed refresh changes status only; never replace useful metadata with an error page. */
+export async function saveMetadata(db: D1Database, userId: string, id: string, metadata: Metadata) {
+  if (metadata.status === "failed") {
+    await db.prepare("UPDATE links SET status=CASE WHEN status='ready' THEN 'ready' ELSE 'failed' END WHERE id=? AND user_id=?").bind(id, userId).run();
+    return;
+  }
+  await db.prepare(`UPDATE links SET url=?,domain=?,
+    title=CASE WHEN ?= ? AND title<>domain THEN title ELSE ? END,
+    description=CASE WHEN ?='' THEN description ELSE ? END,
+    image=coalesce(?,image),favicon=coalesce(?,favicon),status='ready' WHERE id=? AND user_id=?`)
+    .bind(metadata.url,metadata.domain,metadata.title,metadata.domain,metadata.title,
+      metadata.description,metadata.description,metadata.image,metadata.favicon,id,userId).run();
 }

@@ -5,7 +5,7 @@ export type AddResult = { input: string; id: string; created: boolean } | { inpu
 
 /**
  * Adds URLs to the owner's library the way All links does (normalization, URL rules, per-owner
- * dedupe) and queues one extraction batch for the links it created.
+ * dedupe), updates last-saved recency, and queues one extraction batch for the links it created.
  *
  * Quotas are admitted before anything is written: new links count against the link and job
  * quotas, so an exhausted quota answers 429 with nothing saved. The links, their batch and their
@@ -22,6 +22,7 @@ export type AddResult = { input: string; id: string; created: boolean } | { inpu
  * never charged.
  */
 export async function addLinks(env: Env, userId: string, inputs: string[]): Promise<AddResult[]> {
+  const now = new Date().toISOString();
   type Parsed = { input: string; url: string } | { input: string; error: string };
   const parsed = inputs.map((input): Parsed => {
     try {
@@ -62,9 +63,8 @@ export async function addLinks(env: Env, userId: string, inputs: string[]): Prom
 
   const createdLinks = new Set<string>();
   const queuedJobs: string[] = [];
-  if (fresh.length || orphans.length) {
+  if (known.size) {
     const db = env.DB;
-    const now = new Date().toISOString();
     const batchId = crypto.randomUUID();
     // D1 allows at most 100 bound parameters per statement, also inside a batch: every statement
     // below binds a constant number of values, so up to 100 URLs (and orphans) fit in ONE batch.
@@ -76,19 +76,28 @@ export async function addLinks(env: Env, userId: string, inputs: string[]): Prom
           )
           .bind(f.id, userId, f.url, f.url, domainOf(f.url), domainOf(f.url), now, userId, f.url, f.url),
       ),
-      db.prepare("INSERT INTO batches(id,user_id,kind,config,created_at) VALUES(?,?,'extract','{}',?)").bind(batchId, userId, now),
-      ...[...fresh, ...orphans].map((j) =>
+      ...(fresh.length || orphans.length ? [
+        db.prepare("INSERT INTO batches(id,user_id,kind,config,created_at) VALUES(?,?,'extract','{}',?)").bind(batchId, userId, now),
+        ...[...fresh, ...orphans].map((j) =>
+          db
+            .prepare(
+              "INSERT INTO jobs(id,batch_id,link_id,created_at) SELECT ?,?,id,? FROM links WHERE id=? AND user_id=? AND NOT EXISTS(SELECT 1 FROM jobs WHERE link_id=links.id)",
+            )
+            .bind(j.jobId, batchId, now, j.id, userId),
+        ),
         db
-          .prepare(
-            "INSERT INTO jobs(id,batch_id,link_id,created_at) SELECT ?,?,id,? FROM links WHERE id=? AND user_id=? AND NOT EXISTS(SELECT 1 FROM jobs WHERE link_id=links.id)",
-          )
-          .bind(j.jobId, batchId, now, j.id, userId),
-      ),
-      db
-        .prepare(`UPDATE links SET content_state='queued',content_error=NULL WHERE user_id=? AND id IN (SELECT link_id FROM jobs WHERE batch_id=?)`)
-        .bind(userId, batchId),
-      // A fully deduped call (every link already had a job) leaves no empty batch behind.
-      db.prepare("DELETE FROM batches WHERE id=? AND user_id=? AND NOT EXISTS(SELECT 1 FROM jobs WHERE batch_id=?)").bind(batchId, userId, batchId),
+          .prepare(`UPDATE links SET content_state='queued',content_error=NULL WHERE user_id=? AND id IN (SELECT link_id FROM jobs WHERE batch_id=?)`)
+          .bind(userId, batchId),
+        // A fully deduped call (every link already had a job) leaves no empty batch behind.
+        db.prepare("DELETE FROM batches WHERE id=? AND user_id=? AND NOT EXISTS(SELECT 1 FROM jobs WHERE batch_id=?)").bind(batchId, userId, batchId),
+      ] : []),
+      // Re-saving changes recency only. Resolve each URL with the same original-first rule
+      // as findAll, including a concurrent insert that won over ours.
+      db.prepare(`UPDATE links SET last_saved_at=max(coalesce(last_saved_at,created_at),?1)
+        WHERE user_id=?2 AND id IN (SELECT coalesce(
+          (SELECT id FROM links WHERE user_id=?2 AND original_url=value),
+          (SELECT id FROM links WHERE user_id=?2 AND url=value LIMIT 1)
+        ) FROM json_each(?3))`).bind(now, userId, JSON.stringify([...known.keys()])),
     ];
     let results: D1Result[];
     try {
