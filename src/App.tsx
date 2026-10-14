@@ -3,7 +3,7 @@ import { Link2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "./api";
 import type { Job, Lens, LensResult, LensScope, Library, Link, Tag } from "./types";
-import { pastedUrls } from "./url";
+import { clipboardUrls, pastedUrls } from "./url";
 import { Sidebar, type View } from "./components/Sidebar";
 import { Toolbar, type ContextFilter } from "./components/Toolbar";
 import { LinkList } from "./components/LinkList";
@@ -446,10 +446,12 @@ export function App({
     };
     const paste = (e: ClipboardEvent) => {
       if (isInput(e.target) || dialog || activityOpen) return;
-      const text = e.clipboardData?.getData("text/plain") || "";
-      if (pastedUrls(text).length) {
+      const urls = e.clipboardData ? clipboardUrls(e.clipboardData) : [];
+      if (urls.length) {
         e.preventDefault();
-        capture(text);
+        capture(urls.join("\n"));
+      } else if (/https?:\/\//i.test(e.clipboardData?.getData("text/plain") || "")) {
+        toast.error("Couldn't read this link list", { description: "Use one URL per line, or copy links with their titles." });
       }
     };
     window.addEventListener("keydown", key);

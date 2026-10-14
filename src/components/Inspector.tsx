@@ -496,8 +496,16 @@ export function Inspector({
                   </DropdownMenuContent>
                 </DropdownMenu>}
               </div>
-              {!details.transcript.originalLanguage && <p className="text-muted-foreground">Original audio language could not be verified.</p>}
+              {!details.transcript.originalLanguage && !details.transcript.selectedLanguage && <p className="text-muted-foreground">Original audio language could not be verified.</p>}
             </div>}
+            {details?.transcript?.selectedLanguage && details.transcript.reason.startsWith("english-") && (
+              <p className="mb-3 text-xs text-muted-foreground">
+                {details.transcript.reason === "english-original-unknown"
+                  ? "English transcript saved. The video's original language could not be confirmed."
+                  : "English transcript saved. Captions in the original language were unavailable."}
+                {selectableTracks.length > 1 && " You can choose another available track above."}
+              </p>
+            )}
             {(link.content_state === "partial" || (details?.issues.length || 0) > 0) && <div role="status" className="mb-3 flex flex-col gap-1 rounded-md bg-muted/50 p-2 text-xs">
               <span className="font-medium">Extraction incomplete</span>
               {details?.issues.map((issue, i) => <span key={i} className="text-muted-foreground">{issue}</span>)}
