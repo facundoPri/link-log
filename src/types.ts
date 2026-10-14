@@ -41,6 +41,8 @@ export type Link = {
   status: "pending" | "ready" | "failed";
   created_at: string;
   last_saved_at?: string | null;
+  original_metadata?: string | null;
+  metadata_error?: string | null;
   tags: Tag[];
   evaluations: Evaluation[];
   content_key: string | null;

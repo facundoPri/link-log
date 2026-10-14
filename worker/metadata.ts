@@ -2,6 +2,7 @@ import ipaddr from "ipaddr.js";
 import { youtubeId } from "./adapters/youtube";
 import { decodeHTML } from "entities";
 import { normalizeUrl, domainOf } from "../src/url";
+import { accessInterstitial, accessPageTitle, ACCESS_PAGE_ERROR } from "./access-page";
 export function publicAddress(address: string): boolean {
   try {
     return ipaddr.process(address).range() === "unicast";
@@ -52,15 +53,10 @@ function safeAsset(raw: string | undefined, base: string) {
     return null;
   }
 }
-export type Metadata = { url: string; domain: string; title: string; description: string; image: string | null; favicon: string | null; status: "ready" | "failed" };
+export type Metadata = { url: string; domain: string; title: string; description: string; image: string | null; favicon: string | null; status: "ready" | "failed"; error?: string };
 
-function failedPreview(input: string): Metadata {
-  return { url: input, domain: domainOf(input), title: domainOf(input), description: "", image: null, favicon: null, status: "failed" };
-}
-
-function accessInterstitial(url: URL) {
-  return ["consent.youtube.com", "consent.google.com", "accounts.google.com"].includes(url.hostname) ||
-    (url.hostname === "www.google.com" && url.pathname.startsWith("/sorry/"));
+function failedPreview(input: string, error = "Preview unavailable. Any previously saved metadata was kept."): Metadata {
+  return { url: input, domain: domainOf(input), title: domainOf(input), description: "", image: null, favicon: null, status: "failed", error };
 }
 
 /** oEmbed is independent of watch-page/caption access; a missing transcript must not erase a preview. */
@@ -113,7 +109,7 @@ async function pageMetadata(input: string): Promise<Metadata> {
   let url = new URL(input);
   let response: Response | undefined;
   for (let n = 0; n < 6; n++) {
-    if (accessInterstitial(url)) return failedPreview(input);
+    if (accessInterstitial(url)) return failedPreview(input, ACCESS_PAGE_ERROR);
     await validateDestination(url, signal);
     response = await fetch(url.href, {
       redirect: "manual",
@@ -185,6 +181,8 @@ async function pageMetadata(input: string): Promise<Metadata> {
     })
     .transform(new Response(data))
     .text();
+  if (accessPageTitle(decodeHTML(title)) || accessPageTitle(decodeHTML(meta["og:title"] || "")))
+    return failedPreview(input, ACCESS_PAGE_ERROR);
   // YouTube sometimes returns only its app shell, with no video metadata.
   if (youtubeId(input) && !meta["og:title"] && !meta["twitter:title"] && /^\s*(?:-\s*)?YouTube\s*$/i.test(title))
     return failedPreview(input);
@@ -208,13 +206,15 @@ async function pageMetadata(input: string): Promise<Metadata> {
 /** A failed refresh changes status only; never replace useful metadata with an error page. */
 export async function saveMetadata(db: D1Database, userId: string, id: string, metadata: Metadata) {
   if (metadata.status === "failed") {
-    await db.prepare("UPDATE links SET status=CASE WHEN status='ready' THEN 'ready' ELSE 'failed' END WHERE id=? AND user_id=?").bind(id, userId).run();
+    await db.prepare("UPDATE links SET status=CASE WHEN status='ready' OR original_metadata IS NOT NULL THEN 'ready' ELSE 'failed' END,metadata_error=? WHERE id=? AND user_id=?").bind(metadata.error || "Preview unavailable. Any previously saved metadata was kept.", id, userId).run();
     return;
   }
-  await db.prepare(`UPDATE links SET url=?,domain=?,
+  const snapshot = metadata.title !== metadata.domain || metadata.image || metadata.description
+    ? JSON.stringify({ ...metadata, captured_at: new Date().toISOString() }) : null;
+  await db.prepare(`UPDATE links SET original_metadata=coalesce(original_metadata,?),metadata_error=NULL,url=?,domain=?,
     title=CASE WHEN ?= ? AND title<>domain THEN title ELSE ? END,
     description=CASE WHEN ?='' THEN description ELSE ? END,
     image=coalesce(?,image),favicon=coalesce(?,favicon),status='ready' WHERE id=? AND user_id=?`)
-    .bind(metadata.url,metadata.domain,metadata.title,metadata.domain,metadata.title,
+    .bind(snapshot,metadata.url,metadata.domain,metadata.title,metadata.domain,metadata.title,
       metadata.description,metadata.description,metadata.image,metadata.favicon,id,userId).run();
 }

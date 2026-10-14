@@ -44,7 +44,7 @@ const counts = (db: TestD1) =>
 const snapshot = (db: TestD1) =>
   // prepare(), not query(): query() caches statements and would reuse the pre-rebuild column list.
   TABLES.filter((t) => t !== "settings").map((t) => db.sqlite.prepare(`SELECT * FROM ${t} ORDER BY 1`).all()).map((rows) =>
-    (rows as Record<string, unknown>[]).map(({ user_id: _u, last_saved_at: _saved, ...rest }) => rest),
+    (rows as Record<string, unknown>[]).map(({ user_id: _u, last_saved_at: _saved, original_metadata: _preview, metadata_error: _error, ...rest }) => rest),
   );
 
 describe("0012 + 0013 on existing data", () => {

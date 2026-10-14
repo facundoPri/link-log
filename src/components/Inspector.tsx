@@ -60,6 +60,7 @@ import { TagPicker } from "./TagPicker";
 import { LensVerdict } from "./LensVerdict";
 import { lensIcon } from "./Sidebar";
 import { MarkdownView } from "./MarkdownView";
+import { PreservedPreview } from "./PreservedPreview";
 
 const sourceLabel: Record<string, string> = {
   web: "Page text",
@@ -916,6 +917,7 @@ export function Inspector({
             </section>
           </TabsContent>
           <TabsContent value="details" className="mt-3">
+            <h3 className="mb-3 text-xs font-medium">Current details</h3>
             <dl className="grid grid-cols-[88px_1fr] gap-y-2 text-xs">
               <dt className="text-muted-foreground">Original URL</dt>
               <dd className="min-w-0">
@@ -971,6 +973,8 @@ export function Inspector({
                   ` · updated ${relativeTime(link.content_updated_at)}`}
               </dd>
             </dl>
+            {link.metadata_error && <p className="mt-3 text-xs text-muted-foreground" role="status">{link.metadata_error}</p>}
+            <PreservedPreview value={link.original_metadata} />
           </TabsContent>
         </Tabs>
       </div>
