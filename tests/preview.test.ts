@@ -132,6 +132,40 @@ describe("resource lifecycle against mock Cloudflare API", () => {
     await expect(cleanup(cf, repo, pr)).rejects.toThrow("foreign consumer");
     expect(calls.some(c => c.method === "DELETE")).toBe(false);
   });
+  test("redeploy recognizes the script field returned by the live Queue API", async () => {
+    const { cf, calls } = mockCloud(call => call.path === `/queues/${queueId}`
+      ? { result: { queue_id: queueId, queue_name: n.queue, consumers: [{
+        script: n.worker, type: "worker", consumer_id: "3".repeat(32),
+      }] } } : existing(call));
+    const found = await resources(cf, repo, pr, true);
+    expect(found.queue.queue_id).toBe(queueId);
+    expect(calls.every(c => c.method === "GET")).toBe(true);
+  });
+  test("cleanup recognizes the live script field and stops its consumer first", async () => {
+    const { cf, calls } = mockCloud(call => call.path === `/queues/${queueId}` && call.method === "GET"
+      ? { result: { queue_id: queueId, queue_name: n.queue, consumers: [{
+        script: n.worker, type: "worker", consumer_id: "3".repeat(32),
+      }] } }
+      : call.path.endsWith("/objects?per_page=1000") ? { result: [] } : existing(call));
+    await cleanup(cf, repo, pr);
+    expect(calls.find(c => c.method === "DELETE")?.path).toBe(`/queues/${queueId}/consumers/${"3".repeat(32)}`);
+  });
+  test("foreign, missing, conflicting and non-worker identities remain blocked", async () => {
+    for (const consumer of [
+      { script: "linklog", type: "worker" },
+      { type: "worker" },
+      { script: n.worker, script_name: "linklog", type: "worker" },
+      { script: "linklog", script_name: n.worker, type: "worker" },
+      { script: n.worker, type: "http_pull" },
+      { script: n.worker, type: "unknown" },
+    ]) {
+      const { cf, calls } = mockCloud(call => call.path === `/queues/${queueId}`
+        ? { result: { queue_id: queueId, queue_name: n.queue, consumers: [consumer] } } : existing(call));
+      await expect(resources(cf, repo, pr, true)).rejects.toThrow("foreign consumer");
+      await expect(cleanup(cf, repo, pr)).rejects.toThrow("foreign consumer");
+      expect(calls.every(c => c.method === "GET")).toBe(true);
+    }
+  });
   test("failure stopping workflows never proceeds to deleting storage", async () => {
     const { cf, calls } = mockCloud(call => call.path.startsWith("/workflows/") ? { status: 500, success: false } : existing(call));
     await expect(cleanup(cf, repo, pr)).rejects.toThrow("500");
