@@ -6,9 +6,16 @@ interface Env {
   JEV_PROVIDER?: "cloudflare" | "typesafe" | "fixture";
   /** Must be "1" for JEV_PROVIDER="fixture" (tests only). */
   ALLOW_FIXTURE_JEV?: string;
+  /** Set by the local launcher when Wrangler remote services are disabled. */
+  LOCAL_SERVICES_ONLY?: string;
   /** Days an unconfirmed browser result is kept before it expires (default 7). */
   BROWSER_RESULT_TTL_DAYS?: string;
   JEV_MODEL?: string;
   BROWSER_CONCURRENCY?: string;
   JEV_CONCURRENCY?: string;
+  // Auth/runtime configuration, validated fail-closed by worker/config.ts.
+  BETTER_AUTH_URL?: string;
+  BETTER_AUTH_SECRET?: string;
+  EMAIL_FROM?: string;
+  AUTH_EMAIL_DAILY_LIMIT?: string;
 }

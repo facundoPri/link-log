@@ -1,4 +1,5 @@
 import type { Library } from "./types";
+import { announceUnauthorized } from "./auth-client";
 export async function api<T = Library & { duplicate?: boolean; id?: string }>(
   path = "/library",
   method = "GET",
@@ -14,6 +15,7 @@ export async function api<T = Library & { duplicate?: boolean; id?: string }>(
     id?: string;
     error?: string;
   };
+  if (response.status === 401) announceUnauthorized();
   if (!response.ok)
     throw new Error(data.error || "Something went wrong.");
   return data as T;

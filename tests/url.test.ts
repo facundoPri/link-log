@@ -48,3 +48,15 @@ describe("link capture", () => {
     expect(publicAddress("2606:4700:4700::1111")).toBe(true);
   });
 });
+
+test("bulk paste accepts the app's Copy with titles output and formatted lists", async () => {
+  const { pastedUrls } = await import("../src/url");
+  const expected = ["https://example.com/a", "https://example.com/b"];
+  for (const clipboard of [
+    "https://example.com/a — Article A\nhttps://example.com/b — Article B",
+    "• https://example.com/a\n• https://example.com/b",
+    "1. https://example.com/a\r\n2. https://example.com/b",
+    "[Article A](https://example.com/a)\n[Article B](https://example.com/b)",
+    "https://example.com/a\r\n\r\nhttps://example.com/b",
+  ]) expect(pastedUrls(clipboard)).toEqual(expected);
+});

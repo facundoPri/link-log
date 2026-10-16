@@ -1,20 +1,11 @@
-import {
-  WorkflowEntrypoint,
-  type WorkflowEvent,
-  type WorkflowStep,
-} from "cloudflare:workers";
-import {
-  browserHandlers,
-  handlers,
-  type BrowserTargetRow,
-  type JobConfig,
-  type Pool,
-} from "./handlers";
+import type { JobConfig, Pool } from "./handlers";
 import { parseLensDefinition } from "./store";
 import { preservedContentStateSql } from "./content-state";
+import { charge, LIMITS, LimitError } from "./limits";
+import { badRequest } from "./http/context";
 import type { Lens, Link, Tag } from "../src/types";
 const POOL_LIMITS = { browser: 2, jev: 16 } as const;
-function poolLimit(env: Env, pool: Pool) {
+export function poolLimit(env: Env, pool: Pool) {
   const override = Number(
     pool === "browser" ? env.BROWSER_CONCURRENCY : env.JEV_CONCURRENCY,
   );
@@ -25,13 +16,20 @@ function poolLimit(env: Env, pool: Pool) {
 export type JobRow = {
   id: string;
   batch_id: string;
+  /** A job targets either a saved link or a browser capture, never both. */
   link_id: string | null;
   target_id?: string | null;
   status: string;
 };
-type Config = JobConfig;
+export type Config = JobConfig;
+/**
+ * Creates a batch for `userId`. Links, tags and the lens are loaded with the owner in the WHERE
+ * clause, so a foreign or unassigned ID behaves exactly like a missing one. The owner is persisted
+ * on the batch; Queue/Workflow/cron later resolve it from D1, never from a request body.
+ */
 export async function enqueue(
   env: Env,
+  userId: string,
   ids: string[],
   kind: "extract" | "autotag" | "lens",
   lensId?: string,
@@ -39,40 +37,53 @@ export async function enqueue(
 ) {
   ids = [...new Set(ids)];
   if (!ids.length || ids.length > 100)
-    throw new Error("Select between 1 and 100 links per batch.");
-  const links = await env.DB.prepare(
-    `SELECT * FROM links WHERE id IN (${ids.map(() => "?").join(",")})`,
-  )
-    .bind(...ids)
-    .all<Link>();
+    throw badRequest("Select between 1 and 100 links per batch.");
+  // Reads stay under D1's 100 bound parameters per statement (owner + 99 ids per chunk).
+  const chunks = Array.from({ length: Math.ceil(ids.length / 99) }, (_, i) => ids.slice(i * 99, i * 99 + 99));
+  const links = {
+    results: (
+      await Promise.all(
+        chunks.map((chunk) =>
+          env.DB.prepare(`SELECT * FROM links WHERE user_id=? AND id IN (${chunk.map(() => "?").join(",")})`)
+            .bind(userId, ...chunk)
+            .all<Link>(),
+        ),
+      )
+    ).flatMap((r) => r.results),
+  };
   if (links.results.length !== ids.length)
-    throw new Error("One of the links no longer exists.");
+    throw badRequest("One of the links no longer exists.");
   if (kind !== "extract" && links.results.some((l) => !l.content_key))
-    throw new Error(
+    throw badRequest(
       "All selected links need context first.",
     );
-  const active = await env.DB.prepare(
-    `SELECT id FROM jobs WHERE status IN ('queued','running') AND link_id IN (${ids.map(() => "?").join(",")}) LIMIT 1`,
-  )
-    .bind(...ids)
-    .first();
-  if (active)
-    throw new Error("Some selected links are still processing.");
+  const busy = () => badRequest("Some selected links are still processing.");
+  const active = async () =>
+    (
+      await Promise.all(
+        chunks.map((chunk) =>
+          env.DB.prepare(`SELECT id FROM jobs WHERE status IN ('queued','running') AND link_id IN (${chunk.map(() => "?").join(",")}) LIMIT 1`)
+            .bind(...chunk)
+            .first(),
+        ),
+      )
+    ).some(Boolean);
+  if (await active()) throw busy();
   let config: Config = {};
   if (kind === "autotag") {
     const tags = await env.DB.prepare(
-      "SELECT * FROM tags ORDER BY name",
-    ).all<Tag>();
-    if (!tags.results.length) throw new Error("Create at least one tag.");
+      "SELECT id,name,description,threshold,version FROM tags WHERE user_id=? ORDER BY name",
+    ).bind(userId).all<Tag>();
+    if (!tags.results.length) throw badRequest("Create at least one tag.");
     config = { tags: tags.results };
   }
   if (kind === "lens") {
-    const row = await env.DB.prepare("SELECT * FROM lenses WHERE id=?")
-      .bind(lensId)
+    const row = await env.DB.prepare("SELECT id,name,type,question,options,threshold,version,created_at,scope FROM lenses WHERE id=? AND user_id=?")
+      .bind(lensId ?? "", userId)
       .first<Record<string, unknown>>();
-    if (!row) throw new Error("The lens no longer exists.");
+    if (!row) throw badRequest("The lens no longer exists.");
     if (row.scope === "browser")
-      throw new Error("Browser lenses evaluate open tabs, not saved links.");
+      throw badRequest("Browser lenses evaluate open tabs, not saved links.");
     const lens = {
       ...(row as unknown as Lens),
       ...parseLensDefinition(
@@ -83,26 +94,36 @@ export async function enqueue(
     config = { lens };
   }
   if (kind === "extract" && track) config = { track };
+  const charged = await charge(env.DB, [{ key: `jobs:${userId}`, limit: LIMITS.jobsPerUser, cost: ids.length }]);
+  if (!charged) throw new LimitError("Processing limit reached. Try again later.");
   const id = crypto.randomUUID(),
     now = new Date().toISOString();
   const jobs = ids.map((link_id) => ({ id: crypto.randomUUID(), link_id }));
-  await env.DB.batch([
-    env.DB.prepare(
-      "INSERT INTO batches(id,kind,config,created_at) VALUES(?,?,?,?)",
-    ).bind(id, kind, JSON.stringify(config), now),
-    ...jobs.map((j) =>
+  try {
+    await env.DB.batch([
       env.DB.prepare(
-        "INSERT INTO jobs(id,batch_id,link_id,created_at) VALUES(?,?,?,?)",
-      ).bind(j.id, id, j.link_id, now),
-    ),
-    ...(kind === "extract"
-      ? ids.map((link) =>
-          env.DB.prepare(
-            "UPDATE links SET content_state='queued',content_error=NULL WHERE id=?",
-          ).bind(link),
-        )
-      : []),
-  ]);
+        "INSERT INTO batches(id,user_id,kind,config,created_at) VALUES(?,?,?,?,?)",
+      ).bind(id, userId, kind, JSON.stringify(config), now),
+      ...jobs.map((j) =>
+        env.DB.prepare(
+          "INSERT INTO jobs(id,batch_id,link_id,created_at) VALUES(?,?,?,?)",
+        ).bind(j.id, id, j.link_id, now),
+      ),
+      ...(kind === "extract"
+        ? ids.map((link) =>
+            env.DB.prepare(
+              "UPDATE links SET content_state='queued',content_error=NULL WHERE id=? AND user_id=?",
+            ).bind(link, userId),
+          )
+        : []),
+    ]);
+  } catch (error) {
+    // Rolled back as a whole: nothing was queued, so nothing stays charged. A concurrent request
+    // that queued one of these links first (jobs_active_link) is reported like the check above.
+    await charged.release();
+    if (await active()) throw busy();
+    throw error;
+  }
   // D1 is the durable outbox. If dispatch fails, scheduled recovery resends these IDs.
   try {
     await env.JOBS.sendBatch(jobs.map((j) => ({ body: { id: j.id } })));
@@ -112,9 +133,20 @@ export async function enqueue(
   return id;
 }
 export async function recover(env: Env) {
+  const now = Date.now();
+  // Housekeeping for app counters and expired auth verification rows. Better Auth prunes its own
+  // rateLimit rows only when some key's window rolls over; rows idle for a day (windows are at
+  // most 60 s; lastRequest is epoch milliseconds) are dead and go here too.
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM app_rate_limits WHERE window_start<?").bind(Math.floor(now / 1000) - 2 * 86400),
+    env.DB.prepare('DELETE FROM "rateLimit" WHERE "lastRequest"<?').bind(now - 86400_000),
+    env.DB.prepare('DELETE FROM "verification" WHERE "expiresAt"<?').bind(new Date(now).toISOString()),
+    env.DB.prepare('DELETE FROM "session" WHERE "expiresAt"<?').bind(new Date(now).toISOString()),
+  ]);
   await env.DB.prepare("UPDATE usage_events SET status='failed',error='Provider call interrupted before completion' WHERE status='started' AND job_id IN (SELECT id FROM jobs WHERE status IN ('done','failed'))").run();
   const rows = await env.DB.prepare(
-    "SELECT id FROM jobs WHERE status IN ('queued','running') ORDER BY created_at LIMIT 100",
+    // Unassigned legacy batches stay untouched until adjudicated; they have no owner to run as.
+    "SELECT j.id FROM jobs j JOIN batches b ON b.id=j.batch_id WHERE b.user_id IS NOT NULL AND j.status IN ('queued','running') ORDER BY j.created_at LIMIT 100",
   ).all<{ id: string }>();
   if (rows.results.length)
     await env.JOBS.sendBatch(rows.results.map((body) => ({ body })));
@@ -159,125 +191,6 @@ export async function dispatch(batch: MessageBatch<{ id: string }>, env: Env) {
       m.ack();
     } catch {
       m.retry({ delaySeconds: 15 });
-    }
-  }
-}
-export class LinkWorkflow extends WorkflowEntrypoint<Env, { id: string }> {
-  override async run(event: WorkflowEvent<{ id: string }>, step: WorkflowStep) {
-    const env = this.env;
-    const data = await step.do("load-job", async () => {
-      const row = await env.DB.prepare(
-        "SELECT j.*,b.kind,b.config FROM jobs j JOIN batches b ON b.id=j.batch_id WHERE j.id=?",
-      )
-        .bind(event.payload.id)
-        .first<JobRow & { kind: string; config: string }>();
-      if (!row) throw new Error("The job no longer exists.");
-      if (row.status !== "queued")
-        throw new Error("The job was cancelled before it started.");
-      // A job targets either a saved link or a browser capture, never both.
-      const link = row.link_id
-        ? await env.DB.prepare("SELECT * FROM links WHERE id=?")
-            .bind(row.link_id)
-            .first<Link>()
-        : null;
-      const target = row.target_id
-        ? await env.DB.prepare(
-            "SELECT id,request_id,target_key,url,title,capture_key,capture_meta FROM browser_targets WHERE id=?",
-          )
-            .bind(row.target_id)
-            .first<BrowserTargetRow>()
-        : null;
-      if (!link && !target)
-        throw new Error(
-          row.target_id
-            ? "The browser capture no longer exists."
-            : "The link no longer exists.",
-        );
-      await env.DB.prepare(
-        "UPDATE jobs SET status='running',step='Preparing content' WHERE id=? AND status='queued'",
-      )
-        .bind(row.id)
-        .run();
-      return { job: row, link, target };
-    });
-    const { job, link, target } = data;
-    const acquire = async (pool: Pool | null) => {
-      if (!pool) return;
-      const limit = poolLimit(env, pool);
-      let lease = false;
-      for (let attempt = 0; !lease; attempt++) {
-        lease = await step.do(`provider-slot-${attempt}`, async () => {
-          const now = Date.now();
-          await env.DB.prepare(
-            "DELETE FROM provider_leases WHERE expires_at<?",
-          )
-            .bind(now)
-            .run();
-          const result = await env.DB.prepare(
-            "INSERT OR IGNORE INTO provider_leases(job_id,pool,expires_at) SELECT ?,?,? WHERE (SELECT count(*) FROM provider_leases WHERE pool=?)<?",
-          )
-            .bind(job.id, pool, now + 300000, pool, limit)
-            .run();
-          return (
-            result.meta.changes > 0 ||
-            !!(await env.DB.prepare(
-              "SELECT job_id FROM provider_leases WHERE job_id=?",
-            )
-              .bind(job.id)
-              .first())
-          );
-        });
-        if (!lease)
-          await step.sleep(`waiting-for-slot-${attempt}`, "2 seconds");
-      }
-    };
-    try {
-      const config = JSON.parse(job.config) as Config;
-      if (target) {
-        const handler = browserHandlers[job.kind];
-        if (!handler) throw new Error(`No handler for job kind "${job.kind}".`);
-        const ctx = { env, step, job, target, config };
-        await acquire(handler.pool(ctx));
-        await handler.run(ctx);
-      } else {
-        const handler = handlers[job.kind];
-        if (!handler) throw new Error(`No handler for job kind "${job.kind}".`);
-        const ctx = { env, step, job, link: link!, config };
-        await acquire(handler.pool(ctx));
-        await handler.run(ctx);
-      }
-      await step.do("complete", async () => {
-        await env.DB.prepare("UPDATE usage_events SET status='failed',error='Provider call interrupted before completion',duration_ms=?-strftime('%s',created_at)*1000 WHERE job_id=? AND status='started'")
-          .bind(Date.now(), job.id).run();
-        await env.DB.prepare(
-          "UPDATE jobs SET status='done',step='Done',completed_at=? WHERE id=?",
-        )
-          .bind(new Date().toISOString(), job.id)
-          .run();
-      });
-    } catch (error) {
-      await step.do("record-failure", async () => {
-        await env.DB.prepare("UPDATE usage_events SET status='failed',error='Provider call interrupted before completion' WHERE job_id=? AND status='started'").bind(job.id).run();
-        const message =
-          error instanceof Error ? error.message : "Could not process";
-        await env.DB.prepare(
-          "UPDATE jobs SET status='failed',step='Needs attention',error=?,completed_at=? WHERE id=? AND status='running'",
-        )
-          .bind(message, new Date().toISOString(), job.id)
-          .run();
-        if (job.kind === "extract" && link)
-          await env.DB.prepare(
-            `UPDATE links SET content_state=${preservedContentStateSql("failed")},content_error=?,status=CASE WHEN status='pending' THEN 'failed' ELSE status END WHERE id=?`,
-          )
-            .bind(message, link.id)
-            .run();
-      });
-    } finally {
-      await step.do("release-provider-slot", async () => {
-        await env.DB.prepare("DELETE FROM provider_leases WHERE job_id=?")
-          .bind(job.id)
-          .run();
-      });
     }
   }
 }

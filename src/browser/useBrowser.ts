@@ -11,6 +11,7 @@ import {
 } from "@linklog/browser-protocol";
 import { BridgeClient, BridgeTimeout, compatibleBrowser } from "./bridge";
 import { fetchCatalog } from "./api";
+import { onSignedOut } from "../auth-client";
 
 export type Connection =
   | "checking"
@@ -105,6 +106,18 @@ export function useBrowser() {
       connecting.current = false;
     }
   }, [catalog, refreshCatalog, request]);
+
+  // Sign-out: the extension drops this account's cached results (its library scope) and the
+  // handshake. Other accounts use other library ids, so they never read them anyway.
+  const helloRef = useRef(hello);
+  helloRef.current = hello;
+  useEffect(
+    () =>
+      onSignedOut(async () => {
+        if (helloRef.current?.capabilities.includes("forget")) await request("forget", {}, 1000);
+      }),
+    [request],
+  );
 
   const connectRef = useRef(connect);
   connectRef.current = connect;

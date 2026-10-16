@@ -1,4 +1,5 @@
-import { useRef, useState } from "react";
+import { useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { domainOf } from "../url";
 import {
   CircleAlert,
   Ellipsis,
@@ -83,66 +84,66 @@ export function LinkRow({
           : "Applying lens…"
       : null;
   return (
-    <article
-      className={cn(
-        "group flex cursor-default items-start gap-3 px-4 py-3",
-        "hover:bg-accent/60",
-        active && "bg-accent",
-      )}
+    <LinkRowFrame
+      className={cn(active && "bg-accent")}
       onClick={onActivate}
       onDoubleClick={() => window.open(link.url, "_blank", "noopener")}
-    >
-      <Checkbox
-        aria-label={`Select ${link.title}`}
-        checked={picked}
-        onCheckedChange={(c) => onPicked(c === true, lastShift.current)}
-        onClickCapture={(e) => {
-          lastShift.current = e.shiftKey;
-        }}
-        onClick={(e) => e.stopPropagation()}
-        className={cn(
-          "mt-1 transition-opacity",
-          !picked &&
-            "opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100",
-        )}
-      />
-      <div className="h-12 w-[72px] shrink-0 overflow-hidden rounded-md bg-muted ring-1 ring-black/10">
-        {thumb && !imgFailed ? (
-          <img
-            src={thumb}
-            alt=""
-            loading="lazy"
-            referrerPolicy="no-referrer"
-            className="h-full w-full object-cover"
-            onError={() => setImgFailed(true)}
-          />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center text-muted-foreground">
-            {link.favicon && !faviconFailed ? (
-              <img
-                src={link.favicon}
-                alt=""
-                className="size-5"
-                referrerPolicy="no-referrer"
-                onError={() => setFaviconFailed(true)}
-              />
-            ) : (
-              <Globe className="size-5" />
-            )}
-          </div>
-        )}
-      </div>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium leading-5">{link.title}</p>
-        <p className="truncate text-xs text-muted-foreground">
-          {link.description ||
-            (link.status === "pending"
-              ? "Fetching title and preview…"
-              : link.status === "failed"
-                ? "No preview available"
-                : link.domain)}
-        </p>
-        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+
+      selection={
+        <Checkbox
+          aria-label={`Select ${link.title}`}
+          checked={picked}
+          onCheckedChange={(c) => onPicked(c === true, lastShift.current)}
+          onClickCapture={(e) => {
+            lastShift.current = e.shiftKey;
+          }}
+          onClick={(e) => e.stopPropagation()}
+          className={cn(
+            "mt-1 transition-opacity",
+            !picked &&
+              "opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100",
+          )}
+        />
+      }
+      thumbnail={
+        <>
+          {thumb && !imgFailed ? (
+            <img
+              src={thumb}
+              alt=""
+              loading="lazy"
+              referrerPolicy="no-referrer"
+              className="h-full w-full object-cover"
+              onError={() => setImgFailed(true)}
+            />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center text-muted-foreground">
+              {link.favicon && !faviconFailed ? (
+                <img
+                  src={link.favicon}
+                  alt=""
+                  className="size-5"
+                  referrerPolicy="no-referrer"
+                  onError={() => setFaviconFailed(true)}
+                />
+              ) : (
+                <Globe className="size-5" />
+              )}
+            </div>
+          )}
+        </>
+      }
+      title={link.title}
+      description={
+        link.description ||
+        (link.status === "pending"
+          ? "Fetching title and preview…"
+          : link.status === "failed"
+            ? "No preview available"
+            : link.domain)
+      }
+      details={
+        <>
           <Tooltip>
             <TooltipTrigger asChild>
               <button
@@ -215,8 +216,9 @@ export function LinkRow({
                 </span>
               ) : null;
             })()}
-        </div>
-      </div>
+        </>
+      }
+    >
       {lens &&
         (() => {
           const r = link.lens_results.find((r) => r.lens_id === lens.id);
@@ -279,6 +281,94 @@ export function LinkRow({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+    </LinkRowFrame>
+  );
+}
+
+/** One layout for saved rows and saves awaiting server confirmation. */
+function LinkRowFrame({
+  selection,
+  thumbnail,
+  title,
+  description,
+  details,
+  children,
+  className,
+  ...props
+}: {
+  selection: ReactNode;
+  thumbnail: ReactNode;
+  title: string;
+  description: ReactNode;
+  details: ReactNode;
+} & Omit<ComponentProps<"article">, "title">) {
+  return (
+    <article
+      {...props}
+      className={cn(
+        "group flex cursor-default items-start gap-3 px-4 py-3 hover:bg-accent/60",
+        className,
+      )}
+    >
+      {selection}
+      <div className="h-12 w-[72px] shrink-0 overflow-hidden rounded-md bg-muted ring-1 ring-black/10">
+        {thumbnail}
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium leading-5">{title}</p>
+        <p className="truncate text-xs text-muted-foreground">{description}</p>
+        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+          {details}
+        </div>
+      </div>
+      {children}
     </article>
+  );
+}
+
+export function PendingLinkRow({ url }: { url: string }) {
+  const [imageFailed, setImageFailed] = useState(false);
+  const videoId = youtubeId(url);
+  const domain = domainOf(url);
+  return (
+    <LinkRowFrame
+      aria-busy="true"
+      selection={
+        <Checkbox
+          disabled
+          checked={false}
+          aria-label={`Saving ${domain}`}
+          className="mt-1 opacity-0"
+        />
+      }
+      thumbnail={
+        videoId && !imageFailed ? (
+          <img
+            src={`https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`}
+            alt=""
+            referrerPolicy="no-referrer"
+            className="h-full w-full object-cover"
+            onError={() => setImageFailed(true)}
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center text-muted-foreground">
+            <Globe className="size-5" />
+          </div>
+        )
+      }
+      title={domain}
+      description={
+        <span className="inline-flex items-center gap-1">
+          <Loader2 className="size-3 animate-spin" aria-hidden="true" />
+          Saving…
+        </span>
+      }
+      details={
+        <span className="flex items-center gap-1 text-2xs text-muted-foreground">
+          <Globe className="size-3" />
+          {domain}
+        </span>
+      }
+    />
   );
 }

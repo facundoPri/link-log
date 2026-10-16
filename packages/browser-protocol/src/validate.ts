@@ -124,6 +124,7 @@ const validators: { [K in CommandName]: (a: Obj) => boolean } = {
   unbindPinned: (a) => id(a.pinnedId),
   focusTab: (a) => tabRef(a.tab),
   openPermissions: () => true,
+  forget: () => true,
 };
 
 export function parsePageRequest(raw: unknown): PageRequest | null {

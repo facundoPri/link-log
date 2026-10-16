@@ -1,0 +1,27 @@
+/* Auth screens only. The app itself is light-only; these pages follow the system theme, so the
+   tokens are re-pointed inside .auth-screen and nothing outside it changes. */
+.auth-screen {
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  .auth-screen {
+    color-scheme: dark;
+    --background: oklch(0.165 0.005 260);
+    --foreground: oklch(0.965 0.003 260);
+    --primary: oklch(0.965 0.003 260);
+    --primary-foreground: oklch(0.2 0.01 260);
+    --secondary: oklch(0.23 0.006 260);
+    --secondary-foreground: oklch(0.965 0.003 260);
+    --muted: oklch(0.23 0.006 260);
+    --muted-foreground: oklch(0.72 0.01 260);
+    --accent: oklch(0.25 0.006 260);
+    --accent-foreground: oklch(0.965 0.003 260);
+    --destructive: oklch(0.7 0.17 25);
+    --border: oklch(1 0 0 / 0.13);
+    --input: oklch(1 0 0 / 0.16);
+    --ring: oklch(0.7 0.12 160);
+    --brand: oklch(0.6 0.12 160);
+    --brand-soft: oklch(0.3 0.045 160);
+  }
+}

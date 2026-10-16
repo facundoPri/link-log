@@ -60,6 +60,7 @@ import { TagPicker } from "./TagPicker";
 import { LensVerdict } from "./LensVerdict";
 import { lensIcon } from "./Sidebar";
 import { MarkdownView } from "./MarkdownView";
+import { PreservedPreview } from "./PreservedPreview";
 
 const sourceLabel: Record<string, string> = {
   web: "Page text",
@@ -417,7 +418,7 @@ export function Inspector({
             </button>
           )}
           <p className="mt-1.5 text-2xs text-muted-foreground">
-            Saved {relativeTime(link.created_at)} ·{" "}
+            Saved {relativeTime(link.last_saved_at ?? link.created_at)} ·{" "}
             {sourceLabel[link.content_source ?? ""] ?? "Page"}
             {link.content_state === "partial" && <> · <span className="text-destructive">Partial</span></>}
           </p>
@@ -496,8 +497,16 @@ export function Inspector({
                   </DropdownMenuContent>
                 </DropdownMenu>}
               </div>
-              {!details.transcript.originalLanguage && <p className="text-muted-foreground">Original audio language could not be verified.</p>}
+              {!details.transcript.originalLanguage && !details.transcript.selectedLanguage && <p className="text-muted-foreground">Original audio language could not be verified.</p>}
             </div>}
+            {details?.transcript?.selectedLanguage && details.transcript.reason.startsWith("english-") && (
+              <p className="mb-3 text-xs text-muted-foreground">
+                {details.transcript.reason === "english-original-unknown"
+                  ? "English transcript saved. The video's original language could not be confirmed."
+                  : "English transcript saved. Captions in the original language were unavailable."}
+                {selectableTracks.length > 1 && " You can choose another available track above."}
+              </p>
+            )}
             {(link.content_state === "partial" || (details?.issues.length || 0) > 0) && <div role="status" className="mb-3 flex flex-col gap-1 rounded-md bg-muted/50 p-2 text-xs">
               <span className="font-medium">Extraction incomplete</span>
               {details?.issues.map((issue, i) => <span key={i} className="text-muted-foreground">{issue}</span>)}
@@ -908,6 +917,7 @@ export function Inspector({
             </section>
           </TabsContent>
           <TabsContent value="details" className="mt-3">
+            <h3 className="mb-3 text-xs font-medium">Current details</h3>
             <dl className="grid grid-cols-[88px_1fr] gap-y-2 text-xs">
               <dt className="text-muted-foreground">Original URL</dt>
               <dd className="min-w-0">
@@ -929,8 +939,12 @@ export function Inspector({
               )}
               <dt className="text-muted-foreground">Domain</dt>
               <dd>{link.domain}</dd>
-              <dt className="text-muted-foreground">Saved</dt>
+              <dt className="text-muted-foreground">First saved</dt>
               <dd>{new Date(link.created_at).toLocaleString()}</dd>
+              {link.last_saved_at && link.last_saved_at !== link.created_at && <>
+                <dt className="text-muted-foreground">Last saved</dt>
+                <dd>{new Date(link.last_saved_at).toLocaleString()}</dd>
+              </>}
               <dt className="text-muted-foreground">Preview</dt>
               <dd>
                 {link.status === "ready"
@@ -959,6 +973,8 @@ export function Inspector({
                   ` · updated ${relativeTime(link.content_updated_at)}`}
               </dd>
             </dl>
+            {link.metadata_error && <p className="mt-3 text-xs text-muted-foreground" role="status">{link.metadata_error}</p>}
+            <PreservedPreview value={link.original_metadata} />
           </TabsContent>
         </Tabs>
       </div>

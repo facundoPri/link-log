@@ -57,6 +57,51 @@ describe("bridge commands", () => {
     expect(snap.linklogTabs).toBe(1);
   });
 
+  test("forget drops only this account's scope and ends the handshake", async () => {
+    await setup(2, (i) => `page ${i}`);
+    await hello();
+    const mine = await run("claim", { lens, limit: 20 });
+    await run("accepted", { requestId: mine.requestId, batchId: "b", jobs: [] });
+    // Another account (library scope) in the same browser.
+    await run("hello", { libraryScope: "local:other" });
+    const theirs = await run("claim", { lens, limit: 20 });
+    await run("hello", { libraryScope: "local:lib" });
+    expect((await run("pending", {})).requests.map((r: { requestId: string }) => r.requestId)).toEqual([mine.requestId]);
+    const result = await run("forget", {});
+    expect(result.removed).toBe(2);
+    expect(run("pending", {})).rejects.toThrow("Connect first.");
+    await run("hello", { libraryScope: "local:lib" });
+    expect((await run("pending", {})).requests).toEqual([]);
+    await run("hello", { libraryScope: "local:other" });
+    expect((await run("pending", {})).requests.map((r: { requestId: string }) => r.requestId)).toEqual([theirs.requestId]);
+    expect((await run("hello", { libraryScope: "local:other" })).capabilities).toContain("forget");
+  });
+
+  test("a pinned group's Linklog metadata is only visible to the account that wrote it", async () => {
+    await setup(1);
+    await hello();
+    const tab = (await run("snapshot", {})).tabs[0];
+    await run("moveToGroup", {
+      tabs: [{ tabId: tab.tabId, tabInstanceId: tab.tabInstanceId }],
+      target: { kind: "pinned", pinnedId: "pin-a", title: "Research", color: "blue", description: "A's private brief" },
+    });
+    chromeFake.groups.set(1, { id: 1, windowId: 1, title: "Research", color: "blue", collapsed: false } as chrome.tabGroups.TabGroup);
+    const mine = (await run("snapshot", {})).groups[0];
+    expect([mine.description, mine.pinnedId]).toEqual(["A's private brief", "pin-a"]);
+    // Same profile, another account (no forget: e.g. the session expired).
+    await run("hello", { libraryScope: "local:other" });
+    const theirs = (await run("snapshot", {})).groups[0];
+    expect([theirs.title, theirs.description, theirs.pinnedId]).toEqual(["Research", "", null]);
+    // The other account can't unbind A's pin either; A still sees its metadata.
+    expect((await run("unbindPinned", { pinnedId: "pin-a" })).groups).toBe(0);
+    await run("hello", { libraryScope: "local:lib" });
+    expect((await run("snapshot", {})).groups[0].description).toBe("A's private brief");
+    // Sign-out of A removes it for good.
+    await run("forget", {});
+    await run("hello", { libraryScope: "local:lib" });
+    expect((await run("snapshot", {})).groups[0].description).toBe("");
+  });
+
   test("claims are budgeted in UTF-8 bytes of the request body", async () => {
     // 8 captures × 160k two-byte characters: ~2.6 MB of JSON, although only 1.28M characters.
     await setup(8, () => "é".repeat(BROWSER_LIMITS.maxCaptureChars));

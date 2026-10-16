@@ -13,28 +13,35 @@ import {
   type TargetStatus,
 } from "@linklog/browser-protocol";
 import type { Lens } from "../src/types";
-import { enqueue } from "./jobs";
-import { addLink } from "./links";
-import { json, library, parseLensDefinition, text } from "./store";
+import { charge, LIMITS } from "./limits";
+import { addLinks } from "./links";
+import { json, parseLensDefinition, text } from "./store";
+import { badRequest } from "./http/context";
 
-// Browser view API. Requests come from the Linklog page through the existing
-// same-origin boundary; the extension never talks to the backend directly.
+// Browser view API. Requests come from the signed-in Linklog page through the same-origin
+// boundary; the extension never talks to the backend directly. Every read and write is scoped
+// to the session owner (routes in worker/routes/browser.ts run behind requireSession).
 
-type Obj = Record<string, unknown>;
-const isObj = (v: unknown): v is Obj => !!v && typeof v === "object" && !Array.isArray(v);
-const idOk = (v: unknown): v is string => typeof v === "string" && /^[A-Za-z0-9_-]{1,80}$/.test(v);
+export type Obj = Record<string, unknown>;
+export const isObj = (v: unknown): v is Obj => !!v && typeof v === "object" && !Array.isArray(v);
+export const idOk = (v: unknown): v is string => typeof v === "string" && /^[A-Za-z0-9_-]{1,80}$/.test(v);
 
-const readLibraryId = (env: Env) =>
-  env.DB.prepare("SELECT value FROM settings WHERE key='library_id'").first<{ value: string }>();
+const readLibraryId = (env: Env, userId: string) =>
+  env.DB.prepare("SELECT value FROM user_settings WHERE user_id=? AND key='library_id'")
+    .bind(userId)
+    .first<{ value: string }>();
 
-/** Stable id of this library; created once, then only read (GET routes never write). */
-export async function libraryId(env: Env): Promise<string> {
-  const existing = await readLibraryId(env);
+/**
+ * Stable id of this user's library; created once, then only read. The extension scopes its local
+ * results by it, so another account in the same browser never sees this user's results.
+ */
+export async function libraryId(env: Env, userId: string): Promise<string> {
+  const existing = await readLibraryId(env, userId);
   if (existing) return existing.value;
-  await env.DB.prepare("INSERT OR IGNORE INTO settings(key,value) VALUES('library_id',?)")
-    .bind(crypto.randomUUID())
+  await env.DB.prepare("INSERT OR IGNORE INTO user_settings(user_id,key,value,updated_at) VALUES(?,'library_id',?,?)")
+    .bind(userId, crypto.randomUUID(), new Date().toISOString())
     .run();
-  return (await readLibraryId(env))!.value;
+  return (await readLibraryId(env, userId))!.value;
 }
 
 function retentionDays(env: Env) {
@@ -42,16 +49,18 @@ function retentionDays(env: Env) {
   return Number.isFinite(days) && days > 0 ? days : 7;
 }
 
-async function catalog(env: Env): Promise<BrowserCatalog> {
+export async function catalog(env: Env, userId: string): Promise<BrowserCatalog> {
   const [id, groups] = await Promise.all([
-    libraryId(env),
-    env.DB.prepare("SELECT * FROM browser_groups ORDER BY name COLLATE NOCASE, created_at").all<PinnedGroup>(),
+    libraryId(env, userId),
+    env.DB.prepare("SELECT id,name,description,color,version,created_at,updated_at FROM browser_groups WHERE user_id=? ORDER BY name COLLATE NOCASE, created_at")
+      .bind(userId)
+      .all<PinnedGroup>(),
   ]);
   return { libraryId: id, groups: groups.results, retentionDays: retentionDays(env) };
 }
 
 function capture(v: unknown): EvaluationCapture {
-  if (!isObj(v)) throw new Error("Invalid capture.");
+  if (!isObj(v)) throw badRequest("Invalid capture.");
   const strings = (a: unknown, max: number, len: number) =>
     Array.isArray(a) && a.length <= max && a.every((s) => typeof s === "string" && s.length <= len);
   if (
@@ -65,9 +74,9 @@ function capture(v: unknown): EvaluationCapture {
     !v.facts.every((f) => isObj(f) && [f.key, f.label, f.value].every((s) => typeof s === "string" && s.length <= 200)) ||
     typeof v.markdown !== "string"
   )
-    throw new Error("Invalid capture.");
+    throw badRequest("Invalid capture.");
   if (v.markdown.length > BROWSER_LIMITS.maxCaptureChars)
-    throw new Error(`A capture exceeds ${BROWSER_LIMITS.maxCaptureChars.toLocaleString("en")} characters; the extension must trim it and mark it partial.`);
+    throw badRequest(`A capture exceeds ${BROWSER_LIMITS.maxCaptureChars.toLocaleString("en")} characters; the extension must trim it and mark it partial.`);
   return {
     source: v.source,
     completeness: v.completeness,
@@ -82,14 +91,14 @@ function capture(v: unknown): EvaluationCapture {
 
 function evaluationRequest(body: Obj): EvaluationRequest {
   if (!idOk(body.requestId) || !idOk(body.libraryId) || !idOk(body.sessionId))
-    throw new Error("Invalid evaluation request.");
+    throw badRequest("Invalid evaluation request.");
   if (!Array.isArray(body.targets) || !body.targets.length || body.targets.length > BROWSER_LIMITS.maxTargets)
-    throw new Error(`Send between 1 and ${BROWSER_LIMITS.maxTargets} tabs per request.`);
+    throw badRequest(`Send between 1 and ${BROWSER_LIMITS.maxTargets} tabs per request.`);
   const seen = new Set<string>();
   // URLs are stored as data only; this route never fetches them.
   const targets = body.targets.map((t) => {
     if (!isObj(t) || typeof t.targetKey !== "string" || !t.targetKey || t.targetKey.length > 400 || seen.has(t.targetKey))
-      throw new Error("Invalid target.");
+      throw badRequest("Invalid target.");
     seen.add(t.targetKey);
     return {
       targetKey: t.targetKey,
@@ -100,7 +109,7 @@ function evaluationRequest(body: Obj): EvaluationRequest {
   });
   const base = { requestId: body.requestId, libraryId: body.libraryId, sessionId: body.sessionId, targets };
   if (body.kind === "lens") {
-    if (!isObj(body.lens) || !idOk(body.lens.id) || !idOk(body.lens.fingerprint)) throw new Error("Pick a lens.");
+    if (!isObj(body.lens) || !idOk(body.lens.id) || !idOk(body.lens.fingerprint)) throw badRequest("Pick a lens.");
     return { ...base, kind: "lens", lens: { id: body.lens.id, fingerprint: body.lens.fingerprint } };
   }
   if (body.kind === "autogroup") {
@@ -111,17 +120,17 @@ function evaluationRequest(body: Obj): EvaluationRequest {
       typeof body.catalogVersion !== "string" ||
       body.catalogVersion.length > 100
     )
-      throw new Error(`Autogroup needs between 1 and ${BROWSER_LIMITS.maxDestinations} groups.`);
+      throw badRequest(`Autogroup needs between 1 and ${BROWSER_LIMITS.maxDestinations} groups.`);
     const keys = new Set<string>();
     const destinations: Destination[] = body.destinations.map((d) => {
       if (!isObj(d) || typeof d.key !== "string" || !/^[A-Za-z0-9:_-]{1,80}$/.test(d.key) || keys.has(d.key))
-        throw new Error("Invalid group.");
+        throw badRequest("Invalid group.");
       keys.add(d.key);
       return { key: d.key, name: text(d.name, 80), description: text(d.description ?? "", 2000) };
     });
     return { ...base, kind: "autogroup", destinations, catalogVersion: body.catalogVersion };
   }
-  throw new Error("Invalid evaluation kind.");
+  throw badRequest("Invalid evaluation kind.");
 }
 
 async function sha256(value: string) {
@@ -155,9 +164,9 @@ function autogroupLens(destinations: Destination[]): { lens: Lens; map: Record<s
   };
 }
 
-export async function evaluationStatus(env: Env, requestId: string): Promise<EvaluationStatus | null> {
-  const request = await env.DB.prepare("SELECT request_id,batch_id,kind FROM browser_requests WHERE request_id=?")
-    .bind(requestId)
+export async function evaluationStatus(env: Env, userId: string, requestId: string): Promise<EvaluationStatus | null> {
+  const request = await env.DB.prepare("SELECT request_id,batch_id,kind FROM browser_requests WHERE request_id=? AND user_id=?")
+    .bind(requestId, userId)
     .first<{ request_id: string; batch_id: string; kind: "lens" | "autogroup" }>();
   if (!request) return null;
   const rows = await env.DB.prepare(
@@ -188,24 +197,29 @@ export async function evaluationStatus(env: Env, requestId: string): Promise<Eva
   return { requestId, batchId: request.batch_id, kind: request.kind, targets };
 }
 
-async function createEvaluation(env: Env, body: Obj): Promise<Response> {
+export async function createEvaluation(env: Env, userId: string, body: Obj): Promise<Response> {
   const req = evaluationRequest(body);
-  const ours = await libraryId(env);
+  const ours = await libraryId(env, userId);
   if (req.libraryId !== ours)
     return json({ error: "This page belongs to a different library. Reload Linklog.", code: "library-mismatch" }, 409);
   const hash = await sha256(JSON.stringify(req));
-  const existing = await env.DB.prepare("SELECT payload_hash FROM browser_requests WHERE request_id=?")
-    .bind(req.requestId)
-    .first<{ payload_hash: string }>();
-  if (existing) {
-    // Same key and payload → same work. Same key, different payload → conflict.
-    if (existing.payload_hash !== hash)
-      return json({ error: "This request ID was already used with different content.", code: "conflict" }, 409);
-    return json(await evaluationStatus(env, req.requestId));
-  }
+  const receipt = () =>
+    env.DB.prepare("SELECT payload_hash,user_id FROM browser_requests WHERE request_id=?")
+      .bind(req.requestId)
+      .first<{ payload_hash: string; user_id: string | null }>();
+  const replay = async (found: { payload_hash: string; user_id: string | null }) =>
+    // Same key and payload from the same owner -> same work. Anything else -> conflict, without
+    // revealing whose request it was.
+    found.user_id !== userId || found.payload_hash !== hash
+      ? json({ error: "This request ID was already used with different content.", code: "conflict" }, 409)
+      : json(await evaluationStatus(env, userId, req.requestId));
+  const existing = await receipt();
+  if (existing) return replay(existing);
   let lens: Lens, config: Record<string, unknown>, kind: string;
   if (req.kind === "lens") {
-    const row = await env.DB.prepare("SELECT * FROM lenses WHERE id=?").bind(req.lens.id).first<Record<string, unknown>>();
+    const row = await env.DB.prepare("SELECT id,name,type,question,options,threshold,version,created_at,scope FROM lenses WHERE id=? AND user_id=?")
+      .bind(req.lens.id, userId)
+      .first<Record<string, unknown>>();
     if (!row) return json({ error: "The lens no longer exists.", code: "lens-missing" }, 404);
     // Library lenses keep their own results in All links; only browser lenses run here.
     if (row.scope !== "browser")
@@ -221,22 +235,26 @@ async function createEvaluation(env: Env, body: Obj): Promise<Response> {
     config = { lens, destinations: built.map, catalogVersion: req.catalogVersion, browser: true };
     kind = "browser-autogroup";
   }
+  // Browser evaluations share the owner's job quota with the library; it is taken before any
+  // receipt, snapshot or queue message exists, and only a new request is charged.
+  const charged = await charge(env.DB, [{ key: `jobs:${userId}`, limit: LIMITS.jobsPerUser, cost: req.targets.length }]);
+  if (!charged) return json({ error: "Processing limit reached. Try again later.", code: "rate-limited" }, 429);
   const now = new Date().toISOString();
   const batchId = crypto.randomUUID();
   const targets = req.targets.map((t) => ({
     ...t,
     id: crypto.randomUUID(),
     jobId: crypto.randomUUID(),
-    captureKey: `browser/${req.requestId}/${crypto.randomUUID()}.md`,
+    captureKey: `users/${userId}/browser/${req.requestId}/${crypto.randomUUID()}.md`,
   }));
   try {
     // One transaction: the request row is the idempotency receipt. A concurrent
     // duplicate violates its primary key and rolls everything back.
     await env.DB.batch([
-      env.DB.prepare("INSERT INTO batches(id,kind,config,created_at) VALUES(?,?,?,?)").bind(batchId, kind, JSON.stringify(config), now),
+      env.DB.prepare("INSERT INTO batches(id,user_id,kind,config,created_at) VALUES(?,?,?,?,?)").bind(batchId, userId, kind, JSON.stringify(config), now),
       env.DB.prepare(
-        "INSERT INTO browser_requests(request_id,payload_hash,kind,batch_id,library_id,session_id,created_at) VALUES(?,?,?,?,?,?,?)",
-      ).bind(req.requestId, hash, req.kind, batchId, req.libraryId, req.sessionId, now),
+        "INSERT INTO browser_requests(request_id,user_id,payload_hash,kind,batch_id,library_id,session_id,created_at) VALUES(?,?,?,?,?,?,?,?)",
+      ).bind(req.requestId, userId, hash, req.kind, batchId, req.libraryId, req.sessionId, now),
       ...targets.flatMap((t) => {
         const { markdown: _markdown, ...meta } = t.capture;
         return [
@@ -248,13 +266,11 @@ async function createEvaluation(env: Env, body: Obj): Promise<Response> {
       }),
     ]);
   } catch (error) {
-    const again = await env.DB.prepare("SELECT payload_hash FROM browser_requests WHERE request_id=?")
-      .bind(req.requestId)
-      .first<{ payload_hash: string }>();
+    // Nothing was created: a concurrent duplicate won (or the write failed).
+    await charged.release();
+    const again = await receipt();
     if (!again) throw error;
-    if (again.payload_hash !== hash)
-      return json({ error: "This request ID was already used with different content.", code: "conflict" }, 409);
-    return json(await evaluationStatus(env, req.requestId));
+    return replay(again);
   }
   // Snapshots are written after the receipt so a duplicate can never overwrite them.
   const stored = await Promise.allSettled(
@@ -269,6 +285,7 @@ async function createEvaluation(env: Env, body: Obj): Promise<Response> {
     // Never leave a receipt whose jobs can't run: those targets fail visibly (no provider
     // call was made) and the user can evaluate them again explicitly.
     console.error(`Could not store ${lost.length} browser snapshot(s)`);
+    await charged.release(lost.length); // those jobs never reach a provider
     await env.DB.batch(
       lost.map((t) =>
         env.DB.prepare(
@@ -284,11 +301,11 @@ async function createEvaluation(env: Env, body: Obj): Promise<Response> {
   } catch {
     console.error("Queue dispatch deferred to outbox recovery");
   }
-  return json(await evaluationStatus(env, req.requestId), 201);
+  return json(await evaluationStatus(env, userId, req.requestId), 201);
 }
 
-function color(v: unknown): GroupColor {
-  if (typeof v !== "string" || !(GROUP_COLORS as string[]).includes(v)) throw new Error("Pick a group color.");
+export function color(v: unknown): GroupColor {
+  if (typeof v !== "string" || !(GROUP_COLORS as string[]).includes(v)) throw badRequest("Pick a group color.");
   return v as GroupColor;
 }
 
@@ -307,28 +324,21 @@ function faviconOf(v: unknown): string | null {
  * dedupe and the normal server pipeline (metadata, content extraction, autotag). Only
  * URLs are sent; nothing read locally becomes library content.
  */
-async function saveUrls(env: Env, body: Obj): Promise<SaveResult[]> {
+export async function saveUrls(env: Env, userId: string, body: Obj): Promise<SaveResult[]> {
   if (
     !Array.isArray(body.urls) ||
     !body.urls.length ||
     body.urls.length > BROWSER_LIMITS.maxSaveItems ||
     body.urls.some((u) => typeof u !== "string")
   )
-    throw new Error(`Save between 1 and ${BROWSER_LIMITS.maxSaveItems} tabs at a time.`);
-  const results: SaveResult[] = [];
-  for (const url of body.urls as string[]) {
-    try {
-      const { id, created } = await addLink(env, url);
-      results.push({ url, status: created ? "created" : "duplicate", id });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "";
-      results.push({ url, status: "rejected", error: /D1_|SQLITE/i.test(message) ? "Could not save." : message || "Could not save." });
-    }
-  }
-  // One extraction batch per request, like an import.
-  const created = [...new Set(results.filter((r) => r.status === "created").map((r) => r.id!))];
-  if (created.length) await enqueue(env, created, "extract");
-  return results;
+    throw badRequest(`Save between 1 and ${BROWSER_LIMITS.maxSaveItems} tabs at a time.`);
+  // One extraction batch per request, like an import; quotas admitted before anything is saved.
+  const results = await addLinks(env, userId, body.urls as string[]);
+  return results.map((r) =>
+    "error" in r
+      ? { url: r.input, status: "rejected", error: r.error }
+      : { url: r.input, status: r.created ? "created" : "duplicate", id: r.id },
+  );
 }
 
 /** Idempotent retention sweep; safe to run from cron or recovery. */
@@ -355,96 +365,4 @@ export async function cleanupBrowser(env: Env, now = Date.now()) {
   ];
   if (statements.length) await env.DB.batch(statements);
   return { snapshots: finished.results.length, expired: stale.results.length };
-}
-
-export async function browserRoute(
-  env: Env,
-  path: string,
-  method: string,
-  body: Obj,
-): Promise<Response | null> {
-  if (path === "/api/browser/catalog" && method === "GET") return json(await catalog(env));
-  if (path === "/api/browser/evaluations" && method === "POST") return createEvaluation(env, body);
-  const evaluation = path.match(/^\/api\/browser\/evaluations\/([A-Za-z0-9_-]{1,80})(\/ack)?$/);
-  if (evaluation) {
-    const requestId = evaluation[1]!;
-    if (!evaluation[2] && method === "GET") {
-      const status = await evaluationStatus(env, requestId);
-      return status ? json(status) : json({ error: "Unknown request.", code: "unknown-request" }, 404);
-    }
-    const keys =
-      Array.isArray(body.targetKeys) && body.targetKeys.every((k) => typeof k === "string" && k.length <= 400)
-        ? (body.targetKeys as string[]).slice(0, BROWSER_LIMITS.maxTargets)
-        : null;
-    if (evaluation[2] && method === "POST") {
-      if (!keys?.length) throw new Error("Nothing to confirm.");
-      // Stored in the extension: the payload can go; the receipt and usage stay. Only
-      // answered targets are confirmed; the rest keep their snapshot until retention.
-      const rows = await env.DB.prepare(
-        `SELECT id,capture_key FROM browser_targets WHERE request_id=? AND answer IS NOT NULL AND target_key IN (${keys.map(() => "?").join(",")})`,
-      )
-        .bind(requestId, ...keys)
-        .all<{ id: string; capture_key: string | null }>();
-      const captureKeys = rows.results.map((r) => r.capture_key).filter((k): k is string => !!k);
-      if (captureKeys.length) await env.CONTENT.delete(captureKeys);
-      await env.DB.prepare(
-        `UPDATE browser_targets SET acked_at=coalesce(acked_at,?),answer=NULL,capture_key=NULL WHERE request_id=? AND answer IS NOT NULL AND target_key IN (${keys.map(() => "?").join(",")})`,
-      )
-        .bind(new Date().toISOString(), requestId, ...keys)
-        .run();
-      return json({ acked: rows.results.length });
-    }
-    if (!evaluation[2] && method === "DELETE") {
-      // Clean, close or navigation: cancel work that has not started. A call already
-      // sent to the provider may still be billed and stays in Activity.
-      const filter = keys?.length ? ` AND target_key IN (${keys.map(() => "?").join(",")})` : "";
-      const result = await env.DB.prepare(
-        `UPDATE jobs SET status='failed',step='Cancelled',error='Cancelled',completed_at=? WHERE status='queued' AND target_id IN (SELECT id FROM browser_targets WHERE request_id=?${filter})`,
-      )
-        .bind(new Date().toISOString(), requestId, ...(keys ?? []))
-        .run();
-      return json({ cancelled: result.meta.changes });
-    }
-    return json({ error: "Method not allowed." }, 405);
-  }
-  if (path === "/api/browser/groups" && method === "POST") {
-    const name = text(body.name, 80);
-    const now = new Date().toISOString();
-    await env.DB.prepare(
-      "INSERT INTO browser_groups(id,name,description,color,created_at,updated_at) VALUES(?,?,?,?,?,?)",
-    )
-      .bind(typeof body.id === "string" && idOk(body.id) ? body.id : crypto.randomUUID(), name, text(body.description ?? "", 2000), color(body.color), now, now)
-      .run();
-    return json(await catalog(env), 201);
-  }
-  const group = path.match(/^\/api\/browser\/groups\/([A-Za-z0-9_-]{1,80})$/);
-  if (group) {
-    const current = await env.DB.prepare("SELECT * FROM browser_groups WHERE id=?").bind(group[1]).first<PinnedGroup>();
-    if (method === "DELETE") {
-      // Unpin: future destinations disappear; native groups and local metadata stay.
-      await env.DB.prepare("DELETE FROM browser_groups WHERE id=?").bind(group[1]).run();
-      return json(await catalog(env));
-    }
-    if (method === "PATCH") {
-      if (!current) return json({ error: "The pinned group no longer exists." }, 404);
-      await env.DB.prepare(
-        "UPDATE browser_groups SET name=?,description=?,color=?,version=version+1,updated_at=? WHERE id=?",
-      )
-        .bind(
-          body.name === undefined ? current.name : text(body.name, 80),
-          body.description === undefined ? current.description : text(body.description, 2000),
-          body.color === undefined ? current.color : color(body.color),
-          new Date().toISOString(),
-          current.id,
-        )
-        .run();
-      return json(await catalog(env));
-    }
-    return json({ error: "Method not allowed." }, 405);
-  }
-  if (path === "/api/browser/save" && method === "POST") {
-    const results = await saveUrls(env, body);
-    return json({ results, ...(await library(env)) });
-  }
-  return null;
 }

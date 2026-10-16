@@ -1,10 +1,17 @@
 import type { KV, Mutex } from "./kv";
 
 export type GroupMeta = { description: string; pinnedId: string | null };
+/**
+ * Stored metadata also records the Linklog library scope (account) that wrote it. Reads go
+ * through `view(groupId, scope)`: another account in the same profile never sees it, whatever
+ * happened at sign-out. Entries written before scopes existed have none and are never shown.
+ */
+type StoredMeta = GroupMeta & { scope?: string | null };
+const EMPTY: GroupMeta = { description: "", pinnedId: null };
 /** What Chrome tells us about a native group. */
 export type NativeGroup = { id: number; title?: string; color: string };
 /** Last known look of a group bound to a pinned definition, kept across restarts. */
-type Hint = { groupId: number; pinnedId: string; title: string; color: string; description: string };
+type Hint = { groupId: number; pinnedId: string; title: string; color: string; description: string; scope?: string | null };
 
 const KEY = "groups";
 const HINTS = "pinnedHints";
@@ -27,7 +34,7 @@ const signature = (title: string | undefined, color: string) => `${title ?? ""}\
  * Anything ambiguous stays unbound; names never merge groups on their own.
  */
 export class GroupMetaStore {
-  private map = new Map<number, GroupMeta>();
+  private map = new Map<number, StoredMeta>();
   private restore: { until: number; hints: Hint[] } | null = null;
   /** Called after metadata changes so the hints can be refreshed. */
   onChange: (() => void) | null = null;
@@ -40,7 +47,7 @@ export class GroupMetaStore {
   ) {}
 
   async load() {
-    const saved = (await this.kv.get<Record<string, GroupMeta>>(KEY)) ?? {};
+    const saved = (await this.kv.get<Record<string, StoredMeta>>(KEY)) ?? {};
     this.map = new Map(Object.entries(saved).map(([id, m]) => [Number(id), m]));
     this.restore = (await this.kv.get<{ until: number; hints: Hint[] }>(RESTORE)) ?? null;
   }
@@ -57,17 +64,20 @@ export class GroupMetaStore {
     return this.kv.set({ [KEY]: Object.fromEntries(this.map) });
   }
 
-  get(groupId: number): GroupMeta {
-    return this.map.get(groupId) ?? { description: "", pinnedId: null };
+  /** Metadata of a group as one library scope sees it: only what that scope wrote. */
+  view(groupId: number, scope: string | null): GroupMeta {
+    const m = this.map.get(groupId);
+    return m && scope && m.scope === scope ? { description: m.description, pinnedId: m.pinnedId } : EMPTY;
   }
 
-  groupsBoundTo(pinnedId: string): number[] {
-    return [...this.map].filter(([, m]) => m.pinnedId === pinnedId).map(([id]) => id);
+  groupsBoundTo(pinnedId: string, scope: string): number[] {
+    return [...this.map].filter(([, m]) => m.scope === scope && m.pinnedId === pinnedId).map(([id]) => id);
   }
 
-  set(groupId: number, patch: Partial<GroupMeta>) {
+  /** Writes as `scope`; metadata another scope left on this group is replaced, never merged. */
+  set(groupId: number, patch: Partial<GroupMeta>, scope: string) {
     return this.mutex.run(async () => {
-      this.map.set(groupId, { ...this.get(groupId), ...patch });
+      this.map.set(groupId, { ...this.view(groupId, scope), ...patch, scope });
       await this.save();
       this.onChange?.();
     });
@@ -83,14 +93,34 @@ export class GroupMetaStore {
   }
 
   /** Unpin: bindings go away, the native groups and their descriptions stay. */
-  unbindPinned(pinnedId: string) {
+  unbindPinned(pinnedId: string, scope: string) {
     return this.mutex.run(async () => {
-      const ids = this.groupsBoundTo(pinnedId);
-      for (const id of ids) this.map.set(id, { ...this.get(id), pinnedId: null });
-      if (this.restore) this.restore.hints = this.restore.hints.filter((h) => h.pinnedId !== pinnedId);
+      const ids = this.groupsBoundTo(pinnedId, scope);
+      for (const id of ids) this.map.set(id, { ...this.map.get(id)!, pinnedId: null });
+      if (this.restore) this.restore.hints = this.restore.hints.filter((h) => !(h.scope === scope && h.pinnedId === pinnedId));
       if (ids.length) await this.save();
       this.onChange?.();
       return ids.length;
+    });
+  }
+
+  /**
+   * Sign-out: drop everything this scope wrote (descriptions, bindings, restart hints). The
+   * native groups stay. Not the privacy guarantee (that is `view`), just no leftovers.
+   */
+  forget(scope: string) {
+    return this.mutex.run(async () => {
+      for (const [id, m] of [...this.map]) if (m.scope === scope) this.map.delete(id);
+      await this.save();
+      if (this.restore) {
+        this.restore.hints = this.restore.hints.filter((h) => h.scope !== scope);
+        await this.kv.set({ [RESTORE]: this.restore });
+      }
+      if (this.local) {
+        const hints = (await this.local.get<Record<string, Hint>>(HINTS)) ?? {};
+        await this.local.set({ [HINTS]: Object.fromEntries(Object.entries(hints).filter(([, h]) => h.scope !== scope)) });
+      }
+      this.onChange?.();
     });
   }
 
@@ -124,10 +154,13 @@ export class GroupMetaStore {
       let hints = restore.hints;
       let bound = 0;
       const bind = (g: NativeGroup, h: Hint) => {
-        this.map.set(g.id, { description: this.get(g.id).description || h.description, pinnedId: h.pinnedId });
+        // Rebound as the scope that pinned it; restart hints from before scopes stay unbound.
+        const own = this.view(g.id, h.scope ?? null);
+        this.map.set(g.id, { description: own.description || h.description, pinnedId: h.pinnedId, scope: h.scope });
         bound++;
       };
       // Extension reload: Chrome kept the very same group.
+      hints = hints.filter((h) => h.scope);
       for (const h of [...hints]) {
         const g = free.find((x) => x.id === h.groupId && signature(x.title, x.color) === signature(h.title, h.color));
         if (!g) continue;
@@ -163,7 +196,7 @@ export class GroupMetaStore {
       for (const h of this.restore?.hints ?? []) hints[`old:${h.groupId}`] = h;
       for (const g of alive) {
         const m = this.map.get(g.id);
-        if (m?.pinnedId) hints[String(g.id)] = { groupId: g.id, pinnedId: m.pinnedId, title: g.title ?? "", color: g.color, description: m.description };
+        if (m?.pinnedId && m.scope) hints[String(g.id)] = { groupId: g.id, pinnedId: m.pinnedId, title: g.title ?? "", color: g.color, description: m.description, scope: m.scope };
       }
       const before = (await this.local.get<Record<string, Hint>>(HINTS)) ?? {};
       if (JSON.stringify(before) !== JSON.stringify(hints)) await this.local.set({ [HINTS]: hints });

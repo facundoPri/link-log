@@ -6,6 +6,8 @@ import {
   type EvaluationStatus,
 } from "@linklog/browser-protocol";
 
+import { announceUnauthorized } from "../auth-client";
+
 export class OfflineError extends Error {}
 
 /** Same-origin call that keeps the HTTP status (idempotent flows branch on 404/409). */
@@ -21,6 +23,8 @@ export async function call<T>(path: string, method = "GET", body?: unknown): Pro
     throw new OfflineError("The local Linklog API is unreachable.");
   }
   if (response.status === 503 || response.status === 502) throw new OfflineError("The local Linklog API is unavailable.");
+  // The session ended (expiry, revocation, sign-out elsewhere): the gate shows the sign-in screen.
+  if (response.status === 401) announceUnauthorized();
   const data = (await response.json().catch(() => ({}))) as T & { error?: string; code?: string };
   return { status: response.status, data };
 }
