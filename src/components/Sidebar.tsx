@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import type { Lens, Library, Tag as TagType } from "../types";
+import { needsAttention } from "../attention";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -92,9 +93,7 @@ export function Sidebar({
   onSignOut: () => void;
 }) {
   const untaggedCount = library.links.filter((l) => !l.tags.length).length;
-  const attentionCount = library.links.filter(
-    (l) => l.status === "failed" || l.content_state === "failed",
-  ).length;
+  const attentionCount = library.links.filter(needsAttention).length;
   const tagCount = (id: string) =>
     library.links.filter((l) => l.tags.some((t) => t.id === id)).length;
   const lensCount = (id: string) =>

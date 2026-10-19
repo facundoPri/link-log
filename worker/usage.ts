@@ -22,48 +22,29 @@ export type Meter = {
   browser_ms?: number;
   model?: string;
 };
-export async function measured<T>(
-  env: Env,
-  job: { id: string; batch_id: string; link_id: string | null },
-  service: string,
-  provider: string,
-  operation: string,
-  fn: (meter: Meter) => Promise<T>,
-): Promise<T> {
-  const id = crypto.randomUUID(),
-    started = Date.now(),
-    meter: Meter = {};
-  await env.DB.prepare(
-    // The owner comes from the persisted batch, never from the caller.
-    "INSERT INTO usage_events(id,user_id,batch_id,job_id,link_id,provider,service,operation,status,rate_snapshot,created_at) SELECT ?,user_id,?,?,?,?,?,?,?,?,? FROM batches WHERE id=?",
-  )
-    .bind(
-      id,
-      job.batch_id,
-      job.id,
-      job.link_id,
-      provider,
-      service,
-      operation,
-      "started",
-      service === "image-ocr" ? JSON.stringify({ input_usd_per_million: GEMMA_USD_PER_M_INPUT, output_usd_per_million: GEMMA_USD_PER_M_OUTPUT }) : "{}",
-      new Date().toISOString(),
-      job.batch_id,
-    )
-    .run();
-  let error: string | null = null;
+type UsageJob = { id: string; batch_id: string; link_id: string | null };
+const USAGE_COLUMNS = "id,user_id,batch_id,job_id,link_id,provider,service,operation,status,rate_snapshot,created_at";
+const usageValues = (id: string, job: UsageJob, provider: string, service: string, operation: string) => [
+  id, job.batch_id, job.id, job.link_id, provider, service, operation, "started",
+  service === "image-ocr" ? JSON.stringify({ input_usd_per_million: GEMMA_USD_PER_M_INPUT, output_usd_per_million: GEMMA_USD_PER_M_OUTPUT }) : "{}",
+  new Date().toISOString(),
+];
+/** The usage row of a call, inserted only when `guard` (SQL with its own params) holds. */
+export const guardedUsageInsert = (env: Env, id: string, job: UsageJob, provider: string, service: string, operation: string, guard: string, params: unknown[]) =>
+  env.DB.prepare(`INSERT INTO usage_events(${USAGE_COLUMNS}) SELECT ?,user_id,?,?,?,?,?,?,?,?,? FROM batches WHERE id=? AND (${guard})`)
+    .bind(...usageValues(id, job, provider, service, operation), job.batch_id, ...params);
+/**
+ * Settles a usage row. It never throws: the call's own outcome matters more than its metering, and a failed
+ * write is logged (recovery marks a row left 'started' as interrupted).
+ */
+export async function finishUsage(env: Env, id: string, started: number, provider: string, meter: Meter, error: string | null) {
+  const cost = priceUsage({
+    provider,
+    input_tokens: meter.input_tokens ?? null,
+    output_tokens: meter.output_tokens ?? null,
+    model: meter.model ?? null,
+  });
   try {
-    return await fn(meter);
-  } catch (e) {
-    error = e instanceof Error ? e.message : "Provider failed";
-    throw e;
-  } finally {
-    const cost = priceUsage({
-      provider,
-      input_tokens: meter.input_tokens ?? null,
-      output_tokens: meter.output_tokens ?? null,
-      model: meter.model ?? null,
-    });
     await env.DB.prepare(
       "UPDATE usage_events SET status=?,model=?,input_tokens=?,output_tokens=?,browser_ms=?,estimated_usd=?,duration_ms=?,error=? WHERE id=?",
     )
@@ -79,5 +60,34 @@ export async function measured<T>(
         id,
       )
       .run();
+  } catch (e) {
+    console.error(JSON.stringify({ event: "usage_finalize_failed", usage_id: id, provider, status: error ? "failed" : "done", input_tokens: meter.input_tokens ?? null, output_tokens: meter.output_tokens ?? null, detail: e instanceof Error ? e.message.slice(0, 300) : String(e) }));
+  }
+}
+export async function measured<T>(
+  env: Env,
+  job: UsageJob,
+  service: string,
+  provider: string,
+  operation: string,
+  fn: (meter: Meter) => Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  const id = crypto.randomUUID(),
+    started = Date.now(),
+    meter: Meter = {};
+  await guardedUsageInsert(env, id, job, provider, service, operation, "1", [])
+    .run();
+  let error: string | null = null;
+  try {
+    const result = await fn(meter);
+    // An attempt abandoned at its time budget stays failed even if the provider answers later.
+    if (signal?.aborted) throw new Error("The attempt timed out before the provider answered.");
+    return result;
+  } catch (e) {
+    error = e instanceof Error ? e.message : "Provider failed";
+    throw e;
+  } finally {
+    await finishUsage(env, id, started, provider, meter, error);
   }
 }

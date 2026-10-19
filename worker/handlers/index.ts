@@ -1,7 +1,7 @@
 import type { WorkflowStep } from "cloudflare:workers";
 import type { Lens, Link, Tag } from "../../src/types";
 import type { JobRow } from "../jobs";
-import { extractHandler } from "./extract";
+import { extractHandler, previewHandler } from "./extract";
 import { classifyHandler } from "./classify";
 import { browserEvaluationHandler } from "./browser";
 
@@ -10,6 +10,8 @@ export type JobConfig = {
   tags?: Tag[];
   lens?: Lens;
   track?: string;
+  /** extract: "content" retries only the content step (the preview already ran). */
+  step?: "content";
   /** browser-autogroup: Jev option key → destination key chosen by the page. */
   destinations?: Record<string, string>;
 };
@@ -20,6 +22,8 @@ export type JobContext = {
   job: JobRow & { kind: string; config: string; user_id: string };
   link: Link;
   config: JobConfig;
+  /** How the steps that ran ended, for the failure path to settle Needs attention. */
+  progress: { preview?: "ok" | "failed" };
 };
 export type JobHandler = {
   pool: (ctx: JobContext) => Pool | null;
@@ -35,7 +39,7 @@ export type BrowserTargetRow = {
   capture_key: string | null;
   capture_meta: string;
 };
-export type BrowserJobContext = Omit<JobContext, "link"> & {
+export type BrowserJobContext = Omit<JobContext, "link" | "progress"> & {
   target: BrowserTargetRow;
 };
 export type BrowserJobHandler = {
@@ -44,6 +48,7 @@ export type BrowserJobHandler = {
 };
 export const handlers: Record<string, JobHandler> = {
   extract: extractHandler,
+  preview: previewHandler,
   autotag: classifyHandler,
   lens: classifyHandler,
   // Legacy "query" batches may still be delivered by the queue; run them through

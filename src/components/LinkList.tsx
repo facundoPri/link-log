@@ -37,7 +37,9 @@ export function LinkList({
     onDomainFilter: (domain: string) => void;
     onEditTags: (link: Link) => void;
     onExtract: (link: Link) => void;
-    onRetry: (link: Link) => void;
+    onRetry: (link: Link, step?: "content") => void;
+    onDismiss: (link: Link) => void;
+    onUsePreview: (link: Link) => void;
     onDelete: (link: Link) => void;
     onCopyUrl: (link: Link) => void;
   };
@@ -123,7 +125,9 @@ export function LinkList({
           onDomainFilter={rowActions.onDomainFilter}
           onEditTags={() => rowActions.onEditTags(link)}
           onExtract={() => rowActions.onExtract(link)}
-          onRetry={() => rowActions.onRetry(link)}
+          onRetry={(step) => rowActions.onRetry(link, step)}
+          onDismiss={() => rowActions.onDismiss(link)}
+          onUsePreview={() => rowActions.onUsePreview(link)}
           onDelete={() => rowActions.onDelete(link)}
           onCopyUrl={() => rowActions.onCopyUrl(link)}
         />

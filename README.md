@@ -65,7 +65,13 @@ Saves immediately to D1; the extraction workflow enriches title, description, Op
 
 The aliases `youtu.be`, `www.youtube.com`, `m.youtube.com` and `music.youtube.com` are grouped as `youtube.com`. Known tracking parameters are stripped; functional parameters and fragments are preserved. Exact-normalized duplicates or duplicates of an already-resolved destination return the existing link and merge tags, even with concurrent saves. Two different shorteners reaching the same destination after saving can still coexist; they are not merged automatically.
 
-A blocked, slow or HTML-less page keeps the link and allows a retry. If the Worker restarts mid-extraction, the pending state expires after 30s to allow recovery. Remote images have a fallback; their availability depends on the site. There is no image archive or oEmbed. R2 stores the Markdown and transcripts.
+The preview is retried twice with exponential backoff when the site is slow, unreachable, rate limited or answers 5xx; a block (401/403 or a bot challenge), 404/410 or a non-HTML file (like a PDF) fails at once. A failed preview keeps the link, shows a plain reason and allows a retry; on a re-extract, a preview that worked before is kept and the failure is only listed in Activity. A link whose preview has not finished shows as processing while it has a queued or running job; if the Worker restarts mid-extraction, the cron recovery below resends the job. A link left without a preview and without a job (cancelled batch, interrupted extraction) stays neutral, never in Needs attention, and offers "Fetch preview", which runs as a queued job like any other.
+
+Needs attention is stored on the link (`attention_kind` = `preview` or `content`, with its reason) and set only when a job settles with a step that failed for good, after its retries. It is never set while a link is queued, running or retrying, nor by a cancelled or interrupted job, nor when a failed re-extract still shows the previous content or preview (that failure is only listed in Activity). Retry runs only the failed step: the preview alone, or the content alone from the URL the preview resolved. The link stays in the list while the retry runs and leaves it only when that step succeeds (pasting content also resolves a content failure). Dismiss removes it from the list without changing anything else; a later final failure brings it back. When both steps failed, the content failure is shown first. When content definitively cannot be obtained, genuine metadata is used automatically (`content_source='preview'`, partial). There is no preference switch. A real title or description is required: domain/URL placeholders, generic adapter labels and images alone are insufficient. Existing valid content wins, including after failed re-extraction. The row icon and Inspector distinguish metadata available for evaluation from metadata actually used by an existing evaluation; UI labels are never added to Jev's input. Explicit Use preview can recover a failed fallback storage write. A later successful extraction replaces fallback content without silently rerunning Jev.
+
+List fields prefer fetched metadata. Extraction fills only missing fields from an identifiable heading, social caption or usable image; descriptions remain empty when unavailable. No extra LLM requests generate display fields. Failed or partial metadata refreshes preserve good existing values, including YouTube oEmbed previews. Confirmed NXDOMAIN fails fast; empty DNS answers, timeouts and resolver failures use bounded retries. Private destinations and unsupported ports remain fail-fast. R2 stores owner-scoped Markdown and transcripts.
+
+FAC-48 migrations start at `0018`, after main's shipped `0012`–`0017`. Fresh databases and upgrades from main are tested. Disposable pre-auth PR8 databases must be recreated before deploying this ordered series; never apply the renamed series over an old PR8 migration ledger or reset production. The PR8 preview was explicitly recreated for this integration. See `planning/qa/fac-48-test-plan.md` for current validation and historical recording limits.
 
 ## Cloudflare: current boundary
 
@@ -158,20 +164,65 @@ public access without login or personal cookies. A blocked image remains visible
 as a partial result when useful text was obtained.
 
 D1 acts as the outbox, Queue delivers IDs and each Workflow uses a stable ID so
-work is not duplicated on redelivery. Paid steps are not silently retried; the
-user can create a new attempt. There are two shared provider slots via five-minute
-D1 leases; steps have a two-minute timeout. Cron recovers pending jobs;
+work is not duplicated on redelivery. A link runs one job at a time: an auto-tag or
+lens job requested while another is queued, running or waiting on the same link is
+stored as `waiting` (never sent to the Queue) and starts, oldest first, in the same
+transaction that settles the job ahead of it; cron also starts any waiting job left
+without one ahead. An explicit extraction or preview is refused instead ("Some
+selected links are still processing.") while its link is busy.
+Auto-tag and lenses accept links with content or with an extraction on the way and
+skip the rest ("Extract, then auto-tag" extracts them first, only when asked); Jev
+never starts an extraction. If that extraction ends without content, the waiting
+Jev job fails as "Content missing" before any provider call, and stays out of Needs
+attention. A link with a waiting job counts as processing, and one-off edits (paste
+content, Use preview, tags, retry) wait for it. Cancelling a batch drops its queued
+and waiting jobs; cancelling a not-yet-started extraction also cancels the auto-tag
+and lens jobs waiting for it. A single job can also be cancelled from Activity
+(`DELETE /api/jobs/:id`), whether queued, waiting or running: a running job's
+Workflow is terminated first. The job ends as Cancelled (not counted as failed),
+the link keeps whatever already ran (previous content, a fetched preview) and goes
+back to how it was otherwise, Needs attention is never touched, a cancelled
+extraction takes the Jev jobs waiting for it along, and the link's next waiting
+job starts. A late write from the terminated job (content, completion, failure,
+preview fallback) is ignored. A Jev job cancelled after sending may still be billed
+("Cancelled after calling Jev"); its Usage row is kept and it is never resent. Paid steps are not silently retried. A Jev failure
+is split by phase: before the request is sent ("Failed before calling Jev (no cost)",
+no Usage row) only a known transient R2 read or D1 conflict/timeout is retried, once;
+a job sends at most one Jev request, authorized by an atomic claim (`jobs.jev_call`)
+written with its Usage row, so a late or overlapping attempt never sends again;
+once the request may have been sent (HTTP error, timeout, network error, invalid
+answer: "may have been billed") it is never retried automatically, and failed
+auto-tag and lens jobs can be retried from Activity. If Jev refuses the account
+(401/402/403, insufficient balance, quota), the rest of that batch stops without
+calling. Jev failures never put a link in Needs attention and are logged as
+`jev_step_failed` (phase, reason, provider, HTTP status, attempt). Browser Rendering → Markdown is retried once on a
+transient failure (each attempt is a row in Usage), and Activity shows the current
+attempt and the reason of the previous one. A failed re-extract keeps the previous
+content. If the Markdown is a short login wall, captcha or block page
+("Sign in", "Log in to continue", "Just a moment", "Access denied", "Verify you are
+human" and similar), it is discarded without a retry and never stored: a link with
+no content fails with "Got a login page instead of the content." (Needs attention,
+or the preview as content when that setting is on), while a link with content keeps
+the previous version and the failure stays in Activity. Each detection is logged as
+`login_wall_detected` (domain, matched pattern, text length). Each failed attempt is logged as a `link_step_failed` JSON line (step,
+reason, HTTP status, content type, domain, attempt) in Workers Logs. Provider slots are shared through five-minute D1 leases, in two
+pools: Browser Rendering 2 and Jev 16 by default, configurable with
+`BROWSER_CONCURRENCY` and `JEV_CONCURRENCY`. The preview step times out after 30
+seconds (each attempt gives up after 20) and the Markdown step after two minutes
+(each attempt gives up after 100 seconds). Cron recovers pending jobs;
 `scripts/dev.ts` simulates this cron every 30 seconds because Wrangler does not
 run cron automatically in local dev.
 
 The full content is stored in R2 (maximum 2 MB; manual upload 500,000 characters).
-Classification sends the full content and lets the provider's tokenizer validate
-the real window, without confusing bytes with tokens. TypeSafe documents 32,000
-tokens for `state` plus the longest question and 64,000 for the complete request.
-If the provider rejects the size, the job fails with a clear message and preserves
-content, tags and previous scores. It is not truncated and no per-fragment
-probabilities are added automatically; the strategy for documents that truly
-exceed the window is still pending.
+Classification sends the content up to 160,000 characters (`MAX_STATE_CHARS`);
+longer content is cut there and ends with "[Content truncated for classification]",
+so the end of a long document does not reach Jev. The provider's tokenizer still
+validates the real window, without confusing bytes with tokens. TypeSafe documents
+32,000 tokens for `state` plus the longest question and 64,000 for the complete
+request. If the provider rejects the size, the job fails with a clear message and
+preserves content, tags and previous scores. No per-fragment probabilities are
+added automatically; the strategy for documents that truly exceed the window is
+still pending.
 Processing uses full context per link, not embeddings or a vector index.
 
 ### Verification

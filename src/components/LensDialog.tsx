@@ -129,6 +129,7 @@ export function LensDialog({
   template,
   templates = [],
   selectedCount,
+  runBlocked,
   onClose,
   onSave,
 }: {
@@ -139,6 +140,8 @@ export function LensDialog({
   template?: Lens;
   templates?: Lens[];
   selectedCount: number;
+  /** Why the new lens can't run on the selection now (Jev not configured), or null. */
+  runBlocked?: string | null;
   onClose: () => void;
   onSave: (draft: LensDraft) => Promise<void>;
 }) {
@@ -173,7 +176,7 @@ export function LensDialog({
     setCriteriaOpen(t.type === "noul" && !!(t.criteria.yes || t.criteria.no));
     setThreshold(Math.round(t.threshold * 100));
   };
-  const [runNow, setRunNow] = useState(!!selectedCount && scope === "library");
+  const [runNow, setRunNow] = useState(!!selectedCount && scope === "library" && !runBlocked);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const nextKey = useRef(source ? source.options.length : 2);
@@ -277,7 +280,7 @@ export function LensDialog({
                   type === "noul"
                     ? { yes: criteria.yes.trim(), no: criteria.no.trim() }
                     : { yes: "", no: "" },
-                runNow,
+                runNow: runNow && !runBlocked,
               });
               onClose();
             } catch (e) {
@@ -509,14 +512,18 @@ export function LensDialog({
           <DialogFooter className="sm:justify-between">
             <div className="flex items-center gap-2">
               {!editing && !!selectedCount && scope === "library" && (
-                <label className="flex items-center gap-2 text-[13px]">
-                  <Checkbox
-                    checked={runNow}
-                    onCheckedChange={(c) => setRunNow(c === true)}
-                  />
-                  Run on the {selectedCount} selected{" "}
-                  {selectedCount === 1 ? "link" : "links"} now
-                </label>
+                <div>
+                  <label className={cn("flex items-center gap-2 text-[13px]", runBlocked && "text-muted-foreground")}>
+                    <Checkbox
+                      checked={runNow && !runBlocked}
+                      disabled={!!runBlocked}
+                      onCheckedChange={(c) => setRunNow(c === true)}
+                    />
+                    Run on the {selectedCount} selected{" "}
+                    {selectedCount === 1 ? "link" : "links"} now
+                  </label>
+                  {runBlocked && <p className="mt-0.5 text-2xs text-muted-foreground">{runBlocked}</p>}
+                </div>
               )}
               {editing && (
                 <span className="text-xs text-muted-foreground">

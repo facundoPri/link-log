@@ -294,6 +294,7 @@ export function BrowserView({
             onClean={actions.requestClean}
             onEdit={onEditLens}
             onDeactivate={(lens) => ws.deactivate([lens.id])}
+            jevReason={ws.jevReason}
           />
         )}
       </div>
@@ -348,6 +349,7 @@ export function BrowserView({
                 onMove={() => actions.chooseMove([tab])}
                 onUngroup={() => void actions.ungroup([tab])}
                 onCopy={() => actions.copy(tab)}
+                jevReason={ws.jevReason}
               />
             ))}
           </div>
@@ -365,6 +367,7 @@ export function BrowserView({
           onAutogroup={() => actions.autogroup(pickedTabs)}
           onClose={() => actions.requestClose(pickedTabs)}
           onClear={() => setPicked(() => [])}
+          jevReason={ws.jevReason}
         />
       )}
     </>

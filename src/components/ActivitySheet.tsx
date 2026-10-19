@@ -3,9 +3,11 @@ import {
   Check,
   ChevronRight,
   CircleAlert,
+  Clock,
   FileText,
   Globe,
   Loader2,
+  RotateCw,
   Sparkles,
   Telescope,
   X,
@@ -16,6 +18,7 @@ import { api } from "../api";
 import type { Library } from "../types";
 import type { Batch, Job, Lens, OcrUsage, UsageTotals } from "../types";
 import { LensVerdict } from "./LensVerdict";
+import { jobProgress } from "../failures";
 import { relativeTime } from "../lib/time";
 import { usd, tokens, duration } from "../lib/format";
 import { cn } from "../lib/utils";
@@ -62,7 +65,7 @@ function batchUsageTip(b: Batch) {
 }
 
 function kindIcon(kind: Batch["kind"] | "query") {
-  return kind === "extract" ? (
+  return kind === "extract" || kind === "preview" ? (
     <FileText className="size-4 text-muted-foreground" />
   ) : kind === "autotag" || kind === "browser-autogroup" ? (
     <Sparkles className="size-4 text-muted-foreground" />
@@ -83,6 +86,7 @@ function configLens(b: Batch): Lens | undefined {
 
 function label(b: Batch) {
   if (b.kind === "extract") return "Extract context";
+  if (b.kind === "preview") return "Fetch preview";
   if (b.kind === "autotag") return "Auto-tag";
   if ((b.kind as string) === "query") return "Ask (legacy)";
   if (b.kind === "browser-autogroup") return "Autogroup · open tabs";
@@ -91,9 +95,33 @@ function label(b: Batch) {
   return `Lens: ${name}`;
 }
 
-function BatchJobs({ batch }: { batch: Batch }) {
+// Jev is never retried automatically once called; failed auto-tag and lens jobs are retried from here.
+const retriable = (b: Batch) => b.kind === "autotag" || b.kind === "lens";
+async function retryFailed(id: string, ids: string[] | undefined, onLibrary: (l: Library) => void) {
+  try {
+    const data = await api<Library & { skipped?: string[] }>(`/batches/${id}/retry`, "POST", ids ? { ids } : {});
+    onLibrary(data);
+    toast(data.skipped?.length ? `Retrying; ${data.skipped.length} without content were skipped` : "Retrying");
+  } catch (e) {
+    toast.error((e as Error).message);
+  }
+}
+
+// One job, whether queued, waiting or running. Cancelling an extraction also cancels the jobs waiting for it.
+async function cancelJob(job: Job, onLibrary: (l: Library) => void) {
+  try {
+    const data = await api<Library & { dependents?: number }>(`/jobs/${job.id}`, "DELETE");
+    onLibrary(data);
+    toast(data.dependents ? `Cancelled, and ${data.dependents} waiting for that extraction` : "Cancelled");
+  } catch (e) {
+    toast.error((e as Error).message);
+  }
+}
+
+function BatchJobs({ batch, onLibrary }: { batch: Batch; onLibrary: (l: Library) => void }) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [error, setError] = useState("");
+  const [reload, setReload] = useState(0);
   useEffect(() => {
     let alive = true;
     const load = () =>
@@ -111,7 +139,7 @@ function BatchJobs({ batch }: { batch: Batch }) {
       alive = false;
       clearInterval(timer);
     };
-  }, [batch.id, batch.active]);
+  }, [batch.id, batch.active, reload]);
   const lens = configLens(batch);
   return (
     <div className="space-y-1 px-2 pb-2">
@@ -119,6 +147,7 @@ function BatchJobs({ batch }: { batch: Batch }) {
       {jobs.map((j) => {
         const result = j.result ? JSON.parse(j.result) : null;
         const answer = result?.answer ?? result?.answers?.lens;
+        const progress = jobProgress(j);
         return (
           <div key={j.id} className="rounded-md px-2 py-1.5">
             <div className="flex items-center gap-2">
@@ -175,8 +204,28 @@ function BatchJobs({ batch }: { batch: Batch }) {
                 </span>
               ) : j.status === "failed" ? (
                 <CircleAlert className="size-3.5 text-destructive" />
+              ) : j.status === "waiting" ? (
+                <Clock className="size-3.5 text-muted-foreground" />
               ) : (
                 <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+              )}
+              {["queued", "running", "waiting"].includes(j.status) && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      className="-my-0.5 shrink-0"
+                      aria-label="Cancel"
+                      onClick={() => void cancelJob(j, (l) => (onLibrary(l), setReload((n) => n + 1)))}
+                    >
+                      <X className="size-3" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {batch.kind === "extract" ? "Cancel (also cancels what waits for it)" : "Cancel"}
+                  </TooltipContent>
+                </Tooltip>
               )}
             </div>
             {batch.kind === "extract" && j.usage?.ocr && (
@@ -196,19 +245,32 @@ function BatchJobs({ batch }: { batch: Batch }) {
               </div>
             )}
             {j.error && (
-              <p
-                className={cn(
-                  "mt-0.5 text-2xs",
-                  j.step === "Cancelled"
-                    ? "text-muted-foreground"
-                    : "text-destructive",
+              <div className="mt-0.5 flex items-start gap-2">
+                <p
+                  className={cn(
+                    "min-w-0 flex-1 text-2xs",
+                    j.step === "Cancelled"
+                      ? "text-muted-foreground"
+                      : "text-destructive",
+                  )}
+                >
+                  {j.error}
+                </p>
+                {retriable(batch) && j.status === "failed" && j.step !== "Cancelled" && j.link_id && (
+                  <Button variant="ghost" size="xs" className="-my-0.5 shrink-0" onClick={() => void retryFailed(batch.id, [j.link_id!], onLibrary)}>
+                    Retry
+                  </Button>
                 )}
-              >
-                {j.error}
-              </p>
+              </div>
             )}
-            {!j.error && j.status !== "done" && j.status !== "failed" && (
-              <p className="mt-0.5 text-2xs text-muted-foreground">{j.step}</p>
+            {j.step === "Used the preview" && (
+              <p className="mt-0.5 text-2xs text-muted-foreground">Used the preview as content instead.</p>
+            )}
+            {!j.error && progress.step && (
+              <p className="mt-0.5 text-2xs text-muted-foreground">{progress.step}</p>
+            )}
+            {progress.note && (
+              <p className="mt-0.5 text-2xs text-muted-foreground">{progress.note}</p>
             )}
           </div>
         );
@@ -222,14 +284,14 @@ function BatchJobs({ batch }: { batch: Batch }) {
 
 async function cancelBatch(id: string, onLibrary: (l: Library) => void) {
   try {
-    const data = await api<Library & { cancelled?: number }>(
+    const data = await api<Library & { cancelled?: number; dependents?: number }>(
       `/batches/${id}`,
       "DELETE",
     );
     onLibrary(data);
     toast(
       data.cancelled
-        ? `Cancelled ${data.cancelled} queued ${data.cancelled === 1 ? "job" : "jobs"}`
+        ? `Cancelled ${data.cancelled} queued ${data.cancelled === 1 ? "job" : "jobs"}${data.dependents ? `, and ${data.dependents} waiting for that extraction` : ""}`
         : "Nothing left to cancel",
     );
   } catch (e) {
@@ -298,7 +360,8 @@ export function ActivitySheet({
           {sorted.map((b) => (
             <Collapsible key={b.id}>
               <div className="rounded-lg border">
-                <CollapsibleTrigger className="group flex w-full items-center gap-2 px-3 py-2 text-left">
+                <div className="group flex w-full items-center gap-2 px-3 py-2 text-left">
+                  <CollapsibleTrigger className="flex min-w-0 flex-1 items-center gap-2 text-left">
                   {kindIcon(b.kind)}
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[13px] font-medium">
@@ -308,10 +371,11 @@ export function ActivitySheet({
                       {relativeTime(b.created_at)}
                     </span>
                   </span>
+                  </CollapsibleTrigger>
                   {b.active ? (
                     <span className="flex items-center gap-1.5 text-2xs text-muted-foreground tabular">
                       <Loader2 className="size-3 animate-spin" />
-                      {b.done + b.failed}/{b.total}
+                      {b.done + b.failed + b.cancelled}/{b.total}
                       <Button
                         variant="ghost"
                         size="icon-sm"
@@ -325,10 +389,32 @@ export function ActivitySheet({
                       </Button>
                     </span>
                   ) : b.failed ? (
-                    <Badge variant="outline" className="gap-1">
-                      <CircleAlert className="size-3" />
-                      {b.failed} failed
-                    </Badge>
+                    <span className="flex items-center gap-1">
+                      <Badge variant="outline" className="gap-1">
+                        <CircleAlert className="size-3" />
+                        {b.failed} failed
+                      </Badge>
+                      {retriable(b) && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              aria-label="Retry failed"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void retryFailed(b.id, undefined, onLibrary);
+                              }}
+                            >
+                              <RotateCw className="size-3.5" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Retry failed</TooltipContent>
+                        </Tooltip>
+                      )}
+                    </span>
+                  ) : b.cancelled === b.total ? (
+                    <span className="text-2xs text-muted-foreground">Cancelled</span>
                   ) : (
                     <span className="flex items-center gap-1 text-2xs text-muted-foreground">
                       <Check className="size-3" />
@@ -351,15 +437,15 @@ export function ActivitySheet({
                       "group-data-[state=open]:rotate-90",
                     )}
                   />
-                </CollapsibleTrigger>
+                </div>
                 {!!b.active && (
                   <Progress
-                    value={((b.done + b.failed) / Math.max(b.total, 1)) * 100}
+                    value={((b.done + b.failed + b.cancelled) / Math.max(b.total, 1)) * 100}
                     className="mx-3 h-1 w-auto"
                   />
                 )}
                 <CollapsibleContent>
-                  <BatchJobs batch={b} />
+                  <BatchJobs batch={b} onLibrary={onLibrary} />
                 </CollapsibleContent>
               </div>
             </Collapsible>

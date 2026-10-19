@@ -10,7 +10,7 @@ import { loadOwnedJob } from "../worker/workflow";
 import { browserEvaluationHandler } from "../worker/handlers/browser";
 import { capabilities } from "../worker/store";
 
-const step = { do: async (_name: string, a: unknown, b?: unknown) => (typeof a === "function" ? a() : (b as () => unknown)()) };
+const step = { do: async (_name: string, a: unknown, b?: unknown) => (typeof a === "function" ? a() : (b as (c: unknown) => unknown)({ attempt: 1 })) };
 
 async function queuedBrowserJob() {
   const db = await TestD1.migrated();
@@ -34,6 +34,7 @@ async function queuedBrowserJob() {
   expect(created.status).toBe(201);
   const jobId = (db.sqlite.query("SELECT id FROM jobs").get() as { id: string }).id;
   const loaded = await loadOwnedJob(env.DB, jobId);
+  db.sqlite.exec("UPDATE jobs SET status='running'");
   const run = (appEnv: string) =>
     browserEvaluationHandler.run({
       env: { ...env, APP_ENV: appEnv } as Env,

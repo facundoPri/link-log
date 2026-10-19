@@ -28,7 +28,7 @@ test("successful autotag replaces manual assignments, retains rejected scores, a
      INSERT INTO links(id,user_id,original_url,url,domain,title,created_at) VALUES('link','owner','https://example.com','https://example.com','example.com','Example','now');
      INSERT INTO tags(id,user_id,name) VALUES('ai','owner','AI'),('iot','owner','IoT');
      INSERT INTO link_tags(link_id,tag_id,origin) VALUES('link','iot','manual');
-     INSERT INTO batches(id,user_id,kind,config,created_at) VALUES('batch','owner','autotag','{}','now')`,
+     INSERT INTO batches(id,user_id,kind,config,created_at) VALUES('batch','owner','autotag','{}','now'); INSERT INTO jobs(id,batch_id,link_id,status,created_at) VALUES('job','batch','link','running','now')`,
   );
   const tags: Tag[] = [
     {
@@ -68,6 +68,7 @@ test("successful autotag replaces manual assignments, retains rejected scores, a
     "fixture-model",
     "batch",
     "now",
+    "job",
   );
   run(statements);
   expect(sqlite.query("SELECT tag_id,origin FROM link_tags").all()).toEqual([
@@ -106,6 +107,7 @@ test("successful autotag replaces manual assignments, retains rejected scores, a
       "fixture",
       "batch",
       "now",
+    "job",
     ),
   ).toThrow();
   expect(sqlite.query("SELECT tag_id FROM link_tags").all()).toEqual([
@@ -120,6 +122,7 @@ test("successful autotag replaces manual assignments, retains rejected scores, a
     "fixture",
     "missing-batch",
     "now",
+    "job",
   );
   expect(() => run(invalid)).toThrow();
   expect(sqlite.query("SELECT tag_id FROM link_tags").all()).toEqual([
@@ -136,6 +139,7 @@ test("successful autotag replaces manual assignments, retains rejected scores, a
       "fixture",
       "batch",
       "now",
+    "job",
     ),
   );
   expect(sqlite.query("SELECT tag_id FROM link_tags").all()).toEqual([

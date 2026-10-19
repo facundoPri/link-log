@@ -9,6 +9,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -169,7 +170,12 @@ export function BrowserSidebar({
               <DropdownMenuContent align="start" side="right">
                 <DropdownMenuItem onClick={() => ws.toggleLens(lens.id)}>{on ? "Turn off" : "Turn on"}</DropdownMenuItem>
                 <DropdownMenuItem onClick={() => onEditLens(lens)}>Edit lens…</DropdownMenuItem>
-                <DropdownMenuItem onClick={() => onReevaluateLens(lens)}>Re-evaluate this window</DropdownMenuItem>
+                <DropdownMenuItem disabled={!!ws.jevReason} onClick={() => onReevaluateLens(lens)}>
+                  Re-evaluate this window
+                </DropdownMenuItem>
+                {ws.jevReason && (
+                  <DropdownMenuLabel className="text-2xs font-normal text-muted-foreground">{ws.jevReason}</DropdownMenuLabel>
+                )}
                 <DropdownMenuItem onClick={() => onCleanLens(lens)}>Clean results…</DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem variant="destructive" onClick={() => onDeleteLens(lens)}>

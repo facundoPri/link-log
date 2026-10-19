@@ -21,6 +21,8 @@ import {
 } from "lucide-react";
 import { api } from "../api";
 import type { Lens, Library, Link, Tag, ContentDetails, MediaItem } from "../types";
+import { canRetryPreview } from "../attention";
+import { failureMessage } from "../failures";
 import { cn } from "../lib/utils";
 import { captionMenuTracks, youtubeId } from "../lib/youtube";
 import { relativeTime } from "../lib/time";
@@ -66,6 +68,7 @@ const sourceLabel: Record<string, string> = {
   web: "Page text",
   youtube: "Transcript",
   manual: "Manual text",
+  preview: "Metadata available as content",
   "youtube-post": "YouTube post",
   "instagram-post": "Instagram post",
   "instagram-reel": "Instagram reel",
@@ -113,10 +116,12 @@ export function Inspector({
   onExtract,
   onSelectTrack,
   onRetry,
+  onRetryContent,
   onSaveRelated,
   savedUrls,
   running,
   focusTags,
+  jevReason,
 }: {
   link: Link;
   tags: Tag[];
@@ -131,10 +136,13 @@ export function Inspector({
   onExtract: () => void;
   onSelectTrack: (language: string) => void;
   onRetry: () => void;
+  onRetryContent: () => void;
   onSaveRelated: (url: string) => Promise<void>;
   savedUrls: string[];
-  running?: "extract" | "autotag" | "lens" | "query" | null;
+  running?: "extract" | "preview" | "autotag" | "lens" | "query" | null;
   focusTags?: boolean;
+  /** Why Auto-tag and lenses can't run (Jev not configured), or null. */
+  jevReason?: string | null;
 }) {
   const [markdown, setMarkdown] = useState("");
   const [draft, setDraft] = useState("");
@@ -343,9 +351,9 @@ export function Inspector({
             <DropdownMenuItem onClick={onExtract}>
               {link.content_key ? "Re-extract context" : "Extract context"}
             </DropdownMenuItem>
-            {link.status === "failed" && (
+            {canRetryPreview(link) && (
               <DropdownMenuItem onClick={onRetry}>
-                Retry preview
+                {link.status === "failed" ? "Retry preview" : "Fetch preview"}
               </DropdownMenuItem>
             )}
             <DropdownMenuSeparator />
@@ -499,6 +507,12 @@ export function Inspector({
               </div>
               {!details.transcript.originalLanguage && !details.transcript.selectedLanguage && <p className="text-muted-foreground">Original audio language could not be verified.</p>}
             </div>}
+            {!!link.metadata_evaluated && <p className="mb-3 text-xs text-muted-foreground">An existing evaluation used metadata (the saved title and description). Extracting content later does not rerun that evaluation.</p>}
+            {link.content_source === "preview" && link.content_key && <div role="status" className="mb-3 flex flex-col gap-1 rounded-md bg-muted/50 p-2 text-xs">
+              <span className="font-medium">Metadata available as content</span>
+              <span className="text-muted-foreground">The available title and description are saved for evaluation because the page content couldn't be extracted{link.content_error ? `: ${link.content_error}` : "."}</span>
+              <Button variant="outline" size="sm" className="mt-1 self-start" disabled={!!running} onClick={onRetryContent}>Retry getting content</Button>
+            </div>}
             {details?.transcript?.selectedLanguage && details.transcript.reason.startsWith("english-") && (
               <p className="mb-3 text-xs text-muted-foreground">
                 {details.transcript.reason === "english-original-unknown"
@@ -507,12 +521,12 @@ export function Inspector({
                 {selectableTracks.length > 1 && " You can choose another available track above."}
               </p>
             )}
-            {(link.content_state === "partial" || (details?.issues.length || 0) > 0) && <div role="status" className="mb-3 flex flex-col gap-1 rounded-md bg-muted/50 p-2 text-xs">
+            {link.content_source !== "preview" && (link.content_state === "partial" || (details?.issues.length || 0) > 0) && <div role="status" className="mb-3 flex flex-col gap-1 rounded-md bg-muted/50 p-2 text-xs">
               <span className="font-medium">Extraction incomplete</span>
               {details?.issues.map((issue, i) => <span key={i} className="text-muted-foreground">{issue}</span>)}
               <Button variant="outline" size="sm" className="mt-1 self-start" onClick={onExtract}>Retry extraction</Button>
             </div>}
-            {link.content_key && link.content_error && link.content_state !== "queued" && !details?.issues.includes(link.content_error) && <p role="alert" className="mb-3 text-xs text-destructive">Last extraction failed: {link.content_error}</p>}
+            {link.content_key && link.content_error && link.content_state !== "queued" && link.content_source !== "preview" && !details?.issues.includes(link.content_error) && <p role="alert" className="mb-3 text-xs text-destructive">Last extraction failed, showing the previous version: {link.content_error}</p>}
             {!editing && !!link.media?.length && <div className="mb-4 flex flex-col gap-2" aria-label="Post media">
               <p className="text-xs text-muted-foreground">{link.media.length} media · {link.media.filter((item) => item.ocr_state === "done").length} with OCR</p>
               {link.media.length > 1 && <div className="grid grid-cols-5 gap-1.5" aria-label="Media in post order">
@@ -635,7 +649,7 @@ export function Inspector({
                   {link.content_error}
                 </p>
                 <div className="mt-3 flex justify-center gap-2">
-                  <Button size="sm" variant="outline" onClick={onExtract}>
+                  <Button size="sm" variant="outline" onClick={onRetryContent}>
                     Retry
                   </Button>
                   <Button
@@ -768,15 +782,23 @@ export function Inspector({
                       Tagging…
                     </span>
                   ) : (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 gap-1 px-2 text-2xs"
-                      onClick={onAutoTag}
-                    >
-                      <Sparkles className="size-3" />
-                      Re-evaluate
-                    </Button>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 gap-1 px-2 text-2xs"
+                            disabled={!!jevReason}
+                            onClick={onAutoTag}
+                          >
+                            <Sparkles className="size-3" />
+                            Re-evaluate
+                          </Button>
+                        </span>
+                      </TooltipTrigger>
+                      {jevReason && <TooltipContent>{jevReason}</TooltipContent>}
+                    </Tooltip>
                   )}
                 </div>
               </div>
@@ -868,17 +890,19 @@ export function Inspector({
                         </Tooltip>
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              className="opacity-0 group-hover/lens:opacity-100"
-                              aria-label="Run again"
-                              onClick={() => onRunLens(lens)}
-                            >
-                              <RotateCw className="size-3" />
-                            </Button>
+                            <span className="opacity-0 group-hover/lens:opacity-100">
+                              <Button
+                                variant="ghost"
+                                size="icon-sm"
+                                aria-label="Run again"
+                                disabled={!!jevReason}
+                                onClick={() => onRunLens(lens)}
+                              >
+                                <RotateCw className="size-3" />
+                              </Button>
+                            </span>
                           </TooltipTrigger>
-                          <TooltipContent>Run again</TooltipContent>
+                          <TooltipContent>{jevReason ?? "Run again"}</TooltipContent>
                         </Tooltip>
                         <Button
                           variant="ghost"
@@ -947,19 +971,21 @@ export function Inspector({
               </>}
               <dt className="text-muted-foreground">Preview</dt>
               <dd>
-                {link.status === "ready"
-                  ? "Ready"
-                  : link.status === "pending"
-                    ? "Pending"
-                    : "Failed"}
-                {link.status === "failed" && (
+                {link.previewing
+                  ? "Fetching…"
+                  : link.status === "ready"
+                    ? "Ready"
+                    : link.status === "pending"
+                      ? "Not fetched yet"
+                    : `Failed${link.preview_reason ? ` · ${failureMessage(link.preview_reason)}` : ""}`}
+                {canRetryPreview(link) && (
                   <>
                     {" · "}
                     <button
                       className="underline underline-offset-2"
                       onClick={onRetry}
                     >
-                      Retry
+                      {link.status === "failed" ? "Retry" : "Fetch"}
                     </button>
                   </>
                 )}

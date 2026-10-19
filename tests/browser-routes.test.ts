@@ -45,7 +45,7 @@ function lens(owner: User, id: string, scope: "browser" | "library" = "browser")
 
 beforeEach(async () => {
   db = await TestD1.migrated();
-  ({ env, r2, queued } = makeEnv(db));
+  ({ env, r2, queued } = makeEnv(db, { JEV_PROVIDER: "fixture", ALLOW_FIXTURE_JEV: "1" }));
   call = client(env);
   A = await testSession(env, "a@example.test");
   B = await testSession(env, "b@example.test");

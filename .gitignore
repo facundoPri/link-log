@@ -46,3 +46,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # Isolated Chrome profiles and packaged extensions
 /.profiles/
 /apps/extension/*.zip
+
+# QA video harness output (videos, frames, logs)
+/qa/out/

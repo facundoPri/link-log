@@ -1,8 +1,8 @@
 import { Hono } from "hono";
 import type { Job, JobUsage, UsageEvent } from "../../src/types";
 import { json, library } from "../store";
-import { enqueue } from "../jobs";
-import { preservedContentStateSql } from "../content-state";
+import { enqueue, NothingToRun, cancelJob, JobFinished, cancelDependents, promoteWaiting, startNext } from "../jobs";
+import { restoredContentStateSql } from "../content-state";
 import { OCR_USAGE_COLUMNS } from "../usage";
 import { badRequest, ownerOf, type AppEnv } from "../http/context";
 import { ownedBatch } from "./shared";
@@ -42,35 +42,52 @@ export const activityRoutes = new Hono<AppEnv>()
     if (!Array.isArray(body.ids) || body.ids.some((id) => typeof id !== "string")) throw badRequest("Invalid selection.");
     if (!["extract", "autotag", "lens"].includes(String(body.kind))) throw badRequest("Invalid action.");
     if (body.kind === "lens" && typeof body.lensId !== "string") throw badRequest("Pick a lens.");
-    const batchId = await enqueue(env, userId, body.ids as string[], body.kind as "extract" | "autotag" | "lens", body.lensId as string | undefined);
-    return json({ ...(await library(env, userId)), batchId });
+    const { id: batchId, skipped } = await enqueue(env, userId, body.ids as string[], body.kind as "extract" | "autotag" | "lens", body.lensId as string | undefined);
+    return json({ ...(await library(env, userId)), batchId, skipped });
+  })
+  .post("/batches/:id/retry", async (c) => {
+    const env = c.env, userId = ownerOf(c), body = c.get("body");
+    const batch = await ownedBatch(env.DB, userId, c.req.param("id"));
+    if (batch.kind !== "autotag" && batch.kind !== "lens") throw badRequest("Only auto-tag and lens runs can be retried here.");
+    const only = Array.isArray(body.ids) ? body.ids : null;
+    const rows = await env.DB.prepare("SELECT DISTINCT link_id FROM jobs WHERE batch_id=? AND status='failed' AND step<>'Cancelled' AND link_id IS NOT NULL").bind(batch.id).all<{ link_id: string }>();
+    const ids = rows.results.map(r => r.link_id).filter(id => !only || only.includes(id));
+    if (!ids.length) throw badRequest("Nothing to retry.");
+    const { id: batchId, skipped } = await enqueue(env, userId, ids, batch.kind, JSON.parse(batch.config).lens?.id, {}, batch.id);
+    return json({ ...(await library(env, userId)), batchId, skipped });
+  })
+  .delete("/jobs/:id", async (c) => {
+    try {
+      const cancelled = await cancelJob(c.env, ownerOf(c), c.req.param("id"));
+      if (!cancelled) return json({ error: "The job no longer exists." }, 404);
+      return json({ ...(await library(c.env, ownerOf(c))), ...cancelled });
+    } catch (error) {
+      if (error instanceof JobFinished) return json({ ...(await library(c.env, ownerOf(c))), error: error.message }, 409);
+      throw error;
+    }
   })
   .delete("/batches/:id", async (c) => {
     const env = c.env, userId = ownerOf(c);
     const batch = await ownedBatch(env.DB, userId, c.req.param("id"));
-    const pending = await env.DB.prepare("SELECT link_id FROM jobs WHERE batch_id=? AND status='queued' AND link_id IS NOT NULL")
-      .bind(batch.id).all<{ link_id: string }>();
-    // Constant bound parameters (D1: max 100 per statement): the links are selected by subquery,
-    // before their queued jobs are marked cancelled in the same batch.
-    const statements: D1PreparedStatement[] = [];
-    if (batch.kind === "extract" && pending.results.length)
-      statements.push(
-        env.DB.prepare(
-          `UPDATE links SET content_state=${preservedContentStateSql("missing")},content_error=NULL WHERE user_id=? AND content_state='queued' AND id IN (SELECT link_id FROM jobs WHERE batch_id=? AND status='queued' AND link_id IS NOT NULL)`,
-        ).bind(userId, batch.id),
-      );
-    statements.push(
-      env.DB.prepare("UPDATE jobs SET status='failed',step='Cancelled',error='Cancelled',completed_at=? WHERE batch_id=? AND status='queued'")
-        .bind(new Date().toISOString(), batch.id),
-    );
-    await env.DB.batch(statements);
-    return json({ ...(await library(env, userId)), cancelled: pending.results.length });
+    // A running extraction waiting for capacity has not called its provider. Cancel it atomically
+    // with queued jobs. Slot acquisition and every publication require status='running'.
+    const cancellable = "(status IN ('queued','waiting') OR (status='running' AND step='Waiting for Browser slot' AND NOT EXISTS (SELECT 1 FROM provider_leases WHERE job_id=jobs.id)))";
+    const now = new Date().toISOString();
+    const results = await env.DB.batch([
+      env.DB.prepare(`UPDATE jobs SET status='failed',step='Cancelled',error='Cancelled',attempt_started_at=NULL,completed_at=? WHERE batch_id=? AND ${cancellable}`).bind(now, batch.id),
+      ...(batch.kind === "extract" ? [cancelDependents(env.DB, "e.batch_id=? AND e.completed_at=?", [batch.id, now], now)] : []),
+      env.DB.prepare(`UPDATE links SET content_state=${restoredContentStateSql} WHERE user_id=? AND content_state='queued' AND id IN (SELECT link_id FROM jobs WHERE batch_id=? AND step='Cancelled' AND completed_at=?) AND NOT EXISTS (SELECT 1 FROM jobs j JOIN batches b ON b.id=j.batch_id WHERE j.link_id=links.id AND j.status IN ('queued','running','waiting') AND b.kind='extract')`).bind(userId, batch.id, now),
+      promoteWaiting(env.DB),
+    ]);
+    const links = await env.DB.prepare("SELECT link_id FROM jobs WHERE batch_id=? AND step='Cancelled' AND completed_at=?").bind(batch.id, now).all<{ link_id: string | null }>();
+    await startNext(env, links.results.map(r => r.link_id));
+    return json({ ...(await library(env, userId)), cancelled: results[0]!.meta.changes, dependents: batch.kind === "extract" ? results[1]!.meta.changes : 0 });
   })
   .get("/batches/:id", async (c) => {
     const env = c.env, userId = ownerOf(c);
     const batch = await ownedBatch(env.DB, userId, c.req.param("id"));
     const [jobs, usage] = await Promise.all([
-      env.DB.prepare(`SELECT j.*,coalesce(l.title,bt.title) title FROM jobs j ${OWNED_TITLE_JOINS} WHERE j.batch_id=?2 ORDER BY j.created_at`)
+      env.DB.prepare(`SELECT j.*,coalesce(l.title,bt.title) title,CASE WHEN j.status='waiting' THEN (SELECT b.kind FROM jobs a JOIN batches b ON b.id=a.batch_id WHERE a.link_id=j.link_id AND a.status IN ('queued','running','waiting') AND a.id<>j.id ORDER BY a.status='waiting',a.created_at LIMIT 1) END waiting_for FROM jobs j ${OWNED_TITLE_JOINS} WHERE j.batch_id=?2 ORDER BY j.created_at`)
         .bind(userId, batch.id).all<Job>(),
       env.DB.prepare(
         `SELECT job_id,sum(input_tokens) input_tokens,sum(output_tokens) output_tokens,sum(browser_ms) browser_ms,sum(duration_ms) duration_ms,max(model) model,sum(estimated_usd) usd,sum(estimated_usd IS NULL) unknown_cost_calls,${OCR_USAGE_COLUMNS} FROM usage_events WHERE user_id=? AND batch_id=? AND status IN ('done','failed') GROUP BY job_id`,

@@ -32,8 +32,8 @@ export async function library(env: Env, userId: string) {
   const ownedLinks = "SELECT id FROM links WHERE user_id=?1";
   const [links, tags, joins, evaluations, batches, lensRows, lensResults, usageRows, mediaRows, hiddenRows] =
     await Promise.all([
-    env.DB.prepare("SELECT * FROM links WHERE user_id=?1 ORDER BY coalesce(last_saved_at,created_at) DESC,created_at DESC,id DESC").bind(userId).all<
-      Link & { metadata_started_at: string | null; user_id?: string }
+    env.DB.prepare("SELECT l.*,EXISTS (SELECT 1 FROM jobs pj WHERE pj.link_id=l.id AND pj.status='done' AND pj.content_source='preview' AND (pj.batch_id IN (SELECT batch_id FROM tag_evaluations WHERE link_id=l.id) OR pj.batch_id IN (SELECT batch_id FROM lens_results WHERE link_id=l.id))) metadata_evaluated,(SELECT b.kind FROM jobs j JOIN batches b ON b.id=j.batch_id WHERE j.link_id=l.id AND j.status IN ('queued','running','waiting') ORDER BY j.status='waiting',j.created_at LIMIT 1) active_kind FROM links l WHERE user_id=?1 ORDER BY coalesce(last_saved_at,created_at) DESC,created_at DESC,id DESC").bind(userId).all<
+      Link & { metadata_started_at: string | null; user_id?: string; active_kind: string | null }
     >(),
     env.DB.prepare(
       "SELECT id,name,description,threshold,version FROM tags WHERE user_id=?1 ORDER BY name COLLATE NOCASE",
@@ -47,7 +47,7 @@ export async function library(env: Env, userId: string) {
       Evaluation & { link_id: string }
     >(),
     env.DB.prepare(
-      "SELECT b.id,b.kind,b.config,b.created_at,count(j.id) total,coalesce(sum(j.status='done'),0) done,coalesce(sum(j.status='failed'),0) failed,coalesce(sum(j.status IN ('queued','running')),0) active FROM batches b LEFT JOIN jobs j ON j.batch_id=b.id WHERE b.user_id=?1 GROUP BY b.id HAVING count(j.id)>0 ORDER BY b.created_at DESC LIMIT 30",
+      "SELECT b.id,b.kind,b.config,b.created_at,count(j.id) total,coalesce(sum(j.status='done'),0) done,coalesce(sum(j.status='failed' AND j.step IS NOT 'Cancelled'),0) failed,coalesce(sum(j.status='failed' AND j.step IS 'Cancelled'),0) cancelled,coalesce(sum(j.status IN ('queued','running','waiting')),0) active,coalesce(sum(j.status='waiting'),0) waiting FROM batches b LEFT JOIN jobs j ON j.batch_id=b.id WHERE b.user_id=?1 GROUP BY b.id HAVING count(j.id)>0 ORDER BY b.created_at DESC LIMIT 30",
     ).bind(userId).all<Batch>(),
     env.DB.prepare("SELECT id,name,type,question,options,threshold,version,created_at,scope FROM lenses WHERE user_id=?1 ORDER BY name COLLATE NOCASE").bind(userId).all<
       Omit<Lens, "options" | "levels"> & { options: string }
@@ -143,13 +143,10 @@ export async function library(env: Env, userId: string) {
     ]);
   }
   return {
-    links: links.results.map(({ user_id: _owner, ...l }) => ({
+    links: links.results.map(({ user_id: _owner, active_kind, ...l }) => ({
       ...l,
-      status:
-        l.status === "pending" &&
-        Date.now() - Date.parse(l.metadata_started_at || l.created_at) > 30000
-          ? "failed"
-          : l.status,
+      processing: !!active_kind,
+      previewing: active_kind === "preview" || (l.status === "pending" && active_kind === "extract"),
       tags: membership.get(l.id) || [],
       evaluations: scores.get(l.id) || [],
       lens_results: lensByLink.get(l.id) || [],

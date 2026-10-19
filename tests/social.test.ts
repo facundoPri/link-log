@@ -225,20 +225,21 @@ test("signed URL refreshes retain OCR while a changed asset path invalidates it"
   expect(mediaAssetIdentity("https://scontent.cdninstagram.com/cover.jpg?sig=old"))
     .not.toBe(mediaAssetIdentity("https://scontent.cdninstagram.com/new-cover.jpg?sig=new"));
   const db = new Database(":memory:");
+  db.exec("CREATE TABLE jobs(id TEXT,status TEXT); INSERT INTO jobs VALUES('job','running')");
   db.exec("CREATE TABLE media_items(link_id TEXT,media_key TEXT,position INTEGER,kind TEXT,url TEXT,preview_url TEXT,ocr_state TEXT,ocr_text TEXT,ocr_error TEXT,ocr_model TEXT,updated_at TEXT,PRIMARY KEY(link_id,media_key))");
   db.query("INSERT INTO media_items VALUES('link','cover',0,'video','https://scontent.cdninstagram.com/cover.jpg?sig=old',NULL,'done','Old words',NULL,'gemma','now')").run();
   const upsert = db.query(MEDIA_UPSERT_SQL);
-  upsert.run("link","cover",0,"video","https://scontent.cdninstagram.com/cover.jpg?sig=new",null,"pending","now",0,0,0,0);
+  upsert.run("link","cover",0,"video","https://scontent.cdninstagram.com/cover.jpg?sig=new",null,"pending","now","job",0,0,0,0);
   expect(db.query("SELECT ocr_state,ocr_text FROM media_items").get()).toEqual({ ocr_state: "done", ocr_text: "Old words" });
-  upsert.run("link","cover",0,"video","https://scontent.cdninstagram.com/new-cover.jpg",null,"pending","now",1,1,1,1);
+  upsert.run("link","cover",0,"video","https://scontent.cdninstagram.com/new-cover.jpg",null,"pending","now","job",1,1,1,1);
   expect(db.query("SELECT ocr_state,ocr_text FROM media_items").get()).toEqual({ ocr_state: "pending", ocr_text: null });
   db.close();
 });
 
 test("failed and cancelled retries retain a prior partial state", () => {
   const db = new Database(":memory:");
-  db.exec("CREATE TABLE links(content_key TEXT, content_details TEXT, content_state TEXT, content_error TEXT)");
-  db.query("INSERT INTO links VALUES(?,?,?,NULL)").run("old.md", JSON.stringify({ completeness: "verified", issues: ["Image 2 failed"] }), "queued");
+  db.exec("CREATE TABLE links(content_key TEXT, content_details TEXT, content_state TEXT, content_error TEXT, content_source TEXT)");
+  db.query("INSERT INTO links VALUES(?,?,?,NULL,'x-post')").run("old.md", JSON.stringify({ completeness: "verified", issues: ["Image 2 failed"] }), "queued");
   db.exec(`UPDATE links SET content_state=${preservedContentStateSql("failed")},content_error='New extraction failed'`);
   expect(db.query("SELECT content_state,content_error FROM links").get()).toEqual({ content_state: "partial", content_error: "New extraction failed" });
   db.exec("UPDATE links SET content_state='queued'");

@@ -1,4 +1,5 @@
-import { judge, lensAnswer, lensQuestions } from "../ai/jev";
+import { lensAnswer, lensQuestions } from "../ai/jev";
+import { evaluateWithJev, readSaved } from "./jev-step";
 import type { Answer } from "../../src/types";
 import type { BrowserJobHandler } from "./index";
 
@@ -18,41 +19,30 @@ export const browserEvaluationHandler: BrowserJobHandler = {
   async run({ env, step, job, target, config }) {
     const lens = config.lens;
     if (!lens) throw new Error("The evaluation has no lens definition.");
-    const result = await step.do(
-      "evaluate-jev",
-      { retries: { limit: 0, delay: "1 second" }, timeout: "2 minutes" },
-      async () => {
-        await env.DB.prepare("UPDATE jobs SET step='Evaluating with Jev' WHERE id=?")
-          .bind(job.id)
-          .run();
-        const object = target.capture_key ? await env.CONTENT.get(target.capture_key) : null;
-        if (!object)
-          throw new Error("The page snapshot is no longer available. Evaluate the tab again.");
-        const meta = JSON.parse(target.capture_meta) as CaptureMeta;
-        return judge(
-          env,
-          {
-            url: target.url,
-            title: target.title,
-            description: meta.description || undefined,
-            site: meta.siteName || undefined,
-            // Provenance travels with the evidence so partial captures are not read as complete.
-            source:
-              meta.source === "metadata"
-                ? "Only the tab title and URL"
-                : "Text read from the page as loaded in the user's browser",
-            completeness: meta.completeness,
-            limitations: meta.reasons.length ? meta.reasons : undefined,
-            facts: meta.facts.length
-              ? Object.fromEntries(meta.facts.map((f) => [f.label, f.value]))
-              : undefined,
-            content: await object.text(),
-          },
-          lensQuestions(lens),
-          { id: job.id, batch_id: job.batch_id, link_id: null },
-        );
-      },
-    );
+    const result = await evaluateWithJev(env, step, { ...job, link_id: null }, async () => {
+      const content = await readSaved(env, target.capture_key, "The page snapshot is no longer available. Evaluate the tab again.");
+      const meta = JSON.parse(target.capture_meta) as CaptureMeta;
+      return {
+        state: {
+          url: target.url,
+          title: target.title,
+          description: meta.description || undefined,
+          site: meta.siteName || undefined,
+          // Provenance travels with the evidence so partial captures are not read as complete.
+          source:
+            meta.source === "metadata"
+              ? "Only the tab title and URL"
+              : "Text read from the page as loaded in the user's browser",
+          completeness: meta.completeness,
+          limitations: meta.reasons.length ? meta.reasons : undefined,
+          facts: meta.facts.length
+            ? Object.fromEntries(meta.facts.map((f) => [f.label, f.value]))
+            : undefined,
+          content,
+        },
+        questions: lensQuestions(lens),
+      };
+    });
     await step.do("save-evaluation", async () => {
       let answer: Answer = lensAnswer(lens, result.answers);
       // Autogroup options are opaque Jev keys; hand back the page's destination keys.
@@ -69,9 +59,9 @@ export const browserEvaluationHandler: BrowserJobHandler = {
       const now = new Date().toISOString();
       await env.DB.batch([
         env.DB.prepare(
-          "UPDATE browser_targets SET answer=?,model=?,evaluated_at=? WHERE id=?",
-        ).bind(JSON.stringify(answer), result.model, now, target.id),
-        env.DB.prepare("UPDATE jobs SET result=? WHERE id=?").bind(
+          "UPDATE browser_targets SET answer=?,model=?,evaluated_at=? WHERE id=? AND EXISTS (SELECT 1 FROM jobs WHERE id=? AND status='running')",
+        ).bind(JSON.stringify(answer), result.model, now, target.id, job.id),
+        env.DB.prepare("UPDATE jobs SET result=? WHERE id=? AND status='running'").bind(
           JSON.stringify({ answer, model: result.model }),
           job.id,
         ),

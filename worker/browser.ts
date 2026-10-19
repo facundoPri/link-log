@@ -15,7 +15,8 @@ import {
 import type { Lens } from "../src/types";
 import { charge, LIMITS } from "./limits";
 import { addLinks } from "./links";
-import { json, parseLensDefinition, text } from "./store";
+import { capabilities, json, parseLensDefinition, text } from "./store";
+import { jevUnavailable } from "../src/attention";
 import { badRequest } from "./http/context";
 
 // Browser view API. Requests come from the signed-in Linklog page through the same-origin
@@ -215,6 +216,8 @@ export async function createEvaluation(env: Env, userId: string, body: Obj): Pro
       : json(await evaluationStatus(env, userId, req.requestId));
   const existing = await receipt();
   if (existing) return replay(existing);
+  const unavailable = jevUnavailable(capabilities(env));
+  if (unavailable) return json({ error: unavailable, code: "jev-unavailable" }, 400);
   let lens: Lens, config: Record<string, unknown>, kind: string;
   if (req.kind === "lens") {
     const row = await env.DB.prepare("SELECT id,name,type,question,options,threshold,version,created_at,scope FROM lenses WHERE id=? AND user_id=?")

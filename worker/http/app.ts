@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { AUTH_BASE_PATH } from "../auth";
+import { NothingToRun } from "../jobs";
 import { LimitError } from "../limits";
 import { json } from "../store";
 import { activityRoutes } from "../routes/activity";
@@ -48,6 +49,7 @@ export function createApp() {
   // Only deliberate errors (HttpError, LimitError) reach the client with their message. Anything
   // else is a server fault: a generic 500, logged by type only (messages can quote stored data).
   app.onError((error, c) => {
+    if (error instanceof NothingToRun) return json({ error: error.message, skipped: error.skipped }, 400);
     if (error instanceof HttpError) return json({ error: error.message, ...(error.code ? { code: error.code } : {}) }, error.status);
     if (error instanceof LimitError) return json({ error: error.message }, 429);
     const message = error instanceof Error ? error.message : "";

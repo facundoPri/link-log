@@ -79,17 +79,18 @@ test("extraction keeps the YouTube adapter and prior preview when metadata is bl
   if (!saved || "error" in saved) throw new Error("setup failed");
   db.sqlite.query("UPDATE links SET title='Video title',image='https://i.ytimg.com/preview.jpg',status='ready' WHERE id=?").run(saved.id);
   const loaded = await loadOwnedJob(db.d1, queued[0]!.id);
+  db.sqlite.exec("UPDATE jobs SET status='running'");
   blocked();
   const discover = spyOn(youtubeAdapter, "discover").mockImplementation(async (_env, url) => {
     expect(url).toBe(original);
     return { source: "youtube", title: "Video title", text: "", media: [], details: { type: "youtube-video", completeness: "unverified", issues: ["No public transcript is available"] } };
   });
   mocks.push(discover);
-  const step = { do: async (...args: any[]) => args.at(-1)() };
-  await extractHandler.run({ env, step: step as never, job: loaded.job, link: loaded.link!, config: {} });
+  const step = { do: async (...args: any[]) => args.at(-1)({ attempt: 1 }) };
+  await expect(extractHandler.run({ env, step: step as never, job: loaded.job, link: loaded.link!, config: {}, progress: {} })).rejects.toThrow("The page returned no content.");
   expect(discover).toHaveBeenCalledTimes(1);
-  expect(db.sqlite.query("SELECT url,title,image,content_source,content_state FROM links WHERE id=?").get(saved.id)).toEqual({ url: original, title: "Video title", image: "https://i.ytimg.com/preview.jpg", content_source: "youtube", content_state: "partial" });
-  expect([...r2.objects.values()][0]).toContain("Transcription not available");
+  expect(db.sqlite.query("SELECT url,title,image,content_source,content_state FROM links WHERE id=?").get(saved.id)).toEqual({ url: original, title: "Video title", image: "https://i.ytimg.com/preview.jpg", content_source: null, content_state: "queued" });
+  expect([...r2.objects.values()]).toEqual([]);
 });
 
 const product = 'https://articulo.mercadolibre.com.ar/MLA-1363560657-producto-_JM';
@@ -127,7 +128,7 @@ test('first successful preview stays immutable across refreshes and failures, sc
   productRedirect();
   await enrich(db.d1, 'owner', 'product', product);
   expect(read()).toMatchObject({ original_metadata: snapshot, title: 'Updated title', image: first.image });
-  expect(read().metadata_error).toContain('sign-in or verification');
+  expect(read().metadata_error).toContain('Got a login page instead of the content.');
 });
 
 test('browser login response cannot publish content or replace a prior preview', async () => {
@@ -147,8 +148,8 @@ test('browser login response cannot publish content or replace a prior preview',
   r2.objects.set('prior', 'Useful product details');
   const loaded = await loadOwnedJob(db.d1, queued[0]!.id);
   productRedirect();
-  const step = { do: async (...args: any[]) => args.at(-1)() };
-  await expect(extractHandler.run({ env, step: step as never, job: loaded.job, link: loaded.link!, config: {} })).rejects.toThrow('sign-in or verification');
+  const step = { do: async (...args: any[]) => args.at(-1)({ attempt: 1 }) };
+  await expect(extractHandler.run({ env, step: step as never, job: loaded.job, link: loaded.link!, config: {}, progress: {} })).rejects.toThrow('Got a login page instead of the content.');
   expect([...r2.objects.values()]).toEqual(['Useful product details']);
   expect(db.sqlite.query('SELECT content_key,content_version,title FROM links WHERE id=?').get(saved.id)).toEqual({ content_key: 'prior', content_version: 1, title: 'Product' });
 });
@@ -169,7 +170,7 @@ test('web extraction accepts short articles about access denial, but rejects ori
   productRedirect(); // public DNS fixture
   expect((await webAdapter.extract!(env, 'https://example.com/article', extractionJob)).markdown).toContain('Debugging access denied');
   response = { success: true, result: 'Unavailable', meta: { status: 403 } };
-  await expect(webAdapter.extract!(env, 'https://example.com/article', extractionJob)).rejects.toThrow('HTTP 403');
+  await expect(webAdapter.extract!(env, 'https://example.com/article', extractionJob)).rejects.toThrow('The site blocks automated access.');
   response = { success: true, result: '¡Hola! Para continuar, ingresa a\ntu cuenta\n[Ya tengo cuenta](https://www.mercadolibre.com/jms/mla/lgz/login?go=product)' };
-  await expect(webAdapter.extract!(env, product, extractionJob)).rejects.toThrow('sign-in or verification');
+  await expect(webAdapter.extract!(env, product, extractionJob)).rejects.toThrow('Got a login page instead of the content.');
 });

@@ -27,4 +27,3 @@ export async function proxyApi(request: Request, upstreamPort: number) {
     return Response.json({ error: "The local API is unavailable. Run bun run dev." }, { status: 503 });
   }
 }
-

@@ -3,6 +3,7 @@ import { Link2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "./api";
 import type { Job, Lens, LensResult, LensScope, Library, Link, Tag } from "./types";
+import { jevUnavailable, needsAttention } from "./attention";
 import { clipboardUrls, pastedUrls } from "./url";
 import { Sidebar, type View } from "./components/Sidebar";
 import { Toolbar, type ContextFilter } from "./components/Toolbar";
@@ -24,6 +25,7 @@ import { BrowserInspector } from "./components/browser/BrowserInspector";
 import { BrowserDialogs } from "./components/browser/BrowserDialogs";
 import { useBrowserActions } from "./browser/useBrowserActions";
 import { usd, tokens } from "./lib/format";
+import { submitInChunks, type BatchReply } from "./batches";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
@@ -110,12 +112,14 @@ export function App({
   const [deleteTag, setDeleteTag] = useState<Tag | null>(null);
   const [deleteLens, setDeleteLens] = useState<Lens | null>(null);
   const [confirmAutoTag, setConfirmAutoTag] = useState(false);
+  const [confirmNoContent, setConfirmNoContent] = useState(false);
+  const [extractFirst, setExtractFirst] = useState(false);
   const [confirmExtract, setConfirmExtract] = useState<string[] | null>(null);
   const [running, setRunning] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [focusTags, setFocusTags] = useState(false);
   const [jobsByLink, setJobsByLink] = useState<
-    Map<string, { kind: "extract" | "autotag" | "lens" | "query"; status: string }>
+    Map<string, { kind: "extract" | "preview" | "autotag" | "lens" | "query"; status: string; step: string | null }>
   >(new Map());
   const dragDepth = useRef(0);
   const [pendingUrls, setPendingUrls] = useState<string[]>([]);
@@ -161,6 +165,7 @@ export function App({
     () => library.lenses.filter((l) => l.scope !== "browser"),
     [library.lenses],
   );
+  const jevReason = jevUnavailable(library.capabilities);
 
   useEffect(() => {
     localStorage.setItem(
@@ -185,7 +190,7 @@ export function App({
     });
   }, [refresh]);
 
-  const busyPolling = library.links.some((l) => l.status === "pending") ||
+  const busyPolling = library.links.some((l) => l.processing) ||
     library.batches.some((b) => b.active > 0);
 
   // Poll library + per-batch jobs while work is in flight.
@@ -200,13 +205,14 @@ export function App({
         const lib = await refresh();
         const active = lib.batches.filter((b) => b.active > 0);
         if (!alive) return;
-        const map = new Map<string, { kind: "extract" | "autotag" | "lens" | "query"; status: string }>();
+        const map = new Map<string, { kind: "extract" | "preview" | "autotag" | "lens" | "query"; status: string; step: string | null }>();
         for (const b of active) {
           try {
             const { jobs } = await api<{ jobs: Job[] }>(`/batches/${b.id}`);
             for (const j of jobs)
-              if (j.link_id && (b.kind === "extract" || b.kind === "autotag" || b.kind === "lens" || b.kind === "query"))
-                map.set(j.link_id, { kind: b.kind, status: j.status });
+              // A waiting job never hides the job it waits for.
+              if (j.link_id && ["queued", "running", "waiting"].includes(j.status) && !(j.status === "waiting" && map.has(j.link_id)) && (b.kind === "extract" || b.kind === "preview" || b.kind === "autotag" || b.kind === "lens" || b.kind === "query"))
+                map.set(j.link_id, { kind: b.kind, status: j.status, step: j.step });
           } catch {
             /* batch may be gone */
           }
@@ -238,16 +244,20 @@ export function App({
       if (b.active > 0) {
         toast.loading(`${verb} ${n} ${n === 1 ? "link" : "links"}…`, {
           id: b.id,
-          description: `${b.done + b.failed} of ${n} done`,
+          description: `${b.done + b.failed + b.cancelled} of ${n} done`,
           action: { label: "Cancel", onClick: () => void cancelBatch(b.id) },
         });
+      } else if (b.cancelled === n) {
+        toast("Cancelled", { id: b.id });
+        sessionBatches.current.delete(b.id);
       } else if (b.failed === 0) {
+        const ran = n - b.cancelled;
         toast.success(
           b.kind === "autotag"
-            ? `Auto-tagged ${n} ${n === 1 ? "link" : "links"}`
+            ? `Auto-tagged ${ran} ${ran === 1 ? "link" : "links"}`
             : b.kind === "extract"
-              ? `Extracted ${n} ${n === 1 ? "link" : "links"}`
-              : `Lens applied to ${n} ${n === 1 ? "link" : "links"}`,
+              ? `Extracted ${ran} ${ran === 1 ? "link" : "links"}`
+              : `Lens applied to ${ran} ${ran === 1 ? "link" : "links"}`,
           {
             id: b.id,
             description:
@@ -368,15 +378,16 @@ export function App({
     ) => {
       setRunning(true);
       try {
-        for (let offset = 0; offset < ids.length; offset += 100) {
-          const data = await api<Library & { batchId?: string }>("/batches", "POST", {
-            kind,
-            ids: ids.slice(offset, offset + 100),
-            lensId,
+        const { batchIds, skipped } = await submitInChunks<Library & BatchReply>(
+          ids,
+          (chunk) => api<Library & BatchReply>("/batches", "POST", { kind, ids: chunk, lensId }),
+          (data) => setLibrary(data),
+        );
+        for (const id of batchIds) sessionBatches.current.add(id);
+        if (skipped.length)
+          toast(`Skipped ${skipped.length} ${skipped.length === 1 ? "link" : "links"} without content`, {
+            description: "Extract the content first.",
           });
-          setLibrary(data);
-          if (data.batchId) sessionBatches.current.add(data.batchId);
-        }
         await refresh();
       } catch (e) {
         toast.error((e as Error).message);
@@ -502,9 +513,7 @@ export function App({
           (context === "any" ||
             (context === "with" ? !!l.content_key : !l.content_key)) &&
           (view !== "untagged" || !l.tags.length) &&
-          (view !== "attention" ||
-            l.status === "failed" ||
-            l.content_state === "failed") &&
+          (view !== "attention" || needsAttention(l)) &&
           (!activeLens ||
             (() => {
               const r = resultOf(l);
@@ -624,14 +633,31 @@ export function App({
         : cur.filter((id) => !ids.includes(id)),
     );
 
-  const doAutoTag = async () => {
+  // Selected links with no content and no extraction on the way: auto-tag skips them unless the user
+  // explicitly asks to extract them first (Jev never starts an extraction by itself).
+  const noContent = pickedLinks.filter((l) => !l.content_key && l.content_state !== "queued");
+  const doAutoTag = async (extract = extractFirst) => {
     setConfirmAutoTag(false);
+    setConfirmNoContent(false);
+    setExtractFirst(false);
     try {
-      await runBatch("autotag", picked);
+      const targets = extract ? noContent.filter((l) => !l.processing).map((l) => l.id) : [];
+      // The auto-tag jobs of these links wait for their extraction and start when it settles.
+      if (targets.length) await runBatch("extract", targets);
+      // "Auto-tag N with content" sends only those N; the server still skips any that changed meanwhile.
+      await runBatch("autotag", extract ? picked : picked.filter((id) => !noContent.some((l) => l.id === id)));
+      if (!extract && noContent.length) toast(`Skipped ${noContent.length} ${noContent.length === 1 ? "link" : "links"} without content`, { description: "Extract the content first." });
       setPicked([]);
     } catch {
       /* toasted */
     }
+  };
+  const proceedAutoTag = (extract: boolean) => {
+    setConfirmNoContent(false);
+    if (manualTagged) {
+      setExtractFirst(extract);
+      setConfirmAutoTag(true);
+    } else void doAutoTag(extract);
   };
 
   const doExtract = async (ids: string[]) => {
@@ -655,14 +681,14 @@ export function App({
 
   const cancelBatch = async (id: string) => {
     try {
-      const data = await api<Library & { cancelled?: number }>(
+      const data = await api<Library & { cancelled?: number; dependents?: number }>(
         `/batches/${id}`,
         "DELETE",
       );
       setLibrary(data);
       toast(
         data.cancelled
-          ? `Cancelled ${data.cancelled} queued ${data.cancelled === 1 ? "job" : "jobs"}`
+          ? `Cancelled ${data.cancelled} queued ${data.cancelled === 1 ? "job" : "jobs"}${data.dependents ? `, and ${data.dependents} waiting for that extraction` : ""}`
           : "Nothing left to cancel",
       );
     } catch (e) {
@@ -688,8 +714,10 @@ export function App({
                   ? "Auto-tagging"
                   : activeBatch.kind === "extract"
                     ? "Extracting"
-                    : "Applying lens",
-              done: activeBatch.done + activeBatch.failed,
+                    : activeBatch.kind === "preview"
+                      ? "Fetching preview"
+                      : "Applying lens",
+              done: activeBatch.done + activeBatch.failed + activeBatch.cancelled,
               total: activeBatch.total,
             }
           : null
@@ -789,6 +817,7 @@ export function App({
       onToggleGroup={ws.toggleGroupFilter}
       onDomainFilter={ws.toggleDomain}
       onSaveRelated={(url) => save(url)}
+      jevReason={ws.jevReason}
     />
   );
   const showInspector = view === "browser" ? !!activeTab : !!activeLink;
@@ -810,6 +839,7 @@ export function App({
       onToggleTag={toggleTagFilter}
       onAutoTag={() => void runBatch("autotag", [activeLink.id])}
       running={jobsByLink.get(activeLink.id)?.kind ?? null}
+      jevReason={jevReason}
       onExtract={() => requestExtract([activeLink.id])}
       onSelectTrack={async (language) => {
         try {
@@ -820,6 +850,11 @@ export function App({
       }}
       onRetry={() => {
         void mutate(`/links/${activeLink.id}/retry`, "POST").catch((e) =>
+          toast.error(e.message),
+        );
+      }}
+      onRetryContent={() => {
+        void mutate(`/links/${activeLink.id}/retry`, "POST", { step: "content" }).catch((e) =>
           toast.error(e.message),
         );
       }}
@@ -998,8 +1033,16 @@ export function App({
                   setFocusTags(true);
                 },
                 onExtract: (link) => requestExtract([link.id]),
-                onRetry: (link) =>
-                  void mutate(`/links/${link.id}/retry`, "POST").catch((e) =>
+                onRetry: (link, step) =>
+                  void mutate(`/links/${link.id}/retry`, "POST", step ? { step } : {}).catch((e) =>
+                    toast.error(e.message),
+                  ),
+                onDismiss: (link) =>
+                  void mutate(`/links/${link.id}/dismiss`, "POST").catch((e) =>
+                    toast.error(e.message),
+                  ),
+                onUsePreview: (link) =>
+                  void mutate(`/links/${link.id}/use-preview`, "POST").catch((e) =>
                     toast.error(e.message),
                   ),
                 onDelete: setDeleteLink,
@@ -1080,9 +1123,10 @@ export function App({
           tags={library.tags}
           lenses={libraryLenses}
           running={running}
+          jevReason={jevReason}
           onAutoTag={() => {
-            if (manualTagged) setConfirmAutoTag(true);
-            else void doAutoTag();
+            if (noContent.length) setConfirmNoContent(true);
+            else proceedAutoTag(false);
           }}
           onLens={(lens) =>
             void runBatch("lens", picked, lens.id).then(() => setPicked([]))
@@ -1106,6 +1150,7 @@ export function App({
           scope={dialog.scope ?? (dialog.lens === "new" ? "library" : dialog.lens.scope)}
           templates={libraryLenses}
           selectedCount={picked.length}
+          runBlocked={jevReason}
           onClose={() => setDialog(null)}
           onSave={async (draft: LensDraft) => {
             const { runNow, ...body } = draft;
@@ -1247,7 +1292,35 @@ export function App({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      <AlertDialog open={confirmAutoTag} onOpenChange={setConfirmAutoTag}>
+      <AlertDialog open={confirmNoContent} onOpenChange={setConfirmNoContent}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {noContent.length} of {picked.length} {picked.length === 1 ? "link has" : "links have"} no content yet
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Auto-tag reads the page content. Extract it first and those links are auto-tagged as soon as it's ready
+              {noContent.length < picked.length ? ", or auto-tag only the links that already have content." : "."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            {noContent.length < picked.length && (
+              <AlertDialogAction variant="outline" onClick={() => proceedAutoTag(false)}>
+                Auto-tag {picked.length - noContent.length} with content
+              </AlertDialogAction>
+            )}
+            <AlertDialogAction onClick={() => proceedAutoTag(true)}>Extract, then auto-tag</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog
+        open={confirmAutoTag}
+        onOpenChange={(o) => {
+          setConfirmAutoTag(o);
+          if (!o) setExtractFirst(false);
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Auto-tag replaces existing tags</AlertDialogTitle>

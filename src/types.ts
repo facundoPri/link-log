@@ -30,6 +30,8 @@ export type {
 } from "@linklog/browser-protocol";
 import type { Lens, LensResult } from "@linklog/browser-protocol";
 export type Link = {
+  metadata_evaluated?: boolean | number;
+  title_source?: "placeholder" | "metadata" | "extraction" | "legacy";
   id: string;
   original_url: string;
   url: string;
@@ -39,6 +41,17 @@ export type Link = {
   image: string | null;
   favicon: string | null;
   status: "pending" | "ready" | "failed";
+  /** Why the last preview failed (a `FailureReason`), shown with `failureMessage`. */
+  preview_reason: string | null;
+  /** Derived by the API: an active job is working on the link. */
+  processing: boolean;
+  /** Derived by the API: the preview is being fetched (a pending link's extract job, or a preview retry). */
+  previewing: boolean;
+  /** Needs attention: the step that failed for good, set when its job settles; cleared by its success or Dismiss. */
+  attention_kind: "preview" | "content" | null;
+  /** Why it failed (a `FailureReason`), shown with `failureMessage`. */
+  attention_reason: string | null;
+  attention_at: string | null;
   created_at: string;
   last_saved_at?: string | null;
   original_metadata?: string | null;
@@ -50,6 +63,7 @@ export type Link = {
   content_source: string | null;
   content_state: "missing" | "queued" | "ready" | "partial" | "failed";
   content_error: string | null;
+  content_reason: string | null;
   content_updated_at: string | null;
   content_details: string | null;
   media?: MediaItem[];
@@ -83,9 +97,23 @@ export type Job = {
   batch_id: string;
   link_id: string | null;
   title: string;
-  status: "queued" | "running" | "done" | "failed";
+  /** "waiting": held behind another job on the same link (waiting_for is that job's kind). */
+  status: "queued" | "running" | "waiting" | "done" | "failed";
+  waiting_for?: string | null;
   step: string;
   error: string | null;
+  /** The current attempt of a retried step, and how many it may take. */
+  attempt: number | null;
+  max_attempts: number | null;
+  /** When the current attempt started (ms) and how long it may run; null while waiting to retry. */
+  attempt_started_at: number | null;
+  attempt_budget_ms: number | null;
+  /** The content adapter chosen for the job ("preview" while fetching the preview). */
+  adapter: string | null;
+  /** The previous failed attempt's reason while retrying; the final reason once failed. */
+  reason: string | null;
+  /** A preview that failed while the job still extracted the content. */
+  preview_reason: string | null;
   result: string | null;
   usage?: JobUsage | null;
 };
@@ -118,13 +146,17 @@ export type BatchUsage = {
 };
 export type Batch = {
   id: string;
-  kind: "extract" | "autotag" | "lens" | "query" | "browser-lens" | "browser-autogroup";
+  kind: "extract" | "preview" | "autotag" | "lens" | "query" | "browser-lens" | "browser-autogroup";
   config: string;
   created_at: string;
   total: number;
   done: number;
   failed: number;
+  /** Jobs cancelled before they finished (not counted as failed). */
+  cancelled: number;
+  /** Queued, running or waiting jobs; `waiting` counts the last ones. */
   active: number;
+  waiting: number;
   usage?: BatchUsage | null;
 };
 export type Capabilities = {

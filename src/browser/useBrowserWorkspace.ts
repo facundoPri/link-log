@@ -4,6 +4,7 @@ import { domainOf } from "../url";
 import type { Library, Lens } from "../types";
 import { useBrowser } from "./useBrowser";
 import { useLensRunner } from "./useLensRunner";
+import { jevUnavailable } from "../attention";
 
 export type GroupFilter = number | "none";
 /** A place tabs can be moved to: a native group here, or a pinned definition not yet materialized here. */
@@ -62,7 +63,9 @@ export function useBrowserWorkspace(library: Library, inBrowser: boolean, loaded
     });
   }, [browserLenses, loaded]);
 
-  const runner = useLensRunner(browser, activeLenses, browserLenses, inBrowser);
+  // Without Jev nothing new is evaluated; results already stored stay readable.
+  const jevReason = jevUnavailable(library.capabilities);
+  const runner = useLensRunner(browser, activeLenses, browserLenses, inBrowser && !jevReason);
   const tabs: BrowserTab[] = browser.snapshot?.tabs ?? [];
   const groups: BrowserGroup[] = browser.snapshot?.groups ?? [];
 
@@ -169,6 +172,7 @@ export function useBrowserWorkspace(library: Library, inBrowser: boolean, loaded
   return {
     browser,
     runner,
+    jevReason,
     tabs,
     groups,
     destinations,

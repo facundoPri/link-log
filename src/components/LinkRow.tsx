@@ -4,10 +4,13 @@ import {
   CircleAlert,
   Ellipsis,
   ExternalLink,
+  FileText,
   Globe,
   Loader2,
 } from "lucide-react";
 import type { Lens, Link, Tag } from "../types";
+import { attentionMessage, canRetryPreview, canUsePreview } from "../attention";
+import { failureMessage } from "../failures";
 import { cn } from "../lib/utils";
 import { youtubeId } from "../lib/youtube";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -29,8 +32,9 @@ import { TagChip } from "./TagChip";
 import { LensVerdict } from "./LensVerdict";
 
 export type LinkJob = {
-  kind: "extract" | "autotag" | "lens" | "query";
+  kind: "extract" | "preview" | "autotag" | "lens" | "query";
   status: string;
+  step?: string | null;
 };
 
 export function LinkRow({
@@ -46,6 +50,8 @@ export function LinkRow({
   onEditTags,
   onExtract,
   onRetry,
+  onDismiss,
+  onUsePreview,
   onDelete,
   onCopyUrl,
 }: {
@@ -60,7 +66,9 @@ export function LinkRow({
   onDomainFilter: (domain: string) => void;
   onEditTags: () => void;
   onExtract: () => void;
-  onRetry: () => void;
+  onRetry: (step?: "content") => void;
+  onDismiss: () => void;
+  onUsePreview: () => void;
   onDelete: () => void;
   onCopyUrl: () => void;
 }) {
@@ -76,12 +84,13 @@ export function LinkRow({
         ? `https://i.ytimg.com/vi/${yt}/mqdefault.jpg`
         : null;
   const jobLabel =
-    job && job.status !== "done" && job.status !== "failed"
-      ? job.kind === "extract"
-        ? "Extracting…"
-        : job.kind === "autotag"
-          ? "Tagging…"
-          : "Applying lens…"
+    job && ["queued", "waiting", "running"].includes(job.status)
+      ? job.status === "queued" ? "Queued…"
+        : job.status === "waiting" ? "Waiting for content…"
+          : job.step?.startsWith("Waiting for ") ? job.step
+            : job.kind === "extract" ? "Extracting…"
+              : job.kind === "preview" ? "Fetching preview…"
+                : job.kind === "autotag" ? "Tagging…" : "Applying lens…"
       : null;
   return (
     <LinkRowFrame
@@ -134,14 +143,7 @@ export function LinkRow({
         </>
       }
       title={link.title}
-      description={
-        link.description ||
-        (link.status === "pending"
-          ? "Fetching title and preview…"
-          : link.status === "failed"
-            ? "No preview available"
-            : link.domain)
-      }
+      description={link.description || ""}
       details={
         <>
           <Tooltip>
@@ -169,6 +171,10 @@ export function LinkRow({
             </TooltipTrigger>
             <TooltipContent>Filter by domain</TooltipContent>
           </Tooltip>
+          {(link.metadata_evaluated || (link.content_source === "preview" && link.content_key)) && <Tooltip>
+            <TooltipTrigger asChild><span tabIndex={0} aria-label={link.metadata_evaluated ? "Evaluation used metadata" : "Metadata available as content"} className="text-muted-foreground"><FileText className="size-3" /></span></TooltipTrigger>
+            <TooltipContent>{link.metadata_evaluated ? "An evaluation used the saved title and description because page content was unavailable." : "Page content was unavailable. Saved title and description are available for evaluation."}</TooltipContent>
+          </Tooltip>}
           {link.tags.map((tag: Tag) => (
             <TagChip
               key={tag.id}
@@ -203,6 +209,22 @@ export function LinkRow({
               <CircleAlert className="size-3" />
               No preview
             </Badge>
+          )}
+          {link.attention_kind && !link.processing && (
+            <span className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+              <span className="text-2xs text-destructive">{attentionMessage(link)}</span>
+              <Button variant="ghost" size="xs" onClick={() => onRetry(link.attention_kind === "content" ? "content" : undefined)}>
+                Retry
+              </Button>
+              {canUsePreview(link) && (
+                <Button variant="ghost" size="xs" onClick={onUsePreview} title="Save the title and description as the content, so Jev can use it">
+                  Use preview
+                </Button>
+              )}
+              <Button variant="ghost" size="xs" onClick={onDismiss}>
+                Dismiss
+              </Button>
+            </span>
           )}
           {lens &&
             (() => {
@@ -269,10 +291,16 @@ export function LinkRow({
             <DropdownMenuItem onClick={onExtract}>
               {link.content_key ? "Re-extract context" : "Extract context"}
             </DropdownMenuItem>
-            {link.status === "failed" && (
-              <DropdownMenuItem onClick={onRetry}>
-                Retry preview
+            {canRetryPreview(link) && (
+              <DropdownMenuItem onClick={() => onRetry()}>
+                {link.status === "failed" ? "Retry preview" : "Fetch preview"}
               </DropdownMenuItem>
+            )}
+            {canUsePreview(link) && (
+              <DropdownMenuItem onClick={onUsePreview}>Use preview as content</DropdownMenuItem>
+            )}
+            {link.attention_kind && (
+              <DropdownMenuItem onClick={onDismiss}>Dismiss from Needs attention</DropdownMenuItem>
             )}
             <DropdownMenuSeparator />
             <DropdownMenuItem variant="destructive" onClick={onDelete}>

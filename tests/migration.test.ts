@@ -52,7 +52,7 @@ describe("0012 + 0013 on existing data", () => {
     const db = await legacyDatabase();
     const before = counts(db);
     const rowsBefore = JSON.stringify(snapshot(db));
-    await db.migrate(undefined, "0011");
+    await db.migrate("0017", "0011");
     expect(counts(db)).toEqual(before);
     expect(db.sqlite.query("SELECT count(*) n FROM links WHERE last_saved_at IS NOT NULL").get()).toEqual({ n: 0 });
     expect(JSON.stringify(snapshot(db))).toBe(rowsBefore);

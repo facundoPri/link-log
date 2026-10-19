@@ -35,6 +35,7 @@ export function SelectionBar({
   tags,
   lenses,
   running,
+  jevReason,
   onAutoTag,
   onLens,
   onNewLens,
@@ -45,32 +46,40 @@ export function SelectionBar({
   tags: Tag[];
   lenses: Lens[];
   running: boolean;
+  /** Why Auto-tag and lenses can't run (Jev not configured), or null. */
+  jevReason: string | null;
   onAutoTag: () => void;
   onLens: (lens: Lens) => void;
   onNewLens: () => void;
   onExtract: () => void;
   onClear: () => void;
 }) {
-  const ready =
-    links.length > 0 &&
-    links.every((l) => !!l.content_key && l.content_state !== "queued");
+  // Jev runs on links with content or with an extraction on the way; the others are skipped (or, for
+  // auto-tag, extracted first when the user asks).
   const missing = links.filter(
-    (l) => !l.content_key || l.content_state === "queued",
+    (l) => !l.content_key && l.content_state !== "queued",
   ).length;
-  const tagDisabled = !ready || !tags.length || running;
-  const lensDisabled = !ready || running;
-  const tagReason = !ready
-    ? `${missing} of ${links.length} links need context first`
-    : !tags.length
+  const ready = links.length > missing;
+  const tagDisabled = !!jevReason || !links.length || !tags.length || running;
+  const lensDisabled = !!jevReason || !ready || running;
+  const tagReason =
+    jevReason ??
+    (!tags.length
       ? "Create a tag first"
       : running
         ? "Some links are still processing"
-        : null;
-  const lensReason = !ready
-    ? `${missing} of ${links.length} links need context first`
-    : running
-      ? "Some links are still processing"
-      : null;
+        : missing
+          ? `${missing} of ${links.length} links have no content yet`
+          : null);
+  const lensReason =
+    jevReason ??
+    (!ready
+      ? `${missing} of ${links.length} links need context first`
+      : running
+        ? "Some links are still processing"
+        : missing
+          ? `${missing} of ${links.length} links have no content and will be skipped`
+          : null);
   const copy = async (withTitles: boolean) => {
     const text = links
       .map((link) =>

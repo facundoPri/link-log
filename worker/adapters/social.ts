@@ -1,5 +1,6 @@
 import { validateDestination } from "../metadata";
 import { measured } from "../usage";
+import { ADAPTER_MESSAGES } from "../failures";
 import { allowedMediaHost, type MediaSource } from "../media-hosts";
 import type { ContentAdapter, Discovered, ExtractionJob } from "./types";
 import { requireBrowserRun } from "./browser-run";
@@ -105,7 +106,7 @@ export function parseYoutubePost(html: string, postId: string): Discovered {
       details: { type: "youtube-post", completeness: issues.length ? "unverified" : "verified", issues },
     };
   }
-  throw new Error("The exact YouTube post was not present in the public page.");
+  throw new Error(ADAPTER_MESSAGES.youtubePostMissing);
 }
 
 type AnyObject = Record<string, unknown>;
@@ -174,7 +175,7 @@ export function parseInstagram(html: string, code: string, reel: boolean): Disco
     } catch { /* another script */ }
     if (post && expected !== null) break;
   }
-  if (!post) throw new Error("The exact Instagram post was not available without signing in.");
+  if (!post) throw new Error(ADAPTER_MESSAGES.instagramLogin);
   const children = Array.isArray(post.carousel_media) ? post.carousel_media : [post];
   const media: RawMedia[] = [];
   const issues: string[] = [];
@@ -305,9 +306,9 @@ export function parseXPost(html: string, id: string): Discovered {
   const key = btoa(`Tweet:${id}`);
   const root = jsRecord(html, `__id:"${key}"`);
   const details = jsRecord(html, `__id:"client:${key}:details"`);
-  if (!details) throw new Error("The exact X post was not available in the public page.");
+  if (!details) throw new Error(ADAPTER_MESSAGES.xPostMissing);
   let text = topLevelStringField(details, "full_text");
-  if (text === null) throw new Error("The exact X post text was unavailable.");
+  if (text === null) throw new Error(ADAPTER_MESSAGES.xTextMissing);
   let title = "X post";
   const issues: string[] = [];
   const note = referencedRecord(html, `client:${key}:note_tweet`, ["note_tweet_results", "result"]);
@@ -373,6 +374,7 @@ async function discoverWithFallback(env: Env, url: string, job: ExtractionJob, p
 }
 
 export const youtubePostAdapter: ContentAdapter = {
+  name: "youtube-post",
   matches: (url) => /^https:\/\/(?:www\.|m\.)?youtube\.com\/post\/Ug[\w-]+/.test(url),
   async discover(env, url, job) {
     const id = new URL(url).pathname.split("/")[2];
@@ -381,6 +383,7 @@ export const youtubePostAdapter: ContentAdapter = {
   },
 };
 export const instagramAdapter: ContentAdapter = {
+  name: "instagram",
   matches: (url) => /^https:\/\/(?:www\.)?instagram\.com\/(?:p|reel)\/[\w-]+/.test(url),
   async discover(env, url, job) {
     const parsed = new URL(url);
@@ -391,6 +394,7 @@ export const instagramAdapter: ContentAdapter = {
   },
 };
 export const xAdapter: ContentAdapter = {
+  name: "x",
   matches: (url) => /^https:\/\/(?:x|twitter)\.com\/[^/]+\/status\/\d+/.test(url),
   async discover(env, url, job) {
     const id = new URL(url).pathname.match(/\/status\/(\d+)/)?.[1];

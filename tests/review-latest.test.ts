@@ -23,7 +23,7 @@ const send = async (who: User, path: string, method = "POST", body: unknown = {}
 
 beforeEach(async () => {
   db = await TestD1.migrated();
-  ({ env, r2 } = makeEnv(db));
+  ({ env, r2 } = makeEnv(db, { JEV_PROVIDER: "fixture", ALLOW_FIXTURE_JEV: "1" }));
   call = client(env);
   A = await testSession(env, "a@example.test");
   B = await testSession(env, "b@example.test");
@@ -118,7 +118,7 @@ describe("3. auth email budgets are taken together or not at all", () => {
     await Promise.all(pending);
   }
   test("a send refused by the daily cap does not use the recipient's hourly quota", async () => {
-    const { env: e, outbox } = makeEnv(db);
+    const { env: e, outbox } = makeEnv(db, { JEV_PROVIDER: "fixture", ALLOW_FIXTURE_JEV: "1" });
     await deliver(e, "one@example.test", 1);
     await deliver(e, "two@example.test", 1);
     expect(outbox.map((m) => m.to)).toEqual(["one@example.test"]);
@@ -126,7 +126,7 @@ describe("3. auth email budgets are taken together or not at all", () => {
     expect(quota(`email:to:${await sha256("two@example.test")}`)).toBe(0);
   });
   test("a send refused by the recipient cap does not use the daily budget", async () => {
-    const { env: e, outbox } = makeEnv(db);
+    const { env: e, outbox } = makeEnv(db, { JEV_PROVIDER: "fixture", ALLOW_FIXTURE_JEV: "1" });
     for (let i = 0; i < 6; i++) await deliver(e, "victim@example.test", 100);
     expect(outbox.length).toBe(5);
     expect(quota("email:day")).toBe(5);

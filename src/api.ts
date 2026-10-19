@@ -15,8 +15,9 @@ export async function api<T = Library & { duplicate?: boolean; id?: string }>(
     id?: string;
     error?: string;
   };
+  // The body stays on the error for callers that act on its details (like the links a batch skipped).
   if (response.status === 401) announceUnauthorized();
   if (!response.ok)
-    throw new Error(data.error || "Something went wrong.");
+    throw Object.assign(new Error(data.error || "Something went wrong."), { data });
   return data as T;
 }

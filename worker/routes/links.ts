@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import { contentKeyBelongs, contentPrefix, getOwnedLink, json, library, text } from "../store";
-import { enqueue } from "../jobs";
+import { enqueue, linkIdle } from "../jobs";
+import { settleAttention } from "../attention";
+import { canUsePreview, readPreview, storePreview, usePreviewStatement, dropUnusedPreview } from "../preview-content";
 import { addLinks } from "../links";
 import { badRequest, HttpError, notFound, ownerOf, type AppEnv } from "../http/context";
 import { assertNoActiveJob, enrich, setTags, tagNames, urlInput } from "./shared";
@@ -46,7 +48,7 @@ export const linkRoutes = new Hono<AppEnv>()
       : {};
     if (!details.transcript?.tracks || (language !== "auto" && !details.transcript.tracks.some((track) => track.languageCode === language)))
       throw badRequest("That subtitle track is not available for this video.");
-    const batchId = await enqueue(env, userId, [link.id], "extract", undefined, language);
+    const { id: batchId } = await enqueue(env, userId, [link.id], "extract", undefined, { track: language });
     return json({ ...(await library(env, userId)), batchId });
   })
   .put("/links/:id/related-links", async (c) => {
@@ -83,8 +85,9 @@ export const linkRoutes = new Hono<AppEnv>()
     if (!markdown) throw badRequest("Paste the content.");
     const key = `${contentPrefix(userId, link.id)}${crypto.randomUUID()}.md`;
     await env.CONTENT.put(key, markdown, { httpMetadata: { contentType: "text/markdown; charset=utf-8" } });
-    await env.DB.prepare("UPDATE links SET content_key=?,content_version=content_version+1,content_source='manual',content_state=CASE WHEN content_state='partial' THEN 'partial' ELSE 'ready' END,content_error=NULL,content_updated_at=? WHERE id=? AND user_id=?")
+    await env.DB.prepare("UPDATE links SET content_key=?,content_version=content_version+1,content_source='manual',content_state=CASE WHEN content_state='partial' AND content_source IS NOT 'preview' THEN 'partial' ELSE 'ready' END,content_error=NULL,content_reason=NULL,content_updated_at=? WHERE id=? AND user_id=?")
       .bind(key, new Date().toISOString(), link.id, userId).run();
+    await settleAttention(env.DB, link.id, { content: "ok" });
     return json(await library(env, userId));
   })
   .delete("/links/:id/lenses/:lensId", async (c) => {
@@ -100,9 +103,31 @@ export const linkRoutes = new Hono<AppEnv>()
     const link = await getOwnedLink(env.DB, userId, c.req.param("id"));
     if (!link) throw notFound();
     await assertNoActiveJob(env.DB, link.id);
-    await env.DB.prepare("UPDATE links SET status='pending', metadata_started_at=? WHERE id=? AND user_id=?")
-      .bind(new Date().toISOString(), link.id, userId).run();
-    c.executionCtx.waitUntil(enrich(env.DB, userId, link.id, link.original_url));
+    const { id: batchId } = c.get("body").step === "content"
+      ? await enqueue(env, userId, [link.id], "extract", undefined, { step: "content" })
+      : await enqueue(env, userId, [link.id], "preview");
+    return json({ ...(await library(env, userId)), batchId });
+  })
+  .post("/links/:id/dismiss", async (c) => {
+    const userId = ownerOf(c), id = c.req.param("id");
+    if (!await getOwnedLink(c.env.DB, userId, id)) throw notFound();
+    await c.env.DB.prepare("UPDATE links SET attention_kind=NULL,attention_reason=NULL,attention_at=NULL WHERE id=? AND user_id=?").bind(id, userId).run();
+    return json(await library(c.env, userId));
+  })
+  .post("/links/:id/use-preview", async (c) => {
+    const env = c.env, userId = ownerOf(c), id = c.req.param("id");
+    const link = await readPreview(env.DB, userId, id);
+    if (!link) throw notFound();
+    await assertNoActiveJob(env.DB, id);
+    if (link.content_key) throw badRequest("This link already has content.");
+    if (link.content_state !== "failed") throw badRequest("The content hasn't failed; extract it first.");
+    if (!canUsePreview(link)) throw badRequest("There is no preview to use.");
+    const key = `${contentPrefix(userId, id)}${crypto.randomUUID()}-preview.md`;
+    if (!await storePreview(env, key, link, { link_id: id })) throw new Error("Could not store metadata");
+    try {
+      const used = await usePreviewStatement(env.DB, id, key, link, `content_state='failed' AND ${linkIdle}`, id).run();
+      if (!used.meta.changes) throw badRequest("The link changed meanwhile. Try again.");
+    } finally { await dropUnusedPreview(env, id, key); }
     return json(await library(env, userId));
   })
   .patch("/links/:id", async (c) => {

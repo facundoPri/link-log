@@ -140,7 +140,7 @@ export function setTags(
 
 export async function assertNoActiveJob(db: D1Database, linkId: string) {
   const active = await db
-    .prepare("SELECT id FROM jobs WHERE link_id=? AND status IN ('queued','running')")
+    .prepare("SELECT id FROM jobs WHERE link_id=? AND status IN ('queued','running','waiting')")
     .bind(linkId)
     .first();
   if (active) throw badRequest("Wait for the running job to finish.");
@@ -148,9 +148,9 @@ export async function assertNoActiveJob(db: D1Database, linkId: string) {
 
 export async function ownedBatch(db: D1Database, userId: string, id: string) {
   const batch = await db
-    .prepare("SELECT id,kind FROM batches WHERE id=? AND user_id=?")
+    .prepare("SELECT id,kind,config FROM batches WHERE id=? AND user_id=?")
     .bind(id, userId)
-    .first<{ id: string; kind: string }>();
+    .first<{ id: string; kind: string; config: string }>();
   if (!batch) throw notFound("batch");
   return batch;
 }
