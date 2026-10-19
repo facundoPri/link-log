@@ -211,7 +211,7 @@ export function App({
             const { jobs } = await api<{ jobs: Job[] }>(`/batches/${b.id}`);
             for (const j of jobs)
               // A waiting job never hides the job it waits for.
-              if (j.link_id && !(j.status === "waiting" && map.has(j.link_id)) && (b.kind === "extract" || b.kind === "preview" || b.kind === "autotag" || b.kind === "lens" || b.kind === "query"))
+              if (j.link_id && ["queued", "running", "waiting"].includes(j.status) && !(j.status === "waiting" && map.has(j.link_id)) && (b.kind === "extract" || b.kind === "preview" || b.kind === "autotag" || b.kind === "lens" || b.kind === "query"))
                 map.set(j.link_id, { kind: b.kind, status: j.status, step: j.step });
           } catch {
             /* batch may be gone */
