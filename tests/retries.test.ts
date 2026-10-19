@@ -25,7 +25,7 @@ const attempts = (s: S, name: string) => s.steps.filter((x) => x.name === name).
 const linkRow = (s: S, id: string) => s.db.query("SELECT preview_reason,content_reason,title FROM links WHERE id=?").get(id) as any;
 
 test("retry config: preview 2 retries, Markdown 1, both with exponential backoff", async () => {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   await save(s, "https://cfg.example/x");
   await s.runQueued();
   expect(s.steps.find((x) => x.name === "resolve-and-preview")?.retries).toMatchObject({ limit: 2, backoff: "exponential" });
@@ -40,7 +40,7 @@ for (const [label, meta, reason] of [
   ["PDF", { http: 200, type: "application/pdf" }, "not_html"],
 ] as const)
   test(`preview ${label} fails fast (1 attempt) with reason ${reason}; content is still extracted`, async () => {
-    const s = await setup();
+    const s = await setup({ placeholder: true });
     fakes.meta = meta;
     const id = await save(s, "https://fast.example/doc");
     await s.runQueued();
@@ -60,7 +60,7 @@ for (const [label, meta, reason] of [
   ["DNS", { throws: "DNS unavailable" }, "unreachable"],
 ] as const)
   test(`preview ${label} is retried twice (3 attempts), then only the preview fails`, async () => {
-    const s = await setup();
+    const s = await setup({ placeholder: true });
     fakes.meta = meta;
     const id = await save(s, "https://slow.example/x");
     await s.runQueued();
@@ -70,7 +70,7 @@ for (const [label, meta, reason] of [
   });
 
 test("transient preview failure → retry → success never shows Needs attention; Activity shows attempt 2 of 3", async () => {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   fakes.meta = [{ http: 503 }, { status: "ready" }];
   const id = await save(s, "https://flaky.example/x");
   const batch = s.db.query("SELECT batch_id FROM jobs WHERE link_id=?").get(id) as { batch_id: string };
@@ -90,7 +90,7 @@ test("transient preview failure → retry → success never shows Needs attentio
 });
 
 test("transient Markdown failure → 1 retry → success never shows Needs attention", async () => {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   fakes.content = [{ throws: "Markdown: HTTP 503" }, { markdown: "# ok" }];
   const id = await save(s, "https://md.example/x");
   let during: Awaited<ReturnType<S["view"]>> | undefined, job: Job | undefined;
@@ -107,7 +107,7 @@ test("transient Markdown failure → 1 retry → success never shows Needs atten
 });
 
 test("Markdown keeps failing: 2 attempts, then the link fails with a plain reason", async () => {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   fakes.content = { throws: "Navigation timeout of 30000 ms exceeded" };
   const id = await save(s, "https://md.example/slow");
   await s.runQueued();
@@ -123,7 +123,7 @@ for (const [label, content, reason] of [
   ["private host", { throws: "Private host" }, "unreachable"],
 ] as const)
   test(`Markdown ${label} fails fast without a retry`, async () => {
-    const s = await setup();
+    const s = await setup({ placeholder: true });
     fakes.content = content;
     const id = await save(s, "https://md.example/fast");
     await s.runQueued();
@@ -132,7 +132,7 @@ for (const [label, content, reason] of [
   });
 
 test("a failed re-extract with previous content keeps it, stays out of Needs attention and is recorded in Activity", async () => {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   const id = await save(s, "https://kept.example/x");
   await s.runQueued();
   fakes.content = { throws: "Markdown: HTTP 503" };
@@ -145,21 +145,21 @@ test("a failed re-extract with previous content keeps it, stays out of Needs att
 });
 
 test("a failed preview on re-extract keeps the previous preview and records the reason only in Activity", async () => {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   const id = await save(s, "https://kept.example/p");
   await s.runQueued();
   fakes.meta = { http: 429 };
   await reextract(s, id);
   await s.runQueued();
   expect(await s.view(id)).toMatchObject({ status: "ready", content: "ready", attention: false, preview_reason: null });
-  expect(linkRow(s, id).title).toBe("Title of kept.example");
+  expect(linkRow(s, id).title).toBe("kept.example");
   const job = lastJob(s, id);
   expect(job).toMatchObject({ status: "done", preview_reason: "rate_limited" });
   expect(jobProgress(job).note).toBe(`No preview: ${FAILURE_MESSAGES.rate_limited}`);
 });
 
 test("a later successful preview clears the reason; Retry preview records its own reason", async () => {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   fakes.meta = { http: 404 };
   const id = await save(s, "https://later.example/x");
   await s.runQueued();
@@ -193,7 +193,7 @@ for (const [status, message, code, reason, calls] of [
   [503, "Service unavailable", undefined, "site_error", 2],
 ] as const)
   test(`real web adapter: a JSON ${status} "${message}" envelope is ${reason} with ${calls} Browser call(s)`, async () => {
-    const s = await setup();
+    const s = await setup({ placeholder: true });
     fakes.browser = failedEnvelope(status, message, code);
     const id = await save(s, PUBLIC_URL);
     await s.runQueued();
@@ -205,7 +205,7 @@ for (const [status, message, code, reason, calls] of [
   });
 
 test("the Markdown call bounds its own navigation and action below the attempt budget (the binding takes no abort signal)", async () => {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   let options: Record<string, any> = {};
   fakes.browser = (_action, o) => ((options = o), envelope(200, { success: true, result: "# Page" })());
   await save(s, PUBLIC_URL);
@@ -218,7 +218,7 @@ test("the Markdown call bounds its own navigation and action below the attempt b
 });
 
 test("a timed-out Markdown call that answers during the next attempt can't replace its content or count as a success", async () => {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   ATTEMPT_BUDGET_MS.content = 20;
   let releaseFirst!: (r: Response) => void;
   const ok = (markdown: string) => new Response(JSON.stringify({ success: true, result: markdown }), { status: 200 });
@@ -245,7 +245,7 @@ test("a timed-out Markdown call that answers during the next attempt can't repla
 });
 
 test("an adapter that ignores the abort still can't publish a timed-out result: only the accepted attempt is stored", async () => {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   ATTEMPT_BUDGET_MS.content = 20;
   let releaseFirst!: (markdown: string) => void;
   const first = new Promise<string>((resolve) => (releaseFirst = resolve));
@@ -267,7 +267,7 @@ test("an adapter that ignores the abort still can't publish a timed-out result: 
 });
 
 test("real web adapter: a successful envelope is saved; an empty one fails fast", async () => {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   fakes.browser = envelope(200, { success: true, result: "# Real page" });
   const id = await save(s, PUBLIC_URL);
   await s.runQueued();
@@ -280,7 +280,7 @@ test("real web adapter: a successful envelope is saved; an empty one fails fast"
 });
 
 test("a failed preview stays out of Needs attention while Markdown is retrying, including after a reload", async () => {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   fakes.meta = { http: 403 };
   fakes.content = [{ throws: "Markdown: HTTP 503" }, { throws: "Markdown: HTTP 503" }];
   const id = await save(s, "https://mixed.example/x");
@@ -295,7 +295,7 @@ test("a failed preview stays out of Needs attention while Markdown is retrying, 
 });
 
 test("a hanging Markdown call fails inside the attempt at its time budget and is retried once", async () => {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   ATTEMPT_BUDGET_MS.content = 20;
   fakes.content = { pending: true };
   const id = await save(s, "https://hang.example/x");
@@ -306,7 +306,7 @@ test("a hanging Markdown call fails inside the attempt at its time budget and is
 });
 
 test("an attempt ended by the engine's step timeout is still recorded, with the persisted step and attempt", async () => {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   ATTEMPT_BUDGET_MS.content = 60_000; // the engine gives up first
   s.engine.timeoutMs = 20;
   fakes.content = { pending: true };
@@ -321,7 +321,7 @@ test("an attempt ended by the engine's step timeout is still recorded, with the 
 });
 
 test("a long-running attempt shows elapsed time against its budget, also after a reload", async () => {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   const id = await save(s, "https://long.example/x");
   const batch = (s.db.query("SELECT batch_id FROM jobs WHERE link_id=?").get(id) as { batch_id: string }).batch_id;
   let shown: string | null = null;
@@ -335,7 +335,7 @@ test("a long-running attempt shows elapsed time against its budget, also after a
 });
 
 test("a bookkeeping failure after extraction shows the plain reason; the raw error goes only to the logs", async () => {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   fakes.failSql = /content_state='ready'/; // the save-content write
   const id = await save(s, "https://busy.example/x");
   await s.runQueued();
@@ -347,7 +347,7 @@ test("a bookkeeping failure after extraction shows the plain reason; the raw err
 });
 
 test("an allowlisted adapter message is kept for users; the appended technical detail is not", async () => {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   fakes.discoverError = `${ADAPTER_MESSAGES.instagramLogin} Rendered retry: Rendered post: HTTP 500`;
   const id = await save(s, "https://social.example/p/1");
   await s.runQueued();

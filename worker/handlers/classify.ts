@@ -29,6 +29,7 @@ export const classifyHandler: JobHandler = {
           ...evaluationStatements(
             env.DB,
             link,
+            job.user_id,
             config.tags!,
             result.answers,
             result.model,
@@ -44,16 +45,18 @@ export const classifyHandler: JobHandler = {
         jobResult = { ...result, answer };
         statements.push(
           env.DB.prepare(
-            `INSERT OR REPLACE INTO lens_results(link_id,lens_id,answer,lens_version,content_version,model,evaluated_at,batch_id) SELECT ?,?,?,?,?,?,?,? WHERE ${jobRunning}`,
+            // Lens and link must still belong to the batch owner (a DB trigger enforces it too).
+            `INSERT OR REPLACE INTO lens_results(link_id,lens_id,answer,lens_version,content_version,model,evaluated_at,batch_id) SELECT ?,id,?,?,?,?,?,? FROM lenses WHERE id=? AND user_id=? AND ${jobRunning}`,
           ).bind(
             link.id,
-            lens.id,
             JSON.stringify(answer),
             lens.version,
             link.content_version,
             result.model,
             now,
             job.batch_id,
+            lens.id,
+            job.user_id,
             job.id,
           ),
         );

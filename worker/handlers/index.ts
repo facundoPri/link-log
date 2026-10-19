@@ -18,7 +18,8 @@ export type JobConfig = {
 export type JobContext = {
   env: Env;
   step: WorkflowStep;
-  job: JobRow & { kind: string; config: string };
+  /** user_id is resolved from the persisted batch by loadOwnedJob. */
+  job: JobRow & { kind: string; config: string; user_id: string };
   link: Link;
   config: JobConfig;
   /** How the steps that ran ended, for the failure path to settle Needs attention. */

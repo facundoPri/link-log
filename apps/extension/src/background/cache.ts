@@ -364,6 +364,33 @@ export class ResultCache {
     await this.kv.remove(removes);
   }
 
+  /**
+   * Sign-out of one Linklog account: every result and request of its library scope goes away.
+   * Other scopes (accounts) are untouched; page captures are tab content, not account data.
+   */
+  forget(scope: string) {
+    return this.mutex.run(async () => {
+      const prefix = `${scope}/`;
+      const stored = await this.kv.getMany(await this.kv.keys(RES));
+      const writes: Record<string, unknown> = {};
+      let removed = 0;
+      for (const [key, raw] of Object.entries(stored)) {
+        const tr = raw as TabResults;
+        const keep = Object.entries(tr.entries).filter(([k]) => !k.startsWith(prefix));
+        if (keep.length === Object.keys(tr.entries).length) continue;
+        removed += Object.keys(tr.entries).length - keep.length;
+        writes[key] = { ...tr, entries: Object.fromEntries(keep) };
+      }
+      const reqs = await this.kv.getMany(await this.kv.keys(REQ));
+      const drop = Object.entries(reqs)
+        .filter(([, raw]) => (raw as RequestRecord).scope === scope)
+        .map(([key]) => key);
+      await this.kv.set(writes);
+      await this.kv.remove(drop);
+      return { removed };
+    });
+  }
+
   /** Tab closed: its association disappears, whatever is still in flight. */
   dropTab(tabInstanceId: string) {
     return this.mutex.run(async () => {

@@ -30,6 +30,8 @@ export type {
 } from "@linklog/browser-protocol";
 import type { Lens, LensResult } from "@linklog/browser-protocol";
 export type Link = {
+  metadata_evaluated?: boolean | number;
+  title_source?: "placeholder" | "metadata" | "extraction" | "legacy";
   id: string;
   original_url: string;
   url: string;
@@ -51,6 +53,9 @@ export type Link = {
   attention_reason: string | null;
   attention_at: string | null;
   created_at: string;
+  last_saved_at?: string | null;
+  original_metadata?: string | null;
+  metadata_error?: string | null;
   tags: Tag[];
   evaluations: Evaluation[];
   content_key: string | null;
@@ -165,11 +170,6 @@ export type Library = {
   lenses: Lens[];
   batches: Batch[];
   capabilities: Capabilities;
-  settings: Settings;
-};
-export type Settings = {
-  /** If the content can't be extracted, use the preview (title + description) for Jev. */
-  preview_fallback: boolean;
 };
 export type UsageEvent = {
   id: string;

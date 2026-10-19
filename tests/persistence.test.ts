@@ -21,15 +21,14 @@ test("hidden related links survive content changes and disappear with their pare
 test("successful autotag replaces manual assignments, retains rejected scores, and uses the run snapshot", async () => {
   const sqlite = new Database(":memory:");
   sqlite.exec("PRAGMA foreign_keys=ON");
-  for (const file of [
-    "0001_library.sql",
-    "0002_metadata_recovery.sql",
-    "0003_context_and_evaluations.sql",
-    "0004_provider_leases.sql",
-  ])
-    sqlite.exec(await Bun.file(`migrations/${file}`).text());
+  for (const file of [...new Bun.Glob("migrations/*.sql").scanSync()].sort())
+    sqlite.exec(await Bun.file(file).text());
   sqlite.exec(
-    "INSERT INTO links(id,original_url,url,domain,title,created_at) VALUES('link','https://example.com','https://example.com','example.com','Example','now'); INSERT INTO tags(id,name) VALUES('ai','AI'),('iot','IoT'); INSERT INTO link_tags(link_id,tag_id,origin) VALUES('link','iot','manual'); INSERT INTO batches(id,kind,config,created_at) VALUES('batch','autotag','{}','now'); INSERT INTO jobs(id,batch_id,link_id,status,created_at) VALUES('job','batch','link','running','now')",
+    `INSERT INTO "user"(id,name,email,"emailVerified","createdAt","updatedAt") VALUES('owner','A','a@example.test',1,'now','now'),('other','B','b@example.test',1,'now','now');
+     INSERT INTO links(id,user_id,original_url,url,domain,title,created_at) VALUES('link','owner','https://example.com','https://example.com','example.com','Example','now');
+     INSERT INTO tags(id,user_id,name) VALUES('ai','owner','AI'),('iot','owner','IoT');
+     INSERT INTO link_tags(link_id,tag_id,origin) VALUES('link','iot','manual');
+     INSERT INTO batches(id,user_id,kind,config,created_at) VALUES('batch','owner','autotag','{}','now'); INSERT INTO jobs(id,batch_id,link_id,status,created_at) VALUES('job','batch','link','running','now')`,
   );
   const tags: Tag[] = [
     {
@@ -63,6 +62,7 @@ test("successful autotag replaces manual assignments, retains rejected scores, a
   const statements = evaluationStatements(
     db,
     { id: "link", content_version: 3 },
+    "owner",
     tags,
     { ai: { type: "noul", noul: 0.8 }, iot: { type: "noul", noul: 0.45 } },
     "fixture-model",
@@ -101,12 +101,13 @@ test("successful autotag replaces manual assignments, retains rejected scores, a
     evaluationStatements(
       db,
       { id: "link", content_version: 3 },
+      "owner",
       tags,
       { ai: { type: "noul", noul: 0.2 } },
       "fixture",
       "batch",
       "now",
-      "job",
+    "job",
     ),
   ).toThrow();
   expect(sqlite.query("SELECT tag_id FROM link_tags").all()).toEqual([
@@ -115,6 +116,7 @@ test("successful autotag replaces manual assignments, retains rejected scores, a
   const invalid = evaluationStatements(
     db,
     { id: "link", content_version: 3 },
+    "owner",
     tags,
     { ai: { type: "noul", noul: 0.2 }, iot: { type: "noul", noul: 0.99 } },
     "fixture",
@@ -126,5 +128,23 @@ test("successful autotag replaces manual assignments, retains rejected scores, a
   expect(sqlite.query("SELECT tag_id FROM link_tags").all()).toEqual([
     { tag_id: "ai" },
   ]);
+  // A batch owned by someone else can neither clear nor write this owner's tags and scores.
+  run(
+    evaluationStatements(
+      db,
+      { id: "link", content_version: 4 },
+      "other",
+      tags,
+      { ai: { type: "noul", noul: 0.99 }, iot: { type: "noul", noul: 0.99 } },
+      "fixture",
+      "batch",
+      "now",
+    "job",
+    ),
+  );
+  expect(sqlite.query("SELECT tag_id FROM link_tags").all()).toEqual([
+    { tag_id: "ai" },
+  ]);
+  expect(sqlite.query("SELECT count(*) c FROM tag_evaluations WHERE content_version=4").get()).toEqual({ c: 0 });
   sqlite.close();
 });

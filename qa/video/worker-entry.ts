@@ -104,7 +104,7 @@ globalThis.fetch = async function qaFetch(input: RequestInfo | URL, init?: Reque
     if (!fixture && current?.QA_ALLOW_NET === "1") return realFetch(input as RequestInfo, init);
     // Non-fixture hosts resolve to nothing: they read as "could not be reached", never as a real site.
     const answer = fixture && fixture.dns !== "nxdomain" && url.searchParams.get("type") === "A" ? [{ name, type: 1, TTL: 60, data: FIXTURE_IP }] : [];
-    return Response.json({ Status: 0, Answer: answer }, { headers: { "content-type": "application/dns-json" } });
+    return Response.json({ Status: !fixture || fixture.dns === "nxdomain" ? 3 : 0, Answer: answer }, { headers: { "content-type": "application/dns-json" } });
   }
   const fixture = fixtureFor(url.hostname);
   if (fixture) return previewResponse(fixture.preview, url, init?.signal ?? request.signal);

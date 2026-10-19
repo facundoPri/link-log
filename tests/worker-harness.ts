@@ -1,8 +1,10 @@
 // Drives the real Worker fetch handler, LinkWorkflow and dispatch against in-memory SQLite
 // (all migrations). Only the network-facing preview and content extraction are faked.
+import { TestD1 } from "./support/d1";
+import { testSession } from "./support/auth.test-instance";
 import { Database } from "bun:sqlite";
 import { readdirSync } from "node:fs";
-import { mock, setSystemTime } from "bun:test";
+import { spyOn, setSystemTime } from "bun:test";
 import * as metadata from "../worker/metadata";
 import * as adapters from "../worker/adapters";
 import { needsAttention } from "../src/attention";
@@ -10,11 +12,12 @@ import { responseFailure } from "../worker/failures";
 import { webAdapter } from "../worker/adapters/web";
 import type { Link } from "../src/types";
 
-type Meta = { status: "ready" | "failed"; description?: string } | { throws: string } | { http: number; type?: string; headers?: Record<string, string> };
+type Meta = { status: "ready" | "failed"; description?: string; title?: string; title_source?: string } | { throws: string } | { http: number; type?: string; headers?: Record<string, string> };
 type Content = { markdown: string } | { throws: string } | { error: unknown } | { pending: true } | { wait: Promise<string> };
 // A list is consumed one item per call (the last item sticks), to script transient failures.
 export const fakes: {
   meta: Meta | Meta[];
+  placeholder: boolean;
   content: Content | Content[];
   calls: { meta: number; content: number; browser: number };
   onMeta?: () => Promise<void>;
@@ -33,12 +36,12 @@ export const fakes: {
   onSql?: (sql: string, phase: "read" | "write") => Promise<void>;
 } = {
   meta: { status: "ready" },
+  placeholder: false,
   content: { markdown: "# page" },
   calls: { meta: 0, content: 0, browser: 0 },
 };
 const next = <T>(v: T | T[]): T => (Array.isArray(v) ? (v.length > 1 ? v.shift()! : v[0]!) : v);
-mock.module("../worker/metadata", () => ({
-  ...metadata,
+const metadataFake = {
   extractMetadata: async (url: string) => {
     fakes.calls.meta++;
     await fakes.onMeta?.();
@@ -51,11 +54,10 @@ mock.module("../worker/metadata", () => ({
       if (failure) throw failure;
     }
     const domain = new URL(url).hostname;
-    return { url, domain, title: `Title of ${domain}`, description: ("status" in meta && meta.description) || "", image: null, favicon: null, status: "ready" as const };
+    return { url, domain, title: "status" in meta && meta.title !== undefined ? meta.title : fakes.placeholder ? domain : `Title of ${domain}`, description: ("status" in meta && meta.description) || "", image: null, favicon: null, status: "ready" as const };
   },
-}));
-mock.module("../worker/adapters", () => ({
-  ...adapters,
+};
+const adaptersFake = {
   adapterFor: () => fakes.browser ? webAdapter : fakes.discover ? ({ name: "x", discover: async () => fakes.discover!() }) : fakes.discoverError ? ({
     name: "x",
     discover: async () => { throw new Error(fakes.discoverError); },
@@ -72,49 +74,47 @@ mock.module("../worker/adapters", () => ({
       return { markdown: content.markdown, source: "web" };
     },
   }),
-}));
+};
 
 const { default: worker, LinkWorkflow } = await import("../worker/index");
 export const { dispatch } = await import("../worker/jobs");
 
 function d1(db: Database) {
+  const adapter = new TestD1(db);
   const check = (sql: string) => {
     if (fakes.failSql?.test(sql)) throw new Error("D1_ERROR: database unavailable (SQLITE_BUSY)");
-    if (fakes.failSqlOnce?.test(sql)) {
-      fakes.failSqlOnce = undefined;
-      throw new Error("D1_ERROR: database unavailable (SQLITE_BUSY)");
-    }
+    if (fakes.failSqlOnce?.test(sql)) { fakes.failSqlOnce = undefined; throw new Error("D1_ERROR: database unavailable (SQLITE_BUSY)"); }
   };
-  const stmt = (sql: string, params: unknown[] = []) => ({
-    bind: (...p: unknown[]) => stmt(sql, p),
-    sql,
-    all: async () => {
-      const results = db.query(sql).all(...(params as never[]));
-      await fakes.onSql?.(sql, "read");
-      return { results };
-    },
-    first: async () => {
-      const row = db.query(sql).get(...(params as never[])) ?? null;
-      await fakes.onSql?.(sql, "read");
-      return row;
-    },
-    run: async () => (await fakes.onSql?.(sql, "write"), check(sql), { meta: { changes: db.query(sql).run(...(params as never[])).changes } }),
-    _exec: () => (check(sql), db.query(sql).run(...(params as never[]))),
-  });
+  const stmt = (sql: string, params: unknown[] = []) => {
+    const execute = () => { check(sql); return adapter.run(sql, params); };
+    const read = async () => { const result = execute(); await fakes.onSql?.(sql, "read"); return result; };
+    return {
+      sql, bind: (...p: unknown[]) => stmt(sql,p),
+      all: read,
+      first: async (column?: string) => { const row = (await read()).results[0]; return row ? column ? row[column] : row : null; },
+      raw: async () => (await read()).results.map(row => Object.values(row)),
+      run: async () => { await fakes.onSql?.(sql, "write"); return execute(); },
+      _exec: execute,
+    };
+  };
   return {
     prepare: (sql: string) => stmt(sql),
-    batch: async (list: { sql: string; _exec: () => { changes: number } }[]) => {
+    batch: async (list: { sql: string; _exec: () => unknown }[]) => {
       for (const s of list) await fakes.onSql?.(s.sql, "write");
-      return db.transaction(() => list.map((s) => ({ meta: { changes: s._exec().changes } })))();
+      return db.transaction(() => list.map(s => s._exec()))();
     },
   };
 }
 
 let clock = Date.parse("2026-09-29T12:00:00.000Z");
 export const tick = (ms: number) => setSystemTime(new Date((clock += ms)));
-export const resetClock = () => setSystemTime();
+const spies: { mockRestore(): void }[] = [];
+export const resetClock = () => { for (const s of spies.splice(0)) s.mockRestore(); setSystemTime(); };
 
-export async function setup() {
+export async function setup(options: { placeholder?: boolean } = {}) {
+  for (const s of spies.splice(0)) s.mockRestore();
+  spies.push(spyOn(metadata, "extractMetadata").mockImplementation(metadataFake.extractMetadata), spyOn(adapters, "adapterFor").mockImplementation(adaptersFake.adapterFor as typeof adapters.adapterFor));
+  fakes.placeholder = !!options.placeholder;
   tick(0);
   fakes.meta = { status: "ready" };
   fakes.content = { markdown: "# page" };
@@ -138,8 +138,15 @@ export async function setup() {
   // terminate that came too late; "ended" and "throw" make terminate fail with an ended or a live instance.
   const workflows = { terminate: "stop" as "stop" | "ignore" | "ended" | "throw", terminated: [] as string[] };
   const stopped = new Set<string>();
+  const adapter = new TestD1(db);
+  const instrumented = d1(db);
   const env = {
-    DB: d1(db),
+    APP_ENV: "test",
+    BETTER_AUTH_URL: "http://localhost",
+    BETTER_AUTH_SECRET: "test-secret-0123456789abcdefghijklmnopqrstuvwxyz",
+    EMAIL: { send: async () => ({ messageId: "test" }) },
+
+    DB: { prepare: instrumented.prepare, batch: instrumented.batch, exec: (sql: string) => adapter.exec(sql) },
     CONTENT: {
       put: async (k: string, v: string) => void r2.set(k, v),
       get: async (k: string) => (r2.has(k) ? { text: async () => r2.get(k)! } : null),
@@ -162,12 +169,15 @@ export async function setup() {
       }),
     },
   } as unknown as Env;
+  // Auth needs raw/returning as well as the race-aware shim used by lifecycle tests.
+  const authEnv = { ...env, DB: adapter.d1 };
+  const session = await testSession(authEnv, "lifecycle@example.test");
   const api = async (path: string, method = "GET", body?: unknown) => {
     const waits: Promise<unknown>[] = [];
     const res = await worker.fetch(
       new Request(`http://localhost/api${path}`, {
         method,
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", origin: "http://localhost", cookie: session.cookie },
         body: method === "GET" ? undefined : JSON.stringify(body ?? {}),
       }) as never,
       env,
@@ -239,5 +249,5 @@ export async function setup() {
       job: job ? `${job.status}/${job.step}` : null,
     };
   };
-  return { db, env, api, runQueued, runJob, view, sent, steps, engine, r2, workflows };
+  return { db, env, api, userId: session.userId, runQueued, runJob, view, sent, steps, engine, r2, workflows };
 }

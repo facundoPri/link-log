@@ -1,12 +1,13 @@
 // Starts and stops the isolated QA environment: the product dev stack (scripts/dev.ts) on the QA ports,
 // with the QA Worker entry (worker-entry.ts) and its own D1/R2 state. Never touches your data.
+import { ensureFixture, FIXTURES } from "../../scripts/seed-dev-users";
 import { existsSync } from "node:fs";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
 export const ROOT = resolve(import.meta.dir, "../..");
-export const OUT = resolve(ROOT, "qa/out");
+export const OUT = resolve(ROOT, process.env.QA_OUT || "qa/out");
 export const UI_PORT = Number(process.env.QA_UI_PORT) || 3300;
 export const API_PORT = Number(process.env.QA_API_PORT) || 8990;
 export const UI = `http://127.0.0.1:${UI_PORT}`;
@@ -53,7 +54,7 @@ async function writeConfig(options: EnvOptions) {
   return path;
 }
 
-export type QaEnv = { ui: string; api: string; options: EnvOptions; stop: () => Promise<void> };
+export type QaEnv = { cookie: string; ui: string; api: string; options: EnvOptions; stop: () => Promise<void> };
 
 /** `keepState`: restart on the previous run's D1/R2 instead of wiping it (a scenario that changes the Worker
  * configuration mid-chapter, like the plan's "restart the same persist dir under another profile"). */
@@ -102,7 +103,12 @@ export async function startEnv(options: EnvOptions = {}, { keepState = false } =
   for (let i = 0; i < 600; i++) {
     try {
       const health = await fetch(`${UI}/api/__qa/health`);
-      if (health.ok && (await health.json() as { qa?: boolean }).qa) return { ui: UI, api: API, options, stop };
+      if (health.ok && (await health.json() as { qa?: boolean }).qa) {
+        process.env.LINKLOG_MAIL_DIR = resolve(OUT, ".wrangler/tmp/email");
+        const session = await ensureFixture(API, UI, FIXTURES[0]!);
+        await ensureFixture(API, UI, FIXTURES[1]!);
+        return { cookie: session.cookie, ui: UI, api: API, options, stop };
+      }
     } catch {}
     if (proc.exitCode !== null) throw new Error(`dev exited (${proc.exitCode}); see qa/out/logs/dev.err.log`);
     await Bun.sleep(200);

@@ -3,6 +3,7 @@ import { measured } from "../usage";
 import { ADAPTER_MESSAGES } from "../failures";
 import { allowedMediaHost, type MediaSource } from "../media-hosts";
 import type { ContentAdapter, Discovered, ExtractionJob } from "./types";
+import { requireBrowserRun } from "./browser-run";
 
 const MAX_HTML = 3_000_000;
 type RawMedia = Discovered["media"][number];
@@ -56,6 +57,7 @@ async function publicHtml(url: string): Promise<string> {
 }
 
 async function renderedHtml(env: Env, url: string, job: ExtractionJob): Promise<string> {
+  requireBrowserRun(env);
   await validateDestination(new URL(url), AbortSignal.timeout(10_000));
   return measured(env, job, "browser-content", "cloudflare", "discover", async (meter) => {
     const response = await env.BROWSER.quickAction("content", { url });

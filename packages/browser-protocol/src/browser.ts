@@ -295,6 +295,11 @@ export type Commands = {
   unbindPinned: { args: { pinnedId: string }; result: { groups: number } };
   focusTab: { args: { tab: TabRef }; result: {} };
   openPermissions: { args: {}; result: {} };
+  /**
+   * Sign-out: drop this connection's library-scope results and pending requests, then end the
+   * handshake. Only offered when hello lists the "forget" capability.
+   */
+  forget: { args: {}; result: { removed: number } };
 };
 export type CommandName = keyof Commands;
 

@@ -1,4 +1,4 @@
-import { extractMetadata } from "../metadata";
+import { extractMetadata, metadataStatement } from "../metadata";
 import { adapterFor } from "../adapters";
 import type { Discovered } from "../adapters/types";
 import { transcribeImage, OCR_MODEL } from "../ocr";
@@ -7,6 +7,8 @@ import type { WorkflowStepContext } from "cloudflare:workers";
 import { classify, logFailure, logResidualFailure, LinkFailure } from "../failures";
 import type { FailureReason } from "../../src/failures";
 import type { JobContext, JobHandler } from "./index";
+import { displayMetadataStatement } from "../display-metadata";
+import { contentPrefix } from "../store";
 import { jobRunning, settleAttention } from "../attention";
 
 const MAX_OCR_PREVIEWS = 20;
@@ -108,7 +110,11 @@ async function attempt<R, T = R>(
 // write) is a final preview failure too.
 async function fetchPreview({ env, step, job, link }: JobContext) {
   return step.do("resolve-and-preview", { retries: PREVIEW_RETRIES, timeout: "30 seconds" },
-    (ctx) => attempt({ env, job, link }, ctx, { step: "preview", label: "Fetching preview", limit: PREVIEW_RETRIES.limit, adapter: "preview" }, () => extractMetadata(link.original_url)))
+    (ctx) => attempt({ env, job, link }, ctx, { step: "preview", label: "Fetching preview", limit: PREVIEW_RETRIES.limit, adapter: "preview" }, async () => {
+      const result = await extractMetadata(link.original_url);
+      if (result.status === "failed") throw new LinkFailure(result.failure?.reason ?? "unknown", result.failure?.detail);
+      return result;
+    }))
     .catch((error) => step.do("record-preview-failure", async (): Promise<Failed> => {
       const failure = classify(error);
       await logResidualFailure(env, failure, { link_id: link.id, job_id: job.id, url: link.url });
@@ -118,11 +124,11 @@ async function fetchPreview({ env, step, job, link }: JobContext) {
 type Preview = Awaited<ReturnType<typeof fetchPreview>>;
 // A preview that worked before is kept, like content: the failure is only recorded in Activity.
 // Published only while the job runs: a cancelled job leaves the preview as it was.
-const savePreview = (env: Env, linkId: string, jobId: string, preview: Preview) => "failed" in preview
-  ? env.DB.prepare(`UPDATE links SET preview_reason=CASE WHEN status='ready' THEN preview_reason ELSE ? END,status=CASE WHEN status='ready' THEN 'ready' ELSE 'failed' END WHERE id=? AND ${jobRunning}`)
-    .bind(preview.failed, linkId, jobId)
-  : env.DB.prepare(`UPDATE links SET url=?,domain=?,title=?,description=?,image=?,favicon=?,status='ready',preview_reason=NULL WHERE id=? AND ${jobRunning}`)
-    .bind(preview.url, preview.domain, preview.title, preview.description, preview.image, preview.favicon, linkId, jobId);
+const savePreview = (env: Env, linkId: string, jobId: string, preview: Preview, userId: string) =>
+  metadataStatement(env.DB, userId, linkId, "failed" in preview ? {
+    url: "", domain: "", title: "", description: "", image: null, favicon: null, status: "failed",
+    error: new LinkFailure(preview.failed).message, failure: { reason: preview.failed, detail: {} },
+  } : preview, jobRunning, [jobId]);
 
 // "Retry preview": only the preview step, through the queue like any job.
 export const previewHandler: JobHandler = {
@@ -133,7 +139,7 @@ export const previewHandler: JobHandler = {
     ctx.progress.preview = "failed" in preview ? "failed" : "ok";
     await step.do("save-preview", async () => {
       await env.DB.batch([
-        savePreview(env, link.id, job.id, preview),
+        savePreview(env, link.id, job.id, preview, job.user_id),
         env.DB.prepare("UPDATE jobs SET attempt_started_at=NULL WHERE id=? AND status='running'").bind(job.id),
       ]);
       await settleAttention(env.DB, link.id, { preview: ctx.progress.preview }, job.id);
@@ -155,7 +161,7 @@ export const extractHandler: JobHandler = {
     const metadata = { url: preview && !("failed" in preview) ? preview.url : link.url };
     const adapter = adapterFor(metadata.url);
     await step.do("save-preview", async () => {
-      if (preview) await savePreview(env, link.id, job.id, preview).run();
+      if (preview) await savePreview(env, link.id, job.id, preview, job.user_id).run();
       await env.DB.prepare("UPDATE jobs SET step='Extracting content',attempt=NULL,max_attempts=NULL,reason=NULL,attempt_started_at=NULL,attempt_budget_ms=NULL,adapter=?,preview_reason=? WHERE id=? AND status='running'")
         .bind(adapter.name, previewFailed, job.id).run();
     });
@@ -173,13 +179,14 @@ export const extractHandler: JobHandler = {
           },
           // A per-attempt key: a step callback the engine abandoned can never overwrite the accepted content.
           async (result) => {
-            const key = `links/${link.id}/${job.id}-${ctx.attempt}.md`;
+            const key = `${contentPrefix(job.user_id, link.id)}${job.id}-${ctx.attempt}.md`;
             await env.CONTENT.put(key, result.markdown, { httpMetadata: { contentType: "text/markdown; charset=utf-8" } });
-            return { key, source: result.source };
+            return { key, source: result.source, display: result.display };
           }));
       if ("failed" in content) throw new LinkFailure(content.failed);
       await step.do("save-content", async () => {
         await env.DB.batch([
+          displayMetadataStatement(env.DB, job.user_id, link.id, job.id, content.display ?? {}, metadata.url),
           env.DB.prepare(`DELETE FROM media_items WHERE link_id=? AND ${running}`).bind(link.id, job.id),
           env.DB.prepare(`UPDATE links SET content_key=?,content_version=content_version+1,content_source=?,content_state='ready',content_error=NULL,content_reason=NULL,content_details=NULL,content_updated_at=? WHERE id=? AND ${running}`)
             .bind(content.key, content.source, new Date().toISOString(), link.id, job.id),
@@ -231,7 +238,22 @@ export const extractHandler: JobHandler = {
     if (ocrMedia.length > MAX_OCR_PREVIEWS)
       discovered.details.issues.push(`Only the first ${MAX_OCR_PREVIEWS} images and video previews were processed; the remainder are pending.`);
     const content = composeSocial(discovered, media);
-    const key = `links/${link.id}/${job.id}.md`;
+    await step.do("fill-display-metadata", async () => {
+      await displayMetadataStatement(env.DB, job.user_id, link.id, job.id, {
+        title: discovered.title,
+        image: [...discovered.media].sort((a,b) => a.position - b.position).find(m => m.preview_url)?.preview_url,
+        description: discovered.details.type === "instagram-post" || discovered.details.type === "x-post" ? discovered.text : undefined,
+      }, metadata.url).run();
+    });
+    // A generic adapter heading, extraction notes, or an image alone is not page content.
+    // Keep details for manual transcript recovery, then let terminal fallback use genuine metadata.
+    if (!discovered.text.trim() && !media.some(m => m.ocr_state === "done" && m.ocr_text?.trim())) {
+      await step.do("save-unavailable-details", async () => {
+        await env.DB.prepare(`UPDATE links SET content_details=? WHERE id=? AND content_key IS NULL AND ${running}`).bind(JSON.stringify(content.details), link.id, job.id).run();
+      });
+      throw new LinkFailure("empty");
+    }
+    const key = `${contentPrefix(job.user_id, link.id)}${job.id}.md`;
     await step.do("store-composed-content", async () => {
       if (new TextEncoder().encode(content.markdown).length > 2_000_000) throw new Error("The extracted content exceeds 2 MB.");
       await env.CONTENT.put(key, content.markdown, { httpMetadata: { contentType: "text/markdown; charset=utf-8" } });

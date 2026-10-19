@@ -118,7 +118,8 @@ export class Hub {
     };
   }
 
-  async snapshot(windowId: number): Promise<Omit<WindowSnapshot, "revision">> {
+  /** Window snapshot as one library scope sees it (Linklog group metadata is per scope). */
+  async snapshot(windowId: number, scope: string | null): Promise<Omit<WindowSnapshot, "revision">> {
     const [tabs, groups] = await Promise.all([
       chrome.tabs.query({ windowId }),
       chrome.tabGroups.query({ windowId }).catch(() => [] as chrome.tabGroups.TabGroup[]),
@@ -135,7 +136,7 @@ export class Hub {
       if (dto) listed.push(dto);
     }
     const groupDtos: BrowserGroup[] = groups.map((g) => {
-      const meta = this.groups.get(g.id);
+      const meta = this.groups.view(g.id, scope);
       return {
         groupId: g.id,
         windowId: g.windowId,
@@ -165,7 +166,7 @@ export class Hub {
   async fullSnapshot(c: Connection): Promise<WindowSnapshot> {
     const tab = await chrome.tabs.get(c.tabId);
     c.windowId = tab.windowId;
-    const snap = { ...(await this.snapshot(tab.windowId)), revision: this.nextRevision() };
+    const snap = { ...(await this.snapshot(tab.windowId, c.scope)), revision: this.nextRevision() };
     c.last = snap;
     return snap;
   }
@@ -195,7 +196,7 @@ export class Hub {
 
   async flush() {
     if (!this.connections.size) return;
-    const byWindow = new Map<number, Omit<WindowSnapshot, "revision">>();
+    const byView = new Map<string, Omit<WindowSnapshot, "revision">>();
     // The revision only moves when something is actually sent.
     let bumped: number | null = null;
     const revision = () => (bumped ??= this.nextRevision());
@@ -209,8 +210,9 @@ export class Hub {
         this.send(c, { event: { event: "scope-changed", windowId: tab.windowId } });
       }
       c.windowId = tab.windowId;
-      let next = byWindow.get(tab.windowId);
-      if (!next) byWindow.set(tab.windowId, (next = await this.snapshot(tab.windowId)));
+      const view = `${tab.windowId}\u0000${c.scope}`;
+      let next = byView.get(view);
+      if (!next) byView.set(view, (next = await this.snapshot(tab.windowId, c.scope)));
       if (!c.last) {
         c.last = { ...next, revision: revision() };
         this.send(c, { event: { event: "snapshot", snapshot: c.last } });

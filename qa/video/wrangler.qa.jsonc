@@ -26,6 +26,7 @@
     "consumers": [{ "queue": "linklog-jobs", "max_batch_size": 10, "max_batch_timeout": 1, "max_retries": 3, "max_concurrency": 10 }]
   },
   "workflows": [{ "binding": "PROCESS_LINK", "name": "linklog-process-link", "class_name": "LinkWorkflow" }],
+  "send_email": [{ "name": "EMAIL" }],
   "vars": {
     "JEV_PROVIDER": "fixture",
     "ALLOW_FIXTURE_JEV": "1",

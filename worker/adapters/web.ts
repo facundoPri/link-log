@@ -1,11 +1,15 @@
 import { validateDestination } from "../metadata";
 import { measured } from "../usage";
-import { browserFailure, LinkFailure } from "../failures";
+import { browserFailure, LinkFailure, statusReason } from "../failures";
 import type { ContentAdapter } from "./types";
+import { requireBrowserRun } from "./browser-run";
+import { accessInterstitial, accessPageTitle, mercadoLoginText } from "../access-page";
 export const webAdapter: ContentAdapter = {
   name: "web",
   matches: () => true,
   async extract(env, url, job, signal) {
+    requireBrowserRun(env);
+    if (accessInterstitial(new URL(url))) throw new LinkFailure("login_wall");
     await validateDestination(new URL(url), AbortSignal.timeout(10000));
     return measured(
       env,
@@ -23,6 +27,7 @@ export const webAdapter: ContentAdapter = {
         const data = (await response.json().catch(() => ({}))) as {
           success?: boolean;
           result?: string;
+          meta?: { finalUrl?: string; status?: number; title?: string };
           errors?: { code?: number; message?: string }[];
         };
         if (!response.ok || data.success === false)
@@ -30,12 +35,15 @@ export const webAdapter: ContentAdapter = {
         if (typeof data.result !== "string" || !data.result.trim())
           throw new LinkFailure("empty");
         // A login wall or block page is not the content: it is discarded (never stored) and not retried.
-        const wall = detectLoginWall(data.result);
+        if (data.meta?.finalUrl) await validateDestination(new URL(data.meta.finalUrl), AbortSignal.timeout(10000));
+        const access = (data.meta?.finalUrl && accessInterstitial(new URL(data.meta.finalUrl))) || accessPageTitle(data.meta?.title || "") || mercadoLoginText(data.result);
+        const wall = access ? { pattern: "access interstitial" } : detectLoginWall(data.result);
         if (wall) {
           console.log(JSON.stringify({ event: "login_wall_detected", link_id: job.link_id, job_id: job.id, adapter: "web", domain: new URL(url).hostname, pattern: wall.pattern, text_length: data.result.length }));
           throw new LinkFailure("login_wall", { technical: `Matched "${wall.pattern}" in ${data.result.length} characters` });
         }
-        return { markdown: data.result, source: "web" };
+        if (data.meta?.status && data.meta.status >= 400) throw new LinkFailure(statusReason(data.meta.status), { http_status: data.meta.status });
+        return { markdown: data.result, source: "web", display: { title: data.meta?.title || data.result.match(/^#\s+(.+)$/m)?.[1], image: data.result.match(/!\[[^\]]*\]\((https:\/\/[^\s)]+)\)/)?.[1] } };
       },
       signal,
     );

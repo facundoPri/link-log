@@ -23,7 +23,7 @@ export type Meter = {
   model?: string;
 };
 type UsageJob = { id: string; batch_id: string; link_id: string | null };
-const USAGE_COLUMNS = "id,batch_id,job_id,link_id,provider,service,operation,status,rate_snapshot,created_at";
+const USAGE_COLUMNS = "id,user_id,batch_id,job_id,link_id,provider,service,operation,status,rate_snapshot,created_at";
 const usageValues = (id: string, job: UsageJob, provider: string, service: string, operation: string) => [
   id, job.batch_id, job.id, job.link_id, provider, service, operation, "started",
   service === "image-ocr" ? JSON.stringify({ input_usd_per_million: GEMMA_USD_PER_M_INPUT, output_usd_per_million: GEMMA_USD_PER_M_OUTPUT }) : "{}",
@@ -31,8 +31,8 @@ const usageValues = (id: string, job: UsageJob, provider: string, service: strin
 ];
 /** The usage row of a call, inserted only when `guard` (SQL with its own params) holds. */
 export const guardedUsageInsert = (env: Env, id: string, job: UsageJob, provider: string, service: string, operation: string, guard: string, params: unknown[]) =>
-  env.DB.prepare(`INSERT INTO usage_events(${USAGE_COLUMNS}) SELECT ?,?,?,?,?,?,?,?,?,? WHERE ${guard}`)
-    .bind(...usageValues(id, job, provider, service, operation), ...params);
+  env.DB.prepare(`INSERT INTO usage_events(${USAGE_COLUMNS}) SELECT ?,user_id,?,?,?,?,?,?,?,?,? FROM batches WHERE id=? AND (${guard})`)
+    .bind(...usageValues(id, job, provider, service, operation), job.batch_id, ...params);
 /**
  * Settles a usage row. It never throws: the call's own outcome matters more than its metering, and a failed
  * write is logged (recovery marks a row left 'started' as interrupted).
@@ -76,8 +76,7 @@ export async function measured<T>(
   const id = crypto.randomUUID(),
     started = Date.now(),
     meter: Meter = {};
-  await env.DB.prepare(`INSERT INTO usage_events(${USAGE_COLUMNS}) VALUES(?,?,?,?,?,?,?,?,?,?)`)
-    .bind(...usageValues(id, job, provider, service, operation))
+  await guardedUsageInsert(env, id, job, provider, service, operation, "1", [])
     .run();
   let error: string | null = null;
   try {

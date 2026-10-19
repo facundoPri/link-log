@@ -92,11 +92,11 @@ export type Api = {
   jobs(url: string): Promise<any[]>;
 };
 
-function makeApi(base: string): Api {
+function makeApi(base: string, cookie: string): Api {
   const send = async (method: string, path: string, body?: unknown): Promise<any> => {
     // The Worker refuses a write without a JSON body (415), like the app's own client never sends.
     if (method !== "GET" && body === undefined) body = {};
-    const r = await fetch(`${base}/api${path}`, { method, headers: body === undefined ? {} : { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+    const r = await fetch(`${base}/api${path}`, { method, headers: { Cookie: cookie, Origin: base, ...(body === undefined ? {} : { "content-type": "application/json" }) }, body: body === undefined ? undefined : JSON.stringify(body) });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(`${method} ${path} → ${r.status}: ${JSON.stringify(data).slice(0, 200)}`);
     return data;
@@ -127,7 +127,7 @@ export async function launchBrowser(): Promise<Browser> {
 }
 
 /** Records one scenario. Never throws: the outcome is in the result (and the manifest). */
-export async function record(browser: Browser, ch: Chapter, sc: Scenario, ui: string): Promise<ScenarioResult> {
+export async function record(browser: Browser, ch: Chapter, sc: Scenario, ui: string, cookie: string): Promise<ScenarioResult> {
   const rawDir = resolve(OUT, "raw", sc.id);
   await rm(rawDir, { recursive: true, force: true });
   await mkdir(resolve(OUT, "clips"), { recursive: true });
@@ -136,7 +136,8 @@ export async function record(browser: Browser, ch: Chapter, sc: Scenario, ui: st
   const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 1, recordVideo: { dir: rawDir, size: VIEWPORT } });
   await context.addInitScript(overlayScript, BAR_HEIGHT);
   const page = await context.newPage();
-  const api = makeApi(ui);
+  await context.addCookies(cookie.split("; ").map(pair => { const at = pair.indexOf("="); return { name: pair.slice(0, at), value: pair.slice(at + 1), url: ui }; }));
+  const api = makeApi(ui, cookie);
   const assertions: Assertion[] = [];
   const steps: { at: number; caption: string; expected: string }[] = [];
   let state: Partial<OverlayState> = { id: sc.id, title: sc.title, n: 0, caption: "Opening Linklog", expected: sc.meta.expected ?? "", status: "running" };

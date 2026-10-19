@@ -9,53 +9,55 @@ import type {
   MediaItem,
 } from "../src/types";
 import { OCR_USAGE_COLUMNS } from "./usage";
-import { PREVIEW_FALLBACK_KEY } from "./preview-content";
+import { fixtureJevAllowed } from "./config";
+import { badRequest } from "./http/context";
+import { browserRunAvailable } from "./adapters/browser-run";
 export const json = (body: unknown, status = 200) =>
   Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
 export function capabilities(env: Env) {
   const provider = env.JEV_PROVIDER || "cloudflare";
   return {
     provider,
-    markdown: !!env.BROWSER,
+    markdown: browserRunAvailable(env),
     jev:
       provider === "typesafe"
         ? !!env.TYPESAFE_API_KEY
         : provider === "fixture"
-          ? env.ALLOW_FIXTURE_JEV === "1"
+          ? fixtureJevAllowed(env)
           : !!env.AI,
   };
 }
-export async function library(env: Env) {
-  const [links, tags, joins, evaluations, batches, lensRows, lensResults, usageRows, mediaRows, hiddenRows, settingRows] =
+export async function library(env: Env, userId: string) {
+  // Every query is scoped to the owner directly or through an owned link/batch.
+  const ownedLinks = "SELECT id FROM links WHERE user_id=?1";
+  const [links, tags, joins, evaluations, batches, lensRows, lensResults, usageRows, mediaRows, hiddenRows] =
     await Promise.all([
-    env.DB.prepare(
-      "SELECT l.*,(SELECT b.kind FROM jobs j JOIN batches b ON b.id=j.batch_id WHERE j.link_id=l.id AND j.status IN ('queued','running','waiting') ORDER BY j.status='waiting',j.created_at LIMIT 1) active_kind FROM links l ORDER BY l.created_at DESC",
-    ).all<
-      Omit<Link, "processing" | "previewing"> & { active_kind: string | null }
+    env.DB.prepare("SELECT l.*,EXISTS (SELECT 1 FROM jobs pj WHERE pj.link_id=l.id AND pj.status='done' AND pj.content_source='preview' AND (pj.batch_id IN (SELECT batch_id FROM tag_evaluations WHERE link_id=l.id) OR pj.batch_id IN (SELECT batch_id FROM lens_results WHERE link_id=l.id))) metadata_evaluated,(SELECT b.kind FROM jobs j JOIN batches b ON b.id=j.batch_id WHERE j.link_id=l.id AND j.status IN ('queued','running','waiting') ORDER BY j.status='waiting',j.created_at LIMIT 1) active_kind FROM links l WHERE user_id=?1 ORDER BY coalesce(last_saved_at,created_at) DESC,created_at DESC,id DESC").bind(userId).all<
+      Link & { metadata_started_at: string | null; user_id?: string; active_kind: string | null }
     >(),
     env.DB.prepare(
-      "SELECT * FROM tags ORDER BY name COLLATE NOCASE",
-    ).all<Tag>(),
-    env.DB.prepare("SELECT * FROM link_tags").all<{
+      "SELECT id,name,description,threshold,version FROM tags WHERE user_id=?1 ORDER BY name COLLATE NOCASE",
+    ).bind(userId).all<Tag>(),
+    env.DB.prepare(`SELECT * FROM link_tags WHERE link_id IN (${ownedLinks})`).bind(userId).all<{
       link_id: string;
       tag_id: string;
       origin: "manual" | "auto";
     }>(),
-    env.DB.prepare("SELECT * FROM tag_evaluations").all<
+    env.DB.prepare(`SELECT * FROM tag_evaluations WHERE link_id IN (${ownedLinks})`).bind(userId).all<
       Evaluation & { link_id: string }
     >(),
     env.DB.prepare(
-      "SELECT b.*,count(j.id) total,coalesce(sum(j.status='done'),0) done,coalesce(sum(j.status='failed' AND j.step IS NOT 'Cancelled'),0) failed,coalesce(sum(j.status='failed' AND j.step IS 'Cancelled'),0) cancelled,coalesce(sum(j.status IN ('queued','running','waiting')),0) active,coalesce(sum(j.status='waiting'),0) waiting FROM batches b LEFT JOIN jobs j ON j.batch_id=b.id GROUP BY b.id HAVING count(j.id)>0 ORDER BY b.created_at DESC LIMIT 30",
-    ).all<Batch>(),
-    env.DB.prepare("SELECT * FROM lenses ORDER BY name COLLATE NOCASE").all<
+      "SELECT b.id,b.kind,b.config,b.created_at,count(j.id) total,coalesce(sum(j.status='done'),0) done,coalesce(sum(j.status='failed' AND j.step IS NOT 'Cancelled'),0) failed,coalesce(sum(j.status='failed' AND j.step IS 'Cancelled'),0) cancelled,coalesce(sum(j.status IN ('queued','running','waiting')),0) active,coalesce(sum(j.status='waiting'),0) waiting FROM batches b LEFT JOIN jobs j ON j.batch_id=b.id WHERE b.user_id=?1 GROUP BY b.id HAVING count(j.id)>0 ORDER BY b.created_at DESC LIMIT 30",
+    ).bind(userId).all<Batch>(),
+    env.DB.prepare("SELECT id,name,type,question,options,threshold,version,created_at,scope FROM lenses WHERE user_id=?1 ORDER BY name COLLATE NOCASE").bind(userId).all<
       Omit<Lens, "options" | "levels"> & { options: string }
     >(),
-    env.DB.prepare("SELECT * FROM lens_results").all<
+    env.DB.prepare(`SELECT * FROM lens_results WHERE link_id IN (${ownedLinks})`).bind(userId).all<
       Omit<LensResult, "answer"> & { link_id: string; answer: string }
     >(),
     env.DB.prepare(
-      `SELECT batch_id,sum(input_tokens) input_tokens,sum(output_tokens) output_tokens,sum(browser_ms) browser_ms,max(model) model,sum(estimated_usd) usd,sum(estimated_usd IS NULL) unknown_cost_calls,${OCR_USAGE_COLUMNS} FROM usage_events WHERE status IN ('done','failed') GROUP BY batch_id`,
-    ).all<{
+      `SELECT batch_id,sum(input_tokens) input_tokens,sum(output_tokens) output_tokens,sum(browser_ms) browser_ms,max(model) model,sum(estimated_usd) usd,sum(estimated_usd IS NULL) unknown_cost_calls,${OCR_USAGE_COLUMNS} FROM usage_events WHERE user_id=?1 AND status IN ('done','failed') GROUP BY batch_id`,
+    ).bind(userId).all<{
       batch_id: string;
       input_tokens: number | null;
       output_tokens: number | null;
@@ -70,9 +72,8 @@ export async function library(env: Env) {
       ocr_usd: number | null;
       ocr_unknown_cost_calls: number;
     }>(),
-    env.DB.prepare("SELECT link_id,media_key,position,kind,url,preview_url,ocr_state,ocr_text,ocr_error,ocr_model FROM media_items ORDER BY position").all<MediaItem & {link_id: string}>(),
-    env.DB.prepare("SELECT link_id,url FROM hidden_related_links ORDER BY hidden_at").all<{link_id: string; url: string}>(),
-    env.DB.prepare("SELECT key,value FROM settings WHERE key=?").bind(PREVIEW_FALLBACK_KEY).all<{key: string; value: string}>(),
+    env.DB.prepare(`SELECT link_id,media_key,position,kind,url,preview_url,ocr_state,ocr_text,ocr_error,ocr_model FROM media_items WHERE link_id IN (${ownedLinks}) ORDER BY position`).bind(userId).all<MediaItem & {link_id: string}>(),
+    env.DB.prepare(`SELECT link_id,url FROM hidden_related_links WHERE link_id IN (${ownedLinks}) ORDER BY hidden_at`).bind(userId).all<{link_id: string; url: string}>(),
   ]);
   const hiddenByLink = new Map<string, string[]>();
   for (const row of hiddenRows.results)
@@ -142,18 +143,16 @@ export async function library(env: Env) {
     ]);
   }
   return {
-    links: links.results.map(({ active_kind, ...l }) => {
-      return {
-        ...l,
-        processing: !!active_kind,
-        previewing: active_kind === "preview" || (l.status === "pending" && active_kind === "extract"),
-        tags: membership.get(l.id) || [],
-        evaluations: scores.get(l.id) || [],
-        lens_results: lensByLink.get(l.id) || [],
-        media: mediaByLink.get(l.id) || [],
-        hidden_related_urls: hiddenByLink.get(l.id) || [],
-      };
-    }),
+    links: links.results.map(({ user_id: _owner, active_kind, ...l }) => ({
+      ...l,
+      processing: !!active_kind,
+      previewing: active_kind === "preview" || (l.status === "pending" && active_kind === "extract"),
+      tags: membership.get(l.id) || [],
+      evaluations: scores.get(l.id) || [],
+      lens_results: lensByLink.get(l.id) || [],
+      media: mediaByLink.get(l.id) || [],
+      hidden_related_urls: hiddenByLink.get(l.id) || [],
+    })),
     tags: tags.results,
     lenses,
     batches: batches.results.map((b) => ({
@@ -161,8 +160,17 @@ export async function library(env: Env) {
       usage: usageByBatch.get(b.id) ?? null,
     })),
     capabilities: capabilities(env),
-    settings: { preview_fallback: settingRows.results.some((r) => r.value === "1") },
   };
+}
+export type OwnedLink = Link & { user_id: string; content_details?: string | null };
+/** The only way handlers load a link by ID: a foreign or legacy (unassigned) ID reads as missing. */
+export function getOwnedLink(db: D1Database, userId: string, id: string) {
+  return db.prepare("SELECT * FROM links WHERE id=? AND user_id=?").bind(id, userId).first<OwnedLink>();
+}
+/** R2 prefix for new content. Legacy objects keep `links/<id>/`; reads always go through the owned row. */
+export const contentPrefix = (userId: string, linkId: string) => `users/${userId}/links/${linkId}/`;
+export function contentKeyBelongs(key: string, userId: string, linkId: string) {
+  return key.startsWith(contentPrefix(userId, linkId)) || key.startsWith(`links/${linkId}/`);
 }
 export function parseLensDefinition(
   _type: Lens["type"],
@@ -220,7 +228,7 @@ export function parseLensDefinition(
 }
 export function text(value: unknown, max = 1000) {
   if (typeof value !== "string" || value.trim().length > max)
-    throw new Error("Invalid or too-long text.");
+    throw badRequest("Invalid or too-long text.");
   return value.trim();
 }
 export function threshold(value: unknown) {
@@ -230,6 +238,6 @@ export function threshold(value: unknown) {
     value < 0 ||
     value > 1
   )
-    throw new Error("The threshold must be between 0 and 100%.");
+    throw badRequest("The threshold must be between 0 and 100%.");
   return value;
 }

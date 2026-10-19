@@ -15,7 +15,7 @@ const reextract = (s: S, id: string) => s.api("/batches", "POST", { kind: "extra
 const linkOf = async (s: S, id: string) => (await s.api("/library")).data.links.find((l: { id: string }) => l.id === id);
 
 test("A: a transient preview and content failure, retried automatically, never shows Needs attention", async () => {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   fakes.meta = [{ http: 503 }, { status: "ready" }];
   fakes.content = [{ throws: "Markdown: HTTP 503" }, { markdown: "# ok" }];
   const id = await save(s, "https://a.example/post");
@@ -30,7 +30,7 @@ test("A: a transient preview and content failure, retried automatically, never s
 });
 
 test("B: a final preview failure enters with its reason only once the job settles; Retry keeps it until the preview works", async () => {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   fakes.meta = { status: "failed" };
   const id = await save(s, "https://b.example/page");
   let during: unknown;
@@ -61,7 +61,7 @@ test("B: a final preview failure enters with its reason only once the job settle
 });
 
 test("C: a re-extract whose preview fails keeps the previous preview and stays out of Needs attention", async () => {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   const id = await save(s, "https://c.example/x");
   await s.runQueued();
   fakes.meta = { status: "failed" };
@@ -71,7 +71,7 @@ test("C: a re-extract whose preview fails keeps the previous preview and stays o
 });
 
 test("D: Retry of failed content keeps the link in Needs attention while it runs, re-runs only the content, and clears on success", async () => {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   fakes.content = { throws: "Markdown: HTTP 503" };
   const id = await save(s, "https://d.example/x");
   await s.runQueued();
@@ -93,7 +93,7 @@ test("D: Retry of failed content keeps the link in Needs attention while it runs
 });
 
 test("E: a failed re-extract with previous content stays out of Needs attention", async () => {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   const id = await save(s, "https://e.example/x");
   await s.runQueued();
   fakes.content = { throws: "Markdown: HTTP 503" };
@@ -103,7 +103,7 @@ test("E: a failed re-extract with previous content stays out of Needs attention"
 });
 
 test("F: cancelling a retry leaves Needs attention as it was; cancelling a fresh import adds nothing", async () => {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   fakes.content = { throws: "Markdown: HTTP 404" };
   const id = await save(s, "https://f.example/x");
   await s.runQueued();
@@ -124,7 +124,7 @@ test("F: cancelling a retry leaves Needs attention as it was; cancelling a fresh
 });
 
 test("G: a preview that keeps failing after its retries enters as unreachable; a later Retry preview that works clears it", async () => {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   fakes.meta = { throws: "DNS unavailable" };
   const id = await save(s, "https://g.example/x");
   await s.runQueued();
@@ -137,7 +137,7 @@ test("G: a preview that keeps failing after its retries enters as unreachable; a
 });
 
 test("H: an interrupted job never raises Needs attention, and an interrupted retry keeps it", async () => {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   const interrupted = async () => {
     const [msg] = s.sent.splice(0);
     (s.env as any).PROCESS_LINK = {
@@ -164,7 +164,7 @@ test("H: an interrupted job never raises Needs attention, and an interrupted ret
 });
 
 test("I: Retry is refused while a job is active (the guard stays) and offered again afterwards", async () => {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   fakes.content = { throws: "Markdown: HTTP 404" };
   const id = await save(s, "https://i.example/x");
   expect((await s.api(`/links/${id}/retry`, "POST", { step: "content" })).status).toBe(400);
@@ -176,7 +176,7 @@ test("I: Retry is refused while a job is active (the guard stays) and offered ag
 });
 
 test("Dismiss removes the link from Needs attention and keeps its data; a later final failure brings it back", async () => {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   fakes.meta = { status: "failed" };
   fakes.content = { throws: "Markdown: HTTP 404" };
   const id = await save(s, "https://dismiss.example/x");
@@ -192,7 +192,7 @@ test("Dismiss removes the link from Needs attention and keeps its data; a later 
 });
 
 test("when both steps failed, content comes first and the preview takes its place once content recovers", async () => {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   fakes.meta = { http: 404 };
   fakes.content = { throws: "Markdown: HTTP 404" };
   const id = await save(s, "https://both.example/x");
@@ -205,7 +205,7 @@ test("when both steps failed, content comes first and the preview takes its plac
 });
 
 test("pasting content resolves a content failure", async () => {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   fakes.content = { throws: "Markdown: HTTP 404" };
   const id = await save(s, "https://paste.example/x");
   await s.runQueued();
@@ -214,7 +214,7 @@ test("pasting content resolves a content failure", async () => {
 });
 
 test("reprocessing gives the same result: the same final failure leaves the same attention", async () => {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   fakes.content = { throws: "Markdown: HTTP 404" };
   const id = await save(s, "https://again.example/x");
   await s.runQueued();
@@ -250,7 +250,7 @@ for (const [label, pattern] of [
   ["the link's failure and attention write", /^UPDATE links SET content_state=.*attention_kind=/],
 ] as const)
   test(`a one-time D1 failure on ${label} is finished by the retried record-failure`, async () => {
-    const s = await setup();
+    const s = await setup({ placeholder: true });
     fakes.content = { throws: "Markdown: HTTP 404" };
     const id = await save(s, "https://replay.example/x");
     fakes.failSqlOnce = pattern;
@@ -263,7 +263,7 @@ for (const [label, pattern] of [
   });
 
 test("a job interrupted while running leaves the link alone when its own failure is recorded", async () => {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   fakes.content = { throws: "Markdown: HTTP 404" };
   const id = await save(s, "https://interrupted.example/x");
   fakes.onContent = async () => {
@@ -276,7 +276,7 @@ test("a job interrupted while running leaves the link alone when its own failure
 });
 
 test("a failed re-extract that keeps previous content never adds preview attention", async () => {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   // Manual content on a link whose preview never ran (cancelled import, then pasted).
   const imp = await s.api("/import", "POST", { urls: ["https://kept.example/x"] });
   const id = imp.data.links[0].id;
@@ -296,7 +296,7 @@ test("a failed re-extract that keeps previous content never adds preview attenti
 });
 
 test("a failed re-extract with previous content keeps an unresolved preview failure, keeps a dismissed one dismissed, and clears it when the preview works", async () => {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   fakes.meta = { status: "failed" };
   const id = await save(s, "https://dismissed.example/x");
   await s.runQueued();
@@ -333,7 +333,7 @@ const blockedPreviewWithContent = async (s: S, url: string) => {
 };
 
 test("a Dismiss that lands while a failed re-extract settles stays dismissed", async () => {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   const id = await blockedPreviewWithContent(s, "https://race.example/x");
   fakes.content = { throws: "Markdown: HTTP 404" };
   await reextract(s, id);
@@ -351,7 +351,7 @@ test("a Dismiss that lands while a failed re-extract settles stays dismissed", a
 });
 
 test("a Dismiss between reading and writing a settlement is never overwritten", async () => {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   const id = await blockedPreviewWithContent(s, "https://race2.example/x");
   let dismissed = false;
   fakes.onSql = async (sql, phase) => {
@@ -370,6 +370,7 @@ test("the content failure SQL settles exactly like nextAttention, on the live ro
   // Every input nextAttention reads is varied, so a change to either copy that the other misses fails here.
   const db = new Database(":memory:");
   for (const f of readdirSync("migrations").filter((f) => f.endsWith(".sql")).sort()) db.exec(await Bun.file(`migrations/${f}`).text());
+  db.exec("INSERT INTO user(id,name,email,emailVerified,createdAt,updatedAt) VALUES('owner','Owner','owner@example.test',1,'t','t')");
   let n = 0;
   for (const status of ["ready", "failed"] as const)
   for (const preview_reason of [null, "blocked"])
@@ -378,7 +379,7 @@ test("the content failure SQL settles exactly like nextAttention, on the live ro
       for (const previewOk of [true, false])
       for (const reason of ["not_found", null]) {
         const id = `l${n++}`;
-        db.query("INSERT INTO links(id,original_url,url,domain,title,description,status,content_key,preview_reason,attention_kind,attention_reason,attention_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")
+        db.query("INSERT INTO links(user_id,id,original_url,url,domain,title,description,status,content_key,preview_reason,attention_kind,attention_reason,attention_at,created_at) VALUES('owner',?,?,?,?,?,?,?,?,?,?,?,?,?)")
           .run(id, `https://${id}/`, `https://${id}/`, "x", "x", "", status, content_key, preview_reason, attention_kind, attention_reason, attention_kind ? "2026-01-01T00:00:00.000Z" : null, "2026-01-01T00:00:00.000Z");
         const set = contentFailureAttentionSql(reason, previewOk);
         db.query(`UPDATE links SET ${set.sql} WHERE id=?`).run(...(set.params as never[]), id);
@@ -398,17 +399,18 @@ type Fixture = { status: string; content: string; key?: string; source?: string;
   /** The content was saved during this job (by index), just after it started. */
   savedBy?: number };
 type FixtureJob = [status: string, step: string, preview?: string, reason?: string];
-async function upgrade(from: "0012" | "0014", rows: Record<string, [Fixture, FixtureJob[]]>) {
+async function upgrade(from: "0012" | "0020", rows: Record<string, [Fixture, FixtureJob[]]>) {
   const db = new Database(":memory:");
   const files = readdirSync("migrations").filter((f) => f.endsWith(".sql")).sort();
   const at = files.findIndex((f) => f.startsWith(from));
   for (const f of files.slice(0, at)) db.exec(await Bun.file(`migrations/${f}`).text());
   const legacy = from === "0012";
-  db.exec("INSERT INTO batches(id,kind,config,created_at) VALUES('b','extract','{}','2026-09-01T00:00:00.000Z')");
+  if (!legacy) db.exec("INSERT INTO user(id,name,email,emailVerified,createdAt,updatedAt) VALUES('owner','Owner','owner@example.test',1,'t','t');");
+  db.exec(`INSERT INTO batches(id,${legacy ? "" : "user_id,"}kind,config,created_at) VALUES('b',${legacy ? "" : "'owner',"}'extract','{}','2026-09-01T00:00:00.000Z')`);
   let t = 10;
   for (const [id, [l, jobs]] of Object.entries(rows)) {
-    db.query(`INSERT INTO links(id,original_url,url,domain,title,description,status,content_state,content_key,content_source,content_updated_at,content_error,metadata_started_at${legacy ? "" : ",preview_reason,content_reason"},created_at)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?${legacy ? "" : ",?,?"},?)`)
+    db.query(`INSERT INTO links(id,${legacy ? "" : "user_id,"}original_url,url,domain,title,description,status,content_state,content_key,content_source,content_updated_at,content_error,metadata_started_at${legacy ? "" : ",preview_reason,content_reason"},created_at)
+      VALUES(?,${legacy ? "" : "'owner',"}?,?,?,?,?,?,?,?,?,?,?,?${legacy ? "" : ",?,?"},?)`)
       .run(...([id, `https://${id}.example/`, `https://${id}.example/`, `${id}.example`, id, "", l.status, l.content, l.key ?? null, l.source ?? (l.key ? "web" : null),
         l.updated ?? null, l.error ?? null, l.retried ?? null, ...(legacy ? [] : [l.preview ?? null, l.reason ?? null]), "2026-09-01T00:00:00.000Z"] as never[]));
     for (const [i, [status, step, preview, reason]] of jobs.entries())
@@ -464,7 +466,7 @@ const histories = (legacy: boolean): Record<string, [Fixture, FixtureJob[]]> => 
 };
 
 test("migration 0014 on a library from this branch's 0013 schema: only settled failures need attention", async () => {
-  expect(await upgrade("0014", histories(false))).toEqual({
+  expect(await upgrade("0020", histories(false))).toEqual({
     interrupted: null, inProgress: null, keptOnce: null, keptTwice: null, cancelled: null, fresh: null, contentInterrupted: null,
     savedThenKeptOnce: null, savedThenKeptTwice: null, genuineThenSavedThenKept: "preview/blocked",
     genuineThenInterrupted: "preview/blocked", genuineThenKept: "preview/blocked", genuineRetrying: "preview/blocked",

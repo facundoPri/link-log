@@ -1,135 +1,9 @@
-// FAC-48 isolated repro: drives the real Worker fetch handler, LinkWorkflow and dispatch
-// against in-memory SQLite (all migrations), with network-facing modules mocked.
-// Not part of `bun test` (name does not match *.test.ts). Run explicitly:
-//   bun test ./planning/research/needs-attention.repro.ts
-// Nothing is deployed and no local D1/R2 state is read or written.
-import { Database } from "bun:sqlite";
-import { readdirSync } from "node:fs";
-import { expect, mock, setSystemTime, test, afterEach } from "bun:test";
-import { responseFailure } from "../../worker/failures";
-
-type Meta = { status: "ready" | "failed" } | { throws: string };
-let meta: Meta = { status: "ready" };
-let content: { markdown: string } | { throws: string } = { markdown: "# page" };
-
-mock.module("../../worker/metadata", () => ({
-  validateDestination: async () => {},
-  publicAddress: () => true,
-  extractMetadata: async (url: string) => {
-    if ("throws" in meta) throw new Error(meta.throws);
-    // Since FAC-48 S3 a non-OK or non-HTML answer throws a classified failure (here the 403 bot wall).
-    if (meta.status === "failed") throw responseFailure(new Response(null, { status: 403, headers: { "content-type": "text/html" } }))!;
-    const domain = new URL(url).hostname;
-    return { url, domain, title: `Title of ${domain}`, description: "", image: null, favicon: null, status: meta.status };
-  },
-}));
-mock.module("../../worker/adapters", () => ({
-  adapterFor: () => ({
-    name: "web",
-    extract: async () => {
-      if ("throws" in content) throw new Error(content.throws);
-      return { markdown: content.markdown, source: "web" };
-    },
-  }),
-}));
-
-const { default: worker, LinkWorkflow } = await import("../../worker/index");
-const { dispatch } = await import("../../worker/jobs");
-const { needsAttention } = await import("../../src/attention");
-
-function d1(db: Database) {
-  const stmt = (sql: string, params: unknown[] = []) => ({
-    bind: (...p: unknown[]) => stmt(sql, p),
-    all: async () => ({ results: db.query(sql).all(...(params as never[])) }),
-    first: async () => db.query(sql).get(...(params as never[])) ?? null,
-    run: async () => ({ meta: { changes: db.query(sql).run(...(params as never[])).changes } }),
-    _exec: () => db.query(sql).run(...(params as never[])),
-  });
-  return {
-    prepare: (sql: string) => stmt(sql),
-    batch: async (list: { _exec: () => { changes: number } }[]) =>
-      db.transaction(() => list.map((s) => ({ meta: { changes: s._exec().changes } })))(),
-  };
-}
-
-let clock = Date.parse("2026-09-29T12:00:00.000Z");
-const tick = (ms: number) => setSystemTime(new Date((clock += ms)));
-afterEach(() => setSystemTime());
-
-async function setup() {
-  tick(0);
-  meta = { status: "ready" };
-  content = { markdown: "# page" };
-  const db = new Database(":memory:");
-  db.exec("PRAGMA foreign_keys=ON");
-  for (const f of readdirSync("migrations").filter((f) => f.endsWith(".sql")).sort())
-    db.exec(await Bun.file(`migrations/${f}`).text());
-  const r2 = new Map<string, string>();
-  const sent: { body: { id: string } }[] = [];
-  const env = {
-    DB: d1(db),
-    CONTENT: {
-      put: async (k: string, v: string) => void r2.set(k, v),
-      get: async (k: string) => (r2.has(k) ? { text: async () => r2.get(k)! } : null),
-      list: async () => ({ objects: [], truncated: false }),
-      delete: async () => {},
-    },
-    JOBS: { sendBatch: async (m: { body: { id: string } }[]) => void sent.push(...m) },
-    JEV_PROVIDER: "fixture",
-  } as unknown as Env;
-  const api = async (path: string, method = "GET", body?: unknown) => {
-    const waits: Promise<unknown>[] = [];
-    const res = await worker.fetch(
-      new Request(`http://localhost/api${path}`, {
-        method,
-        headers: { "content-type": "application/json" },
-        body: method === "GET" ? undefined : JSON.stringify(body ?? {}),
-      }) as never,
-      env,
-      { waitUntil: (p: Promise<unknown>) => void waits.push(p) } as never,
-    );
-    await Promise.all(waits);
-    return { status: res.status, data: (await res.json()) as any };
-  };
-  // Minimal Workflow step: runs callbacks inline with ctx.attempt (1-based), honouring an explicit retry limit.
-  const step = {
-    do: async (name: string, a: unknown, b?: unknown) => {
-      const fn = (typeof a === "function" ? a : b) as (ctx: unknown) => Promise<unknown>;
-      const config = typeof a === "object" ? (a as any) : {};
-      const limit = config.retries?.limit ?? 0;
-      for (let i = 0; ; i++) {
-        try { return await fn({ step: { name, count: 1 }, attempt: i + 1, config }); }
-        catch (e) { if (i >= limit || (e as Error)?.name === "NonRetryableError") throw e; }
-      }
-    },
-    sleep: async () => {},
-  };
-  const runJob = async (jobId: string) => {
-    const wf = new (LinkWorkflow as any)();
-    wf.env = env;
-    try { await wf.run({ payload: { id: jobId } }, step); } catch { /* record-failure already ran */ }
-  };
-  const runQueued = async () => {
-    const ids = sent.splice(0).map((m) => m.body.id);
-    for (const id of ids) await runJob(id);
-  };
-  // What the UI sees after a reload: GET /api/library, then Sidebar/App predicate.
-  const view = async (id: string) => {
-    const lib = (await api("/library")).data;
-    const l = lib.links.find((x: any) => x.id === id);
-    const job = db.query("SELECT status,step,error FROM jobs WHERE link_id=? ORDER BY rowid DESC LIMIT 1").get(id) as any;
-    return {
-      status: l.status as string,
-      content: l.content_state as string,
-      processing: l.processing as boolean,
-      attention: needsAttention(l), // shared by Sidebar and App
-      err: l.content_error as string | null,
-      job: job ? `${job.status}/${job.step}` : null,
-    };
-  };
-  return { db, env, api, runQueued, runJob, view, sent };
-}
-
+// Authenticated FAC48 repro against the real router, workflow and all migrations.
+// Disposable SQLite and fake network providers; hosted behavior is verified separately.
+import { expect, test, afterEach } from "bun:test";
+import { setup as authenticatedSetup, fakes, tick, resetClock, dispatch } from "../../tests/worker-harness";
+const setup = () => authenticatedSetup({ placeholder: true });
+afterEach(resetClock);
 const log: string[] = [];
 const rec = (scenario: string, event: string, v: Awaited<ReturnType<Awaited<ReturnType<typeof setup>>["view"]>>) =>
   log.push(`${scenario} | ${event} | status=${v.status} processing=${v.processing} content=${v.content} attention=${v.attention} job=${v.job}${v.err ? ` err="${v.err}"` : ""}`);
@@ -152,7 +26,7 @@ test("A: queued >30s behind the browser pool stays processing, never Needs atten
 
 test("B: a fail-fast preview (403 bot wall, PDF) + successful content enters Needs attention once settled, with its reason; it stays until the preview works (FAC-48 S4)", async () => {
   const s = await setup();
-  meta = { status: "failed" }; // 403 bot wall: fails fast, no retries (FAC-48 S3)
+  fakes.meta = { status: "failed" }; // 403 bot wall: fails fast, no retries (FAC-48 S3)
   const id = (await s.api("/links", "POST", { url: "https://b.example/doc.pdf" })).data.id;
   await s.runQueued();
   const v1 = await s.view(id);
@@ -172,7 +46,7 @@ test("B: a fail-fast preview (403 bot wall, PDF) + successful content enters Nee
   const v3 = await s.view(id);
   rec("B", "manual paste of content", v3);
   expect(v3.attention).toBe(true);
-  meta = { status: "ready" };
+  fakes.meta = { status: "ready" };
   await s.api(`/links/${id}/retry`, "POST");
   await s.runQueued();
   const v4 = await s.view(id);
@@ -185,7 +59,7 @@ test("C: re-extract of a healthy link keeps its previous preview when only the p
   const id = (await s.api("/links", "POST", { url: "https://c.example/x" })).data.id;
   await s.runQueued();
   rec("C", "first extract OK", await s.view(id));
-  meta = { status: "failed" }; // the preview GET now fails (after retries, or fail-fast)
+  fakes.meta = { status: "failed" }; // the preview GET now fails (after retries, or fail-fast)
   await s.api("/batches", "POST", { kind: "extract", ids: [id] });
   await s.runQueued();
   const v = await s.view(id);
@@ -193,7 +67,7 @@ test("C: re-extract of a healthy link keeps its previous preview when only the p
   expect(v).toMatchObject({ status: "ready", content: "ready", attention: false, job: "done/Done" });
   // The failure is only recorded in Activity.
   expect((s.db.query("SELECT preview_reason FROM jobs WHERE link_id=? ORDER BY rowid DESC LIMIT 1").get(id) as any).preview_reason).toBe("blocked");
-  meta = { status: "ready" };
+  fakes.meta = { status: "ready" };
   await s.api("/batches", "POST", { kind: "extract", ids: [id] });
   await s.runQueued();
   const v2 = await s.view(id);
@@ -203,7 +77,7 @@ test("C: re-extract of a healthy link keeps its previous preview when only the p
 
 test("D: content failure without prior content stays in Needs attention through Retry (no flicker) until success (FAC-48 S4)", async () => {
   const s = await setup();
-  content = { throws: "Markdown: HTTP 503" };
+  fakes.content = { throws: "Markdown: HTTP 503" };
   const id = (await s.api("/links", "POST", { url: "https://d.example/x" })).data.id;
   await s.runQueued();
   const v1 = await s.view(id);
@@ -217,7 +91,7 @@ test("D: content failure without prior content stays in Needs attention through 
   const v2 = await s.view(id);
   rec("D", "retry fails again", v2);
   expect(v2.attention).toBe(true);
-  content = { markdown: "# ok" };
+  fakes.content = { markdown: "# ok" };
   await s.api(`/links/${id}/retry`, "POST", { step: "content" });
   await s.runQueued();
   const v3 = await s.view(id);
@@ -229,7 +103,7 @@ test("E: the same content failure on a link that already had content never shows
   const s = await setup();
   const id = (await s.api("/links", "POST", { url: "https://e.example/x" })).data.id;
   await s.runQueued();
-  content = { throws: "Markdown: HTTP 503" };
+  fakes.content = { throws: "Markdown: HTTP 503" };
   await s.api("/batches", "POST", { kind: "extract", ids: [id] });
   await s.runQueued();
   const v = await s.view(id);
@@ -258,14 +132,14 @@ test("F: cancelling a fresh import leaves links pending and neutral, never Needs
 
 test("G: preview keeps throwing → retried, then only the preview fails; content is still extracted (FAC-48 S3)", async () => {
   const s = await setup();
-  meta = { throws: "DNS unavailable" };
+  fakes.meta = { throws: "DNS unavailable" };
   const id = (await s.api("/links", "POST", { url: "https://g.example/x" })).data.id;
   await s.runQueued();
   const v1 = await s.view(id);
   rec("G", "resolve-and-preview throws (3 attempts)", v1);
   expect(v1).toMatchObject({ status: "failed", content: "ready", attention: true, err: null, job: "done/Done" });
   expect((s.db.query("SELECT preview_reason FROM links WHERE id=?").get(id) as any).preview_reason).toBe("unreachable");
-  meta = { status: "ready" };
+  fakes.meta = { status: "ready" };
   await s.api(`/links/${id}/retry`, "POST");
   await s.runQueued();
   const v2 = await s.view(id);

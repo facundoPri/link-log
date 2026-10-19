@@ -9,7 +9,15 @@ bun install
 bun run dev
 ```
 
-Open http://localhost:3000. The command builds the assets with `bun scripts/build.ts` (Bun.build + bun-plugin-tailwind), applies **local** migrations, starts Wrangler on 127.0.0.1:8787 and Bun with HMR on 127.0.0.1:3000. Data persists in `.wrangler/state`; nothing is stored in localStorage or sent to a remote database.
+Open http://127.0.0.1:3000 (localhost redirects there: cookies and the trusted origin are bound to one host). The command builds the assets with `bun scripts/build.ts` (Bun.build + bun-plugin-tailwind), applies **local** migrations, starts Wrangler on 127.0.0.1:8787 and Bun with HMR on 127.0.0.1:3000. Data persists in `.wrangler/state` (override with `LINKLOG_PERSIST_TO`; ports with `LINKLOG_UI_PORT`/`LINKLOG_API_PORT`); nothing is sent to a remote database.
+
+### Accounts and privacy
+
+Every library is private to its account (Better Auth on D1). Sign up with email + password (an emailed link verifies the address), or ask for a one-time magic link (5 minutes). "Forgot password" sends a reset link; resetting ends the other sessions. Locally, emails are **simulated**: Wrangler writes them under `.wrangler/tmp/email/` (they contain live sign-in links for that local state).
+
+- `bun run demo` → isolated A/B demo at http://127.0.0.1:3100 (API 8800, state `.wrangler/demo-state`, local-only bindings). It creates `demo-a@linklog.test` and `demo-b@linklog.test` through the real sign-up flow and offers them on the sign-in screen. Never available in a built/deployed bundle.
+- `bun run demo:connected` → the same local accounts and storage, with real Cloudflare Browser Run/AI bindings. Requires `wrangler login` and may incur cloud usage charges. Use this to test automatic page extraction: `quickAction` is not supported by Wrangler's local Browser simulator. Stop the other demo first; keep the same `LINKLOG_PERSIST_TO` to preserve its data. Email remains locally simulated in both modes; real delivery requires the hosted preview.
+- Data created before accounts existed stays in D1/R2 but belongs to nobody and is invisible until you assign it with the local tool `bun run legacy:adjudicate` (inventory → backup → assign to a verified user). See `planning/research/auth-implementation-report.md`.
 
 - **Add link** button or `⌘/Ctrl K`: one URL or a list, with optional tags.
 - Paste a URL or a list outside of a field, or drag a link from the browser onto the page: saves directly.
@@ -44,7 +52,7 @@ lenses show "No access". With it, row previews (description and image) are read 
 every accessible tab, and those images load from each site's own servers.
 
 Lens results live in the extension's session storage: they survive closing Linklog and the
-service worker sleeping, but not a Chrome restart or reloading the extension. Evaluating a tab
+service worker sleeping, but not a Chrome restart or reloading the extension. They are scoped to the signed-in account's library id, and signing out asks the extension to drop that account's results. Evaluating a tab
 never saves it; **Save** adds the tabs' URLs exactly like adding links in All links (the server
 fetches metadata and content, then autotags).
 Details: [plan](docs/browser-feature-plan.md) · [implementation](docs/browser-implementation-handoff.md) ·
@@ -59,13 +67,17 @@ The aliases `youtu.be`, `www.youtube.com`, `m.youtube.com` and `music.youtube.co
 
 The preview is retried twice with exponential backoff when the site is slow, unreachable, rate limited or answers 5xx; a block (401/403 or a bot challenge), 404/410 or a non-HTML file (like a PDF) fails at once. A failed preview keeps the link, shows a plain reason and allows a retry; on a re-extract, a preview that worked before is kept and the failure is only listed in Activity. A link whose preview has not finished shows as processing while it has a queued or running job; if the Worker restarts mid-extraction, the cron recovery below resends the job. A link left without a preview and without a job (cancelled batch, interrupted extraction) stays neutral, never in Needs attention, and offers "Fetch preview", which runs as a queued job like any other.
 
-Needs attention is stored on the link (`attention_kind` = `preview` or `content`, with its reason) and set only when a job settles with a step that failed for good, after its retries. It is never set while a link is queued, running or retrying, nor by a cancelled or interrupted job, nor when a failed re-extract still shows the previous content or preview (that failure is only listed in Activity). Retry runs only the failed step: the preview alone, or the content alone from the URL the preview resolved. The link stays in the list while the retry runs and leaves it only when that step succeeds (pasting content also resolves a content failure). Dismiss removes it from the list without changing anything else; a later final failure brings it back. When both steps failed, the content failure is shown first. When the content fails for good but the preview worked, the title and description can be used as the content instead (`content_source='preview'`, partial): automatically at that final failure with the Settings option "If the content can't be extracted, use the preview for Jev" (off by default, stored in `settings`), or on demand with "Use preview" next to Dismiss. Jev then reads only that text; the "Content extracted from preview" label is only shown in the inspector. Such a link is not in Needs attention, Activity still lists the original failure, and "Retry getting content" replaces the preview text when an extraction succeeds. It never applies while a job is queued or running, nor when the preview also failed. Remote images have a fallback; their availability depends on the site. There is no image archive or oEmbed. R2 stores the Markdown and transcripts.
+Needs attention is stored on the link (`attention_kind` = `preview` or `content`, with its reason) and set only when a job settles with a step that failed for good, after its retries. It is never set while a link is queued, running or retrying, nor by a cancelled or interrupted job, nor when a failed re-extract still shows the previous content or preview (that failure is only listed in Activity). Retry runs only the failed step: the preview alone, or the content alone from the URL the preview resolved. The link stays in the list while the retry runs and leaves it only when that step succeeds (pasting content also resolves a content failure). Dismiss removes it from the list without changing anything else; a later final failure brings it back. When both steps failed, the content failure is shown first. When content definitively cannot be obtained, genuine metadata is used automatically (`content_source='preview'`, partial). There is no preference switch. A real title or description is required: domain/URL placeholders, generic adapter labels and images alone are insufficient. Existing valid content wins, including after failed re-extraction. The row icon and Inspector distinguish metadata available for evaluation from metadata actually used by an existing evaluation; UI labels are never added to Jev's input. Explicit Use preview can recover a failed fallback storage write. A later successful extraction replaces fallback content without silently rerunning Jev.
+
+List fields prefer fetched metadata. Extraction fills only missing fields from an identifiable heading, social caption or usable image; descriptions remain empty when unavailable. No extra LLM requests generate display fields. Failed or partial metadata refreshes preserve good existing values, including YouTube oEmbed previews. Confirmed NXDOMAIN fails fast; empty DNS answers, timeouts and resolver failures use bounded retries. Private destinations and unsupported ports remain fail-fast. R2 stores owner-scoped Markdown and transcripts.
+
+FAC-48 migrations start at `0018`, after main's shipped `0012`–`0017`. Fresh databases and upgrades from main are tested. Disposable pre-auth PR8 databases must be recreated before deploying this ordered series; never apply the renamed series over an old PR8 migration ledger or reset production. The PR8 preview was explicitly recreated for this integration. See `planning/qa/fac-48-test-plan.md` for current validation and historical recording limits.
 
 ## Cloudflare: current boundary
 
-The API already runs on the Workers runtime and uses the real D1 binding emulated locally. **It is not deployed and not connected to a remote database.** Bun is used for development/build; it is not the Workers production runtime.
+The API runs on the Workers runtime (Hono for HTTP, Better Auth for sessions) and uses the real D1 binding emulated locally. **It is not deployed and not connected to a remote database.** Bun is used for development/build; it is not the Workers production runtime.
 
-`wrangler.jsonc` contains an explicitly local ID. The API rejects remote hosts while there is no authentication. For the next stage: decide personal vs multi-user, add Cloudflare Access or verified sessions, provision remote D1, replace that ID, apply remote migrations and deploy the assets + Worker. Do not remove the host guard without implementing access control. Remote exposure also calls for hardening egress/DNS against rebinding, limiting abuse and paginating the library.
+Configuration fails closed: a deployed Worker defaults to `APP_ENV=production` and answers 503 until `BETTER_AUTH_URL` (public HTTPS origin), the `BETTER_AUTH_SECRET` secret, `EMAIL_FROM` and the `EMAIL` (Cloudflare Email Service) binding are valid; requests for any other host get 403. `wrangler.jsonc` still contains an explicitly local D1 ID. Before a deployment: provision D1/R2, the domain and Email Service, set the secrets, apply remote migrations and verify delivery — see the runbook in `planning/research/auth-implementation-report.md`. Remote exposure also calls for hardening egress/DNS against rebinding and paginating the library.
 
 Documentation consulted: [Bun React](https://bun.sh/guides/ecosystem/react), [Workers Static Assets](https://developers.cloudflare.com/workers/static-assets/), [D1 prepared statements](https://developers.cloudflare.com/d1/worker-api/prepared-statements/).
 
@@ -74,8 +86,11 @@ Documentation consulted: [Bun React](https://bun.sh/guides/ecosystem/react), [Wo
 ```sh
 bun run typecheck
 bun test
-# With dev running: integration against local D1; cleans up only its own records.
-bun scripts/check-api.ts
+# Real local runtime (workerd + D1/R2/Queue/Workflow) behind the proxy: sign-up, verification,
+# magic link, reset, logout, two-account isolation incl. Browser. Throwaway state, ports 3197/8897.
+bun run test:e2e
+# With dev running: integration against local D1 as a local account; cleans up only its own records.
+LINKLOG_CHECK_EMAIL=... LINKLOG_CHECK_PASSWORD=... bun scripts/check-api.ts
 # Build and run without HMR on the Workers runtime:
 bun run preview
 ```

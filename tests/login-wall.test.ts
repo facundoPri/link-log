@@ -80,18 +80,18 @@ for (const [name, text] of SHORT_LEGIT)
   });
 
 for (const [name, pattern, text] of FIXTURES)
-  test(`${name}: discarded without retry; with no content the link needs attention with login_wall and keeps its preview`, async () => {
+  test(`${name}: discarded without retry; uses genuine metadata after final login_wall failure, without storing wall text`, async () => {
     const s = await setup();
     fakes.browser = markdown(text);
     const id = await save(s, PUBLIC_URL);
     await s.runQueued();
     expect(fakes.calls.browser).toBe(1);
-    expect(s.r2.size).toBe(0);
+    expect([...s.r2.values()]).toEqual(["Title of 93.184.216.34"]);
     expect(await s.view(id)).toMatchObject({
-      status: "ready", content: "failed", attention: true, attention_kind: "content", attention_reason: "login_wall",
+      status: "ready", content: "partial", attention: false, attention_kind: null, attention_reason: null,
       content_reason: "login_wall", err: FAILURE_MESSAGES.login_wall,
     });
-    expect(linkRow(s, id)).toMatchObject({ title: "Title of 93.184.216.34", content_key: null });
+    expect(linkRow(s, id)).toMatchObject({ title: "Title of 93.184.216.34", content_source: "preview", content_key: expect.any(String) });
     expect(lastJob(s, id)).toMatchObject({ status: "failed", reason: "login_wall", error: FAILURE_MESSAGES.login_wall });
     const detected = events.filter((e) => e.event === "login_wall_detected");
     expect(detected).toEqual([{ event: "login_wall_detected", link_id: id, job_id: expect.any(String), adapter: "web", domain: "93.184.216.34", pattern, text_length: text.length }]);
@@ -128,9 +128,8 @@ test("a long article that mentions sign in once is saved as content", async () =
   expect(events.filter((e) => e.event === "login_wall_detected")).toEqual([]);
 });
 
-test("with the preview fallback on, a login wall with no content gets the preview as content", async () => {
+test("automatic fallback: a login wall with no content gets the preview as content", async () => {
   const s = await setup();
-  await s.api("/settings", "PUT", { preview_fallback: true });
   fakes.meta = { status: "ready", description: "What the page is about." };
   fakes.browser = markdown(FIXTURES[4]![2]);
   const id = await save(s, PUBLIC_URL);

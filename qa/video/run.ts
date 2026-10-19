@@ -23,12 +23,10 @@ async function loadChapters(): Promise<Chapter[]> {
   return Promise.all(files.map(async (f) => (await import(resolve(dir, f))).default as Chapter));
 }
 
-/** Empties the library between scenarios so each clip starts clean: resets settings, cancels leftovers, deletes every link. */
+/** Empties the library between scenarios so each clip starts clean: cancels leftovers, deletes every link. */
 async function resetLibrary(env: QaEnv) {
   const call = (method: string, path: string, body?: unknown) =>
-    fetch(`${env.ui}/api${path}`, { method, headers: body === undefined ? {} : { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) }).then((r) => r.json() as Promise<any>);
-  // Settings are library-wide and survive link deletion: put them back to the product default (FAC-56 fallback off).
-  await call("PUT", "/settings", { preview_fallback: false }).catch(() => {});
+    fetch(`${env.ui}/api${path}`, { method, headers: { Cookie: env.cookie, Origin: env.ui, ...(body === undefined ? {} : { "content-type": "application/json" }) }, body: body === undefined ? undefined : JSON.stringify(body) }).then((r) => r.json() as Promise<any>);
   for (let round = 0; round < 60; round++) {
     const lib = await call("GET", "/library");
     if (!lib.links.length) return;
@@ -50,7 +48,9 @@ if (args.includes("--list")) {
   }
   process.exit(0);
 }
-const wantChapters = opt("--chapter"), wantScenarios = opt("--scenario");
+const wantScenarios = opt("--scenario");
+// Older chapters retain the pre-auth product contract for historical comparison only.
+const wantChapters = opt("--chapter") ?? (wantScenarios ? undefined : ["integration"]);
 const selected = chapters
   .filter((c) => (wantChapters ? wantChapters.includes(c.id) : !c.optional))
   .map((c) => ({ ...c, scenarios: c.scenarios.filter((s) => !wantScenarios || wantScenarios.includes(s.id)) }))
@@ -81,7 +81,7 @@ for (const group of groups.values()) {
         if (!sc.meta.keepState) await resetLibrary(env);
         console.log(`  ▶ ${sc.id} ${sc.title}`);
         // The full chapter, not the --scenario subset: the manifest keeps every scenario of the chapter.
-        const r = await record(browser, chapters.find((c) => c.id === ch.id)!, sc, env.ui);
+        const r = await record(browser, chapters.find((c) => c.id === ch.id)!, sc, env.ui, env.cookie);
         results.push(r);
         console.log(`    ${r.status === "passed" ? "✓" : "✗"} ${r.status} — ${r.assertions.filter((a) => a.ok).length}/${r.assertions.length} checks${r.error ? ` — ${r.error}` : ""}`);
       }
@@ -95,5 +95,5 @@ if (!args.includes("--no-compose")) {
   await compose(selected.map((c) => c.id));
 }
 const failed = results.filter((r) => r.status === "failed");
-console.log(`\n${results.length - failed.length}/${results.length} scenarios passed. Manifest: qa/out/manifest.json`);
+console.log(`\n${results.length - failed.length}/${results.length} scenarios passed. Manifest: ${process.env.QA_OUT || "qa/out"}/manifest.json`);
 process.exit(failed.length ? 1 : 0);

@@ -1,5 +1,5 @@
 // FAC-56: when the content fails for good and the preview worked, the title and description can stand in
-// for the content: automatically with the Settings option, or on demand with the per-link action.
+// for the content automatically, or explicitly after a failed fallback storage operation.
 import { afterEach, expect, spyOn, test } from "bun:test";
 import { dispatch, fakes, resetClock, setup, tick } from "./worker-harness";
 
@@ -8,7 +8,6 @@ afterEach(resetClock);
 type S = Awaited<ReturnType<typeof setup>>;
 const save = async (s: S, url: string) => (await s.api("/links", "POST", { url })).data.id as string;
 const linkOf = async (s: S, id: string) => (await s.api("/library")).data.links.find((l: { id: string }) => l.id === id);
-const setFallback = (s: S, on: boolean) => s.api("/settings", "PUT", { preview_fallback: on });
 const contentOf = async (s: S, id: string) => (await s.api(`/links/${id}/content`)).data.markdown as string;
 const lastJob = (s: S, id: string) =>
   s.db.query("SELECT status,step,reason,error FROM jobs WHERE link_id=? ORDER BY rowid DESC LIMIT 1").get(id) as Record<string, string>;
@@ -39,10 +38,10 @@ async function autotag(s: S, id: string) {
   return sent;
 }
 
-test("setting on: a final content failure with a preview gets the preview as content, is auto-taggable and not in Needs attention", async () => {
+test("automatic: a final content failure with a preview gets the preview as content, is auto-taggable and not in Needs attention", async () => {
   const s = await setup();
-  expect((await s.api("/library")).data.settings).toEqual({ preview_fallback: false });
-  expect((await setFallback(s, true)).data.settings).toEqual({ preview_fallback: true });
+  expect((await s.api("/library")).data.settings).toBeUndefined();
+  expect((await s.api("/settings", "PUT", { preview_fallback: false })).status).toBe(404);
   fakes.meta = { status: "ready", description: "What the page is about." };
   fakes.content = { throws: "Markdown: HTTP 404" };
   const id = await save(s, "https://fb.example/a");
@@ -61,9 +60,8 @@ test("setting on: a final content failure with a preview gets the preview as con
   expect(s.db.query("SELECT count(*) n FROM tag_evaluations WHERE link_id=?").get(id)).toMatchObject({ n: 1 });
 });
 
-test("setting on: never applied while retrying; a transient failure that recovers keeps the real content", async () => {
+test("automatic: never applied while retrying; a transient failure that recovers keeps the real content", async () => {
   const s = await setup();
-  await setFallback(s, true);
   fakes.content = [{ throws: "Markdown: HTTP 503" }, { markdown: "# real" }];
   const id = await save(s, "https://fb.example/transient");
   const during: unknown[] = [];
@@ -75,9 +73,8 @@ test("setting on: never applied while retrying; a transient failure that recover
   expect(await contentOf(s, id)).toBe("# real");
 });
 
-test("setting on: when the preview also failed there is nothing to use and the link enters Needs attention", async () => {
+test("automatic: when the preview also failed there is nothing to use and the link enters Needs attention", async () => {
   const s = await setup();
-  await setFallback(s, true);
   fakes.meta = { status: "failed" };
   fakes.content = { throws: "Markdown: HTTP 404" };
   const id = await save(s, "https://fb.example/both");
@@ -87,9 +84,8 @@ test("setting on: when the preview also failed there is nothing to use and the l
   expect((await s.api(`/links/${id}/use-preview`, "POST")).data.error).toBe("There is no preview to use.");
 });
 
-test("setting on: a failed re-extract with previous content keeps that content, not the preview", async () => {
+test("automatic: a failed re-extract with previous content keeps that content, not the preview", async () => {
   const s = await setup();
-  await setFallback(s, true);
   const id = await save(s, "https://fb.example/kept");
   await s.runQueued();
   fakes.content = { throws: "Markdown: HTTP 404" };
@@ -99,11 +95,12 @@ test("setting on: a failed re-extract with previous content keeps that content, 
   expect(await contentOf(s, id)).toBe("# page");
 });
 
-test("setting off: the content failure enters Needs attention, and the per-link action does the same on demand", async () => {
+test("if storing the automatic fallback fails, explicit recovery can save it later", async () => {
   const s = await setup();
   fakes.meta = { status: "ready", description: "Summary." };
   fakes.content = { throws: "Markdown: HTTP 404" };
   const id = await save(s, "https://fb.example/manual");
+  failingPuts(s, 3); // automatic fallback exhausted storage retries
   await s.runQueued();
   expect(await fallbackView(s, id)).toEqual({ source: null, content: "failed", attention: "content", reason: "not_found", has_key: false });
   expect(lastJob(s, id).step).toBe("Needs attention");
@@ -111,6 +108,7 @@ test("setting off: the content failure enters Needs attention, and the per-link 
   // Never while a job is queued or running.
   await s.api(`/links/${id}/retry`, "POST", { step: "content" });
   expect((await s.api(`/links/${id}/use-preview`, "POST")).data.error).toBe("Wait for the running job to finish.");
+  failingPuts(s, 3);
   await s.runQueued();
 
   const used = await s.api(`/links/${id}/use-preview`, "POST");
@@ -126,7 +124,6 @@ test("setting off: the content failure enters Needs attention, and the per-link 
 
 test("Retry getting content replaces the preview text on success; a failed retry keeps it without Needs attention", async () => {
   const s = await setup();
-  await setFallback(s, true);
   fakes.content = { throws: "Markdown: HTTP 404" };
   const id = await save(s, "https://fb.example/retry");
   await s.runQueued();
@@ -154,9 +151,8 @@ test("Retry getting content replaces the preview text on success; a failed retry
   expect(await contentOf(s, id)).toBe("# the real page");
 });
 
-test("turning the setting off while the failure settles applies nothing: the check and the write are one transaction", async () => {
+test("changing metadata while failure settles refuses stale fallback text atomically", async () => {
   const s = await setup();
-  await setFallback(s, true);
   fakes.content = { throws: "Markdown: HTTP 404" };
   const id = await save(s, "https://fb.example/race");
   let raced = false;
@@ -164,7 +160,7 @@ test("turning the setting off while the failure settles applies nothing: the che
     if (raced || phase !== "write" || !sql.includes("content_source='preview'")) return;
     raced = true;
     fakes.onSql = undefined;
-    await setFallback(s, false);
+    s.db.query("UPDATE links SET title='New title' WHERE id=?").run(id);
   };
   await s.runQueued();
   expect(raced).toBe(true);
@@ -176,7 +172,6 @@ test("turning the setting off while the failure settles applies nothing: the che
 
 test("a repeated record-failure after a D1 fault applies the preview exactly once", async () => {
   const s = await setup();
-  await setFallback(s, true);
   fakes.content = { throws: "Markdown: HTTP 404" };
   const id = await save(s, "https://fb.example/replay");
   fakes.failSqlOnce = /UPDATE jobs SET status='failed'/;
@@ -191,7 +186,6 @@ test("a repeated record-failure after a D1 fault applies the preview exactly onc
 
 test("a cancelled or interrupted job never applies the preview", async () => {
   const s = await setup();
-  await setFallback(s, true);
   const imp = await s.api("/import", "POST", { urls: ["https://fb.example/cancel"] });
   const id = imp.data.links[0].id;
   s.sent.splice(0);
@@ -201,7 +195,6 @@ test("a cancelled or interrupted job never applies the preview", async () => {
 
 test("pasting text over the preview text makes it ordinary manual content", async () => {
   const s = await setup();
-  await setFallback(s, true);
   fakes.content = { throws: "Markdown: HTTP 404" };
   const id = await save(s, "https://fb.example/paste");
   await s.runQueued();
@@ -213,6 +206,7 @@ test("the per-link action loses to a job enqueued between its check and its writ
   const s = await setup();
   fakes.content = { throws: "Markdown: HTTP 404" };
   const id = await save(s, "https://fb.example/action-race");
+  failingPuts(s, 3); // automatic fallback exhausted storage retries
   await s.runQueued();
   fakes.onSql = async (sql, phase) => {
     if (phase !== "write" || !sql.includes("content_source='preview'")) return;
@@ -238,7 +232,6 @@ const failingPuts = (s: S, failures: number) => {
 
 test("a fallback write that fails once is retried and the preview is used", async () => {
   const s = await setup();
-  await setFallback(s, true);
   fakes.content = { throws: "Markdown: HTTP 404" };
   const id = await save(s, "https://fb.example/r2-once");
   const calls = failingPuts(s, 1);
@@ -251,7 +244,6 @@ test("a fallback write that fails once is retried and the preview is used", asyn
 
 test("when the fallback can't be stored, the original content failure still settles atomically", async () => {
   const s = await setup();
-  await setFallback(s, true);
   fakes.content = { throws: "Markdown: HTTP 404" };
   const id = await save(s, "https://fb.example/r2-down");
   const calls = failingPuts(s, Infinity);
@@ -302,12 +294,14 @@ test("Use preview needs a final content failure on record: refused for never-fai
   // Failed for good: allowed.
   fakes.content = { throws: "Markdown: HTTP 404" };
   const failed = await save(s, "https://fb.example/failed");
+  failingPuts(s, 3); // automatic fallback exhausted storage retries
   await s.runQueued();
   expect((await s.api(`/links/${failed}/use-preview`, "POST")).status).toBe(200);
   expect(await fallbackView(s, failed)).toMatchObject({ source: "preview", attention: null });
 
   // Failed and dismissed: Dismiss keeps the content failure, so it stays eligible.
   const dismissed = await save(s, "https://fb.example/dismissed");
+  failingPuts(s, 3); // automatic fallback exhausted storage retries
   await s.runQueued();
   await s.api(`/links/${dismissed}/dismiss`, "POST");
   expect(await fallbackView(s, dismissed)).toMatchObject({ content: "failed", attention: null });
@@ -319,6 +313,7 @@ test("Use preview re-checks the content failure in its write", async () => {
   const s = await setup();
   fakes.content = { throws: "Markdown: HTTP 404" };
   const id = await save(s, "https://fb.example/eligibility-race");
+  failingPuts(s, 3); // automatic fallback exhausted storage retries
   await s.runQueued();
   fakes.onSql = async (sql, phase) => {
     if (phase !== "write" || !sql.includes("content_source='preview'")) return;

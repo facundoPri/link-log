@@ -59,6 +59,9 @@ export function startMarkedApp() {
   });
 }
 
+/** The run's signed-in account (real sign-up + emailed verification through the local Worker). */
+let session: { name: string; value: string } | null = null;
+
 export async function startApi() {
   await rm(resolve(OUT, "state"), { recursive: true, force: true });
   await mkdir(OUT, { recursive: true });
@@ -76,6 +79,8 @@ export async function startApi() {
       consumers: [{ queue: "linklog-jobs", max_batch_size: 10, max_batch_timeout: 1, max_retries: 3, max_concurrency: 10 }],
     },
     workflows: [{ binding: "PROCESS_LINK", name: "linklog-process-link", class_name: "LinkWorkflow" }],
+    // Auth email is simulated locally (files under .wrangler/tmp/email); required by the config check.
+    send_email: [{ name: "EMAIL" }],
     vars: { JEV_PROVIDER: "fixture", ALLOW_FIXTURE_JEV: "1" },
   };
   await writeFile(resolve(OUT, "wrangler.jsonc"), JSON.stringify(config, null, 2));
@@ -95,12 +100,32 @@ export async function startApi() {
   });
   for (let i = 0; i < 300; i++) {
     try {
-      if ((await fetch(`${UI}/api/library`)).ok) return proc;
-    } catch {}
+      // The library is private: 401 means the stack is up with a valid auth config.
+      if ((await fetch(`${UI}/api/library`)).status === 401) {
+        process.env.LINKLOG_MAIL_DIR = resolve(OUT, ".wrangler/tmp/email");
+        const { ensureFixture } = await import("../../scripts/seed-dev-users");
+        const { cookie } = await ensureFixture(`http://127.0.0.1:${API_PORT}`, UI, {
+          label: "Browser test",
+          email: "browser-test@linklog.test",
+          password: "browser-test-password",
+        });
+        const pair = cookie.split("; ").find((c) => c.startsWith("linklog.session_token="))!;
+        session = { name: pair.slice(0, pair.indexOf("=")), value: pair.slice(pair.indexOf("=") + 1) };
+        return proc;
+      }
+    } catch (error) {
+      if (error instanceof Error && /Sign-|Verification|email for/.test(error.message)) throw error;
+    }
     if (proc.exitCode !== null) throw new Error(`dev exited; see ${OUT}/dev.err.log`);
     await Bun.sleep(200);
   }
   throw new Error("API did not start");
+}
+
+/** A second real account (sign-up + emailed verification), for account-switch checks. */
+export async function createAccount(email: string, password: string) {
+  const { ensureFixture } = await import("../../scripts/seed-dev-users");
+  return ensureFixture(`http://127.0.0.1:${API_PORT}`, UI, { label: email, email, password });
 }
 
 export async function buildAll() {
@@ -123,6 +148,8 @@ export async function launch(name: string, extension = true): Promise<{ context:
     viewport: { width: 1280, height: 820 },
     args: extension ? [`--disable-extensions-except=${EXTENSION}`, `--load-extension=${EXTENSION}`] : [],
   });
+  if (session)
+    await context.addCookies([{ ...session, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax", secure: false, expires: -1 }]);
   let sw: Worker | null = null;
   if (extension) {
     sw = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker", { timeout: 15000 }));
@@ -132,7 +159,15 @@ export async function launch(name: string, extension = true): Promise<{ context:
 }
 
 export async function api<T = any>(path: string, method = "GET", body?: unknown): Promise<T> {
-  const r = await fetch(API + path, { method, headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+  const r = await fetch(API + path, {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+      ...(session ? { Cookie: `${session.name}=${session.value}` } : {}),
+      ...(method !== "GET" ? { Origin: UI } : {}),
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
   return (await r.json()) as T;
 }
 

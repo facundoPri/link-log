@@ -1,3 +1,5 @@
+> Current integration: run `--chapter integration` with a fresh `QA_OUT` directory. The harness now creates verified local A/B accounts and authenticates API/browser requests. Earlier chapters document the historical pre-auth contract (including the removed Settings switch); their old pass counts do not apply to the integration.
+
 # QA video harness
 
 Records QA scenarios against the real Linklog UI and Worker. Each scenario becomes a narrated clip: an animated cursor, a caption bar with the scenario ID, the current step and its expected result, and a chip for every check. The clips are composed into MP4s with title cards. The run is deterministic and makes no paid calls: every external edge (DNS, preview fetches, Browser Rendering, Jev) is answered by a fixture.
@@ -25,7 +27,7 @@ Requirements: `bun`, `ffmpeg` and `ffprobe` on PATH (no `drawtext` filter needed
 bun qa/video/run.ts --list                    # chapters and scenarios
 bun qa/video/run.ts --scenario P2             # one scenario (comma-separate several), then compose
 bun qa/video/run.ts --chapter pilot           # one chapter, then compose
-bun qa/video/run.ts                           # everything
+bun qa/video/run.ts                           # current authenticated integration chapter
 bun qa/video/run.ts --chapter pilot --no-compose
 bun qa/video/compose.ts                       # compose from the manifest only (no recording)
 HEADED=1 bun qa/video/run.ts --scenario P1    # watch it run

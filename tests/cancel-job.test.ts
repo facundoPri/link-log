@@ -12,7 +12,7 @@ afterEach(() => void (globalThis.fetch = realFetch));
 
 type S = Awaited<ReturnType<typeof setup>>;
 async function start() {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   Object.assign(s.env as any, { JEV_PROVIDER: "fixture", ALLOW_FIXTURE_JEV: "1" });
   await s.api("/tags", "POST", { name: "topic" });
   return s;
@@ -161,7 +161,6 @@ test("queued and waiting jobs are cancelled without touching the workflow; the n
 
 test("a cancelled job's late settlement changes nothing: a failure sets no attention and no preview fallback", async () => {
   const s = await start();
-  await s.api("/settings", "PUT", { preview_fallback: true });
   s.workflows.terminate = "ignore"; // the workflow carries on to record-failure as if the terminate came too late
   const id = await save(s, "https://c.example/late-failure");
   const ex = await runningExtraction(s, id, { throws: "Markdown: HTTP 404" });
@@ -241,7 +240,7 @@ const answer = (questions: Record<string, unknown>) =>
     usage: { input_tokens: 100, output_tokens: 5 },
   });
 async function jevReady() {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   const id = (await s.api("/links", "POST", { url: "https://c.example/jev" })).data.id as string;
   await s.runQueued();
   await s.api("/tags", "POST", { name: "topic" });

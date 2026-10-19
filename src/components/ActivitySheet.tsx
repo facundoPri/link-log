@@ -360,7 +360,8 @@ export function ActivitySheet({
           {sorted.map((b) => (
             <Collapsible key={b.id}>
               <div className="rounded-lg border">
-                <CollapsibleTrigger className="group flex w-full items-center gap-2 px-3 py-2 text-left">
+                <div className="group flex w-full items-center gap-2 px-3 py-2 text-left">
+                  <CollapsibleTrigger className="flex min-w-0 flex-1 items-center gap-2 text-left">
                   {kindIcon(b.kind)}
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[13px] font-medium">
@@ -370,6 +371,7 @@ export function ActivitySheet({
                       {relativeTime(b.created_at)}
                     </span>
                   </span>
+                  </CollapsibleTrigger>
                   {b.active ? (
                     <span className="flex items-center gap-1.5 text-2xs text-muted-foreground tabular">
                       <Loader2 className="size-3 animate-spin" />
@@ -435,7 +437,7 @@ export function ActivitySheet({
                       "group-data-[state=open]:rotate-90",
                     )}
                   />
-                </CollapsibleTrigger>
+                </div>
                 {!!b.active && (
                   <Progress
                     value={((b.done + b.failed + b.cancelled) / Math.max(b.total, 1)) * 100}

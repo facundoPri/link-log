@@ -5,9 +5,11 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { BrowserContext, Page, Worker } from "playwright-core";
-import { api, API_PORT, buildAll, EXTENSION, launch, OTHER_APP_PORT, OUT, ROOT, SITE, startApi, startMarkedApp, startSite, UI, UI_PORT, waitFor } from "./env";
+import { PROTOCOL_VERSION } from "@linklog/browser-protocol";
+import { api, API, API_PORT, buildAll, createAccount, EXTENSION, launch, OTHER_APP_PORT, OUT, ROOT, SITE, startApi, startMarkedApp, startSite, UI, UI_PORT, waitFor } from "./env";
 
-const EVIDENCE = resolve(ROOT, "docs/browser-validation");
+// LINKLOG_BROWSER_EVIDENCE writes the run elsewhere (e.g. .cache/...) instead of the committed evidence.
+const EVIDENCE = resolve(ROOT, process.env.LINKLOG_BROWSER_EVIDENCE ?? "docs/browser-validation");
 type Check = { area: string; name: string; ok: boolean; detail: string; ms: number };
 const checks: Check[] = [];
 const meta: Record<string, unknown> = { startedAt: new Date().toISOString() };
@@ -578,7 +580,7 @@ try {
   await check(`bridge finds Linklog on a non-default port (${UI_PORT}) with no configured origin`, async () => {
     const matches: string[] = manifest.content_scripts[0].matches;
     assert(!matches.some((m) => m.includes(String(UI_PORT))), `manifest names the port: ${matches.join(", ")}`);
-    assert(await L.evaluate(() => document.documentElement.dataset.linklogBridge === "1"), "no bridge on Linklog");
+    assert(await L.evaluate((v) => document.documentElement.dataset.linklogBridge === v, String(PROTOCOL_VERSION)), "no bridge on Linklog");
     return `content script matches ${matches.join(", ")}; Linklog connected on :${UI_PORT}`;
   });
   await check("a local page with the marker gets the bridge, but nothing before a handshake", async () => {
@@ -595,7 +597,7 @@ try {
         });
         return { bridge, reply };
       });
-      assert(res.bridge === "1", `bridge missing: ${JSON.stringify(res)}`);
+      assert(res.bridge === String(PROTOCOL_VERSION), `bridge missing: ${JSON.stringify(res)}`);
       assert(JSON.stringify(res.reply).includes("Connect first"), `snapshot without hello: ${JSON.stringify(res.reply)}`);
       return "bridge attached; snapshot before hello → “Connect first.”";
     } finally {
@@ -717,8 +719,11 @@ try {
       const list = await inSw(ctx, async (w: number) => chrome.tabGroups.query({ windowId: w }), W2);
       return list.length === 1 ? list[0] : null;
     });
-    const meta = await inSw(ctx, async () => (await chrome.storage.session.get("groups")).groups as Record<string, any>, 0);
-    assert(meta[String(g!.id)].pinnedId === pinnedId, "binding missing");
+    // The binding is written right after Chrome creates the group: wait for it, don't race it.
+    await waitFor("binding stored", async () => {
+      const meta = await inSw(ctx, async () => (await chrome.storage.session.get("groups")).groups as Record<string, any>, 0);
+      return meta?.[String(g!.id)]?.pinnedId === pinnedId;
+    }, 5000);
     await shot(L2, "10-pinned-other-window");
     return `created group ${g!.id} in window ${W2} bound to the same definition`;
   });
@@ -888,6 +893,95 @@ try {
     await shot(L, "14-activity");
     await L.keyboard.press("Escape");
   });
+
+  section("Accounts");
+  await check("sign-out makes the extension forget this account; the next account sees none of it", async () => {
+    const catA = await api<{ libraryId: string; groups: unknown[] }>("/browser/catalog");
+    const lensNamesA = (await api<{ lenses: { name: string }[] }>("/library")).lenses.map((l) => l.name);
+    const scopeA = `local:${catA.libraryId}`;
+    // Result entries and pending requests the extension keeps for one library scope.
+    const kept = (scope: string) =>
+      inSw(ctx, async (s: string) => {
+        const all = await chrome.storage.session.get(null);
+        let n = 0;
+        for (const [k, v] of Object.entries(all)) {
+          if (k.startsWith("res:")) n += Object.keys((v as { entries: Record<string, unknown> }).entries).filter((e) => e.startsWith(`${s}/`)).length;
+          if (k.startsWith("req:") && (v as { scope: string }).scope === s) n++;
+        }
+        return n;
+      }, scope);
+    const before = await kept(scopeA);
+    assert(before > 0, "no cached results for the first account before sign-out");
+    const cookieA = (await ctx.cookies()).find((c) => c.name === "linklog.session_token")!.value;
+    const groupMetaOf = (s: string) =>
+      inSw(ctx, async (scope: string) => {
+        const meta = Object.values(((await chrome.storage.session.get("groups")).groups ?? {}) as Record<string, { scope?: string }>);
+        const hints = Object.values(((await chrome.storage.local.get("pinnedHints")).pinnedHints ?? {}) as Record<string, { scope?: string }>);
+        return { meta: meta.filter((m) => m.scope === scope).length, hints: hints.filter((h) => h.scope === scope).length };
+      }, s);
+    const metaBefore = await groupMetaOf(scopeA);
+    // A page command through the bridge (the connection's handshake must still be there).
+    const bridgeSnapshot = () =>
+      L.evaluate(
+        () =>
+          new Promise<string>((resolve) => {
+            const id = `probe-${Date.now()}`;
+            addEventListener("message", (e) => e.data?.from === "extension" && e.data.response?.id === id && resolve(e.data.response.ok ? "ok" : e.data.response.error));
+            postMessage({ channel: "linklog-bridge", from: "page", request: { id, command: "snapshot", args: {} } }, location.origin);
+            setTimeout(() => resolve("timeout"), 3000);
+          }),
+      );
+    // 1) The server refuses the sign-out once (503): error + Retry, and nothing is cleaned up.
+    await L.bringToFront();
+    await L.route("**/api/auth/sign-out", (route) => route.fulfill({ status: 503, contentType: "application/json", body: '{"message":"unavailable"}' }), { times: 1 });
+    await L.locator("aside").getByRole("button", { name: /browser-test@linklog\.test/ }).click();
+    await L.getByRole("menuitem", { name: "Sign out" }).click();
+    await waitFor("sign-out error", async () => (await L.getByText(/Could not sign out/).count()) > 0, 10000);
+    const keptAfterFailure = await kept(scopeA);
+    assert(keptAfterFailure === before, `failed sign-out cleaned the cache: ${before} → ${keptAfterFailure}`);
+    const metaAfterFailure = await groupMetaOf(scopeA);
+    assert(JSON.stringify(metaAfterFailure) === JSON.stringify(metaBefore), `failed sign-out cleaned group metadata: ${JSON.stringify(metaBefore)} → ${JSON.stringify(metaAfterFailure)}`);
+    const bridge = await bridgeSnapshot();
+    assert(bridge === "ok", `bridge after failed sign-out: ${bridge}`);
+    const stillA = await fetch(`${API}/library`, { headers: { Cookie: `linklog.session_token=${cookieA}` } });
+    assert(stillA.status === 200, `session should still be active after the refused sign-out (${stillA.status})`);
+    await shot(L, "15b-signout-refused");
+    // 2) Retry: confirmed sign-out, then the extension forgets A and the page reloads anonymous.
+    await L.locator("[data-sonner-toast]", { hasText: "Could not sign out" }).getByRole("button", { name: "Retry" }).click();
+    await waitFor("sign-in screen", async () => (await L.getByLabel("Password").count()) > 0, 15000);
+    const after = await kept(scopeA);
+    assert(after === 0, `${after} entries left in the first account's scope`);
+    // Pinned-group metadata (descriptions, bindings, restart hints) of A: none left, and what any
+    // other scope wrote is invisible to A's successor anyway (scoped reads, see groups.test.ts).
+    const groupMeta = await inSw(ctx, async (s: string) => {
+      const meta = Object.values(((await chrome.storage.session.get("groups")).groups ?? {}) as Record<string, { scope?: string }>);
+      const hints = Object.values(((await chrome.storage.local.get("pinnedHints")).pinnedHints ?? {}) as Record<string, { scope?: string }>);
+      return { meta: meta.filter((m) => m.scope === s).length, hints: hints.filter((h) => h.scope === s).length, unscoped: [...meta, ...hints].filter((m) => !m.scope).length };
+    }, scopeA);
+    assert(groupMeta.meta === 0 && groupMeta.hints === 0, `group metadata left for the first account: ${JSON.stringify(groupMeta)}`);
+    const stale = await fetch(`${API}/library`, { headers: { Cookie: `linklog.session_token=${cookieA}` } });
+    assert(stale.status === 401, `old session still works (${stale.status})`);
+    // Second account, signed in through the form in the same browser profile.
+    await createAccount("browser-b@linklog.test", "browser-b-password");
+    await L.getByLabel("Email").fill("browser-b@linklog.test");
+    await L.getByLabel("Password").fill("browser-b-password");
+    await L.getByRole("button", { name: "Sign in", exact: true }).click();
+    await waitFor("second account signed in", async () => (await L.locator("aside").getByRole("button", { name: /browser-b@linklog\.test/ }).count()) > 0, 15000);
+    await L.locator("aside").getByRole("button", { name: /^Browser/ }).click();
+    await waitFor("Browser view connected", async () => (await L.locator("h1", { hasText: "Browser" }).count()) > 0, 15000);
+    const cookieB = (await ctx.cookies()).find((c) => c.name === "linklog.session_token")!.value;
+    const catB = (await (await fetch(`${API}/browser/catalog`, { headers: { Cookie: `linklog.session_token=${cookieB}` } })).json()) as { libraryId: string; groups: unknown[] };
+    assert(catB.libraryId !== catA.libraryId, "same library id for both accounts");
+    assert(catB.groups.length === 0, `second account sees ${catB.groups.length} pinned groups`);
+    await waitFor("tab rows", async () => (await rowCount(L)) > 0, 15000);
+    assert((await L.locator("[data-lens-cell]").count()) === 0, "lens result cells shown for the second account");
+    const sidebar = await L.locator("aside").innerText();
+    const leaked = lensNamesA.filter((name) => sidebar.includes(name));
+    assert(leaked.length === 0, `first account's lenses listed: ${leaked.join(", ")}`);
+    assert((await kept(`local:${catB.libraryId}`)) === 0, "second account inherited cached results");
+    await shot(L, "16-second-account");
+    return `refused sign-out (503) kept ${before} cached entries, metadata ${JSON.stringify(metaBefore)} and the bridge; retry: forgotten, old cookie 401; second account: new library id, 0 groups, 0 lens cells, none of ${lensNamesA.length} lenses`;
+  });
 } finally {
   meta.finishedAt = new Date().toISOString();
   meta.providerCalls = await calls().catch(() => null);
@@ -911,6 +1005,6 @@ try {
   site.stop();
   markedApp.stop();
   const failed = checks.filter((c) => !c.ok);
-  console.log(`\n${checks.length - failed.length}/${checks.length} checks passed. Evidence: docs/browser-validation/`);
+  console.log(`\n${checks.length - failed.length}/${checks.length} checks passed. Evidence: ${EVIDENCE}`);
   process.exit(failed.length ? 1 : 0);
 }

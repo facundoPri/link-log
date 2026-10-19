@@ -8,7 +8,7 @@ afterEach(resetClock);
 
 type S = Awaited<ReturnType<typeof setup>>;
 async function start() {
-  const s = await setup();
+  const s = await setup({ placeholder: true });
   Object.assign(s.env as any, { JEV_PROVIDER: "fixture", ALLOW_FIXTURE_JEV: "1" });
   await s.api("/tags", "POST", { name: "topic" });
   return s;
@@ -137,7 +137,6 @@ test("an extraction that fails for good resolves its waiting Jev job as content 
 
 test("with the preview fallback, the waiting Jev job runs on the preview content", async () => {
   const s = await start();
-  await s.api("/settings", "PUT", { preview_fallback: true });
   fakes.meta = { status: "ready", description: "About the page." };
   fakes.content = { throws: "Markdown: HTTP 404" };
   const id = await save(s, "https://q.example/fallback");
@@ -344,14 +343,17 @@ test("a selection over 100 with a wholly unsupported first or middle chunk still
 
 // Round 2: one-off link edits treat a waiting job (even an orphan before recovery) as busy.
 const orphanWaiting = (s: S, link: string) => {
-  s.db.run("INSERT INTO batches(id,kind,config,created_at) VALUES('orphan','autotag','{}','now')");
+  s.db.run("INSERT INTO batches(id,user_id,kind,config,created_at) VALUES('orphan',?,'autotag','{}','now')", [s.userId]);
   s.db.run("INSERT INTO jobs(id,batch_id,link_id,status,created_at) VALUES('orphan-job','orphan',?,'waiting','now')", [link]);
 };
 async function failedWithPreview(s: S, url: string) {
   fakes.meta = { status: "ready", description: "About." };
   fakes.content = { throws: "Markdown: HTTP 404" };
   const id = await save(s, url);
+  const put = s.env.CONTENT.put;
+  s.env.CONTENT.put = (async () => { throw new Error("R2 unavailable"); }) as typeof put;
   await runAll(s);
+  s.env.CONTENT.put = put;
   return id;
 }
 

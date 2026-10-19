@@ -1,3 +1,5 @@
+> Historical pre-auth recording at `3e77f23`. The 2026-10-19 integration changes authentication, automatic metadata fallback and the five QA gaps. These videos do not validate the integrated build; see `fac-48-test-plan.md` and the current `.reviews/` report.
+
 # FAC-48 QA walkthrough video: summary
 
 Branch `facundoPri/fac-48-needs-attention`, FAC-48 + FAC-52..57. Plan: `planning/qa/fac-48-test-plan.md` (§11 summary table, §12 chapters). Chapter reports: `.reviews/QA-ch1-waiting.md` … `.reviews/QA-ch6-cancel.md`. Harness: `qa/video/` (see its README). Media is generated under `qa/out/` (gitignored, not committed); `qa/out/INDEX.md` is the local index of the files.

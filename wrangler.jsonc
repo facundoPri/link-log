@@ -27,5 +27,18 @@
   "triggers":{"crons":["*/5 * * * *"]},
   "ai": {"binding":"AI","remote":true},
   "browser": {"binding":"BROWSER","remote":true},
-  "observability": { "enabled": true },
+  // Auth email (Cloudflare Email Service). Without `remote: true`, `wrangler dev` only simulates
+  // sending and writes messages under .wrangler/tmp. Deploying needs Email Service enabled.
+  "send_email": [{ "name": "EMAIL" }],
+  // Fail closed: deployed Workers are "production" unless overridden. BETTER_AUTH_URL,
+  // BETTER_AUTH_SECRET (secret) and EMAIL_FROM must be configured or the API answers 503.
+  // scripts/dev.ts overrides APP_ENV/BETTER_AUTH_URL/BETTER_AUTH_SECRET for local runs.
+  "vars": { "APP_ENV": "production" },
+  // Auth links carry tokens in the query (verify, magic link) and path (reset). Invocation logs record
+  // request URLs, so they stay off; console logs (sanitized auth events) remain.
+  "observability": {
+    "enabled": true,
+    "redact_query_string": true,
+    "logs": { "enabled": true, "invocation_logs": false },
+  },
 }

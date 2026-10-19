@@ -83,7 +83,7 @@ export async function resolveCaption(
           text = loaded.text;
           title = loaded.title || title;
           selected = fallback;
-          if (fallback.reason !== "original") issues.push(`Original-language captions could not be loaded: ${firstError}`);
+          // A successful fallback is usable content; selected.reason retains its language provenance.
         } catch (secondError) {
           issues.push(firstError, secondError instanceof Error ? secondError.message : "English transcript fetch failed");
         }
@@ -91,8 +91,6 @@ export async function resolveCaption(
     }
   } else if (selected.reason === "needs-selection") issues.push("Choose an available subtitle track to extract a transcript.");
   else issues.push("No public transcript is available; paste subtitles manually.");
-  if (text && selected.reason === "english-fallback") issues.push("Original-language captions were unavailable; English was used instead.");
-  if (text && selected.reason === "english-original-unknown") issues.push("Original audio language could not be verified; English was used.");
   return { selected, text, title, issues };
 }
 

@@ -4,10 +4,11 @@ import { toast } from "sonner";
 import { api } from "./api";
 import type { Job, Lens, LensResult, LensScope, Library, Link, Tag } from "./types";
 import { jevUnavailable, needsAttention } from "./attention";
-import { pastedUrls } from "./url";
+import { clipboardUrls, pastedUrls } from "./url";
 import { Sidebar, type View } from "./components/Sidebar";
 import { Toolbar, type ContextFilter } from "./components/Toolbar";
 import { LinkList } from "./components/LinkList";
+import { PendingLinks } from "./components/PendingLinks";
 import { SelectionBar } from "./components/SelectionBar";
 import { Inspector } from "./components/Inspector";
 import { TagDialog } from "./components/TagDialog";
@@ -16,7 +17,6 @@ import { LensDialog, type LensDraft } from "./components/LensDialog";
 import { lensBucket, lensSelectedKeys } from "./components/LensVerdict";
 import { LensHeader } from "./components/LensHeader";
 import { ActivitySheet } from "./components/ActivitySheet";
-import { SettingsDialog } from "./components/SettingsDialog";
 import { BrowserView } from "./components/browser/BrowserView";
 import { BrowserSidebar } from "./components/browser/BrowserSidebar";
 import { tabDomain, useBrowserWorkspace } from "./browser/useBrowserWorkspace";
@@ -69,14 +69,19 @@ function isInput(target: EventTarget | null) {
   );
 }
 
-export function App() {
+export function App({
+  account,
+  onSignOut,
+}: {
+  account: { email: string };
+  onSignOut: () => void;
+}) {
   const [library, setLibrary] = useState<Library>({
     links: [],
     tags: [],
     lenses: [],
     batches: [],
     capabilities: { markdown: false, jev: false, provider: "typesafe" },
-    settings: { preview_fallback: false },
   });
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -92,7 +97,6 @@ export function App() {
     | "add"
     | { tag: Tag | "new" }
     | { lens: Lens | "new"; scope?: LensScope }
-    | "settings"
     | null
   >(null);
   const [browserPicked, setBrowserPicked] = useState<string[]>([]);
@@ -115,9 +119,26 @@ export function App() {
   const [dragging, setDragging] = useState(false);
   const [focusTags, setFocusTags] = useState(false);
   const [jobsByLink, setJobsByLink] = useState<
-    Map<string, { kind: "extract" | "preview" | "autotag" | "lens" | "query"; status: string }>
+    Map<string, { kind: "extract" | "preview" | "autotag" | "lens" | "query"; status: string; step: string | null }>
   >(new Map());
   const dragDepth = useRef(0);
+  const [pendingUrls, setPendingUrls] = useState<string[]>([]);
+  const pendingSaves = useRef(new Map<string, string>());
+  const captureQueue = useRef(Promise.resolve());
+  const captureActive = useRef(true);
+  useEffect(() => {
+    captureActive.current = true;
+    return () => {
+      captureActive.current = false;
+      for (const id of new Set(pendingSaves.current.values())) toast.dismiss(id);
+    };
+  }, []);
+  const libraryEpoch = useRef(0);
+  const listScroll = useRef<HTMLDivElement>(null);
+  const pendingNewUrls = useMemo(() => {
+    const saved = new Set(library.links.flatMap((link) => [link.original_url, link.url]));
+    return pendingUrls.filter((url) => !saved.has(url));
+  }, [pendingUrls, library.links]);
   const inspectorW = useRef(400);
   const [inspectorWidth, setInspectorWidth] = useState(() => {
     const v = Number(localStorage.getItem("linklog.inspector"));
@@ -154,8 +175,9 @@ export function App() {
   }, [sidebarOpen]);
 
   const refresh = useCallback(async () => {
+    const epoch = libraryEpoch.current;
     const data = await api();
-    setLibrary(data);
+    if (epoch === libraryEpoch.current) setLibrary(data);
     setLoaded(true);
     setLoadError("");
     return data;
@@ -183,14 +205,14 @@ export function App() {
         const lib = await refresh();
         const active = lib.batches.filter((b) => b.active > 0);
         if (!alive) return;
-        const map = new Map<string, { kind: "extract" | "preview" | "autotag" | "lens" | "query"; status: string }>();
+        const map = new Map<string, { kind: "extract" | "preview" | "autotag" | "lens" | "query"; status: string; step: string | null }>();
         for (const b of active) {
           try {
             const { jobs } = await api<{ jobs: Job[] }>(`/batches/${b.id}`);
             for (const j of jobs)
               // A waiting job never hides the job it waits for.
               if (j.link_id && !(j.status === "waiting" && map.has(j.link_id)) && (b.kind === "extract" || b.kind === "preview" || b.kind === "autotag" || b.kind === "lens" || b.kind === "query"))
-                map.set(j.link_id, { kind: b.kind, status: j.status });
+                map.set(j.link_id, { kind: b.kind, status: j.status, step: j.step });
           } catch {
             /* batch may be gone */
           }
@@ -260,38 +282,89 @@ export function App() {
     }
   }, [library.batches]);
 
-  const save = useCallback(async (url: string, tags: string[] = []) => {
-    const data = await api("/links", "POST", { url, tags });
-    setLibrary(data);
-    setLoaded(true);
-    if (data.duplicate) toast("Already in your library");
-    else toast.success("Link saved");
+  const showRecentLinks = useCallback(() => {
+    setView("all");
+    setQuery("");
+    setTagIds([]);
+    setDomainFilter([]);
+    setContext("any");
+    setAscending(false);
+    listScroll.current?.scrollTo({ top: 0 });
   }, []);
 
+  const save = useCallback(async (url: string, tags: string[] = []) => {
+    libraryEpoch.current++;
+    const data = await api("/links", "POST", { url, tags });
+    libraryEpoch.current++;
+    setLibrary(data);
+    setLoaded(true);
+    showRecentLinks();
+    if (data.duplicate) toast.success("Link moved to the top", { description: "Already in your library." });
+    else toast.success("Link saved");
+  }, [showRecentLinks]);
+
   const capture = useCallback((text: string) => {
-    const urls = pastedUrls(text);
-    if (!urls.length) {
+    const parsed = pastedUrls(text);
+    if (!parsed.length) {
       toast.error("Paste http or https links, separated by spaces or new lines.");
       return;
     }
-    void (async () => {
-      let done = 0;
+    // A second paste while the first request is pending must not send the same URLs again.
+    const urls = parsed.filter((url) => !pendingSaves.current.has(url));
+    if (!urls.length) {
+      toast.loading("Saving links…", {
+        id: pendingSaves.current.get(parsed[0]!),
+        description: "These links are already being saved.",
+      });
+      return;
+    }
+    const id = crypto.randomUUID();
+    const count = (n: number) => `${n} ${n === 1 ? "link" : "links"}`;
+    const summary = (added: number, existing: number) => [
+      added ? `${count(added)} saved` : "",
+      existing ? `${count(existing)} moved to the top` : "",
+    ].filter(Boolean).join(" · ");
+    for (const url of urls) pendingSaves.current.set(url, id);
+    setPendingUrls([...pendingSaves.current.keys()]);
+    libraryEpoch.current++;
+    showRecentLinks();
+    toast.loading(`Saving ${count(urls.length)}…`, { id });
+    // Serialize separate pastes so an older response cannot replace a newer library snapshot.
+    captureQueue.current = captureQueue.current.then(async () => {
+      let added = 0, existing = 0, confirmed = 0;
       try {
         for (let offset = 0; offset < urls.length; offset += 100) {
-          const data = await api<Library & { imported: number }>("/import", "POST", {
-            urls: urls.slice(offset, offset + 100),
-          });
+          if (!captureActive.current) return;
+          const chunk = urls.slice(offset, offset + 100);
+          const data = await api<Library & { imported: number; duplicates: number }>("/import", "POST", { urls: chunk });
+          if (!captureActive.current) return;
+          libraryEpoch.current++;
           setLibrary(data);
-          done += data.imported;
+          setLoaded(true);
+          setLoadError("");
+          added += data.imported;
+          existing += data.duplicates;
+          confirmed += chunk.length;
+          for (const url of chunk) pendingSaves.current.delete(url);
+          setPendingUrls([...pendingSaves.current.keys()]);
+          toast.loading(`Saving ${count(urls.length)}…`, { id, description: `${confirmed} of ${urls.length} confirmed` });
         }
-        toast.success(`${done} links saved`, {
-          description: "Fetching titles and previews…",
+        toast.success(summary(added, existing), {
+          id,
+          description: added ? "New links will be processed in the background." : "Already in your library.",
         });
       } catch (e) {
-        toast.error(`${done} links saved. ${(e as Error).message}`);
+        if (!captureActive.current) return;
+        toast.error(confirmed ? summary(added, existing) : "Couldn't confirm the save", {
+          id,
+          description: `${(e as Error).message} You can paste again to retry; links won't be duplicated.`,
+        });
+      } finally {
+        for (const url of urls) pendingSaves.current.delete(url);
+        setPendingUrls([...pendingSaves.current.keys()]);
       }
-    })();
-  }, []);
+    });
+  }, [showRecentLinks]);
 
   const mutate = useCallback(async (path: string, method: string, body: unknown = {}) => {
     setLibrary(await api(path, method, body));
@@ -384,10 +457,12 @@ export function App() {
     };
     const paste = (e: ClipboardEvent) => {
       if (isInput(e.target) || dialog || activityOpen) return;
-      const text = e.clipboardData?.getData("text/plain") || "";
-      if (pastedUrls(text).length) {
+      const urls = e.clipboardData ? clipboardUrls(e.clipboardData) : [];
+      if (urls.length) {
         e.preventDefault();
-        capture(text);
+        capture(urls.join("\n"));
+      } else if (/https?:\/\//i.test(e.clipboardData?.getData("text/plain") || "")) {
+        toast.error("Couldn't read this link list", { description: "Use one URL per line, or copy links with their titles." });
       }
     };
     window.addEventListener("keydown", key);
@@ -483,8 +558,8 @@ export function App() {
           if (vb !== va) return vb - va;
         }
         return ascending
-          ? a.created_at.localeCompare(b.created_at)
-          : b.created_at.localeCompare(a.created_at);
+          ? (a.last_saved_at ?? a.created_at).localeCompare(b.last_saved_at ?? b.created_at)
+          : (b.last_saved_at ?? b.created_at).localeCompare(a.last_saved_at ?? a.created_at);
       });
   }, [library.links, query, domainFilter, context, view, tagIds, ascending, activeLens, lensFilter, lensMinLevel, lensScoreSort]);
   filteredRef.current = filtered;
@@ -571,6 +646,7 @@ export function App() {
       if (targets.length) await runBatch("extract", targets);
       // "Auto-tag N with content" sends only those N; the server still skips any that changed meanwhile.
       await runBatch("autotag", extract ? picked : picked.filter((id) => !noContent.some((l) => l.id === id)));
+      if (!extract && noContent.length) toast(`Skipped ${noContent.length} ${noContent.length === 1 ? "link" : "links"} without content`, { description: "Extract the content first." });
       setPicked([]);
     } catch {
       /* toasted */
@@ -670,10 +746,8 @@ export function App() {
         setActivityOpen(true);
         setMenuOpen(false);
       }}
-      onSettings={() => {
-        setDialog("settings");
-        setMenuOpen(false);
-      }}
+      account={account}
+      onSignOut={onSignOut}
       browserCount={ws.browser.snapshot ? ws.tabs.length : null}
       browserPanel={
         <BrowserSidebar
@@ -916,7 +990,8 @@ export function App() {
             onEdit={() => setDialog({ lens: activeLens })}
           />
         )}
-        <div className={`min-h-0 flex-1 overflow-y-auto ${picked.length ? "pb-24 max-[700px]:pb-32" : ""}`}>
+        <div ref={listScroll} className={`min-h-0 flex-1 overflow-y-auto ${picked.length ? "pb-24 max-[700px]:pb-32" : ""}`}>
+          <PendingLinks urls={pendingNewUrls} />
           {loadError ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center">
               <p className="text-sm font-medium">Couldn't load your library</p>
@@ -933,7 +1008,7 @@ export function App() {
                 Retry
               </Button>
             </div>
-          ) : (
+          ) : pendingNewUrls.length && !library.links.length ? null : (
             <LinkList
               links={filtered}
               loaded={loaded}
@@ -1106,9 +1181,6 @@ export function App() {
             }
           }}
         />
-      )}
-      {dialog === "settings" && (
-        <SettingsDialog library={library} onClose={() => setDialog(null)} onChange={setLibrary} />
       )}
       {dialog && typeof dialog === "object" && "tag" in dialog && (
         <TagDialog

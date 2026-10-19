@@ -94,6 +94,7 @@ export function useLensRunner(browser: BrowserState, active: Lens[], allLenses: 
       if (res.status >= 400) {
         await request("release", { requestId: claim.requestId, error: res.data.error || "The evaluation was rejected.", state: "failed" });
         if (res.data.code === "lens-changed") setNotice("A lens changed on another page. Reload to use its current question.");
+        if (res.status === 429) setNotice(res.data.error || "Processing limit reached. Try again later.");
         return;
       }
       await request("accepted", {

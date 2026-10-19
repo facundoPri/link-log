@@ -4,6 +4,7 @@ import { capabilities } from "../store";
 import { jevUnavailable } from "../../src/attention";
 import { fixtureJev } from "./fixture";
 import { JEV_FAILURE_MESSAGES, type JevReason } from "../../src/failures";
+import { fixtureJevAllowed } from "../config";
 export type { Answer, Question } from "../../src/types";
 export function probability(n: unknown): n is number {
   return typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= 1;
@@ -242,7 +243,7 @@ async function claimCall(env: Env, job: JevJob, usageId: string, provider: strin
   let claimed: boolean;
   try {
     const [claim] = await env.DB.batch([
-      env.DB.prepare(`UPDATE jobs SET jev_call=? WHERE id=? AND jev_call IS NULL AND status='running' AND NOT ${accountStopped}`)
+      env.DB.prepare(`UPDATE jobs SET jev_call=?,content_source=(SELECT content_source FROM links WHERE id=jobs.link_id) WHERE id=? AND jev_call IS NULL AND status='running' AND NOT ${accountStopped}`)
         .bind(usageId, job.id, job.batch_id, job.id),
       guardedUsageInsert(env, usageId, job, provider, "jev", "classify", "EXISTS (SELECT 1 FROM jobs WHERE id=? AND jev_call=?)", [job.id, usageId]),
     ]);
@@ -271,6 +272,7 @@ export async function judge(
   const input = { state: truncateState(state), questions };
   const provider = env.JEV_PROVIDER || "cloudflare";
   // The configuration can change between enqueue and run; fail before Usage records a call.
+  if (provider === "fixture" && !fixtureJevAllowed(env)) throw new JevFailure("before_call", "not_configured", "The fixture Jev provider is only available in local and test environments.");
   const unavailable = jevUnavailable(capabilities(env));
   if (unavailable) {
     console.error(JSON.stringify({ event: "jev_not_configured", provider, job: job.id }));

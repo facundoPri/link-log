@@ -33,7 +33,47 @@ export function pastedUrl(text: string): string | null {
 }
 
 export function pastedUrls(text: string): string[] {
-  const values = text.trim().split(/\s+/).filter(Boolean);
+  const lines = text
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const values = lines.flatMap((line) => {
+    // Browser/bookmark lists and Linklog's own "Copy with titles" output.
+    const item = line.replace(/^(?:[-*•]|\d+[.)])\s+/, "");
+    const markdown = item.match(/^\[[^\]]*\]\((https?:\/\/\S+)\)$/i);
+    if (markdown) return [markdown[1]!];
+    const titled = item.match(/^(https?:\/\/\S+)\s+[—–]\s+.+$/i);
+    if (titled) return [titled[1]!];
+    return item
+      .split(/\s+/)
+      .map((value) => value.replace(/^<(https?:\/\/[^>]+)>$/i, "$1"));
+  });
   if (!values.length || values.some((v) => !pastedUrl(v))) return [];
   return [...new Set(values.map((v) => normalizeUrl(v)))];
+}
+
+/** Prefer explicit URL lists/plain text; HTML is a fallback for selections copied from a page. */
+export function clipboardUrls(data: Pick<DataTransfer, "getData">): string[] {
+  const uriList = data
+    .getData("text/uri-list")
+    .split(/\r?\n/)
+    .filter((line) => !line.startsWith("#"))
+    .join("\n");
+  const urls = pastedUrls(uriList);
+  if (urls.length) return urls;
+  const text = pastedUrls(data.getData("text/plain"));
+  if (text.length) return text;
+  const html = data.getData("text/html");
+  if (!html) return [];
+  // Parsing an inert document does not execute copied scripts or insert anything in the app.
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  const links = [...template.content.querySelectorAll("a[href]")].flatMap(
+    (anchor) => {
+      const url = pastedUrl(anchor.getAttribute("href") || "");
+      return url ? [url] : [];
+    },
+  );
+  return [...new Set(links)];
 }
