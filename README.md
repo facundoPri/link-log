@@ -25,7 +25,7 @@ Every library is private to its account (Better Auth on D1). Sign up with email 
 - **Filter** menu: domain and context filters; tags filter with AND semantics.
 - Click a row to open the inspector: preview, tags, AI confidence, content and details. `↑`/`↓` move between links and `Esc` closes it.
 - Hover `…` on a row for actions (open, copy URL, edit tags, extract, delete).
-- Row checkboxes open a floating selection bar: **Auto-tag**, **Ask**, **Extract context**.
+- Row checkboxes open a floating selection bar: **Auto-tag**, **Lens**, **Extract context**.
 - In the sidebar, **Tags** `+` creates a tag and `…` edits it (name, description for the AI, confidence threshold) or deletes it. **Activity** and **Usage** live in the sidebar footer.
 
 ## Browser view (Chrome extension)
@@ -119,7 +119,7 @@ not deployed and public access is not enabled.
   shows each image's result, partial failures and an explicit retry. Completed
   OCR is reused on re-extraction.
 - The "With context" filter and "Untagged" view help narrow the selection before
-  paying for an evaluation. Select links and use **Auto-tag** or **Ask**.
+  paying for an evaluation. Select links and use **Auto-tag** or **Lens**.
 - Auto-tag groups one Noul per tag into one call per link. A complete, valid
   response replaces all of its tags (including manual ones) and scores.
   Failures preserve the previous state. The initial threshold is 80%, editable;
@@ -128,7 +128,7 @@ not deployed and public access is not enabled.
   of that run. Changing a tag does not re-evaluate previous links.
   All scores are visible in the inspector's confidence list; discarded ones also
   appear in the tag picker. Auto-tagged chips show the percentage on hover.
-- Ask offers Noul or Choice, with per-link results, without modifying tags.
+- A lens offers Noul or Choice, with per-link results, without modifying tags.
   Choice includes an "Other" option. Results and progress are stored per batch.
 
 ### Credentials

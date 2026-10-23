@@ -37,6 +37,5 @@ Preconditions:
 
 - A complete Auto-tag result replaces all of a link's tags, including manual ones. Don't assert that a manual tag survives an Auto-tag run.
 - Links without content are skipped, and the result says `Skipped N link(s) without content`. `Extract, then auto-tag` is a separate, explicit choice.
-- The README still calls the selection-bar action `Ask`. The button now reads `Lens`.
 - Fixture Jev markers live in the content: `jev:yes`, `jev:fail` and `jev:slow=<ms>` (`worker/ai/fixture.ts`). Pick an `*-yes` fixture to get a positive score.
 - An Auto-tag requested while the link is still extracting waits (`waiting` job) and starts after extraction. Wait for `!processing` before asserting tags.
