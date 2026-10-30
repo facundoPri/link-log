@@ -57,7 +57,7 @@ export default (async ({ page, api, fixture, step, check, shot, note }) => {
   await check("Tooltip says why only 4 qualify", () => page.getByRole("tooltip").getByText("3 of 7 links have no content yet").isVisible());
   await snap("01-bar-seven-selected");
 
-  await step("Open: this instance has no extension, so it is blocked with its reason and O does nothing");
+  await step("Open: this instance has no extension, so it is blocked with its reason and O toasts that reason");
   await check("Open is disabled", () => open.isDisabled());
   // The disabled button swallows pointer events, so hover the span the tooltip is attached to. Radix ignores
   // pointer moves for a moment after leaving another trigger, so leave the Auto-tag one first and give it time.
@@ -73,7 +73,7 @@ export default (async ({ page, api, fixture, step, check, shot, note }) => {
   await page.mouse.move(0, 0);
   await page.keyboard.press("o");
   await page.waitForTimeout(500);
-  await check("Nothing happened: no toast, still 7 selected, no dialog", async () => (await page.locator("[data-sonner-toast]").count()) === 0 && (await countButton(7).isVisible()) && !(await page.getByRole("dialog").isVisible()));
+  await check("A toast gives the reason; still 7 selected, no dialog", async () => (await page.locator("[data-sonner-toast]").filter({ hasText: /extension|Chrome/ }).count()) > 0 && (await countButton(7).isVisible()) && !(await page.getByRole("dialog").isVisible()));
 
   await step("Count menu: Escape closes it and keeps the selection");
   await countButton(7).click();
