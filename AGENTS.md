@@ -35,6 +35,14 @@ Use a single-context layout. Before exploring domain concepts or proposing archi
 
 For multi-step agent work, the coordinator reads [the model profile](.agents/pstack-models.md): the shared sections, then the section for its harness (Codex or Claude Code). These choices override the user-level `~/.agents/pstack-models.md` and bundled pstack defaults.
 
+### React code health
+
+After changing React code, run the `react-doctor` skill for an advisory scan of what your branch introduced. It is on demand only: never add it to CI, a git hook or a merge gate.
+
 ### Verification
 
 To prove web UI or API behavior in a running app, use the `verify-linklog` skill. It starts an isolated instance with fixture external services and records evidence.
+
+### Browser and extension
+
+Before touching Browser, the Chrome extension, or `packages/browser-protocol`, read `docs/browser-feature-plan.md` (product spec) and `docs/browser-implementation-handoff.md` (how it's actually built: monorepo map, commands, decisions, known limits). `docs/browser-validation.md` holds the evidence.

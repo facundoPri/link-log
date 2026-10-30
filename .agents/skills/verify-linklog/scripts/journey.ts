@@ -88,7 +88,11 @@ export async function runJourney(file: string, s: Session, dir: string, { headed
   const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || undefined, headless: !headed });
   const contexts: BrowserContext[] = [];
   const signedIn = async (account: number) => {
-    const context = await browser.newContext({ viewport: VIEWPORT, recordVideo: { dir: join(dir, `.video-${contexts.length}`), size: VIEWPORT } });
+    const context = await browser.newContext({
+      viewport: VIEWPORT,
+      recordVideo: { dir: join(dir, `.video-${contexts.length}`), size: VIEWPORT },
+      permissions: ["clipboard-read", "clipboard-write"],
+    });
     contexts.push(context);
     await context.addCookies(s.accounts[account]!.cookie.split("; ").map((pair) => ({ name: pair.slice(0, pair.indexOf("=")), value: pair.slice(pair.indexOf("=") + 1), url: s.ui })));
     const page = await context.newPage();
