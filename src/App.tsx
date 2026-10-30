@@ -162,6 +162,10 @@ export function App({
   const sessionBatches = useRef(new Set<string>());
   // Batches started from the selection surface; the ones that settle with failures get a results card.
   const selectionBatches = useRef(new Set<string>());
+  // "Extract, then auto-tag" is one flow with one results card, on the auto-tag batch: the extract batches are
+  // reported through it, since the auto-tag jobs that fail do so because their extraction did.
+  const extractFlows = useRef(new Map<string, string[]>());
+  const flowExtracts = useRef(new Set<string>());
   const narrow = useMedia("(max-width: 1099px)");
   const mobile = useMedia("(max-width: 767px)");
   const ws = useBrowserWorkspace(library, view === "browser", loaded && !loadError);
@@ -266,6 +270,7 @@ export function App({
       } else if (b.cancelled === n) {
         toast("Cancelled", { id: b.id });
         sessionBatches.current.delete(b.id);
+        if (extractFlows.current.has(b.id)) void showFailures(b);
       } else if (b.failed === 0) {
         const ran = n - b.cancelled;
         toast.success(
@@ -284,6 +289,7 @@ export function App({
           },
         );
         sessionBatches.current.delete(b.id);
+        if (extractFlows.current.has(b.id)) void showFailures(b);
       } else {
         toast[b.failed === n ? "error" : "success"](
           `${verb.replace("ing", "ed")} ${n} ${n === 1 ? "link" : "links"}`,
@@ -302,15 +308,26 @@ export function App({
 
   // The same jobs Activity lists, narrowed to the failed ones, so the selection surface can say why and re-select them.
   const showFailures = async (b: Batch) => {
-    try {
-      const { jobs } = await api<{ jobs: Job[] }>(`/batches/${b.id}`);
-      const failed = jobs
+    if (flowExtracts.current.has(b.id)) return;
+    const failedOf = async (batchId: string) => {
+      const { jobs } = await api<{ jobs: Job[] }>(`/batches/${batchId}`);
+      return jobs
         .filter((j) => j.status === "failed" && j.step !== "Cancelled" && j.link_id)
         .map((j) => ({
           linkId: j.link_id!,
           title: j.title,
           reason: j.error ?? failureMessage(j.reason) ?? "Something went wrong.",
         }));
+    };
+    try {
+      const upstream = extractFlows.current.get(b.id) ?? [];
+      extractFlows.current.delete(b.id);
+      const [own, ...extracted] = await Promise.all([failedOf(b.id), ...upstream.map(failedOf)]);
+      // The extraction reason wins: the auto-tag job only knows the content is missing.
+      const byLink = new Map(extracted.flat().map((f) => [f.linkId, f]));
+      for (const f of own ?? []) if (!byLink.has(f.linkId)) byLink.set(f.linkId, f);
+      const failed = [...byLink.values()];
+      for (const id of upstream) flowExtracts.current.delete(id);
       if (failed.length)
         setResults((cur) =>
           [...cur.filter((r) => r.batchId !== b.id), { batchId: b.id, kind: b.kind, total: b.total, failed }].slice(-3),
@@ -414,6 +431,8 @@ export function App({
       ids: string[],
       lensId?: string,
       fromSelection = false,
+      /** Called with the new batch ids before they are watched, so a caller can tag them in time. */
+      onBatches?: (batchIds: string[]) => void,
     ) => {
       setRunning(true);
       try {
@@ -422,6 +441,7 @@ export function App({
           (chunk) => api<Library & BatchReply>("/batches", "POST", { kind, ids: chunk, lensId }),
           (data) => setLibrary(data),
         );
+        onBatches?.(batchIds);
         for (const id of batchIds) {
           sessionBatches.current.add(id);
           if (fromSelection) selectionBatches.current.add(id);
@@ -700,16 +720,30 @@ export function App({
     setConfirmAutoTag(false);
     setConfirmNoContent(false);
     setExtractFirst(false);
+    const extractIds: string[] = [];
     try {
       const targets = extract ? noContent.filter((l) => !l.processing).map((l) => l.id) : [];
       // The auto-tag jobs of these links wait for their extraction and start when it settles.
-      if (targets.length) await runBatch("extract", targets, undefined, true);
+      if (targets.length)
+        await runBatch("extract", targets, undefined, true, (ids) => {
+          extractIds.push(...ids);
+          for (const id of ids) flowExtracts.current.add(id);
+        });
       // "Auto-tag N with content" sends only those N; the server still skips any that changed meanwhile.
-      await runBatch("autotag", extract ? picked : picked.filter((id) => !noContent.some((l) => l.id === id)), undefined, true);
+      await runBatch(
+        "autotag",
+        extract ? picked : picked.filter((id) => !noContent.some((l) => l.id === id)),
+        undefined,
+        true,
+        (ids) => {
+          if (extractIds.length) for (const id of ids) extractFlows.current.set(id, extractIds);
+        },
+      );
       if (!extract && noContent.length) toast(`Skipped ${noContent.length} ${noContent.length === 1 ? "link" : "links"} without content`, { description: "Extract the content first." });
       setPicked([]);
     } catch {
-      /* toasted */
+      // The flow never started its auto-tag half, so the extraction reports on its own.
+      for (const id of extractIds) flowExtracts.current.delete(id);
     }
   };
   const proceedAutoTag = (extract: boolean) => {

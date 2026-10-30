@@ -12,8 +12,8 @@ export default (async ({ page, api, fixture, step, check, shot, note }) => {
   const all = [...articles, ...broken];
 
   await step("Seed 4 articles and 3 links that can never be extracted, one tag and one lens");
-  await api.send("POST", "/tags", { name: "reading" });
-  await api.send("POST", "/lenses", { name: "Worth reading?", type: "noul", question: "Is this worth reading?" });
+  await api.ensure("/tags", { name: "reading" });
+  await api.ensure("/lenses", { name: "Worth reading?", type: "noul", question: "Is this worth reading?" });
   for (const url of all) await api.send("POST", "/links", { url });
   const links = await check(
     "API: all seven links settled",
@@ -210,6 +210,31 @@ export default (async ({ page, api, fixture, step, check, shot, note }) => {
     return true;
   });
   await snap("08-select-failed");
+
+  await step("Extract, then auto-tag: one results card for the flow, with the extraction reason");
+  const article = links.find((l) => l.content_key)!;
+  await rowBox(article.title).click();
+  await check("Bar shows 4 selected: the 3 failed links and one article", () => countButton(4).isVisible());
+  await page.keyboard.press("t");
+  const noContent = page.getByRole("alertdialog", { name: "3 of 4 links have no content yet" });
+  await check("Auto-tag asks about the 3 links without content", () => noContent.isVisible());
+  await noContent.getByRole("button", { name: "Extract, then auto-tag" }).click();
+  await check("API: an extract batch of 3 and an auto-tag batch of 4 started", async () => {
+    const bs = (await api.library()).batches;
+    return bs.some((b) => b.kind === "extract" && b.total === 3) && bs.some((b) => b.kind === "autotag" && b.total === 4);
+  });
+  await check("API: both batches settle", async () => (await api.library()).batches.filter((b) => b.kind === "extract" || b.kind === "autotag").every((b) => b.active === 0), { timeout: 120_000 });
+  const flowCard = page.getByRole("region", { name: "Auto-tag results" });
+  await check("One card: Auto-tag, 3 of 4 failed", () => flowCard.getByText("3 of 4 failed").isVisible());
+  await page.waitForTimeout(500);
+  await check("No separate Extract context card", async () => (await page.getByRole("region", { name: "Extract context results" }).count()) === 0 && (await page.getByRole("region", { name: /results$/ }).count()) === 1);
+  await check("Each failed link carries the extraction reason, not 'Content missing'", async () => {
+    const reasons = await flowCard.locator("li").allTextContents();
+    return reasons.length === 3 && reasons.every((t) => !/Content missing/.test(t)) && reasons;
+  });
+  await snap("08b-extract-then-autotag-card");
+  await flowCard.getByRole("button", { name: "Select failed" }).click();
+  await check("Select failed selects the 3 failed links", () => countButton(3).isVisible());
 
   await step("Escape on an open menu keeps the selection");
   await countButton(3).click();
