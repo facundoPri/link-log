@@ -41,4 +41,44 @@
     "redact_query_string": true,
     "logs": { "enabled": true, "invocation_logs": false },
   },
+  // `wrangler deploy --env production` → https://linklog.facundopri.com. The top level stays local:
+  // dev and tests never touch these resources. Secrets (wrangler secret put --env production):
+  // BETTER_AUTH_SECRET, TYPESAFE_API_KEY.
+  "env": {
+    "production": {
+      "name": "linklog",
+      "routes": [{ "pattern": "linklog.facundopri.com", "custom_domain": true }],
+      "workers_dev": false,
+      "preview_urls": false,
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "linklog-production",
+          "database_id": "77281341-ff2d-4b76-a489-dbc3bd610008",
+          "migrations_dir": "migrations",
+        },
+      ],
+      "r2_buckets": [{ "binding": "CONTENT", "bucket_name": "linklog-content-production" }],
+      "queues": {
+        "producers": [{ "binding": "JOBS", "queue": "linklog-jobs-production" }],
+        "consumers": [{ "queue": "linklog-jobs-production", "max_batch_size": 10, "max_batch_timeout": 1, "max_retries": 3, "max_concurrency": 10 }],
+      },
+      "workflows": [{ "binding": "PROCESS_LINK", "name": "linklog-process-link-production", "class_name": "LinkWorkflow" }],
+      "triggers": { "crons": ["*/5 * * * *"] },
+      "ai": { "binding": "AI" },
+      "browser": { "binding": "BROWSER" },
+      "send_email": [{ "name": "EMAIL" }],
+      "vars": {
+        "APP_ENV": "production",
+        "BETTER_AUTH_URL": "https://linklog.facundopri.com",
+        "EMAIL_FROM": "Linklog <auth@linklog.facundopri.com>",
+        "JEV_PROVIDER": "typesafe",
+      },
+      "observability": {
+        "enabled": true,
+        "redact_query_string": true,
+        "logs": { "enabled": true, "invocation_logs": false },
+      },
+    },
+  },
 }
