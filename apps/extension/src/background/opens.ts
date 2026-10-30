@@ -1,7 +1,8 @@
 import { Mutex, type KV } from "./kv";
 
-/** Long enough for the page's own retry of an unconfirmed request, short enough not to pile up. */
-const TTL_MS = 10 * 60_000;
+const REPLAY_WINDOW_MS = 10 * 60_000;
+
+const keepOpenedTab = () => {};
 
 type Entry = { at: number; opened: Record<string, number> };
 
@@ -10,21 +11,15 @@ export type OpenRecord = {
   record(url: string, tabId: number): Promise<void>;
 };
 
-/**
- * What an Open operation already created, by URL. A retry with the same operationId (the first
- * answer was lost) replays these instead of opening them again, even if the tabs have since
- * navigated or closed. Its own mutex: opening 50 tabs must not hold up lens claims.
- */
 export class OpenLedger {
-  private mutex = new Mutex();
+  private opensOnly = new Mutex();
   constructor(
     private kv: KV,
     private now: () => number = Date.now,
   ) {}
 
-  /** Runs `work` alone per ledger, so two calls with one operationId never both create a tab. */
   run<T>(scope: string, operationId: string, work: (ledger: OpenRecord) => Promise<T>): Promise<T> {
-    return this.mutex.run(async () => {
+    return this.opensOnly.run(async () => {
       const now = this.now();
       await this.prune(now);
       const key = `open:${scope}:${operationId}`;
@@ -33,8 +28,7 @@ export class OpenLedger {
         has: (url) => Object.hasOwn(entry.opened, url),
         record: async (url, tabId) => {
           entry.opened[url] = tabId;
-          // The tab exists either way; a full cache must not turn it into a failure.
-          await this.kv.set({ [key]: entry }).catch(() => {});
+          await this.kv.set({ [key]: entry }).catch(keepOpenedTab);
         },
       });
     });
@@ -43,6 +37,6 @@ export class OpenLedger {
   private async prune(now: number) {
     const keys = await this.kv.keys("open:");
     const entries = await this.kv.getMany(keys);
-    await this.kv.remove(keys.filter((k) => ((entries[k] as Entry | undefined)?.at ?? 0) < now - TTL_MS));
+    await this.kv.remove(keys.filter((k) => ((entries[k] as Entry | undefined)?.at ?? 0) < now - REPLAY_WINDOW_MS));
   }
 }

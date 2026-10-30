@@ -37,6 +37,12 @@ Demo A's library held three saved links: `https://example.com/?fac47=a`, `https:
 
 In Ego the disabled Open button's tooltip would not open under the agent's synthetic pointer. The tooltip text is proven in the fixture journey below.
 
+## Final build (after comment cleanup)
+
+The comment cleanup renamed and extracted code in `apps/extension/src/background/opens.ts`, so the extension was rebuilt at 2026-10-30T02:49:26Z and reloaded at 02:49:42Z, from the same path and ID. The new `background.js` hash is `4643ff1680b909e72d85885a669430c5371d7605345fc7b552be9e814316a077`. The other files match the hashes above, and every hash was the same before and after this run.
+
+TaskSpace 7 repeated the core case. The window held Linklog and example.org. Opening all three links gave "Opened 2 links · 1 already open", with iana.org and example.com added as inactive tabs (`fac-47/ego-final-open.png`). Opening them again gave "3 links already open", still 4 tabs. The selection stayed at "3 selected". The fixture journey passed 25/25 again on this code (`.cache/verify-linklog/20261030-024841-3410/evidence/bulk-open-20261030-024859/`).
+
 ## Fixture and harness proof
 
 - verify-linklog journey `.agents/skills/verify-linklog/journeys/bulk-open.ts` passed 25/25. Its evidence is in `.cache/verify-linklog/20261030-023208-3410/evidence/bulk-open-20261030-023223/`.

@@ -51,7 +51,6 @@ export function SelectionBar({
   running: boolean;
   /** Why Auto-tag and lenses can't run (Jev not configured), or null. */
   jevReason: string | null;
-  /** Why the links can't be opened as tabs (extension missing, too many selected), or null. */
   openReason: string | null;
   opening: boolean;
   onOpen: () => void;

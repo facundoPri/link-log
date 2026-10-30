@@ -5,7 +5,6 @@ import { plural } from "../lib/format";
 import type { Link } from "../types";
 import type { BrowserState } from "./useBrowser";
 
-/** Why links can't be opened through the extension right now, or null. */
 export function openUnavailable({ connection, hello }: Pick<BrowserState, "connection" | "hello">): string | null {
   switch (connection) {
     case "unsupported":
@@ -58,8 +57,6 @@ export function useOpenLinks(browser: BrowserState) {
   const busy = useRef(false);
   const { request } = browser;
 
-  // A retry re-sends the same operationId and URLs: the extension replays what it opened and
-  // skips what is already there, so retrying an unconfirmed request can't duplicate tabs.
   async function attempt(operationId: string, urls: string[], links: Link[]) {
     if (busy.current) return;
     busy.current = true;

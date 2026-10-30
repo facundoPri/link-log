@@ -241,7 +241,6 @@ describe("bridge commands", () => {
       await hello();
       const urls = ["https://a.dev/", "https://broken.dev/", "https://b.dev/"];
       await run("openTabs", { operationId: "op1", urls });
-      // The opened tabs redirected, so no tab matches their URLs any more.
       for (const t of created()) {
         t.url = `${t.pendingUrl}redirected`;
         t.pendingUrl = undefined;
@@ -249,7 +248,6 @@ describe("bridge commands", () => {
       chromeFake.createErrors.clear();
       const retry = await run("openTabs", { operationId: "op1", urls });
       expect(outcomes(retry)).toEqual(["opened", "opened", "opened"]);
-      // Only the link that had failed is opened now.
       expect(created().map((t) => t.pendingUrl ?? t.url)).toEqual([
         "https://a.dev/redirected",
         "https://b.dev/redirected",

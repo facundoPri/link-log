@@ -6,7 +6,6 @@ export function fakeChrome() {
   const groups = new Map<number, chrome.tabGroups.TabGroup>();
   /** What the injected extractor returns per tab (page content). */
   const pages = new Map<number, { url: string; markdown: string; title?: string }>();
-  /** URLs `tabs.create` refuses, with the error Chrome would give. */
   const createErrors = new Map<string, string>();
   let scripts = 0;
   let nextTabId = 1000;

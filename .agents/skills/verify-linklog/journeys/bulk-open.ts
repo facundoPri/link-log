@@ -1,28 +1,20 @@
-// bulk-open: the selection bar's Open action (FAC-47). Playwright's Chromium has no Linklog extension, so the
-// unavailable state is real, and every connected case answers from a scripted stand-in for the bridge content
-// script. This proves the page's gating, reporting and retry behavior only; that real tabs open is proven with
-// the actual extension (see tests/browser/run.ts and the Ego Lite QA report).
 import type { Page } from "playwright-core";
 import type { Journey } from "../scripts/journey";
 
 type FakeMode = { caps: string[]; open: "partial" | "disconnect-once" };
 
-/**
- * Runs in the page before its scripts and answers bridge requests like the extension would. Plain JS in a string:
- * Bun's transpiled function text can reference helpers that do not exist in the page.
- */
-const FAKE_BRIDGE = `(() => {
+function fakeBridge() {
   const raw = sessionStorage.getItem("fakeBridge");
   if (!raw) return;
-  const mode = JSON.parse(raw);
-  const log = JSON.parse(sessionStorage.getItem("fakeOpenLog") || "[]");
+  const mode: FakeMode = JSON.parse(raw);
+  const log: { operationId: string; urls: string[] }[] = JSON.parse(sessionStorage.getItem("fakeOpenLog") || "[]");
   const opened = new Set(log.flatMap((l) => l.urls));
-  // The real bridge marks <html> once the document exists; init scripts can run before it does.
+  // Init scripts can run before <html> exists.
   const mark = () => (document.documentElement.dataset.linklogBridge = "1");
   if (document.documentElement) mark();
   else document.addEventListener("DOMContentLoaded", mark);
-  const post = (body) => window.postMessage({ channel: "linklog-bridge", from: "extension", ...body }, location.origin);
-  const reply = (id, result) => post({ response: { id, ok: true, result } });
+  const post = (body: Record<string, unknown>) => window.postMessage({ channel: "linklog-bridge", from: "extension", ...body }, location.origin);
+  const reply = (id: string, result: unknown) => post({ response: { id, ok: true, result } });
   window.addEventListener("message", (event) => {
     const data = event.data;
     if (!data || data.channel !== "linklog-bridge" || data.from !== "page") return;
@@ -39,20 +31,19 @@ const FAKE_BRIDGE = `(() => {
       for (const url of args.urls) opened.add(url);
       return post({ disconnected: true });
     }
-    // In "partial" the second URL fails; a replay reports what the operation opened before.
     reply(id, {
-      items: args.urls.map((url, i) =>
+      items: args.urls.map((url: string, i: number) =>
         opened.has(url) || mode.open === "disconnect-once" || i === 0
           ? (opened.add(url), { url, outcome: "opened" })
           : { url, outcome: "failed", error: "Chrome refused the URL." },
       ),
     });
   });
-})();`;
+}
 
 export default (async ({ page, api, fixture, step, check, shot, aria, note }) => {
   const urls = [fixture("article", "one"), fixture("article", "two")];
-  await page.addInitScript({ content: FAKE_BRIDGE });
+  await page.addInitScript(fakeBridge);
   const setMode = async (mode: FakeMode | null) => {
     await page.evaluate((m) => {
       sessionStorage.removeItem("fakeOpenLog");
@@ -126,7 +117,6 @@ export default (async ({ page, api, fixture, step, check, shot, aria, note }) =>
   await open.click();
   await check("Toast says the outcome could not be confirmed", () => page.getByText(/Couldn't confirm which links opened/).isVisible());
   await shot("04-unconfirmed");
-  // The page reconnects after a disconnect; Retry is offered on the toast.
   await check("Open is usable again after reconnecting", () => open.isEnabled(), { timeout: 10_000 });
   await page.getByRole("button", { name: "Retry" }).click();
   await check("Retry reports both opened", () => page.getByText(/Opened 2 links/).isVisible());
