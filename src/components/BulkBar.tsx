@@ -79,6 +79,9 @@ export function BulkDock({
                       size="sm"
                       variant={i === 0 ? "default" : "ghost"}
                       disabled={s.disabled}
+                      // The visible badge and key are not part of the name, so it stays "Auto-tag", "Lens", "Extract context".
+                      aria-label={s.action.label}
+                      aria-keyshortcuts={s.action.shortcut}
                       onClick={() => onInvoke(s.action)}
                     >
                       <Icon className="size-3.5" />

@@ -14,7 +14,7 @@ A user creates tags with a description for the AI and a confidence threshold, ad
 ## How to get to it (user POV)
 
 - The sidebar `TAGS` section: `New tag`, or `Create one` when there are no tags yet. Each tag has a `Tag options for <name>` menu.
-- Select rows with their `Select <title>` checkbox, or with `Select all N links`. The `Selected link actions` bar then shows `Auto-tag`, `Lens` and `Extract context`.
+- Select rows with their `Select <title>` checkbox, or with `Select all N links`. The `Selected link actions` bar then shows `Auto-tag`, `Lens` and `Extract context` (with an `eligible/total` badge such as `4/7` when only some links qualify). On desktop, `⌘K` opens the actions palette and `T`/`L`/`E`/`C`/`⇧C` run actions directly; see `journeys/bulk-actions-desktop.ts`.
 - The inspector's `Add tag` button, and a row's `Link actions` → `Edit tags`.
 - The sidebar `LENSES` section: `New lens`, and `Lens options for <name>`.
 
