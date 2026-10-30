@@ -44,17 +44,36 @@ export default (async ({ page, api, fixture, step, check, shot, note }) => {
   await check("Bar shows 7 selected", () => countButton(7).isVisible());
   const autotag = bar.getByRole("button", { name: /^Auto-tag/ });
   const lens = bar.getByRole("button", { name: /^Lens/ });
-  const extract = bar.getByRole("button", { name: /^Extract context/ });
+  const open = bar.getByRole("button", { name: /^Open/ });
   await check("Auto-tag shows 4/7 and its key T", async () => /4\/7/.test((await autotag.textContent()) ?? "") && /T$/.test((await autotag.textContent()) ?? ""));
   await check("Lens shows 4/7 and its key L", async () => /4\/7/.test((await lens.textContent()) ?? "") && /L$/.test((await lens.textContent()) ?? ""));
-  await check("Extract context has no badge and its key E", async () => {
-    const t = (await extract.textContent()) ?? "";
-    return !t.includes("/") && /E$/.test(t);
+  await check("Open reads Open 7 with no badge and its key O", async () => {
+    const t = (await open.textContent()) ?? "";
+    return /^Open 7/.test(t) && !t.includes("/") && /O$/.test(t);
   });
+  await check("Extract context is not on the bar: it lives in the palette and on E", () => bar.getByRole("button", { name: /^Extract context/ }).count().then((n) => n === 0));
   await check("More ⌘K and Clear are on the bar", async () => (await bar.getByRole("button", { name: /^More/ }).isVisible()) && (await bar.getByRole("button", { name: "Clear selection" }).isVisible()));
   await autotag.hover();
   await check("Tooltip says why only 4 qualify", () => page.getByRole("tooltip").getByText("3 of 7 links have no content yet").isVisible());
   await snap("01-bar-seven-selected");
+
+  await step("Open: this instance has no extension, so it is blocked with its reason and O does nothing");
+  await check("Open is disabled", () => open.isDisabled());
+  // The disabled button swallows pointer events, so hover the span the tooltip is attached to. Radix ignores
+  // pointer moves for a moment after leaving another trigger, so leave the Auto-tag one first and give it time.
+  await page.mouse.move(600, 300, { steps: 8 });
+  await page.waitForTimeout(1000);
+  const openBox = (await open.locator("xpath=..").boundingBox())!;
+  await page.mouse.move(openBox.x + openBox.width / 2, openBox.y + openBox.height / 2, { steps: 8 });
+  const openTip = await check("Tooltip gives the extension reason", async () => {
+    const tips = await page.getByRole("tooltip").allTextContents();
+    return tips.find((t) => /extension|Chrome/.test(t)) ?? false;
+  });
+  await note("open-blocked-reason", openTip);
+  await page.mouse.move(0, 0);
+  await page.keyboard.press("o");
+  await page.waitForTimeout(500);
+  await check("Nothing happened: no toast, still 7 selected, no dialog", async () => (await page.locator("[data-sonner-toast]").count()) === 0 && (await countButton(7).isVisible()) && !(await page.getByRole("dialog").isVisible()));
 
   await step("Count menu: Escape closes it and keeps the selection");
   await countButton(7).click();
@@ -75,12 +94,13 @@ export default (async ({ page, api, fixture, step, check, shot, note }) => {
     return m.scrollHeight <= m.clientHeight && m;
   });
   await note("palette-list-metrics", overflow);
-  await check("Rows: Auto-tag 4/7 with its skip reason, Extract 7/7, Copy URLs, Copy URLs + titles", async () => {
+  await check("Rows: Auto-tag 4/7 with its skip reason, Extract 7/7, Open with its blocked reason, Copy URLs, Copy URLs + titles", async () => {
     const row = (name: string) => palette.getByRole("option", { name: new RegExp(`^${name}`) });
     return (
       /4\/7/.test((await row("Auto-tag").textContent()) ?? "") &&
       /3 of 7 links have no content yet/.test((await row("Auto-tag").textContent()) ?? "") &&
       /7\/7/.test((await row("Extract context").textContent()) ?? "") &&
+      /extension|Chrome/.test((await row("Open").textContent()) ?? "") &&
       (await row("Copy URLs").first().isVisible()) &&
       (await row("Copy URLs \\+ titles").isVisible())
     );
