@@ -437,7 +437,7 @@ export function App({
         setPicked(filteredRef.current.map((l) => l.id));
         return;
       }
-      if (e.key === "Escape" && !dialog) {
+      if (e.key === "Escape" && !dialog && !e.defaultPrevented) {
         if (activeId) setActiveId(null);
         else setPicked([]);
         return;
