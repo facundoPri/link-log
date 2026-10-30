@@ -42,5 +42,5 @@ const seed: [FixtureName, string, string[]][] = [
 for (const [fixture, path, tags] of seed) await send("POST", "/links", { url: fixtureUrl(fixture, path), tags });
 
 console.log(`\nPROTOTYPE FAC-45 seeded ${seed.length} links for ${demo.email} / ${demo.password}`);
-for (const v of ["A", "B", "C"]) console.log(`  ${session.ui}/?variant=${v}`);
+for (const v of ["D", "A", "B", "C"]) console.log(`  ${session.ui}/?variant=${v}`);
 console.log(`Stop: ${V.join(" ")} down`);

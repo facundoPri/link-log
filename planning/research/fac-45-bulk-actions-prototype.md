@@ -1,6 +1,6 @@
 # FAC-45 bulk actions: prototype comparison
 
-Status: research and throwaway prototype, **awaiting owner selection**. Nothing here is production code, and no variant has been folded into the app.
+Status: research and throwaway prototype. The owner chose a hybrid of A and B, prototyped as **variant D** below, and it is **awaiting owner confirmation** before any production work. Nothing here is production code, and no variant has been folded into the app.
 
 Question: how should the library's selection surface fit today's four actions (Auto-tag, Lens, Extract context, Copy) plus FAC-46 bulk delete, FAC-47 bulk open and later tag/organize actions, while keeping the selection count, per-action availability, progress and partial failures visible?
 
@@ -17,6 +17,7 @@ bun run prototype:bulk
 
 This starts an isolated verify-linklog instance with fixture sites only, so it makes no real network calls and costs nothing. It seeds Demo A with 12 links of mixed states, 3 tags and 1 lens, then prints:
 
+- http://127.0.0.1:3400/?variant=D (the owner's hybrid)
 - http://127.0.0.1:3400/?variant=A
 - http://127.0.0.1:3400/?variant=B
 - http://127.0.0.1:3400/?variant=C
@@ -51,6 +52,36 @@ Screenshots (1280×820 unless noted, in `assets/fac-45/`):
 - A: [selected](assets/fac-45/A-1-selected.png), [More menu](assets/fac-45/A-2-more-menu.png), [running](assets/fac-45/A-3-running.png), [partial failure](assets/fac-45/A-4-partial-failure.png), [after Select failed](assets/fac-45/A-5-select-failed.png).
 - B: [chip](assets/fac-45/B-1-selected-chip.png), [palette](assets/fac-45/B-2-palette.png), [lens sub-page, opened with `L`](assets/fac-45/B-3-lens-subpage.png), [chip progress](assets/fac-45/B-4-chip-progress.png), [failure popover](assets/fac-45/B-5-results-popover.png) (1218 px wide).
 - C: [panel](assets/fac-45/C-1-panel.png), [delete undo window](assets/fac-45/C-2-delete-undo.png), [Open with 1 failure](assets/fac-45/C-3-results.png).
+
+## Variant D: the owner's hybrid
+
+Owner feedback on A/B/C: A on desktop, B on narrow screens, a bottom drawer on mobile, a palette without scrolling, and direct shortcuts on every layout. D implements exactly that on the same route and data.
+
+| Width | Surface |
+|---|---|
+| ≥1100 px (desktop) | A's bar: count menu, Auto-tag `T`, Lens `L`, Open N `O`, More `⌘K`. Every promoted button shows its key. More and ⌘K open the compact palette |
+| 768 to 1099 px (narrow) | B's chip ("7 selected · Actions ⌘K") and the same compact palette |
+| <768 px (mobile) | A full-width chip with a large Actions button. It opens a bottom drawer with a 4-column tile grid (count badge when only some links are eligible), one line explaining the counts, and a separate full-width "Delete 7 links" button. Lens and tag pickers replace the tiles inside the drawer |
+
+The breakpoints match App's existing `narrow` (1099 px) and `mobile` (767 px) media queries.
+
+Direct shortcuts work whenever links are selected and focus is not in a text field. `T` Auto-tag, `L` Lens (opens the picker), `E` Extract, `G` Add tag (opens the picker), `O` Open in tabs, `C` Copy URLs, `⇧C` Copy URLs + titles, `⌫` Delete (confirm, then 5 s undo), `⌘K` palette. The same keys run the action from inside the palette while its filter is empty.
+
+The palette is now one line per action. The skip reason trails the label, groups sit in a left gutter, and each row shows the count and key. Observed at 1280×820, all eight actions fit with no scrollbar (`scrollHeight` 288 equals `clientHeight`, overflow visible). The mobile drawer is 347 px tall at 390×844, also without scrolling.
+
+D also fixes the Escape bug for its own overlays. Escape that closes the palette, a menu or the drawer no longer clears the selection (observed). The fix records whether an overlay was open in the window capture phase and stops the event at `document` before App's window handler sees it. The production fix can be the same.
+
+Screenshots:
+
+- Desktop: [bar](assets/fac-45/D-1-desktop-bar.png), [palette](assets/fac-45/D-2-desktop-palette.png), [after pressing E](assets/fac-45/D-3-desktop-shortcut-run.png).
+- Narrow, 900 px: [chip](assets/fac-45/D-4-narrow-chip.png), [palette](assets/fac-45/D-5-narrow-palette.png).
+- Mobile, 390 px: [chip](assets/fac-45/D-6-mobile-chip.png), [drawer](assets/fac-45/D-7-mobile-drawer.png), [lens picker](assets/fac-45/D-8-mobile-lens-picker.png), [run in progress](assets/fac-45/D-9-mobile-result.png).
+
+Known rough edges, left for the production rewrite:
+
+- The 7 non-danger tiles leave one empty cell in the 4-column grid.
+- The mobile chip shows "2/4" without naming the running action.
+- Mobile was checked with Chromium device emulation, not on a phone.
 
 ## What the prototype showed
 

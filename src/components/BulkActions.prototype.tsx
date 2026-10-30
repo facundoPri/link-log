@@ -45,12 +45,15 @@ import {
   CommandList,
   CommandShortcut,
 } from "@/components/ui/command";
+import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { lensIcon } from "./Sidebar";
 
 const VARIANTS = [
   { key: "A", name: "Promoted bar + More" },
   { key: "B", name: "Command palette" },
   { key: "C", name: "Selection panel" },
+  { key: "D", name: "Hybrid: A desktop · B narrow · drawer mobile" },
 ] as const;
 type VariantKey = (typeof VARIANTS)[number]["key"];
 
@@ -160,6 +163,7 @@ const ACTIONS: BulkAction[] = [
     verb: "Copying",
     group: "Share",
     icon: <Copy className="size-3.5" />,
+    shortcut: "⇧C",
     availability: (links) => split(links, () => null),
   },
   {
@@ -256,6 +260,7 @@ export function BulkActionsPrototype(props: Props) {
       {props.variant === "A" && <VariantA {...shared} />}
       {props.variant === "B" && <VariantB {...shared} />}
       {props.variant === "C" && <VariantC {...shared} />}
+      {props.variant === "D" && <VariantD {...shared} />}
       <PrototypeSwitcher current={props.variant} selected={props.links.length} />
     </>
   );
@@ -659,6 +664,348 @@ function VariantC(p: Shared) {
   );
 }
 
+// D: the owner's pick after A/B/C. Desktop keeps A's bar, with More and ⌘K opening a compact, scroll-free palette.
+// Narrow screens fall back to B's chip and the same palette. Phones get a chip that opens a bottom drawer. Direct
+// single-key shortcuts work on every layout while links are selected.
+type Layout = "desktop" | "narrow" | "mobile";
+function useLayout(): Layout {
+  const read = (): Layout => (window.innerWidth < 768 ? "mobile" : window.innerWidth < 1100 ? "narrow" : "desktop");
+  const [layout, setLayout] = useState(read);
+  useEffect(() => {
+    const sync = () => setLayout(read());
+    window.addEventListener("resize", sync);
+    return () => window.removeEventListener("resize", sync);
+  }, []);
+  return layout;
+}
+
+const matches = (a: BulkAction, e: KeyboardEvent) => {
+  if (!a.shortcut || e.metaKey || e.ctrlKey || e.altKey) return false;
+  if (a.shortcut === "⌫") return e.key === "Backspace" || e.key === "Delete";
+  if (a.shortcut.startsWith("⇧")) return e.shiftKey && e.key.toLowerCase() === a.shortcut.slice(1).toLowerCase();
+  return !e.shiftKey && e.key.toLowerCase() === a.shortcut.toLowerCase();
+};
+
+function VariantD(p: Shared) {
+  const layout = useLayout();
+  const [palette, setPalette] = useState<{ page: BulkAction | null } | null>(null);
+  const [drawer, setDrawer] = useState<{ page: BulkAction | null } | null>(null);
+  const total = p.links.length;
+  const run = (a: BulkAction, detail?: string) => {
+    const av = p.avail.get(a.id)!;
+    if (disabled(av)) return toast(reasonOf(av, total) ?? `${a.label} is unavailable`);
+    if (a.picker && !detail) return layout === "mobile" ? setDrawer({ page: a }) : setPalette({ page: a });
+    setPalette(null);
+    setDrawer(null);
+    if (a.id === "delete" && !confirmDelete(av)) return;
+    p.start(a, av, detail);
+  };
+  const runRef = useRef(run);
+  runRef.current = run;
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (!total) return;
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        setPalette((o) => (o ? null : { page: null }));
+        return;
+      }
+      const t = e.target as HTMLElement | null;
+      if (t?.closest("input, textarea, [contenteditable]") || document.querySelector("[role=dialog], [role=menu]")) return;
+      const hit = ACTIONS.find((a) => matches(a, e));
+      if (hit) {
+        e.preventDefault();
+        runRef.current(hit);
+      }
+    };
+    // Escape that closes an overlay must not also reach App's window handler, which clears the selection.
+    let overlayOpen = false;
+    const note = (e: KeyboardEvent) => {
+      if (e.key === "Escape") overlayOpen = !!document.querySelector("[role=dialog], [role=menu], [data-radix-popper-content-wrapper]");
+    };
+    const swallow = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && overlayOpen) e.stopPropagation();
+    };
+    window.addEventListener("keydown", key, true);
+    window.addEventListener("keydown", note, true);
+    document.addEventListener("keydown", swallow);
+    return () => {
+      window.removeEventListener("keydown", key, true);
+      window.removeEventListener("keydown", note, true);
+      document.removeEventListener("keydown", swallow);
+    };
+  }, [total]);
+  const status = p.runs.find((r) => r.phase !== "done") ?? p.runs[0];
+  return (
+    <>
+      {layout === "desktop" ? (
+        <DesktopBar {...p} run={run} openPalette={() => setPalette({ page: null })} />
+      ) : (
+        (total > 0 || status) && (
+          <div
+            aria-label="Selected link actions"
+            className={`fixed z-40 flex items-center gap-1 border bg-popover p-1 shadow-lg ${layout === "mobile" ? "right-3 bottom-[calc(3.75rem+env(safe-area-inset-bottom))] left-3 rounded-2xl pl-4" : "bottom-[calc(4.5rem+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 rounded-full pl-3"}`}
+          >
+            {total > 0 && <span className="flex-1 text-[13px] font-medium whitespace-nowrap tabular">{total} selected</span>}
+            {status && <RunChip run={status} {...p} />}
+            {total > 0 && (
+              <Button
+                size={layout === "mobile" ? "default" : "sm"}
+                className={layout === "mobile" ? "h-10 rounded-xl" : "rounded-full"}
+                variant={layout === "mobile" ? "default" : "secondary"}
+                onClick={() => (layout === "mobile" ? setDrawer({ page: null }) : setPalette({ page: null }))}
+              >
+                Actions {layout === "narrow" && <Kbd>⌘K</Kbd>}
+              </Button>
+            )}
+            {total > 0 && (
+              <Button size={layout === "mobile" ? "icon" : "icon-sm"} variant="ghost" className="rounded-full" aria-label="Clear selection" onClick={() => p.onSelect([])}>
+                <X className="size-4" />
+              </Button>
+            )}
+          </div>
+        )
+      )}
+      {layout !== "mobile" && (
+        <CompactPalette {...p} page={palette?.page ?? null} open={!!palette} onOpenChange={(o) => setPalette(o ? { page: null } : null)} setPage={(page) => setPalette({ page })} run={run} />
+      )}
+      {layout === "mobile" && (
+        <ActionDrawer {...p} page={drawer?.page ?? null} open={!!drawer} onOpenChange={(o) => setDrawer(o ? { page: null } : null)} setPage={(page) => setDrawer({ page })} run={run} />
+      )}
+    </>
+  );
+}
+
+function RunChip({ run, runs, onSelect, undo, dismiss }: Shared & { run: Run }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button size="sm" variant="ghost" className="rounded-full">
+          {run.phase === "done" ? run.failed.length ? <CircleAlert className="size-3.5 text-amber-600" /> : <Check className="size-3.5 text-emerald-600" /> : <Loader2 className="size-3.5 animate-spin" />}
+          {run.phase === "undo" ? "Undo" : run.phase === "running" ? `${run.done + run.failed.length}/${run.ids.length}` : run.failed.length ? `${run.failed.length} failed` : "Done"}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent side="top" sideOffset={8} className="w-[min(24rem,calc(100vw-1.5rem))] space-y-3">
+        {runs.map((r) => (
+          <RunLine key={r.id} run={r} onSelect={onSelect} undo={undo} dismiss={dismiss} />
+        ))}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function DesktopBar(p: Shared & { run: (a: BulkAction, detail?: string) => void; openPalette: () => void }) {
+  const total = p.links.length;
+  const promoted = ["autotag", "lens", "open"];
+  return (
+    <div className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] left-1/2 z-40 flex w-max -translate-x-1/2 flex-col items-center gap-2">
+      {p.runs.map((r) => (
+        <div key={r.id} className="w-[440px] rounded-lg border bg-popover px-3 py-2 shadow-md">
+          <RunLine run={r} onSelect={p.onSelect} undo={p.undo} dismiss={p.dismiss} />
+        </div>
+      ))}
+      {total > 0 && (
+        <div aria-label="Selected link actions" className="flex items-center gap-1 rounded-xl border bg-popover p-1.5 shadow-lg">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" variant="ghost" className="tabular">
+                {total} selected <ChevronDown className="size-3" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              <DropdownMenuItem onClick={() => p.onSelect(p.visible.map((l) => l.id))}>Select all {p.visible.length} visible</DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => p.onSelect([])}>Clear selection</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Separator orientation="vertical" className="h-5" />
+          {ACTIONS.filter((a) => promoted.includes(a.id)).map((a) => {
+            const av = p.avail.get(a.id)!;
+            const count = countLabel(av, total);
+            const reason = reasonOf(av, total);
+            return (
+              <Tooltip key={a.id}>
+                <TooltipTrigger asChild>
+                  <span>
+                    <Button size="sm" variant={a.id === "autotag" ? "default" : "ghost"} disabled={disabled(av)} onClick={() => p.run(a)}>
+                      {a.icon}
+                      {a.id === "open" ? `Open ${av.eligible.length}` : a.id === "lens" ? "Lens" : a.label}
+                      {count && <span className="rounded bg-muted px-1 text-2xs tabular text-muted-foreground">{count}</span>}
+                      <Kbd className={a.id === "autotag" ? "bg-white/20 text-current" : ""}>{a.shortcut}</Kbd>
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                {reason && <TooltipContent>{reason}</TooltipContent>}
+              </Tooltip>
+            );
+          })}
+          <Button size="sm" variant="ghost" onClick={p.openPalette}>
+            <MoreHorizontal className="size-3.5" /> More <Kbd>⌘K</Kbd>
+          </Button>
+          <Separator orientation="vertical" className="h-5" />
+          <Button size="icon-sm" variant="ghost" aria-label="Clear selection" onClick={() => p.onSelect([])}>
+            <X className="size-3.5" />
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+type PageProps = Shared & {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  page: BulkAction | null;
+  setPage: (page: BulkAction | null) => void;
+  run: (a: BulkAction, detail?: string) => void;
+};
+const pickerItems = (p: PageProps, a: BulkAction) =>
+  a.picker === "lens"
+    ? p.lenses.map((l) => ({ id: l.id, name: l.name, icon: lensIcon(l.type, "size-4") }))
+    : p.tags.map((t) => ({ id: t.id, name: t.name, icon: <TagIcon className="size-4" /> }));
+
+// Compact: one line per action, the reason trails the label, groups sit in a left gutter. Eight actions fit without
+// a scrollbar at 820 px tall.
+function CompactPalette(p: PageProps) {
+  const total = p.links.length;
+  const [search, setSearch] = useState("");
+  useEffect(() => setSearch(""), [p.page, p.open]);
+  return (
+    <CommandDialog open={p.open} onOpenChange={p.onOpenChange} title="Bulk actions" description={`Act on ${total} selected links`} showCloseButton={false} className="top-[30%] sm:max-w-[560px]">
+      <div className="flex items-center gap-2 border-b px-3 py-2 text-[12px] text-muted-foreground">
+        {p.page ? (
+          <button className="hover:text-foreground" onClick={() => p.setPage(null)}>
+            ← {p.page.label.replace("…", "")} on {total} links
+          </button>
+        ) : (
+          <span className="flex-1">
+            Acting on <b className="text-foreground tabular">{total} selected</b>
+          </span>
+        )}
+        {!p.page && <span>Press a key to run directly</span>}
+      </div>
+      <CommandInput
+        value={search}
+        onValueChange={setSearch}
+        placeholder={p.page ? `Pick a ${p.page.picker}…` : "Filter actions…"}
+        onKeyDown={(e) => {
+          if (p.page || search || e.metaKey || e.ctrlKey) return;
+          const hit = ACTIONS.find((a) => matches(a, e.nativeEvent));
+          if (hit) {
+            e.preventDefault();
+            p.run(hit);
+          }
+        }}
+      />
+      <CommandList className="max-h-none overflow-visible">
+        <CommandEmpty>No matching action</CommandEmpty>
+        {p.page ? (
+          <CommandGroup>
+            {pickerItems(p, p.page).map((i) => (
+              <CommandItem key={i.id} value={i.name} onSelect={() => p.run(p.page!, i.name)} className="!py-2">
+                {i.icon}
+                {i.name}
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        ) : (
+          GROUPS.map((g) => (
+            <CommandGroup key={g} className="!px-1.5 !py-1 [&_[cmdk-group-items]]:grid [&_[cmdk-group-items]]:grid-cols-[4.5rem_1fr] [&_[cmdk-group-items]]:items-start">
+              <div className={`row-span-3 px-2 pt-2 text-2xs font-medium uppercase tracking-wide ${g === "Danger" ? "text-destructive" : "text-muted-foreground"}`}>{g}</div>
+              {ACTIONS.filter((a) => a.group === g).map((a) => {
+                const av = p.avail.get(a.id)!;
+                const reason = av.blocked ?? (av.skipped.length ? `${av.skipped.length} skipped: ${av.skipped[0]!.reason.toLowerCase()}` : null);
+                return (
+                  <CommandItem key={a.id} value={a.label} disabled={disabled(av)} onSelect={() => p.run(a)} className={`col-start-2 !py-1.5 ${g === "Danger" ? "text-destructive data-[selected=true]:text-destructive" : ""}`}>
+                    <span className="[&_svg]:!size-4">{a.icon}</span>
+                    <span className="whitespace-nowrap">{a.label}</span>
+                    {reason && <span className="min-w-0 truncate text-2xs text-muted-foreground">{reason}</span>}
+                    <span className="ml-auto text-[12px] tabular text-muted-foreground">{av.blocked ? "–" : `${av.eligible.length}/${total}`}</span>
+                    {a.shortcut && <Kbd className="min-w-6 justify-center">{a.shortcut}</Kbd>}
+                  </CommandItem>
+                );
+              })}
+            </CommandGroup>
+          ))
+        )}
+      </CommandList>
+    </CommandDialog>
+  );
+}
+
+// Mobile: a bottom drawer with thumb-sized tiles. The danger action is a separate full-width button, pickers replace
+// the tiles in place, and results sit above the tiles while a run is visible.
+function ActionDrawer(p: PageProps) {
+  const total = p.links.length;
+  return (
+    <Sheet open={p.open} onOpenChange={p.onOpenChange}>
+      <SheetContent side="bottom" showCloseButton={false} className="max-h-[85dvh] gap-0 rounded-t-2xl px-4 pt-2 pb-[calc(1rem+env(safe-area-inset-bottom))]">
+        <div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-muted-foreground/30" />
+        <div className="mb-3 flex items-center gap-2">
+          {p.page ? (
+            <button className="flex items-center gap-1 text-[15px] font-semibold" onClick={() => p.setPage(null)}>
+              <ArrowLeft className="size-4" /> {p.page.label.replace("…", "")}
+            </button>
+          ) : (
+            <SheetTitle className="flex-1 text-[15px] tabular">{total} selected</SheetTitle>
+          )}
+          <SheetDescription className="sr-only">Actions for the selected links</SheetDescription>
+          {!p.page && (
+            <Button size="sm" variant="ghost" onClick={() => p.onSelect(p.visible.map((l) => l.id))}>
+              Select all {p.visible.length}
+            </Button>
+          )}
+        </div>
+        {p.page ? (
+          <div className="flex flex-col overflow-y-auto">
+            {pickerItems(p, p.page).map((i) => (
+              <button key={i.id} className="flex min-h-12 items-center gap-3 border-b px-1 text-left text-[15px] last:border-0 active:bg-muted" onClick={() => p.run(p.page!, i.name)}>
+                {i.icon}
+                {i.name}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-4 gap-2">
+              {ACTIONS.filter((a) => a.group !== "Danger").map((a) => {
+                const av = p.avail.get(a.id)!;
+                const count = countLabel(av, total);
+                return (
+                  <button
+                    key={a.id}
+                    disabled={disabled(av)}
+                    onClick={() => p.run(a)}
+                    className="relative flex min-h-[76px] flex-col items-center justify-center gap-1.5 rounded-xl bg-muted/60 px-1 text-center text-[12px] leading-tight font-medium active:bg-muted disabled:opacity-40 [&_svg]:!size-5"
+                  >
+                    {a.icon}
+                    <span>{a.label.replace("…", "").replace("Extract context", "Extract").replace("Copy URLs + titles", "Copy + titles").replace("Open in tabs", "Open tabs")}</span>
+                    {count && <span className="absolute top-1.5 right-1.5 rounded-full bg-background px-1.5 text-2xs tabular text-muted-foreground">{count}</span>}
+                  </button>
+                );
+              })}
+            </div>
+            {ACTIONS.some((a) => p.avail.get(a.id)!.skipped.length && !p.avail.get(a.id)!.blocked) && (
+              <p className="mt-2 text-[12px] text-muted-foreground">
+                Numbers show how many of the {total} each action can run on. {p.links.filter((l) => !hasContent(l)).length} have no content yet, so AI actions skip them.
+              </p>
+            )}
+            {ACTIONS.filter((a) => a.group === "Danger").map((a) => {
+              const av = p.avail.get(a.id)!;
+              return (
+                <Button key={a.id} variant="outline" disabled={disabled(av)} onClick={() => p.run(a)} className="mt-3 h-11 w-full rounded-xl border-destructive/40 text-destructive">
+                  <Trash2 className="size-4" /> Delete {av.eligible.length} {av.eligible.length === 1 ? "link" : "links"}
+                </Button>
+              );
+            })}
+          </>
+        )}
+      </SheetContent>
+    </Sheet>
+  );
+}
+
 function PrototypeSwitcher({ current, selected }: { current: VariantKey; selected: number }) {
   const go = (step: number) => {
     const i = VARIANTS.findIndex((v) => v.key === current);
@@ -680,11 +1027,11 @@ function PrototypeSwitcher({ current, selected }: { current: VariantKey; selecte
   });
   const name = VARIANTS.find((v) => v.key === current)!.name;
   return (
-    <div aria-label="Prototype variant switcher" className="fixed bottom-3 left-1/2 z-[60] flex -translate-x-1/2 items-center gap-1 rounded-full bg-fuchsia-700 px-1.5 py-1 text-[12px] font-medium text-white shadow-2xl ring-2 ring-fuchsia-300">
+    <div aria-label="Prototype variant switcher" className="fixed bottom-3 left-1/2 z-[60] max-[767px]:z-30 flex -translate-x-1/2 items-center gap-1 rounded-full bg-fuchsia-700 px-1.5 py-1 text-[12px] font-medium text-white shadow-2xl ring-2 ring-fuchsia-300">
       <button aria-label="Previous variant" className="rounded-full p-1 hover:bg-white/20" onClick={() => go(-1)}>
         <ArrowLeft className="size-3.5" />
       </button>
-      <span className="px-1 whitespace-nowrap">
+      <span className="max-w-[calc(100vw-6rem)] truncate px-1 whitespace-nowrap">
         PROTOTYPE {current} ({name}) · {selected} selected
       </span>
       <button aria-label="Next variant" className="rounded-full p-1 hover:bg-white/20" onClick={() => go(1)}>
