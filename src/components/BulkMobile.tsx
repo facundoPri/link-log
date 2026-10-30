@@ -1,14 +1,12 @@
 import { ArrowLeft, ChevronUp, CircleAlert, Loader2, Plus, X } from "lucide-react";
 import type { Lens } from "../types";
-import type { ActionState, BulkAction, BulkProgress } from "../bulkActions";
+import { plural, type ActionState, type BulkAction, type BulkProgress } from "../bulkActions";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import { progressText } from "./BulkBar";
 import { BulkResultsPopover, resultTitle, type BulkResult } from "./BulkResults";
 import { lensIcon } from "./Sidebar";
-
-const plural = (n: number) => (n === 1 ? "link" : "links");
 
 // Mobile bar: clear on the left, the count over a one-tap select-all (or the running job), and a large Actions
 // button. With nothing selected it stays only to report the last run.

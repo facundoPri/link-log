@@ -43,8 +43,8 @@ export type BulkAction = {
   group: BulkGroup;
   /** Shown in a Kbd and matched against key presses: a letter, optionally prefixed with ⇧. */
   shortcut?: string;
-  /** Needs a choice (lens, tag) before it runs; `run` then receives the chosen id as `detail`. */
-  picker?: "lens" | "tag";
+  /** Needs a choice (a lens) before it runs; `run` then receives the chosen id as `detail`. */
+  picker?: "lens";
   /** Shown as its own button in the desktop bar. */
   promoted?: boolean;
   icon: LucideIcon;
@@ -75,7 +75,7 @@ const needsContent = (links: Link[], reason: string, blocked: string | null): Av
 });
 
 const STILL_PROCESSING = "Some links are still processing";
-const plural = (n: number) => (n === 1 ? "link" : "links");
+export const plural = (n: number) => (n === 1 ? "link" : "links");
 
 export const BULK_ACTIONS: BulkAction[] = [
   {
