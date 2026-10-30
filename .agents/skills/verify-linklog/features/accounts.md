@@ -29,13 +29,14 @@ Preconditions:
 - **Sign in.** Fill `Email` with `demo-a@linklog.test` and `Password` with `linklog-demo-a-password`, then click the submit button `Sign in`. The library appears with Demo A's email in the footer.
 - **Sign up.** Click `Create an account` and fill `Email` (a new `@linklog.test` address) and `Password`, then click `Create account`. A status asks the user to check their email. Open the `verify` link from `waitForMail` in the page. The library opens, signed in, and empty.
 - **Magic link.** Click `Email me a sign-in link`, fill `Email`, and click `Send link`. Open the `magic` link. The library opens signed in.
+  A magic link to an email with no account creates one. A magic link to an email with an unverified password account removes that password; the screen says so.
 - **Reset.** Use the forgot-password link, fill `Email`, and click `Send password link`. Open the `reset` link, fill `New password` and `Confirm new password`, and submit. Signing in with the new password works, and a session from before the reset gets 401.
 - **Isolation.** Save `fixture("article", "a-only")` as Demo A. `pageAs(1)` (Demo B) does not list it, `apiAs(1).library()` does not contain it, and `apiAs(1).get(\`/links/${idA}/content\`)` fails.
 - **Proof.** Save a `shot` of the auth screen and of each signed-in library with the footer email visible, plus a `note` of the API status codes.
 
 ## Gotchas
 
-- Better Auth rate-limits sign-in per IP. More than a few sign-ins within about 10 s return 429. Space them out, or reuse the sessions `up` already made.
+- Better Auth rate-limits sign-in per IP: more than 5 sign-ins within 60 s return 429 (`worker/auth.ts`'s `/sign-in/email` rule; sign-up and magic-link have their own 60 s/3-attempt rules). Space repeated sign-ins out by more than 60 s, or reuse the sessions `up` already made.
 - Mail files carry live tokens. They stay inside the run directory, and `down` deletes them.
 - Sessions are bound to the UI origin, `http://127.0.0.1:<ui port>`. Using `localhost` loses the cookie.
 - A password reset ends the other sessions of that account. Resetting Demo A invalidates the cookie in `session.json`, so later journeys on the same instance must sign in again, or you must `down` and `up`.
