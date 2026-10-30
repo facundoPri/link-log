@@ -11,6 +11,8 @@ const ROOT = resolve(realpathSync(import.meta.dir), "../../../..");
 type Api = {
   get: (path: string) => Promise<any>;
   send: (method: string, path: string, body?: unknown) => Promise<any>;
+  /** POST a tag or lens that a journey needs; a 409 means an earlier journey on this instance already created it. */
+  ensure: (path: string, body: unknown) => Promise<void>;
   library: () => Promise<{ links: any[]; batches: any[]; tags: any[] }>;
   /** The link saved from `url` (matched on original or resolved URL), or undefined. */
   link: (url: string) => Promise<any>;
@@ -67,6 +69,11 @@ function makeApi(ui: string, cookie: string): Api {
   const api: Api = {
     get: (path) => send("GET", path),
     send,
+    ensure: async (path, body) => {
+      await send("POST", path, body).catch((e: Error) => {
+        if (!e.message.includes("→ 409")) throw e;
+      });
+    },
     library: () => send("GET", "/library"),
     link: async (url) => (await api.library()).links.find((l) => l.original_url === url || l.url === url),
   };

@@ -114,7 +114,7 @@ export default (async ({ page, api, fixture, step, check, shot, aria, note }) =>
   const failedText = (await page.getByText(/Chrome refused the URL/).first().textContent()) ?? "";
   await check("Selection is kept after opening", () => bar.getByText("2 selected").isVisible());
   await shot("03-partial-failure");
-  await page.getByRole("button", { name: "Retry" }).click();
+  await page.locator("[data-sonner-toast]").getByRole("button", { name: "Retry" }).click();
   const partialLog = await check("Retry resent the same operation and URLs", async () => {
     const log = await page.evaluate(() => JSON.parse(sessionStorage.getItem("fakeOpenLog") || "[]"));
     return log.length === 2 && log[0].operationId === log[1].operationId && JSON.stringify(log[0].urls) === JSON.stringify(log[1].urls) && log;
@@ -127,7 +127,7 @@ export default (async ({ page, api, fixture, step, check, shot, aria, note }) =>
   await step("Select failed selects exactly the link that failed, without retrying");
   await page.getByRole("checkbox", { name: `Select ${failedTitle}` }).uncheck();
   await check("Only the link that opened is selected now", () => bar.getByText("1 selected").isVisible());
-  await page.getByRole("button", { name: "Select failed" }).click();
+  await page.locator("[data-sonner-toast]").getByRole("button", { name: "Select failed" }).click();
   await check("The failed link is selected and the other is not", async () => (await page.getByRole("checkbox", { name: `Select ${failedTitle}` }).isChecked()) && !(await page.getByRole("checkbox", { name: `Select ${other.title}` }).isChecked()));
   await check("Select failed did not send another open", async () => (await page.evaluate(() => JSON.parse(sessionStorage.getItem("fakeOpenLog") || "[]"))).length === 2);
   await shot("03b-select-failed");
@@ -141,7 +141,7 @@ export default (async ({ page, api, fixture, step, check, shot, aria, note }) =>
   await check("Toast says the outcome could not be confirmed", () => page.getByText(/Couldn't confirm which links opened/).isVisible());
   await shot("04-unconfirmed");
   await check("Open is usable again after reconnecting", () => open.isEnabled(), { timeout: 10_000 });
-  await page.getByRole("button", { name: "Retry" }).click();
+  await page.locator("[data-sonner-toast]").getByRole("button", { name: "Retry" }).click();
   await check("Retry reports both opened", () => page.getByText(/Opened 2 links/).isVisible());
   const retryLog = await check("Retry reused the operation id", async () => {
     const log = await page.evaluate(() => JSON.parse(sessionStorage.getItem("fakeOpenLog") || "[]"));

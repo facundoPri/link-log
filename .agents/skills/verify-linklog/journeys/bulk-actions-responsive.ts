@@ -12,8 +12,8 @@ export default (async ({ page, api, fixture, step, check, shot, note }) => {
   const all = [...articles, ...broken];
 
   await step("Seed 4 articles and 3 links that can never be extracted, one tag and one lens");
-  await api.send("POST", "/tags", { name: "reading" });
-  await api.send("POST", "/lenses", { name: "Worth reading?", type: "noul", question: "Is this worth reading?" });
+  await api.ensure("/tags", { name: "reading" });
+  await api.ensure("/lenses", { name: "Worth reading?", type: "noul", question: "Is this worth reading?" });
   for (const url of all) await api.send("POST", "/links", { url });
   const links = await check(
     "API: all seven links settled",
