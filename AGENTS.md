@@ -43,6 +43,10 @@ After changing React code, run the `react-doctor` skill for an advisory scan of 
 
 To prove web UI or API behavior in a running app, use the `verify-linklog` skill. It starts an isolated instance with fixture external services and records evidence.
 
+### Production
+
+A bug, failure or slowdown the user hit in real use (production, the deployed app, the extension) starts with the `triage-production` skill, `poteto-mode` included: it replaces the Bug fix and Perf issue playbooks' reproduce and root-cause steps, and its last step decides whether a fix starts. Before a retro, or when proposing monitoring changes, read `docs/agents/production-observability.md`: what production records and its known gaps.
+
 ### Browser and extension
 
 Before touching Browser, the Chrome extension, or `packages/browser-protocol`, read `docs/browser-feature-plan.md` (product spec) and `docs/browser-implementation-handoff.md` (how it's actually built: monorepo map, commands, decisions, known limits). `docs/browser-validation.md` holds the evidence.

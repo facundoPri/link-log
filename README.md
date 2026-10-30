@@ -91,7 +91,8 @@ Production runs at **https://linklog.facundopri.com**: `wrangler.jsonc` → `env
 ```sh
 bun run build
 bunx wrangler d1 migrations apply DB --remote --env production   # back up first once there is real data
-bunx wrangler deploy --env production
+# Tag the commit so triage can tie the live version to code (wrangler deployments list --env production).
+bunx wrangler deploy --env production --tag "$(git rev-parse --short HEAD)" --message "$(git log -1 --format=%s)"
 ```
 
 Secrets (`bunx wrangler secret put <NAME> --env production`): `BETTER_AUTH_SECRET`, `TYPESAFE_API_KEY`. Configuration fails closed: the API answers 503 if any of `BETTER_AUTH_URL`, the secret, `EMAIL_FROM` or the `EMAIL` binding is invalid, and requests for any other host get 403. Remote exposure still calls for hardening egress/DNS against rebinding and paginating the library.
