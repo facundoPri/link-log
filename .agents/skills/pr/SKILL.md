@@ -9,7 +9,12 @@ metadata:
     url: "https://github.com/humanlayer/skills/blob/main/plugins/show-me/skills/show-me/SKILL.md"
 ---
 
-Use this template for writing the PR body:
+For Linklog, first read `docs/agents/issue-tracker.md` and apply its PR linking
+contract and authorized issue lifecycle. Include one `Closes FAC-<number>` line
+in the description for each fully completed issue; partial work uses `Part of`.
+Verify `In Review` when the PR is ready and `Done` after its required code merges.
+
+Use this template for writing the PR body, adding a Linear section when linked:
 
 ```markdown
 ## Summary
