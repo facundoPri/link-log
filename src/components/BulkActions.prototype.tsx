@@ -7,6 +7,7 @@ import {
   ArrowRight,
   Check,
   ChevronDown,
+  ChevronUp,
   CircleAlert,
   Copy,
   ExternalLink,
@@ -741,26 +742,23 @@ function VariantD(p: Shared) {
     <>
       {layout === "desktop" ? (
         <DesktopBar {...p} run={run} openPalette={() => setPalette({ page: null })} />
+      ) : layout === "mobile" ? (
+        <MobileBar {...p} status={status} openDrawer={() => setDrawer({ page: null })} />
       ) : (
         (total > 0 || status) && (
           <div
             aria-label="Selected link actions"
-            className={`fixed z-40 flex items-center gap-1 border bg-popover p-1 shadow-lg ${layout === "mobile" ? "right-3 bottom-[calc(3.75rem+env(safe-area-inset-bottom))] left-3 rounded-2xl pl-4" : "bottom-[calc(4.5rem+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 rounded-full pl-3"}`}
+            className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] left-1/2 z-40 flex -translate-x-1/2 items-center gap-1 rounded-full border bg-popover p-1 pl-3 shadow-lg"
           >
             {total > 0 && <span className="flex-1 text-[13px] font-medium whitespace-nowrap tabular">{total} selected</span>}
             {status && <RunChip run={status} {...p} />}
             {total > 0 && (
-              <Button
-                size={layout === "mobile" ? "default" : "sm"}
-                className={layout === "mobile" ? "h-10 rounded-xl" : "rounded-full"}
-                variant={layout === "mobile" ? "default" : "secondary"}
-                onClick={() => (layout === "mobile" ? setDrawer({ page: null }) : setPalette({ page: null }))}
-              >
-                Actions {layout === "narrow" && <Kbd>⌘K</Kbd>}
+              <Button size="sm" className="rounded-full" variant="secondary" onClick={() => setPalette({ page: null })}>
+                Actions <Kbd>⌘K</Kbd>
               </Button>
             )}
             {total > 0 && (
-              <Button size={layout === "mobile" ? "icon" : "icon-sm"} variant="ghost" className="rounded-full" aria-label="Clear selection" onClick={() => p.onSelect([])}>
+              <Button size="icon-sm" variant="ghost" className="rounded-full" aria-label="Clear selection" onClick={() => p.onSelect([])}>
                 <X className="size-4" />
               </Button>
             )}
@@ -777,13 +775,75 @@ function VariantD(p: Shared) {
   );
 }
 
-function RunChip({ run, runs, onSelect, undo, dismiss }: Shared & { run: Run }) {
+const runSummary = (r: Run) =>
+  r.phase === "undo"
+    ? `Deleting ${r.ids.length} in 5 s`
+    : r.phase === "running"
+      ? `${r.action.verb} ${r.done + r.failed.length}/${r.ids.length}`
+      : `${r.action.label.replace("…", "")}: ${r.done} done${r.failed.length ? `, ${r.failed.length} failed` : ""}`;
+
+// Mobile bar: clear on the left, count with a one-tap "Select all N" (or the running job) underneath, and a large
+// Actions button that opens the drawer. With no selection it stays only to report the last run.
+function MobileBar(p: Shared & { status: Run | undefined; openDrawer: () => void }) {
+  const total = p.links.length;
+  const allVisible = p.visible.length > 0 && p.visible.every((l) => p.links.some((x) => x.id === l.id));
+  const s = p.status;
+  if (!total && !s) return null;
+  const icon = !s ? null : s.phase === "done" ? s.failed.length ? <CircleAlert className="size-3.5 shrink-0 text-amber-600" /> : <Check className="size-3.5 shrink-0 text-emerald-600" /> : s.phase === "undo" ? <Trash2 className="size-3.5 shrink-0 text-destructive" /> : <Loader2 className="size-3.5 shrink-0 animate-spin" />;
+  const live = s && s.phase !== "done";
+  return (
+    <div
+      aria-label="Selected link actions"
+      className="fixed right-3 bottom-[calc(3.75rem+env(safe-area-inset-bottom))] left-3 z-40 flex min-h-16 items-center gap-1 rounded-[22px] border border-black/5 bg-popover/90 p-1.5 shadow-[0_10px_40px_-8px_rgba(0,0,0,0.25)] backdrop-blur-xl animate-in fade-in slide-in-from-bottom-3 duration-200"
+    >
+      {total > 0 ? (
+        <button aria-label="Clear selection" onClick={() => p.onSelect([])} className="grid size-11 shrink-0 place-items-center rounded-full text-muted-foreground active:bg-muted">
+          <X className="size-5" />
+        </button>
+      ) : (
+        <span className="grid size-11 shrink-0 place-items-center">{icon}</span>
+      )}
+      <div className="min-w-0 flex-1 leading-tight">
+        {total > 0 ? (
+          <>
+            <div className="text-[16px] font-semibold tabular">{total} selected</div>
+            {live ? (
+              <div className="mt-0.5 flex items-center gap-1.5 text-[12px] text-muted-foreground">
+                {icon}
+                <span className="truncate">{runSummary(s!)}</span>
+              </div>
+            ) : allVisible ? (
+              <button className="mt-0.5 text-[12px] text-muted-foreground active:text-foreground" onClick={() => p.onSelect([])}>
+                All {p.visible.length} selected · <span className="font-medium text-foreground underline underline-offset-2">Deselect all</span>
+              </button>
+            ) : (
+              <button className="mt-0.5 text-[12px] font-medium text-foreground underline underline-offset-2 active:opacity-60" onClick={() => p.onSelect(p.visible.map((l) => l.id))}>
+                Select all {p.visible.length}
+              </button>
+            )}
+          </>
+        ) : (
+          <div className="truncate text-[14px] font-medium">{runSummary(s!)}</div>
+        )}
+      </div>
+      {total > 0 ? (
+        <Button onClick={p.openDrawer} className="h-12 shrink-0 gap-1.5 rounded-2xl px-5 text-[15px]">
+          Actions <ChevronUp className="size-4" />
+        </Button>
+      ) : (
+        s && <RunChip run={s} {...p} label={s.phase === "undo" ? "Undo" : "Details"} />
+      )}
+    </div>
+  );
+}
+
+function RunChip({ run, runs, onSelect, undo, dismiss, label }: Shared & { run: Run; label?: string }) {
   return (
     <Popover>
       <PopoverTrigger asChild>
         <Button size="sm" variant="ghost" className="rounded-full">
-          {run.phase === "done" ? run.failed.length ? <CircleAlert className="size-3.5 text-amber-600" /> : <Check className="size-3.5 text-emerald-600" /> : <Loader2 className="size-3.5 animate-spin" />}
-          {run.phase === "undo" ? "Undo" : run.phase === "running" ? `${run.done + run.failed.length}/${run.ids.length}` : run.failed.length ? `${run.failed.length} failed` : "Done"}
+          {label ?? <>{run.phase === "done" ? run.failed.length ? <CircleAlert className="size-3.5 text-amber-600" /> : <Check className="size-3.5 text-emerald-600" /> : <Loader2 className="size-3.5 animate-spin" />}
+          {run.phase === "undo" ? "Undo" : run.phase === "running" ? `${run.done + run.failed.length}/${run.ids.length}` : run.failed.length ? `${run.failed.length} failed` : "Done"}</>}
         </Button>
       </PopoverTrigger>
       <PopoverContent side="top" sideOffset={8} className="w-[min(24rem,calc(100vw-1.5rem))] space-y-3">
@@ -951,7 +1011,7 @@ function ActionDrawer(p: PageProps) {
             <SheetTitle className="flex-1 text-[15px] tabular">{total} selected</SheetTitle>
           )}
           <SheetDescription className="sr-only">Actions for the selected links</SheetDescription>
-          {!p.page && (
+          {!p.page && total < p.visible.length && (
             <Button size="sm" variant="ghost" onClick={() => p.onSelect(p.visible.map((l) => l.id))}>
               Select all {p.visible.length}
             </Button>
@@ -969,12 +1029,13 @@ function ActionDrawer(p: PageProps) {
         ) : (
           <>
             <div className="grid grid-cols-4 gap-2">
-              {ACTIONS.filter((a) => a.group !== "Danger").map((a) => {
+              {ACTIONS.filter((a) => a.group !== "Danger").map((a, i, tiles) => {
                 const av = p.avail.get(a.id)!;
                 const count = countLabel(av, total);
                 return (
                   <button
                     key={a.id}
+                    style={i === tiles.length - 1 && tiles.length % 4 === 3 ? { gridColumn: "span 2" } : undefined}
                     disabled={disabled(av)}
                     onClick={() => p.run(a)}
                     className="relative flex min-h-[76px] flex-col items-center justify-center gap-1.5 rounded-xl bg-muted/60 px-1 text-center text-[12px] leading-tight font-medium active:bg-muted disabled:opacity-40 [&_svg]:!size-5"

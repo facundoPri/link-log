@@ -1,6 +1,6 @@
 # FAC-45 bulk actions: prototype comparison
 
-Status: research and throwaway prototype. The owner chose a hybrid of A and B, prototyped as **variant D** below, and it is **awaiting owner confirmation** before any production work. Nothing here is production code, and no variant has been folded into the app.
+Status: **decided on 2026-10-29. The owner chose variant D.** Implementation follows [fac-45-implementation-handoff.md](fac-45-implementation-handoff.md). The prototype stays on this throwaway branch. Nothing here is production code, and no variant has been folded into the app.
 
 Question: how should the library's selection surface fit today's four actions (Auto-tag, Lens, Extract context, Copy) plus FAC-46 bulk delete, FAC-47 bulk open and later tag/organize actions, while keeping the selection count, per-action availability, progress and partial failures visible?
 
@@ -77,10 +77,12 @@ Screenshots:
 - Narrow, 900 px: [chip](assets/fac-45/D-4-narrow-chip.png), [palette](assets/fac-45/D-5-narrow-palette.png).
 - Mobile, 390 px: [chip](assets/fac-45/D-6-mobile-chip.png), [drawer](assets/fac-45/D-7-mobile-drawer.png), [lens picker](assets/fac-45/D-8-mobile-lens-picker.png), [run in progress](assets/fac-45/D-9-mobile-result.png).
 
-Known rough edges, left for the production rewrite:
+Mobile bar, revised after owner feedback. The clear button is on the left. The count sits above a one-tap "Select all N", which becomes "All N selected · Deselect all" once everything visible is selected. A large "Actions ⌃" button sits on the right. While a job runs, the line under the count shows it ("Extracting 2/12"). Once the selection is cleared, the bar only reports the last run, with a "Details" popover that lists failures and offers "Select failed". The 7 drawer tiles now fill the grid (the last tile spans two columns), and the drawer hides "Select all" when everything is selected.
 
-- The 7 non-danger tiles leave one empty cell in the 4-column grid.
-- The mobile chip shows "2/4" without naming the running action.
+- [Bar with 3 selected](assets/fac-45/D-10-mobile-bar.png), [after Select all](assets/fac-45/D-11-mobile-bar-all.png), [drawer with all selected](assets/fac-45/D-12-mobile-drawer-all.png), [running](assets/fac-45/D-13-mobile-running.png), [finished, with Details open](assets/fac-45/D-14-mobile-done.png).
+
+Remaining rough edges, left for the production rewrite:
+
 - Mobile was checked with Chromium device emulation, not on a phone.
 
 ## What the prototype showed
