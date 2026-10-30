@@ -171,6 +171,10 @@ export default (async ({ page, api, fixture, step, check, shot, note }) => {
     "API: an extract batch of 7 links exists",
     async () => (await api.library()).batches.find((b) => b.kind === "extract" && b.total === 7),
   );
+  const running = page.getByRole("region", { name: "Running job" });
+  await check("Desktop shows the running job above the bar: Extracting n/7 with a progress bar", async () =>
+    (await running.getByText(/^Extracting \d+\/7$/).isVisible()) && (await running.getByRole("progressbar").isVisible()), { timeout: 10_000 });
+  await shot("06b-running-progress");
   await check("API: exactly one new batch", async () => (await api.library()).batches.length === before + 1);
   const settled = await check(
     "API: the batch settles with the 3 impossible links failed",

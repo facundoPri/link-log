@@ -1240,6 +1240,7 @@ export function App({
           selected={picked.length}
           visibleCount={filtered.length}
           states={bulkStates}
+          progress={progress}
           results={results}
           onInvoke={invokeBulk}
           onSelectAll={() => setPicked(filtered.map((l) => l.id))}

@@ -1,6 +1,7 @@
 import { ChevronDown, CircleAlert, Loader2, MoreHorizontal, X } from "lucide-react";
 import type { ActionState, BulkAction, BulkProgress } from "../bulkActions";
 import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import { Kbd } from "@/components/ui/kbd";
 import {
@@ -13,12 +14,13 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { BulkResultCard, BulkResultsPopover, type BulkResult } from "./BulkResults";
 
-// The desktop selection surface: results of earlier runs stack above the bar, which exists only while links
-// are selected.
+// The desktop selection surface: the running job and the results of earlier runs stack above the bar, which exists
+// only while links are selected.
 export function BulkDock({
   selected,
   visibleCount,
   states,
+  progress,
   results,
   onInvoke,
   onSelectAll,
@@ -30,6 +32,7 @@ export function BulkDock({
   selected: number;
   visibleCount: number;
   states: ActionState[];
+  progress: BulkProgress | null;
   results: BulkResult[];
   onInvoke: (action: BulkAction) => void;
   onSelectAll: () => void;
@@ -38,10 +41,24 @@ export function BulkDock({
   onSelectFailed: (result: BulkResult) => void;
   onDismissResult: (result: BulkResult) => void;
 }) {
-  if (!selected && !results.length) return null;
+  if (!selected && !progress && !results.length) return null;
   const promoted = states.filter((s) => s.action.promoted);
   return (
     <div className="fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] left-1/2 z-40 flex -translate-x-1/2 flex-col items-center gap-2">
+      {progress && (
+        <section
+          aria-label="Running job"
+          className="flex w-[440px] max-w-[calc(100vw-2rem)] items-center gap-2.5 rounded-lg border bg-popover px-3 py-2 shadow-md animate-in fade-in slide-in-from-bottom-2 duration-200"
+        >
+          <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+          <p className="text-[13px] font-medium tabular">{progressText(progress)}</p>
+          <Progress
+            value={progress.total ? (progress.done / progress.total) * 100 : 0}
+            aria-label={progress.label}
+            className="h-1.5 flex-1"
+          />
+        </section>
+      )}
       {results.map((r) => (
         <BulkResultCard
           key={r.batchId}
