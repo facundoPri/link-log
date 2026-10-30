@@ -75,11 +75,17 @@ List fields prefer fetched metadata. Extraction fills only missing fields from a
 
 FAC-48 migrations start at `0018`, after main's shipped `0012`–`0017`. Fresh databases and upgrades from main are tested. Disposable pre-auth PR8 databases must be recreated before deploying this ordered series; never apply the renamed series over an old PR8 migration ledger or reset production. The PR8 preview was explicitly recreated for this integration. See `planning/qa/fac-48-test-plan.md` for current validation and historical recording limits.
 
-## Cloudflare: current boundary
+## Cloudflare: production
 
-The API runs on the Workers runtime (Hono for HTTP, Better Auth for sessions) and uses the real D1 binding emulated locally. **It is not deployed and not connected to a remote database.** Bun is used for development/build; it is not the Workers production runtime.
+Production runs at **https://linklog.facundopri.com**: `wrangler.jsonc` → `env.production` (Worker `linklog`, custom domain, D1 `linklog-production`, R2 `linklog-content-production`, Queue `linklog-jobs-production`, Workflow `linklog-process-link-production`, Jev via TypeSafe). The top level of `wrangler.jsonc` stays local-only; dev and tests never touch production. Auth emails come from `auth@linklog.facundopri.com` (Cloudflare Email Sending; DNS records in the `facundopri.com` zone).
 
-Configuration fails closed: a deployed Worker defaults to `APP_ENV=production` and answers 503 until `BETTER_AUTH_URL` (public HTTPS origin), the `BETTER_AUTH_SECRET` secret, `EMAIL_FROM` and the `EMAIL` (Cloudflare Email Service) binding are valid; requests for any other host get 403. `wrangler.jsonc` still contains an explicitly local D1 ID. Before a deployment: provision D1/R2, the domain and Email Service, set the secrets, apply remote migrations and verify delivery — see the runbook in `planning/research/auth-implementation-report.md`. Remote exposure also calls for hardening egress/DNS against rebinding and paginating the library.
+```sh
+bun run build
+bunx wrangler d1 migrations apply DB --remote --env production   # back up first once there is real data
+bunx wrangler deploy --env production
+```
+
+Secrets (`bunx wrangler secret put <NAME> --env production`): `BETTER_AUTH_SECRET`, `TYPESAFE_API_KEY`. Configuration fails closed: the API answers 503 if any of `BETTER_AUTH_URL`, the secret, `EMAIL_FROM` or the `EMAIL` binding is invalid, and requests for any other host get 403. Remote exposure still calls for hardening egress/DNS against rebinding and paginating the library.
 
 Documentation consulted: [Bun React](https://bun.sh/guides/ecosystem/react), [Workers Static Assets](https://developers.cloudflare.com/workers/static-assets/), [D1 prepared statements](https://developers.cloudflare.com/d1/worker-api/prepared-statements/).
 
@@ -101,8 +107,8 @@ bun run preview
 
 `bun run dev` applies migrations and opens the library at `http://localhost:3000`.
 D1, R2, Queues and Workflows run **locally**. Browser Rendering and, if selected,
-Workers AI are **remote** bindings: their calls use real services. The library is
-not deployed and public access is not enabled.
+Workers AI are **remote** bindings: their calls use real services. Local data never
+reaches production (see Cloudflare: production).
 
 - Saving a link or pasting a list outside of a field creates an extraction batch.
   Large lists are split into batches of 100, with deduplication by normalized URL.
