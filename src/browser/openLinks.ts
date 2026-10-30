@@ -82,7 +82,6 @@ export function useOpenLinks(browser: BrowserState, selectLinks: (ids: string[])
   }
 
   return {
-    reason: (count: number) => openUnavailable(browser) ?? openLimitReason(count),
     opening,
     open: async (links: Link[]) => {
       const urls = [...new Set(links.map((l) => l.url))];
