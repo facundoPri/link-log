@@ -419,17 +419,30 @@ export function App({
     [refresh],
   );
 
-  // Keyboard: ⌘K add, / search, Esc close inspector, ↑/↓ navigate while inspector open.
+  // Keyboard: ⌘K add (or the bulk palette while links are selected), T/L/E/C bulk actions, / search, Esc close
+  // inspector, ↑/↓ navigate while inspector open.
+  const hasPicked = picked.length > 0;
+  const invokeBulkRef = useRef<(action: BulkAction, detail?: string) => void>(() => {});
   const filteredRef = useRef<Link[]>([]);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
-        setDialog("add");
+        // With links selected ⌘K is the actions palette; otherwise it adds a link.
+        if (hasPicked && view !== "browser" && !dialog) setPalette((p) => (p ? null : { page: null }));
+        else setDialog("add");
         return;
       }
       // Browser view has its own search, selection and Escape handling.
       if (view === "browser" && e.key !== "\\") return;
+      if (hasPicked && !e.repeat && !dialog && !isInput(e.target) && !overlayOpen()) {
+        const action = actionForKey(e);
+        if (action) {
+          e.preventDefault();
+          invokeBulkRef.current(action);
+          return;
+        }
+      }
       if (e.key === "/" && !isInput(e.target) && !dialog) {
         e.preventDefault();
         search.current?.focus();
@@ -491,7 +504,7 @@ export function App({
       window.removeEventListener("keydown", key);
       window.removeEventListener("paste", paste);
     };
-  }, [dialog, activeId, activityOpen, capture, view]);
+  }, [dialog, activeId, activityOpen, capture, view, hasPicked]);
 
   useEffect(() => {
     setTagIds((current) => current.filter((id) => library.tags.some((t) => t.id === id)));
@@ -750,7 +763,6 @@ export function App({
     setPalette(null);
     void action.run(bulkRunners, state.availability.eligible, detail);
   };
-  const invokeBulkRef = useRef(invokeBulk);
   invokeBulkRef.current = invokeBulk;
   useEffect(() => {
     if (!picked.length) setPalette(null);
