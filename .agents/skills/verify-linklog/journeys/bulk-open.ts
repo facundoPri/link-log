@@ -80,9 +80,19 @@ export default (async ({ page, api, fixture, step, check, shot, aria, note }) =>
   await selectBoth(page);
   await check("Open is disabled once the missing extension is detected", () => open.isDisabled(), { timeout: 10_000 });
   await tooltipFor(/Install or enable the Linklog extension/);
-  for (const name of ["Auto-tag", "Lens", "Extract context", "Copy"])
-    await check(`"${name}" is still in the bar`, () => bar.getByRole("button", { name }).isVisible());
-  await check("Extract context is still enabled", () => bar.getByRole("button", { name: "Extract context" }).isEnabled());
+  for (const name of ["Auto-tag", "Lens", "More"])
+    await check(`"${name}" is still in the bar`, () => bar.getByRole("button", { name: new RegExp(`^${name}`) }).isVisible());
+  await page.keyboard.press("ControlOrMeta+k");
+  const palette = page.getByRole("dialog", { name: "Bulk actions" });
+  await check("Palette rows Extract context and Copy URLs are still enabled", async () => {
+    const enabled = async (name: string) => (await palette.getByRole("option", { name: new RegExp(`^${name}`) }).first().getAttribute("aria-disabled")) !== "true";
+    return (await enabled("Extract context")) && (await enabled("Copy URLs"));
+  });
+  await check("Palette row Open is disabled with the reason", async () => {
+    const row = palette.getByRole("option", { name: /^Open/ }).first();
+    return (await row.getAttribute("aria-disabled")) === "true" && /Install or enable the Linklog extension/.test((await row.textContent()) ?? "");
+  });
+  await page.keyboard.press("Escape");
   await shot("01-no-extension");
   await aria("01-no-extension");
 
@@ -101,24 +111,37 @@ export default (async ({ page, api, fixture, step, check, shot, aria, note }) =>
   const partial = page.getByText(/Opened 1 of 2 links/);
   await check("Toast reports 1 of 2 opened", () => partial.isVisible());
   await check("Toast names the failed link and reason", () => page.getByText(new RegExp(`(${links.map((l) => l.title).join("|")}): Chrome refused the URL`)).isVisible());
+  const failedText = (await page.getByText(/Chrome refused the URL/).first().textContent()) ?? "";
   await check("Selection is kept after opening", () => bar.getByText("2 selected").isVisible());
   await shot("03-partial-failure");
-  await page.getByRole("button", { name: "Retry" }).click();
+  await page.locator("[data-sonner-toast]").getByRole("button", { name: "Retry" }).click();
   const partialLog = await check("Retry resent the same operation and URLs", async () => {
     const log = await page.evaluate(() => JSON.parse(sessionStorage.getItem("fakeOpenLog") || "[]"));
     return log.length === 2 && log[0].operationId === log[1].operationId && JSON.stringify(log[0].urls) === JSON.stringify(log[1].urls) && log;
   });
   await note("partial-log", partialLog);
+  await check("Retry's toast fails the same link again", () => partial.isVisible());
+  const failedTitle = links.find((l) => new RegExp(`${l.title}: Chrome refused the URL`).test(failedText))!.title;
+  const other = links.find((l) => l.title !== failedTitle)!;
 
-  await step("Ambiguous outcome: the extension disconnects mid-request; Retry replays the same operation");
+  await step("Select failed selects exactly the link that failed, without retrying");
+  await page.getByRole("checkbox", { name: `Select ${failedTitle}` }).uncheck();
+  await check("Only the link that opened is selected now", () => bar.getByText("1 selected").isVisible());
+  await page.locator("[data-sonner-toast]").getByRole("button", { name: "Select failed" }).click();
+  await check("The failed link is selected and the other is not", async () => (await page.getByRole("checkbox", { name: `Select ${failedTitle}` }).isChecked()) && !(await page.getByRole("checkbox", { name: `Select ${other.title}` }).isChecked()));
+  await check("Select failed did not send another open", async () => (await page.evaluate(() => JSON.parse(sessionStorage.getItem("fakeOpenLog") || "[]"))).length === 2);
+  await shot("03b-select-failed");
+
+  await step("Ambiguous outcome: the extension disconnects mid-request after the O key; Retry replays the same operation");
   await setMode({ caps: ["tabs", "open"], open: "disconnect-once" });
   await selectBoth(page);
   await check("Open is enabled", () => open.isEnabled(), { timeout: 10_000 });
-  await open.click();
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.keyboard.press("o");
   await check("Toast says the outcome could not be confirmed", () => page.getByText(/Couldn't confirm which links opened/).isVisible());
   await shot("04-unconfirmed");
   await check("Open is usable again after reconnecting", () => open.isEnabled(), { timeout: 10_000 });
-  await page.getByRole("button", { name: "Retry" }).click();
+  await page.locator("[data-sonner-toast]").getByRole("button", { name: "Retry" }).click();
   await check("Retry reports both opened", () => page.getByText(/Opened 2 links/).isVisible());
   const retryLog = await check("Retry reused the operation id", async () => {
     const log = await page.evaluate(() => JSON.parse(sessionStorage.getItem("fakeOpenLog") || "[]"));

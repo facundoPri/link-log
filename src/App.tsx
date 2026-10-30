@@ -2,14 +2,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "./api";
-import type { Job, Lens, LensResult, LensScope, Library, Link, Tag } from "./types";
+import type { Batch, Job, Lens, LensResult, LensScope, Library, Link, Tag } from "./types";
 import { jevUnavailable, needsAttention } from "./attention";
 import { clipboardUrls, pastedUrls } from "./url";
 import { Sidebar, type View } from "./components/Sidebar";
 import { Toolbar, type ContextFilter } from "./components/Toolbar";
 import { LinkList } from "./components/LinkList";
 import { PendingLinks } from "./components/PendingLinks";
-import { SelectionBar } from "./components/SelectionBar";
+import { BulkChip, BulkDock } from "./components/BulkBar";
+import { BulkDrawer, BulkMobileBar } from "./components/BulkMobile";
+import { BulkPalette } from "./components/BulkPalette";
+import type { BulkResult } from "./components/BulkResults";
 import { Inspector } from "./components/Inspector";
 import { TagDialog } from "./components/TagDialog";
 import { AddLinkDialog } from "./components/AddLinkDialog";
@@ -21,12 +24,15 @@ import { BrowserView } from "./components/browser/BrowserView";
 import { BrowserSidebar } from "./components/browser/BrowserSidebar";
 import { tabDomain, useBrowserWorkspace } from "./browser/useBrowserWorkspace";
 import { useSavedLookup } from "./browser/saved";
-import { useOpenLinks } from "./browser/openLinks";
+import { openUnavailable, useOpenLinks } from "./browser/openLinks";
 import { BrowserInspector } from "./components/browser/BrowserInspector";
 import { BrowserDialogs } from "./components/browser/BrowserDialogs";
 import { useBrowserActions } from "./browser/useBrowserActions";
 import { usd, tokens } from "./lib/format";
 import { submitInChunks, type BatchReply } from "./batches";
+import { actionForKey, actionStates, BULK_ACTIONS, bulkProgress, lacksContent, type BulkAction, type BulkRunners } from "./bulkActions";
+import { copyLinks } from "./lib/copy-links";
+import { failureMessage } from "./failures";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
@@ -69,6 +75,10 @@ function isInput(target: EventTarget | null) {
     !!target.closest('input,textarea,select,[contenteditable="true"]')
   );
 }
+
+// Radix menus, popovers, dialogs and sheets mount into portals with these roles while open.
+const overlayOpen = () =>
+  !!document.querySelector('[role="dialog"],[role="alertdialog"],[role="menu"],[role="listbox"]');
 
 export function App({
   account,
@@ -117,6 +127,8 @@ export function App({
   const [extractFirst, setExtractFirst] = useState(false);
   const [confirmExtract, setConfirmExtract] = useState<string[] | null>(null);
   const [running, setRunning] = useState(false);
+  const [palette, setPalette] = useState<{ page: string | null } | null>(null);
+  const [results, setResults] = useState<BulkResult[]>([]);
   const [dragging, setDragging] = useState(false);
   const [focusTags, setFocusTags] = useState(false);
   const [jobsByLink, setJobsByLink] = useState<
@@ -148,10 +160,16 @@ export function App({
   });
   const search = useRef<HTMLInputElement>(null);
   const sessionBatches = useRef(new Set<string>());
+  // Batches started from the selection surface; the ones that settle with failures get a results card.
+  const selectionBatches = useRef(new Set<string>());
+  // "Extract, then auto-tag" is one flow with one results card, on the auto-tag batch: the extract batches are
+  // reported through it, since the auto-tag jobs that fail do so because their extraction did.
+  const extractFlows = useRef(new Map<string, string[]>());
+  const flowExtracts = useRef(new Set<string>());
   const narrow = useMedia("(max-width: 1099px)");
   const mobile = useMedia("(max-width: 767px)");
   const ws = useBrowserWorkspace(library, view === "browser", loaded && !loadError);
-  const openLinks = useOpenLinks(ws.browser);
+  const openLinks = useOpenLinks(ws.browser, setPicked);
   const browserController = useBrowserActions(
     ws,
     setLibrary,
@@ -252,6 +270,7 @@ export function App({
       } else if (b.cancelled === n) {
         toast("Cancelled", { id: b.id });
         sessionBatches.current.delete(b.id);
+        if (extractFlows.current.has(b.id)) void showFailures(b);
       } else if (b.failed === 0) {
         const ran = n - b.cancelled;
         toast.success(
@@ -270,6 +289,7 @@ export function App({
           },
         );
         sessionBatches.current.delete(b.id);
+        if (extractFlows.current.has(b.id)) void showFailures(b);
       } else {
         toast[b.failed === n ? "error" : "success"](
           `${verb.replace("ing", "ed")} ${n} ${n === 1 ? "link" : "links"}`,
@@ -280,9 +300,42 @@ export function App({
           },
         );
         sessionBatches.current.delete(b.id);
+        if (selectionBatches.current.has(b.id)) void showFailures(b);
       }
+      if (b.active === 0) selectionBatches.current.delete(b.id);
     }
   }, [library.batches]);
+
+  // The same jobs Activity lists, narrowed to the failed ones, so the selection surface can say why and re-select them.
+  const showFailures = async (b: Batch) => {
+    if (flowExtracts.current.has(b.id)) return;
+    const failedOf = async (batchId: string) => {
+      const { jobs } = await api<{ jobs: Job[] }>(`/batches/${batchId}`);
+      return jobs
+        .filter((j) => j.status === "failed" && j.step !== "Cancelled" && j.link_id)
+        .map((j) => ({
+          linkId: j.link_id!,
+          title: j.title,
+          reason: j.error ?? failureMessage(j.reason) ?? "Something went wrong.",
+        }));
+    };
+    try {
+      const upstream = extractFlows.current.get(b.id) ?? [];
+      extractFlows.current.delete(b.id);
+      const [own, ...extracted] = await Promise.all([failedOf(b.id), ...upstream.map(failedOf)]);
+      // The extraction reason wins: the auto-tag job only knows the content is missing.
+      const byLink = new Map(extracted.flat().map((f) => [f.linkId, f]));
+      for (const f of own ?? []) if (!byLink.has(f.linkId)) byLink.set(f.linkId, f);
+      const failed = [...byLink.values()];
+      for (const id of upstream) flowExtracts.current.delete(id);
+      if (failed.length)
+        setResults((cur) =>
+          [...cur.filter((r) => r.batchId !== b.id), { batchId: b.id, kind: b.kind, total: b.total, failed }].slice(-3),
+        );
+    } catch {
+      /* the toast still points to Activity */
+    }
+  };
 
   const showRecentLinks = useCallback(() => {
     setView("all");
@@ -377,6 +430,9 @@ export function App({
       kind: "autotag" | "extract" | "lens",
       ids: string[],
       lensId?: string,
+      fromSelection = false,
+      /** Called with the new batch ids before they are watched, so a caller can tag them in time. */
+      onBatches?: (batchIds: string[]) => void,
     ) => {
       setRunning(true);
       try {
@@ -385,7 +441,11 @@ export function App({
           (chunk) => api<Library & BatchReply>("/batches", "POST", { kind, ids: chunk, lensId }),
           (data) => setLibrary(data),
         );
-        for (const id of batchIds) sessionBatches.current.add(id);
+        onBatches?.(batchIds);
+        for (const id of batchIds) {
+          sessionBatches.current.add(id);
+          if (fromSelection) selectionBatches.current.add(id);
+        }
         if (skipped.length)
           toast(`Skipped ${skipped.length} ${skipped.length === 1 ? "link" : "links"} without content`, {
             description: "Extract the content first.",
@@ -401,17 +461,35 @@ export function App({
     [refresh],
   );
 
-  // Keyboard: ⌘K add, / search, Esc close inspector, ↑/↓ navigate while inspector open.
+  // Keyboard: ⌘K add (or the bulk palette while links are selected), T/L/E/C bulk actions, / search, Esc close
+  // inspector, ↑/↓ navigate while inspector open.
+  const hasPicked = picked.length > 0;
+  const invokeBulkRef = useRef<(action: BulkAction, detail?: string) => void>(() => {});
+  // The confirms are alert dialogs of their own, not `dialog`, but block the keys the same way.
+  const confirming = confirmNoContent || confirmAutoTag || !!confirmExtract || !!deleteLink || !!deleteTag || !!deleteLens;
+  const paletteOpen = !!palette;
   const filteredRef = useRef<Link[]>([]);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
-        setDialog("add");
+        // The open palette is itself an overlay, and ⌘K closes it.
+        if (dialog || confirming || (!paletteOpen && overlayOpen())) return;
+        // With links selected ⌘K is the actions palette; otherwise it adds a link.
+        if (hasPicked && view !== "browser") setPalette((p) => (p ? null : { page: null }));
+        else setDialog("add");
         return;
       }
       // Browser view has its own search, selection and Escape handling.
       if (view === "browser" && e.key !== "\\") return;
+      if (hasPicked && !e.repeat && !dialog && !confirming && !isInput(e.target) && !overlayOpen()) {
+        const action = actionForKey(e);
+        if (action) {
+          e.preventDefault();
+          invokeBulkRef.current(action);
+          return;
+        }
+      }
       if (e.key === "/" && !isInput(e.target) && !dialog) {
         e.preventDefault();
         search.current?.focus();
@@ -437,7 +515,7 @@ export function App({
         setPicked(filteredRef.current.map((l) => l.id));
         return;
       }
-      if (e.key === "Escape" && !dialog) {
+      if (e.key === "Escape" && !dialog && !e.defaultPrevented) {
         if (activeId) setActiveId(null);
         else setPicked([]);
         return;
@@ -473,7 +551,7 @@ export function App({
       window.removeEventListener("keydown", key);
       window.removeEventListener("paste", paste);
     };
-  }, [dialog, activeId, activityOpen, capture, view]);
+  }, [dialog, confirming, paletteOpen, activeId, activityOpen, capture, view, hasPicked]);
 
   useEffect(() => {
     setTagIds((current) => current.filter((id) => library.tags.some((t) => t.id === id)));
@@ -637,21 +715,35 @@ export function App({
 
   // Selected links with no content and no extraction on the way: auto-tag skips them unless the user
   // explicitly asks to extract them first (Jev never starts an extraction by itself).
-  const noContent = pickedLinks.filter((l) => !l.content_key && l.content_state !== "queued");
+  const noContent = pickedLinks.filter(lacksContent);
   const doAutoTag = async (extract = extractFirst) => {
     setConfirmAutoTag(false);
     setConfirmNoContent(false);
     setExtractFirst(false);
+    const extractIds: string[] = [];
     try {
       const targets = extract ? noContent.filter((l) => !l.processing).map((l) => l.id) : [];
       // The auto-tag jobs of these links wait for their extraction and start when it settles.
-      if (targets.length) await runBatch("extract", targets);
+      if (targets.length)
+        await runBatch("extract", targets, undefined, true, (ids) => {
+          extractIds.push(...ids);
+          for (const id of ids) flowExtracts.current.add(id);
+        });
       // "Auto-tag N with content" sends only those N; the server still skips any that changed meanwhile.
-      await runBatch("autotag", extract ? picked : picked.filter((id) => !noContent.some((l) => l.id === id)));
+      await runBatch(
+        "autotag",
+        extract ? picked : picked.filter((id) => !noContent.some((l) => l.id === id)),
+        undefined,
+        true,
+        (ids) => {
+          if (extractIds.length) for (const id of ids) extractFlows.current.set(id, extractIds);
+        },
+      );
       if (!extract && noContent.length) toast(`Skipped ${noContent.length} ${noContent.length === 1 ? "link" : "links"} without content`, { description: "Extract the content first." });
       setPicked([]);
     } catch {
-      /* toasted */
+      // The flow never started its auto-tag half, so the extraction reports on its own.
+      for (const id of extractIds) flowExtracts.current.delete(id);
     }
   };
   const proceedAutoTag = (extract: boolean) => {
@@ -662,17 +754,19 @@ export function App({
     } else void doAutoTag(extract);
   };
 
+  const extractFromSelection = useRef(false);
   const doExtract = async (ids: string[]) => {
     setConfirmExtract(null);
     try {
-      await runBatch("extract", ids);
+      await runBatch("extract", ids, undefined, extractFromSelection.current);
       setPicked((cur) => cur.filter((id) => !ids.includes(id)));
     } catch {
       /* toasted */
     }
   };
 
-  const requestExtract = (ids: string[]) => {
+  const requestExtract = (ids: string[], fromSelection = false) => {
+    extractFromSelection.current = fromSelection;
     const targets = library.links.filter((l) => ids.includes(l.id));
     if (targets.length === 1 && !targets[0]!.content_key) {
       void doExtract(ids);
@@ -701,6 +795,62 @@ export function App({
   const manualTagged = pickedLinks.filter((l) =>
     l.tags.some((t) => t.origin === "manual"),
   ).length;
+
+  const runLens = (lensId: string) =>
+    void runBatch("lens", picked, lensId, true)
+      .then(() => setPicked([]))
+      .catch(() => {
+        /* toasted */
+      });
+  const requestAutoTag = () => {
+    if (noContent.length) setConfirmNoContent(true);
+    else proceedAutoTag(false);
+  };
+  // Every bulk surface (bar, palette, shortcuts) runs actions through these, the same paths the buttons always used.
+  const bulkRunners: BulkRunners = {
+    autotag: requestAutoTag,
+    lens: runLens,
+    extract: () => requestExtract(picked, true),
+    copy: (links, withTitles) => void copyLinks(links, withTitles),
+    open: (links) => void openLinks.open(links),
+  };
+  const bulkStates = actionStates(pickedLinks, {
+    tags: library.tags,
+    jevReason,
+    running,
+    openReason: openUnavailable(ws.browser),
+    opening: openLinks.opening,
+  });
+  const invokeBulk = (action: BulkAction, detail?: string) => {
+    const state = bulkStates.find((s) => s.action.id === action.id);
+    if (!state) return;
+    if (state.disabled) {
+      toast(state.reason ?? `${action.label} isn't available`);
+      return;
+    }
+    if (action.picker && detail === undefined) {
+      setPalette({ page: action.id });
+      return;
+    }
+    setPalette(null);
+    void action.run(bulkRunners, state.availability.eligible, detail);
+  };
+  invokeBulkRef.current = invokeBulk;
+  useEffect(() => {
+    if (!picked.length) setPalette(null);
+  }, [picked.length]);
+  const paletteAction = BULK_ACTIONS.find((a) => a.id === palette?.page) ?? null;
+  const pickedSet = new Set(picked);
+  const allVisibleSelected = filtered.length > 0 && filtered.every((l) => pickedSet.has(l.id));
+  const progress = bulkProgress(library.batches, selectionBatches.current);
+  // The bar, chip or mobile bar covers the list's end while links are selected and while it reports a run.
+  const bulkSurfaceShown = view !== "browser" && (picked.length > 0 || !!progress || results.length > 0);
+  const selectFailed = (r: BulkResult) => {
+    const ids = new Set(library.links.map((l) => l.id));
+    setPicked(r.failed.map((f) => f.linkId).filter((id) => ids.has(id)));
+    setResults((cur) => cur.filter((x) => x.batchId !== r.batchId));
+  };
+  const dismissResult = (r: BulkResult) => setResults((cur) => cur.filter((x) => x.batchId !== r.batchId));
 
 
   const sidebar = (
@@ -992,7 +1142,7 @@ export function App({
             onEdit={() => setDialog({ lens: activeLens })}
           />
         )}
-        <div ref={listScroll} className={`min-h-0 flex-1 overflow-y-auto ${picked.length ? "pb-24 max-[700px]:pb-32" : ""}`}>
+        <div ref={listScroll} className={`min-h-0 flex-1 overflow-y-auto ${bulkSurfaceShown ? "pb-24 max-[700px]:pb-32" : ""}`}>
           <PendingLinks urls={pendingNewUrls} />
           {loadError ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center">
@@ -1119,26 +1269,79 @@ export function App({
           {inspector}
         </SheetContent>
       </Sheet>
-      {!!picked.length && view !== "browser" && (
-        <SelectionBar
-          links={pickedLinks}
-          tags={library.tags}
-          lenses={libraryLenses}
-          running={running}
-          jevReason={jevReason}
-          openReason={openLinks.reason(pickedLinks.length)}
-          opening={openLinks.opening}
-          onOpen={() => void openLinks.open(pickedLinks)}
-          onAutoTag={() => {
-            if (noContent.length) setConfirmNoContent(true);
-            else proceedAutoTag(false);
-          }}
-          onLens={(lens) =>
-            void runBatch("lens", picked, lens.id).then(() => setPicked([]))
-          }
-          onNewLens={() => setDialog({ lens: "new" })}
-          onExtract={() => requestExtract(picked)}
+      {view !== "browser" && !narrow && (
+        <BulkDock
+          selected={picked.length}
+          visibleCount={filtered.length}
+          states={bulkStates}
+          progress={progress}
+          results={results}
+          onInvoke={invokeBulk}
+          onSelectAll={() => setPicked(filtered.map((l) => l.id))}
           onClear={() => setPicked([])}
+          onOpenPalette={() => setPalette({ page: null })}
+          onSelectFailed={selectFailed}
+          onDismissResult={dismissResult}
+        />
+      )}
+      {view !== "browser" && narrow && !mobile && (
+        <BulkChip
+          selected={picked.length}
+          progress={progress}
+          results={results}
+          onOpenPalette={() => setPalette({ page: null })}
+          onClear={() => setPicked([])}
+          onSelectFailed={selectFailed}
+          onDismissResult={dismissResult}
+        />
+      )}
+      {view !== "browser" && mobile && (
+        <BulkMobileBar
+          selected={picked.length}
+          visibleCount={filtered.length}
+          allVisibleSelected={allVisibleSelected}
+          progress={progress}
+          results={results}
+          onSelectAll={() => setPicked(filtered.map((l) => l.id))}
+          onClear={() => setPicked([])}
+          onOpenDrawer={() => setPalette({ page: null })}
+          onSelectFailed={selectFailed}
+          onDismissResult={dismissResult}
+        />
+      )}
+      {!!picked.length && view !== "browser" && !mobile && (
+        <BulkPalette
+          open={!!palette}
+          onOpenChange={(o) => !o && setPalette(null)}
+          page={paletteAction}
+          onPage={(a) => setPalette({ page: a?.id ?? null })}
+          selected={picked.length}
+          states={bulkStates}
+          lenses={libraryLenses}
+          onInvoke={invokeBulk}
+          onNewLens={() => {
+            setPalette(null);
+            setDialog({ lens: "new" });
+          }}
+        />
+      )}
+      {!!picked.length && view !== "browser" && mobile && (
+        <BulkDrawer
+          open={!!palette}
+          onOpenChange={(o) => !o && setPalette(null)}
+          page={paletteAction}
+          onPage={(a) => setPalette({ page: a?.id ?? null })}
+          selected={picked.length}
+          visibleCount={filtered.length}
+          allVisibleSelected={allVisibleSelected}
+          states={bulkStates}
+          lenses={libraryLenses}
+          onInvoke={invokeBulk}
+          onSelectAll={() => setPicked(filtered.map((l) => l.id))}
+          onNewLens={() => {
+            setPalette(null);
+            setDialog({ lens: "new" });
+          }}
         />
       )}
       {dialog === "add" && (
@@ -1182,7 +1385,7 @@ export function App({
               const lens = lib.lenses.find(
                 (l) => l.name.toLowerCase() === draft.name.toLowerCase(),
               );
-              if (lens) await runBatch("lens", picked, lens.id);
+              if (lens) await runBatch("lens", picked, lens.id, true);
             }
           }}
         />

@@ -40,6 +40,6 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 - [Tags and auto-tag](./tags-autotag.md) covers creating and editing tags, manual tags, selection-bar Auto-tag with fixture Jev, and lenses.
 - [Needs attention and Activity](./needs-attention.md) covers failed previews and content, Retry, Use preview, Dismiss, the Activity sheet and cancelling.
 - [Accounts and privacy](./accounts.md) covers sign-in, sign-out, sign-up with emailed verification, magic link, password reset, and library isolation between accounts.
-- [Bulk open](./bulk-open.md) covers the selection bar's `Open` action: gating on the extension's connection and capability, opening background tabs, partial failure, and retry safety. Only its missing-extension state is proven live here; the rest uses a scripted stand-in for the extension bridge (see the file's own caveats).
+- [Bulk open](./bulk-open.md) covers the bulk `Open` action (toolbar, palette, drawer and `O` key): gating on the extension's connection and capability, opening background tabs, partial failure, and retry safety. Only its missing-extension state is proven live here; the rest uses a scripted stand-in for the extension bridge (see the file's own caveats).
 
 Not mapped here: the Browser view and the rest of the Chrome extension (`bun run test:browser`), Usage, the inspector's Links and Analysis tabs, transcript upload, and YouTube and social adapters, which have no fixtures.

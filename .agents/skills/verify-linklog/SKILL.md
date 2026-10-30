@@ -64,7 +64,7 @@ Write a new journey next to `add-link.ts` and copy its shape. The context it rec
 | Field | Use |
 |---|---|
 | `page` | Playwright page signed in as Demo A, already on the library |
-| `api.get(path)`, `api.send(method, path, body)`, `api.library()`, `api.link(url)` | Worker API as Demo A, through the UI proxy. Paths omit `/api`. Writes send JSON and a trusted `Origin` |
+| `api.get(path)`, `api.send(method, path, body)`, `api.ensure(path, body)`, `api.library()`, `api.link(url)` | Worker API as Demo A, through the UI proxy. Paths omit `/api`. Writes send JSON and a trusted `Origin` |
 | `pageAs(1)`, `apiAs(1)` | Demo B, in its own browser context, for isolation checks |
 | `fixture(name, path)` | A fixture URL unique to this journey run, such as `https://article.qa.example/add-link-032946/one`. Reruns never dedupe into older links |
 | `step(text)` | Starts a step. Its millisecond offset into `video.webm` goes in the report |
