@@ -24,7 +24,7 @@ import { BrowserView } from "./components/browser/BrowserView";
 import { BrowserSidebar } from "./components/browser/BrowserSidebar";
 import { tabDomain, useBrowserWorkspace } from "./browser/useBrowserWorkspace";
 import { useSavedLookup } from "./browser/saved";
-import { useOpenLinks } from "./browser/openLinks";
+import { openUnavailable, useOpenLinks } from "./browser/openLinks";
 import { BrowserInspector } from "./components/browser/BrowserInspector";
 import { BrowserDialogs } from "./components/browser/BrowserDialogs";
 import { useBrowserActions } from "./browser/useBrowserActions";
@@ -165,7 +165,7 @@ export function App({
   const narrow = useMedia("(max-width: 1099px)");
   const mobile = useMedia("(max-width: 767px)");
   const ws = useBrowserWorkspace(library, view === "browser", loaded && !loadError);
-  const openLinks = useOpenLinks(ws.browser);
+  const openLinks = useOpenLinks(ws.browser, setPicked);
   const browserController = useBrowserActions(
     ws,
     setLibrary,
@@ -773,8 +773,15 @@ export function App({
     lens: runLens,
     extract: () => requestExtract(picked, true),
     copy: (links, withTitles) => void copyLinks(links, withTitles),
+    open: (links) => void openLinks.open(links),
   };
-  const bulkStates = actionStates(pickedLinks, { tags: library.tags, jevReason, running });
+  const bulkStates = actionStates(pickedLinks, {
+    tags: library.tags,
+    jevReason,
+    running,
+    openReason: openUnavailable(ws.browser),
+    opening: openLinks.opening,
+  });
   const invokeBulk = (action: BulkAction, detail?: string) => {
     const state = bulkStates.find((s) => s.action.id === action.id);
     if (!state || state.disabled) return;

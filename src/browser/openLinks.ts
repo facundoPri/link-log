@@ -52,7 +52,7 @@ export function summarizeOpen(items: OpenOutcome[], links: Pick<Link, "url" | "t
   };
 }
 
-export function useOpenLinks(browser: BrowserState) {
+export function useOpenLinks(browser: BrowserState, selectLinks: (ids: string[]) => void) {
   const [opening, setOpening] = useState(false);
   const busy = useRef(false);
   const { request } = browser;
@@ -66,7 +66,13 @@ export function useOpenLinks(browser: BrowserState) {
       const { items } = await request("openTabs", { operationId, urls }, 30_000);
       const summary = summarizeOpen(items, links);
       if (summary.kind === "success") toast.success(summary.message);
-      else toast.error(summary.message, { description: summary.description, action, duration: 10_000 });
+      else {
+        const failedUrls = new Set(items.filter((i) => i.outcome === "failed").map((i) => i.url));
+        const ids = links.filter((l) => failedUrls.has(l.url)).map((l) => l.id);
+        // Select failed is the toast's secondary button, so Retry keeps replaying the same operation.
+        const cancel = { label: "Select failed", onClick: () => selectLinks(ids) };
+        toast.error(summary.message, { description: summary.description, action, cancel, duration: 10_000 });
+      }
     } catch (error) {
       toast.error("Couldn't confirm which links opened", { description: (error as Error).message, action, duration: 10_000 });
     } finally {

@@ -1,4 +1,5 @@
-import { Copy, FileText, ClipboardList, Sparkles, Telescope, type LucideIcon } from "lucide-react";
+import { Copy, ExternalLink, FileText, ClipboardList, Sparkles, Telescope, type LucideIcon } from "lucide-react";
+import { openLimitReason } from "./browser/openLinks";
 import type { Link, Tag } from "./types";
 
 // The only place that knows which selected links an action applies to. The desktop bar, the palette and the
@@ -11,6 +12,10 @@ export type BulkContext = {
   jevReason: string | null;
   /** A batch submission is in flight. */
   running: boolean;
+  /** Why the Linklog extension can't open tabs right now (missing, outdated, connecting), or null. */
+  openReason: string | null;
+  /** An open request is in flight. */
+  opening: boolean;
 };
 
 export type Availability = {
@@ -29,6 +34,7 @@ export type BulkRunners = {
   lens: (lensId: string) => void;
   extract: () => void;
   copy: (links: Link[], withTitles: boolean) => void;
+  open: (links: Link[]) => void;
 };
 
 export type BulkAction = {
@@ -42,6 +48,8 @@ export type BulkAction = {
   /** Shown as its own button in the desktop bar. */
   promoted?: boolean;
   icon: LucideIcon;
+  /** The desktop bar's text when it should say more than `label`, e.g. "Open 3". */
+  barLabel?: (eligible: number) => string;
   availability: (links: Link[], ctx: BulkContext) => Availability;
   /** Tooltip/row text when only some of the links qualify. */
   partial?: (skipped: number, total: number) => string;
@@ -110,10 +118,21 @@ export const BULK_ACTIONS: BulkAction[] = [
     label: "Extract context",
     group: "Process",
     shortcut: "E",
-    promoted: true,
     icon: FileText,
     availability: (ls, ctx) => everyLink(ls, ctx.running ? STILL_PROCESSING : null),
     run: (h) => h.extract(),
+  },
+  {
+    id: "open",
+    label: "Open",
+    group: "Share",
+    shortcut: "O",
+    promoted: true,
+    icon: ExternalLink,
+    barLabel: (n) => `Open ${n}`,
+    availability: (ls, ctx) =>
+      everyLink(ls, ctx.openReason ?? openLimitReason(ls.length) ?? (ctx.opening ? "Opening links…" : null)),
+    run: (h, eligible) => h.open(eligible),
   },
   {
     id: "copy",

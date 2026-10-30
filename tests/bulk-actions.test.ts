@@ -9,7 +9,7 @@ const extracting = (id: string) => link(id, { content_state: "queued" });
 const bare = (id: string) => link(id);
 
 const tag = { id: "t1", name: "reading" } as unknown as Tag;
-const ready: BulkContext = { tags: [tag], jevReason: null, running: false };
+const ready: BulkContext = { tags: [tag], jevReason: null, running: false, openReason: null, opening: false };
 const state = (id: string, selected: Link[], ctx = ready) =>
   actionState(BULK_ACTIONS.find((a) => a.id === id)!, selected, ctx);
 const key = (k: string, mods: Partial<Parameters<typeof actionForKey>[0]> = {}) =>
@@ -74,7 +74,7 @@ describe("blocked actions", () => {
   });
 
   test("Jev's reason wins over the missing-tags reason", () => {
-    const ctx = { tags: [], jevReason: "Jev is not configured.", running: false };
+    const ctx = { ...ready, tags: [], jevReason: "Jev is not configured." };
     expect(state("autotag", mixed, ctx).availability.blocked).toBe("Jev is not configured.");
   });
 
@@ -105,6 +105,35 @@ describe("blocked actions", () => {
   });
 });
 
+describe("open", () => {
+  test("opens every selected link, including ones without content", () => {
+    const s = state("open", mixed);
+    expect(s.availability.eligible).toHaveLength(7);
+    expect(s.disabled).toBe(false);
+    expect(s.badge).toBeNull();
+    expect(s.action.barLabel?.(s.availability.eligible.length)).toBe("Open 7");
+  });
+
+  test("the extension's reason blocks it and leaves the other actions alone", () => {
+    const ctx = { ...ready, openReason: "Install or enable the Linklog extension to open links" };
+    const s = state("open", mixed, ctx);
+    expect(s.disabled).toBe(true);
+    expect(s.reason).toBe("Install or enable the Linklog extension to open links");
+    for (const id of ["autotag", "lens", "extract", "copy"]) expect(state(id, mixed, ctx).disabled).toBe(false);
+  });
+
+  test("more than 50 selected links is blocked, 50 is not", () => {
+    const many = (n: number) => Array.from({ length: n }, (_, i) => bare(`m${i}`));
+    expect(state("open", many(50)).disabled).toBe(false);
+    expect(state("open", many(51)).availability.blocked).toBe("Open up to 50 links at once");
+  });
+
+  test("an open in flight blocks a second one, but a batch in flight does not", () => {
+    expect(state("open", mixed, { ...ready, opening: true }).disabled).toBe(true);
+    expect(state("open", mixed, { ...ready, running: true }).disabled).toBe(false);
+  });
+});
+
 describe("shortcuts", () => {
   test("letters run their action, case-insensitively", () => {
     expect(key("t")?.id).toBe("autotag");
@@ -112,6 +141,7 @@ describe("shortcuts", () => {
     expect(key("l")?.id).toBe("lens");
     expect(key("e")?.id).toBe("extract");
     expect(key("c")?.id).toBe("copy");
+    expect(key("o")?.id).toBe("open");
   });
 
   test("shift+C is the copy-with-titles variant, not plain copy", () => {
@@ -136,14 +166,14 @@ describe("shortcuts", () => {
 
 describe("registry", () => {
   test("holds exactly the actions that exist today, in bar order", () => {
-    expect(BULK_ACTIONS.map((a) => a.id)).toEqual(["autotag", "lens", "extract", "copy", "copy-titles"]);
-    expect(BULK_ACTIONS.filter((a) => a.promoted).map((a) => a.id)).toEqual(["autotag", "lens", "extract"]);
+    expect(BULK_ACTIONS.map((a) => a.id)).toEqual(["autotag", "lens", "extract", "open", "copy", "copy-titles"]);
+    expect(BULK_ACTIONS.filter((a) => a.promoted).map((a) => a.id)).toEqual(["autotag", "lens", "open"]);
     expect(BULK_ACTIONS.find((a) => a.id === "lens")?.picker).toBe("lens");
   });
 
   test("lens runs only once a lens is chosen", () => {
     const calls: string[] = [];
-    const runners = { autotag: () => calls.push("autotag"), lens: (id: string) => calls.push(`lens:${id}`), extract: () => calls.push("extract"), copy: () => calls.push("copy") };
+    const runners = { autotag: () => calls.push("autotag"), lens: (id: string) => calls.push(`lens:${id}`), extract: () => calls.push("extract"), copy: () => calls.push("copy"), open: () => calls.push("open") };
     const lens = BULK_ACTIONS.find((a) => a.id === "lens")!;
     void lens.run(runners, mixed);
     expect(calls).toEqual([]);
