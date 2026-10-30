@@ -30,7 +30,7 @@ import { BrowserDialogs } from "./components/browser/BrowserDialogs";
 import { useBrowserActions } from "./browser/useBrowserActions";
 import { usd, tokens } from "./lib/format";
 import { submitInChunks, type BatchReply } from "./batches";
-import { actionForKey, actionStates, BULK_ACTIONS, bulkProgress, type BulkAction, type BulkRunners } from "./bulkActions";
+import { actionForKey, actionStates, BULK_ACTIONS, bulkProgress, lacksContent, type BulkAction, type BulkRunners } from "./bulkActions";
 import { copyLinks } from "./lib/copy-links";
 import { failureMessage } from "./failures";
 import { Toaster } from "@/components/ui/sonner";
@@ -695,7 +695,7 @@ export function App({
 
   // Selected links with no content and no extraction on the way: auto-tag skips them unless the user
   // explicitly asks to extract them first (Jev never starts an extraction by itself).
-  const noContent = pickedLinks.filter((l) => !l.content_key && l.content_state !== "queued");
+  const noContent = pickedLinks.filter(lacksContent);
   const doAutoTag = async (extract = extractFirst) => {
     setConfirmAutoTag(false);
     setConfirmNoContent(false);
