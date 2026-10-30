@@ -48,7 +48,7 @@ export function BulkPalette({
       title="Bulk actions"
       description={`Act on ${selected} selected links`}
       showCloseButton={false}
-      className="top-[30%] sm:max-w-[600px]"
+      className="top-[18%] translate-y-0 sm:max-w-[600px]"
     >
       <div className="flex items-center gap-2 border-b px-3 py-2 text-[12px] text-muted-foreground">
         {page ? (
@@ -82,7 +82,7 @@ export function BulkPalette({
         }}
       />
       <CommandList className="max-h-[60vh]">
-        <CommandEmpty>{page ? "No matching lens" : "No matching action"}</CommandEmpty>
+        <CommandEmpty>{page ? (lenses.length ? "No matching lens" : "No lenses yet") : "No matching action"}</CommandEmpty>
         {page ? (
           <>
             <CommandGroup>

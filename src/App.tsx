@@ -294,9 +294,31 @@ export function App({
           },
         );
         sessionBatches.current.delete(b.id);
+        if (selectionBatches.current.has(b.id)) void showFailures(b);
       }
+      if (b.active === 0) selectionBatches.current.delete(b.id);
     }
   }, [library.batches]);
+
+  // The same jobs Activity lists, narrowed to the failed ones, so the selection surface can say why and re-select them.
+  const showFailures = async (b: Batch) => {
+    try {
+      const { jobs } = await api<{ jobs: Job[] }>(`/batches/${b.id}`);
+      const failed = jobs
+        .filter((j) => j.status === "failed" && j.step !== "Cancelled" && j.link_id)
+        .map((j) => ({
+          linkId: j.link_id!,
+          title: j.title,
+          reason: j.error ?? failureMessage(j.reason) ?? "Something went wrong.",
+        }));
+      if (failed.length)
+        setResults((cur) =>
+          [...cur.filter((r) => r.batchId !== b.id), { batchId: b.id, kind: b.kind, total: b.total, failed }].slice(-3),
+        );
+    } catch {
+      /* the toast still points to Activity */
+    }
+  };
 
   const showRecentLinks = useCallback(() => {
     setView("all");
