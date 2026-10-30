@@ -24,9 +24,14 @@ export default (async ({ page, api, fixture, step, check, shot, note }) => {
     { timeout: 60_000 },
   );
   await check("API: the four articles have content, the others none", () => links.filter((l) => l.content_key).length === 4);
-  const visible = (await api.library()).links.length;
+  // Select all takes every visible link, which on a shared instance includes earlier journeys' links.
+  const everyLink = (await api.library()).links;
+  const visible = everyLink.length;
+  const withContent = everyLink.filter((l) => l.content_key).length;
+  const lacking = visible - withContent;
   const bar = page.getByLabel("Selected link actions");
-  const rowBox = (title: string) => page.getByRole("checkbox", { name: `Select ${title}` });
+  // The links that can never be extracted are titled by host alone, so an earlier journey's rows share the name; the newest is listed first.
+  const rowBox = (title: string) => page.getByRole("checkbox", { name: `Select ${title}` }).first();
   const selectSeven = async () => {
     for (const l of links) {
       await check(`Row "${l.title}" is listed`, () => rowBox(l.title).isVisible());
@@ -118,8 +123,8 @@ export default (async ({ page, api, fixture, step, check, shot, note }) => {
     return names;
   });
   await note("drawer-tiles", tiles);
-  await check("Auto-tag tile shows 4/7 when partial", async () => /4\/7/.test((await drawer.getByRole("button", { name: /^Auto-tag/ }).textContent()) ?? ""));
-  await check("The counts are explained in one line", () => drawer.getByText(/Numbers show how many of the 7 selected links each action can run on/).isVisible());
+  await check(`Auto-tag tile shows ${withContent}/${visible} when partial`, async () => new RegExp(`${withContent}/${visible}`).test((await drawer.getByRole("button", { name: /^Auto-tag/ }).textContent()) ?? ""));
+  await check("The counts are explained in one line", () => drawer.getByText(new RegExp(`Numbers show how many of the ${visible} selected links each action can run on`)).isVisible());
   const grid = await check("4-column grid, the last tile fills its row, tiles at least 44px", async () => {
     const m = await drawer.locator(".grid").evaluate((el) => {
       const kids = [...el.children].map((c) => c.getBoundingClientRect());
@@ -171,27 +176,27 @@ export default (async ({ page, api, fixture, step, check, shot, note }) => {
   const batch = await check("API: an extract batch started", async () => (await api.library()).batches.find((b) => b.kind === "extract" && b.total === visible));
   await check("The bar reports Extracting n/N", () => bar.getByText(new RegExp(`Extracting \\d+/${visible}`)).isVisible(), { timeout: 5_000 }).catch(() => note("progress-missed", "the batch settled before the bar was polled"));
   await shot("09-mobile-running");
-  await check("API: the batch settles with the 3 impossible links failed", async () => {
+  await check("API: the batch settles with every link that can never be extracted failed", async () => {
     const b = (await api.library()).batches.find((x) => x.id === batch.id);
-    return b && b.active === 0 && b.failed === 3 && b;
+    return b && b.active === 0 && b.failed === lacking && b;
   }, { timeout: 90_000 });
 
   await step("After the run the bar stays with Details");
-  await check("Selection cleared, bar reports the run", async () => (await bar.getByText(`Extract context: 3 of ${visible} failed`).isVisible()) && (await bar.getByRole("button", { name: "Details" }).isVisible()));
+  await check("Selection cleared, bar reports the run", async () => (await bar.getByText(`Extract context: ${lacking} of ${visible} failed`).isVisible()) && (await bar.getByRole("button", { name: "Details" }).isVisible()));
   await snap("10-mobile-done");
   await bar.getByRole("button", { name: "Details" }).click();
   const failedJobs = ((await api.get(`/batches/${batch.id}`)).jobs as { status: string; link_id: string; title: string }[]).filter((j) => j.status === "failed");
   const card = page.getByRole("region", { name: "Extract context results" });
-  await check("Details lists the three failed links", async () => {
-    for (const j of failedJobs) if (!(await card.getByText(j.title, { exact: true }).isVisible())) return false;
-    return failedJobs.length === 3;
+  await check("Details lists the failed links", async () => {
+    for (const j of failedJobs) if (!(await card.getByText(j.title, { exact: true }).first().isVisible())) return false;
+    return failedJobs.length === lacking;
   });
   await snap("11-mobile-details");
   await card.getByRole("button", { name: "Select failed" }).click();
   const failedIds = new Set(failedJobs.map((j) => j.link_id));
   await check("Select failed selects exactly the failed links", async () => {
     for (const l of links) if ((await rowBox(l.title).isChecked()) !== failedIds.has(l.id)) return false;
-    return /3 selected/.test((await bar.textContent()) ?? "");
+    return new RegExp(`${lacking} selected`).test((await bar.textContent()) ?? "");
   });
   await snap("12-mobile-select-failed");
   await bar.getByRole("button", { name: "Clear selection" }).click();

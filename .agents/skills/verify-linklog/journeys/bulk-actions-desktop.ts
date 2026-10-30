@@ -29,7 +29,8 @@ export default (async ({ page, api, fixture, step, check, shot, note }) => {
 
   const bar = page.getByLabel("Selected link actions");
   const countButton = (n: number) => bar.getByRole("button", { name: `${n} selected` });
-  const rowBox = (title: string) => page.getByRole("checkbox", { name: `Select ${title}` });
+  // The links that can never be extracted are titled by host alone, so an earlier journey's rows share the name; the newest is listed first.
+  const rowBox = (title: string) => page.getByRole("checkbox", { name: `Select ${title}` }).first();
 
   // Row by row, so the journey also works on an instance that already holds other links.
   const selectSeven = async () => {
