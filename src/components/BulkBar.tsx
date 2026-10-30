@@ -1,5 +1,5 @@
-import { ChevronDown, MoreHorizontal, X } from "lucide-react";
-import type { ActionState, BulkAction } from "../bulkActions";
+import { ChevronDown, CircleAlert, Loader2, MoreHorizontal, X } from "lucide-react";
+import type { ActionState, BulkAction, BulkProgress } from "../bulkActions";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Kbd } from "@/components/ui/kbd";
@@ -11,10 +11,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { BulkResultCard, type BulkResult } from "./BulkResults";
+import { BulkResultCard, BulkResultsPopover, type BulkResult } from "./BulkResults";
 
 // The desktop selection surface: results of earlier runs stack above the bar, which exists only while links
-// are selected. Narrow and mobile layouts keep SelectionBar.
+// are selected.
 export function BulkDock({
   selected,
   visibleCount,
@@ -109,6 +109,63 @@ export function BulkDock({
             <X className="size-3.5" />
           </Button>
         </div>
+      )}
+    </div>
+  );
+}
+
+export const progressText = (p: BulkProgress) => `${p.label} ${p.done}/${p.total}`;
+
+// The narrow surface: a chip that opens the same palette. A running job shows in it and results open from it, and
+// it stays after the selection clears for as long as there is something to report.
+export function BulkChip({
+  selected,
+  progress,
+  results,
+  onOpenPalette,
+  onClear,
+  onSelectFailed,
+  onDismissResult,
+}: {
+  selected: number;
+  progress: BulkProgress | null;
+  results: BulkResult[];
+  onOpenPalette: () => void;
+  onClear: () => void;
+  onSelectFailed: (result: BulkResult) => void;
+  onDismissResult: (result: BulkResult) => void;
+}) {
+  if (!selected && !progress && !results.length) return null;
+  const failed = results.reduce((n, r) => n + r.failed.length, 0);
+  return (
+    <div
+      aria-label="Selected link actions"
+      className="selection-bar fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] left-1/2 z-40 flex max-w-[calc(100vw-1.5rem)] -translate-x-1/2 items-center gap-1 rounded-full border bg-popover p-1 pl-3 shadow-lg animate-in fade-in slide-in-from-bottom-2 duration-200"
+    >
+      {selected > 0 && <span className="whitespace-nowrap text-[13px] font-medium tabular">{selected} selected</span>}
+      {progress && (
+        <span className="flex items-center gap-1.5 whitespace-nowrap px-2 text-[13px] tabular text-muted-foreground">
+          <Loader2 className="size-3.5 animate-spin" />
+          {progressText(progress)}
+        </span>
+      )}
+      {failed > 0 && (
+        <BulkResultsPopover results={results} onSelectFailed={onSelectFailed} onDismiss={onDismissResult}>
+          <Button size="sm" variant="ghost" className="rounded-full">
+            <CircleAlert className="size-3.5 text-amber-600" />
+            {failed} failed
+          </Button>
+        </BulkResultsPopover>
+      )}
+      {selected > 0 && (
+        <>
+          <Button size="sm" variant="secondary" className="rounded-full" onClick={onOpenPalette}>
+            Actions <Kbd>⌘K</Kbd>
+          </Button>
+          <Button variant="ghost" size="icon-sm" className="rounded-full" aria-label="Clear selection" onClick={onClear}>
+            <X className="size-4" />
+          </Button>
+        </>
       )}
     </div>
   );

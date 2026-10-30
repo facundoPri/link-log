@@ -9,8 +9,8 @@ import { Sidebar, type View } from "./components/Sidebar";
 import { Toolbar, type ContextFilter } from "./components/Toolbar";
 import { LinkList } from "./components/LinkList";
 import { PendingLinks } from "./components/PendingLinks";
-import { SelectionBar } from "./components/SelectionBar";
-import { BulkDock } from "./components/BulkBar";
+import { BulkChip, BulkDock } from "./components/BulkBar";
+import { BulkDrawer, BulkMobileBar } from "./components/BulkMobile";
 import { BulkPalette } from "./components/BulkPalette";
 import type { BulkResult } from "./components/BulkResults";
 import { Inspector } from "./components/Inspector";
@@ -30,7 +30,7 @@ import { BrowserDialogs } from "./components/browser/BrowserDialogs";
 import { useBrowserActions } from "./browser/useBrowserActions";
 import { usd, tokens } from "./lib/format";
 import { submitInChunks, type BatchReply } from "./batches";
-import { actionForKey, actionStates, BULK_ACTIONS, type BulkAction, type BulkRunners } from "./bulkActions";
+import { actionForKey, actionStates, BULK_ACTIONS, bulkProgress, type BulkAction, type BulkRunners } from "./bulkActions";
 import { copyLinks } from "./lib/copy-links";
 import { failureMessage } from "./failures";
 import { Toaster } from "@/components/ui/sonner";
@@ -784,7 +784,11 @@ export function App({
   });
   const invokeBulk = (action: BulkAction, detail?: string) => {
     const state = bulkStates.find((s) => s.action.id === action.id);
-    if (!state || state.disabled) return;
+    if (!state) return;
+    if (state.disabled) {
+      toast(state.reason ?? `${action.label} isn't available`);
+      return;
+    }
     if (action.picker && detail === undefined) {
       setPalette({ page: action.id });
       return;
@@ -797,6 +801,15 @@ export function App({
     if (!picked.length) setPalette(null);
   }, [picked.length]);
   const paletteAction = BULK_ACTIONS.find((a) => a.id === palette?.page) ?? null;
+  const pickedSet = new Set(picked);
+  const allVisibleSelected = filtered.length > 0 && filtered.every((l) => pickedSet.has(l.id));
+  const progress = bulkProgress(library.batches, selectionBatches.current);
+  const selectFailed = (r: BulkResult) => {
+    const ids = new Set(library.links.map((l) => l.id));
+    setPicked(r.failed.map((f) => f.linkId).filter((id) => ids.has(id)));
+    setResults((cur) => cur.filter((x) => x.batchId !== r.batchId));
+  };
+  const dismissResult = (r: BulkResult) => setResults((cur) => cur.filter((x) => x.batchId !== r.batchId));
 
 
   const sidebar = (
@@ -1215,23 +1228,6 @@ export function App({
           {inspector}
         </SheetContent>
       </Sheet>
-      {!!picked.length && view !== "browser" && narrow && (
-        <SelectionBar
-          links={pickedLinks}
-          tags={library.tags}
-          lenses={libraryLenses}
-          running={running}
-          jevReason={jevReason}
-          openReason={openLinks.reason(pickedLinks.length)}
-          opening={openLinks.opening}
-          onOpen={() => void openLinks.open(pickedLinks)}
-          onAutoTag={requestAutoTag}
-          onLens={(lens) => runLens(lens.id)}
-          onNewLens={() => setDialog({ lens: "new" })}
-          onExtract={() => requestExtract(picked, true)}
-          onClear={() => setPicked([])}
-        />
-      )}
       {view !== "browser" && !narrow && (
         <BulkDock
           selected={picked.length}
@@ -1242,15 +1238,36 @@ export function App({
           onSelectAll={() => setPicked(filtered.map((l) => l.id))}
           onClear={() => setPicked([])}
           onOpenPalette={() => setPalette({ page: null })}
-          onSelectFailed={(r) => {
-            const ids = new Set(library.links.map((l) => l.id));
-            setPicked(r.failed.map((f) => f.linkId).filter((id) => ids.has(id)));
-            setResults((cur) => cur.filter((x) => x.batchId !== r.batchId));
-          }}
-          onDismissResult={(r) => setResults((cur) => cur.filter((x) => x.batchId !== r.batchId))}
+          onSelectFailed={selectFailed}
+          onDismissResult={dismissResult}
         />
       )}
-      {!!picked.length && view !== "browser" && (
+      {view !== "browser" && narrow && !mobile && (
+        <BulkChip
+          selected={picked.length}
+          progress={progress}
+          results={results}
+          onOpenPalette={() => setPalette({ page: null })}
+          onClear={() => setPicked([])}
+          onSelectFailed={selectFailed}
+          onDismissResult={dismissResult}
+        />
+      )}
+      {view !== "browser" && mobile && (
+        <BulkMobileBar
+          selected={picked.length}
+          visibleCount={filtered.length}
+          allVisibleSelected={allVisibleSelected}
+          progress={progress}
+          results={results}
+          onSelectAll={() => setPicked(filtered.map((l) => l.id))}
+          onClear={() => setPicked([])}
+          onOpenDrawer={() => setPalette({ page: null })}
+          onSelectFailed={selectFailed}
+          onDismissResult={dismissResult}
+        />
+      )}
+      {!!picked.length && view !== "browser" && !mobile && (
         <BulkPalette
           open={!!palette}
           onOpenChange={(o) => !o && setPalette(null)}
@@ -1260,6 +1277,25 @@ export function App({
           states={bulkStates}
           lenses={libraryLenses}
           onInvoke={invokeBulk}
+          onNewLens={() => {
+            setPalette(null);
+            setDialog({ lens: "new" });
+          }}
+        />
+      )}
+      {!!picked.length && view !== "browser" && mobile && (
+        <BulkDrawer
+          open={!!palette}
+          onOpenChange={(o) => !o && setPalette(null)}
+          page={paletteAction}
+          onPage={(a) => setPalette({ page: a?.id ?? null })}
+          selected={picked.length}
+          visibleCount={filtered.length}
+          allVisibleSelected={allVisibleSelected}
+          states={bulkStates}
+          lenses={libraryLenses}
+          onInvoke={invokeBulk}
+          onSelectAll={() => setPicked(filtered.map((l) => l.id))}
           onNewLens={() => {
             setPalette(null);
             setDialog({ lens: "new" });

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { actionForKey, actionState, actionStates, BULK_ACTIONS, type BulkContext } from "../src/bulkActions";
-import type { Link, Tag } from "../src/types";
+import { actionForKey, actionState, actionStates, BULK_ACTIONS, bulkProgress, type BulkContext } from "../src/bulkActions";
+import type { Batch, Link, Tag } from "../src/types";
 
 const link = (id: string, over: Partial<Link> = {}) =>
   ({ id, url: `https://${id}.example`, title: id, content_key: null, content_state: "missing", tags: [], ...over }) as unknown as Link;
@@ -179,5 +179,25 @@ describe("registry", () => {
     expect(calls).toEqual([]);
     void lens.run(runners, mixed, "l1");
     expect(calls).toEqual(["lens:l1"]);
+  });
+});
+
+describe("progress of a run started from the selection", () => {
+  const batch = (id: string, kind: Batch["kind"], total: number, active: number) => ({ id, kind, total, active }) as Batch;
+
+  test("reports done over total for the active batch, and nothing once it settles", () => {
+    const started = new Set(["b1"]);
+    expect(bulkProgress([batch("b1", "extract", 12, 10)], started)).toEqual({ label: "Extracting", done: 2, total: 12 });
+    expect(bulkProgress([batch("b1", "extract", 12, 0)], started)).toBeNull();
+  });
+
+  test("sums the chunks of one run and ignores batches the selection did not start", () => {
+    const started = new Set(["b1", "b2"]);
+    const batches = [batch("b1", "autotag", 100, 40), batch("b2", "autotag", 20, 20), batch("other", "extract", 5, 5)];
+    expect(bulkProgress(batches, started)).toEqual({ label: "Auto-tagging", done: 60, total: 120 });
+  });
+
+  test("the drawer shortens only the label that would not fit", () => {
+    expect(BULK_ACTIONS.filter((a) => a.tileLabel).map((a) => [a.id, a.tileLabel])).toEqual([["extract", "Extract"]]);
   });
 });

@@ -1,6 +1,6 @@
 import { Copy, ExternalLink, FileText, ClipboardList, Sparkles, Telescope, type LucideIcon } from "lucide-react";
 import { openLimitReason } from "./browser/openLinks";
-import type { Link, Tag } from "./types";
+import type { Batch, Link, Tag } from "./types";
 
 // The only place that knows which selected links an action applies to. The desktop bar, the palette and the
 // keyboard shortcuts all read it, so they cannot disagree. Adding an action is one entry in BULK_ACTIONS plus
@@ -50,6 +50,8 @@ export type BulkAction = {
   icon: LucideIcon;
   /** The desktop bar's text when it should say more than `label`, e.g. "Open 3". */
   barLabel?: (eligible: number) => string;
+  /** The mobile drawer tile's label when `label` is too long for a quarter of the row. */
+  tileLabel?: string;
   availability: (links: Link[], ctx: BulkContext) => Availability;
   /** Tooltip/row text when only some of the links qualify. */
   partial?: (skipped: number, total: number) => string;
@@ -119,6 +121,7 @@ export const BULK_ACTIONS: BulkAction[] = [
     group: "Process",
     shortcut: "E",
     icon: FileText,
+    tileLabel: "Extract",
     availability: (ls, ctx) => everyLink(ls, ctx.running ? STILL_PROCESSING : null),
     run: (h) => h.extract(),
   },
@@ -197,4 +200,23 @@ export function actionForKey(e: KeyLike): BulkAction | null {
       return shift === e.shiftKey && a.shortcut.slice(shift ? 1 : 0).toLowerCase() === e.key.toLowerCase();
     }) ?? null
   );
+}
+
+const PROGRESS_VERB: Partial<Record<Batch["kind"], string>> = {
+  extract: "Extracting",
+  autotag: "Auto-tagging",
+  lens: "Running lens",
+};
+
+export type BulkProgress = { label: string; done: number; total: number };
+
+/** The run in progress among the batches started from the selection: the first kind that still has jobs, summed over its chunks. */
+export function bulkProgress(batches: Batch[], started: ReadonlySet<string>): BulkProgress | null {
+  const active = batches.filter((b) => started.has(b.id) && b.active > 0);
+  const kind = active[0]?.kind;
+  if (!kind) return null;
+  const same = active.filter((b) => b.kind === kind);
+  const total = same.reduce((n, b) => n + b.total, 0);
+  const left = same.reduce((n, b) => n + b.active, 0);
+  return { label: PROGRESS_VERB[kind] ?? "Working on", done: total - left, total };
 }

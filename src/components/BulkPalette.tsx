@@ -77,8 +77,7 @@ export function BulkPalette({
           const action = actionForKey(e);
           if (!action) return;
           e.preventDefault();
-          const s = byId.get(action.id);
-          if (s && !s.disabled) onInvoke(action);
+          onInvoke(action);
         }}
       />
       <CommandList className="max-h-[60vh]">
