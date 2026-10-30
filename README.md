@@ -25,7 +25,9 @@ Every library is private to its account (Better Auth on D1). Sign up with email 
 - **Filter** menu: domain and context filters; tags filter with AND semantics.
 - Click a row to open the inspector: preview, tags, AI confidence, content and details. `↑`/`↓` move between links and `Esc` closes it.
 - Hover `…` on a row for actions (open, copy URL, edit tags, extract, delete).
-- Row checkboxes open a floating selection bar: **Auto-tag**, **Lens**, **Extract context**.
+- Row checkboxes open a floating selection bar: **Auto-tag**, **Lens**, **Extract context**, **Open**, **Copy**.
+  **Open** needs the Chrome extension (see Browser view): it opens up to 50 selected links as background tabs in
+  this window and skips links that are already open there.
 - In the sidebar, **Tags** `+` creates a tag and `…` edits it (name, description for the AI, confidence threshold) or deletes it. **Activity** and **Usage** live in the sidebar footer.
 
 ## Browser view (Chrome extension)

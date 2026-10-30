@@ -1,3 +1,4 @@
+import { BROWSER_LIMITS } from "./api.ts";
 import {
   GROUP_COLORS,
   type BridgeEnvelope,
@@ -123,6 +124,12 @@ const validators: { [K in CommandName]: (a: Obj) => boolean } = {
     (a.pinnedId === undefined || a.pinnedId === null || id(a.pinnedId)),
   unbindPinned: (a) => id(a.pinnedId),
   focusTab: (a) => tabRef(a.tab),
+  openTabs: (a) =>
+    id(a.operationId) &&
+    Array.isArray(a.urls) &&
+    a.urls.length >= 1 &&
+    a.urls.length <= BROWSER_LIMITS.maxOpenUrls &&
+    a.urls.every((u) => str(u, BROWSER_LIMITS.maxUrlChars)),
   openPermissions: () => true,
   forget: () => true,
 };

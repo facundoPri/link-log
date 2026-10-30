@@ -5,6 +5,7 @@ import { handle, type Services } from "./commands";
 import { GroupMetaStore } from "./groups";
 import { Hub, type Connection } from "./hub";
 import { chromeKV, Mutex } from "./kv";
+import { OpenLedger } from "./opens";
 import { TabRegistry, type Change } from "./registry";
 import { isBridgeSender, isExtensionPage } from "./sender";
 
@@ -19,6 +20,7 @@ const registry = new TabRegistry(session);
 const cache = new ResultCache(session, mutex);
 const groups = new GroupMetaStore(session, mutex, local);
 const hub = new Hub(session, registry, groups);
+const opens = new OpenLedger(session);
 let services: Services | null = null;
 
 // Bridge content-script matches show up as granted origins; they are for the bridge
@@ -68,7 +70,7 @@ async function init(): Promise<Services> {
   await groups.restoreBindings(alive);
   await groups.syncHints(alive);
   groups.onChange = () => syncGroups();
-  return { registry, cache, groups, hub, ids: { installationId, browserSessionId } };
+  return { registry, cache, groups, hub, opens, ids: { installationId, browserSessionId } };
 }
 const ready = init().then((s) => (services = s));
 

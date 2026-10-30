@@ -1,6 +1,7 @@
 import { BROWSER_LIMITS, type BrowserGroup, type BrowserTab } from "@linklog/browser-protocol";
 import type { BrowserWorkspace, Destination } from "../../browser/useBrowserWorkspace";
-import { plural, type BrowserActions, type GroupDialogState } from "../../browser/useBrowserActions";
+import type { BrowserActions, GroupDialogState } from "../../browser/useBrowserActions";
+import { plural } from "../../lib/format";
 import { GroupDialog, type GroupDraft } from "./GroupDialog";
 import { AutogroupDialog } from "./AutogroupDialog";
 import { GroupPicker } from "./GroupPicker";

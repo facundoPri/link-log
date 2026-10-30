@@ -1,4 +1,4 @@
-import { Copy, FileText, Plus, Sparkles, Telescope, X } from "lucide-react";
+import { Copy, ExternalLink, FileText, Plus, Sparkles, Telescope, X } from "lucide-react";
 import { toast } from "sonner";
 import type { Lens, Link, Tag } from "../types";
 import { Button } from "@/components/ui/button";
@@ -36,6 +36,9 @@ export function SelectionBar({
   lenses,
   running,
   jevReason,
+  openReason,
+  opening,
+  onOpen,
   onAutoTag,
   onLens,
   onNewLens,
@@ -48,6 +51,10 @@ export function SelectionBar({
   running: boolean;
   /** Why Auto-tag and lenses can't run (Jev not configured), or null. */
   jevReason: string | null;
+  /** Why the links can't be opened as tabs (extension missing, too many selected), or null. */
+  openReason: string | null;
+  opening: boolean;
+  onOpen: () => void;
   onAutoTag: () => void;
   onLens: (lens: Lens) => void;
   onNewLens: () => void;
@@ -103,7 +110,7 @@ export function SelectionBar({
         </span>
       </div>
       <Separator orientation="vertical" className="h-5 max-[700px]:hidden" />
-      <div className="flex shrink-0 items-center gap-1 max-[700px]:col-span-2 max-[700px]:row-start-2 max-[700px]:grid max-[700px]:grid-cols-4">
+      <div className="flex shrink-0 items-center gap-1 max-[700px]:col-span-2 max-[700px]:row-start-2 max-[700px]:grid max-[700px]:grid-cols-5">
         <Tooltip>
           <TooltipTrigger asChild>
             <span className="block min-w-0">
@@ -185,6 +192,23 @@ export function SelectionBar({
           <span className="max-[700px]:hidden">Extract context</span>
           <span className="hidden max-[700px]:inline">Extract</span>
         </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="block min-w-0">
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={!!openReason || opening}
+                onClick={onOpen}
+                className="max-[700px]:h-auto max-[700px]:min-h-12 max-[700px]:w-full max-[700px]:flex-col max-[700px]:gap-0.5 max-[700px]:px-1 max-[700px]:py-1 max-[700px]:text-[11px]"
+              >
+                <ExternalLink className="size-3.5" />
+                Open
+              </Button>
+            </span>
+          </TooltipTrigger>
+          {openReason && <TooltipContent>{openReason}</TooltipContent>}
+        </Tooltip>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button

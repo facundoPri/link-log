@@ -6,6 +6,7 @@ import { handle, type Services } from "../src/background/commands";
 import { GroupMetaStore } from "../src/background/groups";
 import { Hub, type Connection } from "../src/background/hub";
 import { memoryKV, Mutex } from "../src/background/kv";
+import { OpenLedger } from "../src/background/opens";
 import { TabRegistry } from "../src/background/registry";
 
 const LINKLOG_TAB = 99;
@@ -22,7 +23,7 @@ async function setup(count: number, markdown?: (i: number) => string) {
   const groups = new GroupMetaStore(kv, mutex);
   const hub = new Hub(kv, registry, groups);
   hub.grants = ["http://*/*", "https://*/*"];
-  s = { registry, cache: new ResultCache(kv, mutex), groups, hub, ids: { installationId: "inst", browserSessionId: "sess" } };
+  s = { registry, cache: new ResultCache(kv, mutex), groups, hub, opens: new OpenLedger(kv), ids: { installationId: "inst", browserSessionId: "sess" } };
   chromeFake.addTab(LINKLOG_TAB, "http://localhost:4321/");
   for (let i = 1; i <= count; i++) {
     chromeFake.addTab(i, `https://site.dev/${i}`);
@@ -182,5 +183,107 @@ describe("bridge commands", () => {
     const other = await run("closeTabs", { tabs: [{ tabId: 50, tabInstanceId: s.registry.get(50)!.tabInstanceId, url: "https://elsewhere.dev/" }] });
     expect(other.items[0]).toMatchObject({ ok: false, error: "The tab is no longer in this window." });
     expect(chromeFake.tabs.has(50)).toBe(true);
+  });
+
+  describe("openTabs", () => {
+    const outcomes = (r: { items: { outcome: string }[] }) => r.items.map((i) => i.outcome);
+    const created = () => [...chromeFake.tabs.values()].filter((t) => t.id! >= 1000);
+
+    test("opens inactive tabs in the page's window, in order", async () => {
+      await setup(1);
+      chromeFake.addTab(50, "https://elsewhere.dev/", 2);
+      await hello();
+      const urls = ["https://a.dev/1", "https://a.dev/2", "http://b.dev/"];
+      const result = await run("openTabs", { operationId: "op1", urls });
+      expect(result.items).toEqual(urls.map((url) => ({ url, outcome: "opened" })));
+      expect(created().map((t) => [t.pendingUrl, t.windowId, t.active])).toEqual(urls.map((u) => [u, 1, false]));
+    });
+
+    test("a page already open in the window is reported, not duplicated", async () => {
+      await setup(1);
+      await hello();
+      const result = await run("openTabs", {
+        operationId: "op1",
+        urls: ["https://site.dev/1#section", "https://other.dev/", "https://other.dev/#again"],
+      });
+      expect(outcomes(result)).toEqual(["already-open", "opened", "already-open"]);
+      expect(created().map((t) => t.pendingUrl)).toEqual(["https://other.dev/"]);
+    });
+
+    test("a page open only in another window doesn't count", async () => {
+      await setup(0);
+      chromeFake.addTab(50, "https://elsewhere.dev/", 2);
+      await hello();
+      const result = await run("openTabs", { operationId: "op1", urls: ["https://elsewhere.dev/"] });
+      expect(outcomes(result)).toEqual(["opened"]);
+    });
+
+    test("failures are reported per link and the rest still open", async () => {
+      await setup(0);
+      chromeFake.createErrors.set("https://broken.dev/", "Tabs cannot be edited right now.");
+      await hello();
+      const result = await run("openTabs", {
+        operationId: "op1",
+        urls: ["chrome://settings", "https://broken.dev/", "not a url", "https://fine.dev/"],
+      });
+      expect(result.items).toEqual([
+        { url: "chrome://settings", outcome: "failed", error: "Only web links can be opened." },
+        { url: "https://broken.dev/", outcome: "failed", error: "Tabs cannot be edited right now." },
+        { url: "not a url", outcome: "failed", error: "Only web links can be opened." },
+        { url: "https://fine.dev/", outcome: "opened" },
+      ]);
+      expect(created().map((t) => t.pendingUrl)).toEqual(["https://fine.dev/"]);
+    });
+
+    test("a retry replays what was opened, even after the tabs navigated", async () => {
+      await setup(0);
+      chromeFake.createErrors.set("https://broken.dev/", "Boom");
+      await hello();
+      const urls = ["https://a.dev/", "https://broken.dev/", "https://b.dev/"];
+      await run("openTabs", { operationId: "op1", urls });
+      // The opened tabs redirected, so no tab matches their URLs any more.
+      for (const t of created()) {
+        t.url = `${t.pendingUrl}redirected`;
+        t.pendingUrl = undefined;
+      }
+      chromeFake.createErrors.clear();
+      const retry = await run("openTabs", { operationId: "op1", urls });
+      expect(outcomes(retry)).toEqual(["opened", "opened", "opened"]);
+      // Only the link that had failed is opened now.
+      expect(created().map((t) => t.pendingUrl ?? t.url)).toEqual([
+        "https://a.dev/redirected",
+        "https://b.dev/redirected",
+        "https://broken.dev/",
+      ]);
+    });
+
+    test("the same operation sent twice at once opens each page once", async () => {
+      await setup(0);
+      await hello();
+      const urls = ["https://a.dev/", "https://b.dev/"];
+      const [first, second] = await Promise.all([
+        run("openTabs", { operationId: "op1", urls }),
+        run("openTabs", { operationId: "op1", urls }),
+      ]);
+      expect(outcomes(first)).toEqual(["opened", "opened"]);
+      expect(outcomes(second)).toEqual(["opened", "opened"]);
+      expect(created()).toHaveLength(2);
+    });
+
+    test("different operations don't replay each other", async () => {
+      await setup(0);
+      await hello();
+      await run("openTabs", { operationId: "op1", urls: ["https://a.dev/"] });
+      const next = await run("openTabs", { operationId: "op2", urls: ["https://a.dev/"] });
+      expect(outcomes(next)).toEqual(["already-open"]);
+    });
+
+    test("needs the handshake and is advertised", async () => {
+      await setup(0);
+      expect(run("openTabs", { operationId: "op1", urls: ["https://a.dev/"] })).rejects.toThrow("Connect first.");
+      expect(created()).toHaveLength(0);
+      const ack = await run("hello", { libraryScope: "local:lib" });
+      expect(ack.capabilities).toContain("open");
+    });
   });
 });

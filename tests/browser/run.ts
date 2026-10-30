@@ -677,6 +677,44 @@ try {
     return `2 closed; ${links} saved links untouched`;
   });
 
+  await check("Open creates background tabs once per operation, even when the request is repeated", async () => {
+    const urls = [`${SITE}/open/1`, `${SITE}/open/2`];
+    const operationId = "open-op-1";
+    const send = () =>
+      L.evaluate(async ([id, list]) => {
+        const requestId = `open-${Math.random().toString(36).slice(2)}`;
+        return new Promise<{ ok: boolean; result?: { items: { outcome: string }[] }; error?: string }>((resolve) => {
+          const on = (e: MessageEvent) => {
+            if (e.data?.from === "extension" && e.data.response?.id === requestId) {
+              removeEventListener("message", on);
+              resolve(e.data.response);
+            }
+          };
+          addEventListener("message", on);
+          postMessage({ channel: "linklog-bridge", from: "page", request: { id: requestId, command: "openTabs", args: { operationId: id, urls: list } } }, location.origin);
+        });
+      }, [operationId, urls] as [string, string[]]);
+    const inWindow = () => inSw(ctx, async (w: number) => (await chrome.tabs.query({ windowId: w })).map((t) => t.url || t.pendingUrl || ""), W1);
+    const before = (await inWindow()).length;
+    const first = await send();
+    assert(first.ok && first.result!.items.every((i) => i.outcome === "opened"), JSON.stringify(first));
+    await waitFor("both tabs in the window", async () => {
+      const now = await inWindow();
+      return urls.every((u) => now.includes(u)) ? now : null;
+    });
+    const after = (await inWindow()).length;
+    assert(after === before + 2, `expected ${before + 2} tabs, got ${after}`);
+    const again = await send();
+    assert(again.ok && again.result!.items.every((i) => i.outcome === "opened"), JSON.stringify(again));
+    assert((await inWindow()).length === after, "the repeated operation opened more tabs");
+    const other = await inSw(ctx, async (w: number) => (await chrome.tabs.query({})).filter((t) => t.windowId !== w && (t.url ?? "").includes("/open/")).length, W1);
+    assert(other === 0, "tabs opened in another window");
+    await inSw(ctx, async (list: string[]) => {
+      for (const t of await chrome.tabs.query({})) if (list.includes(t.url || t.pendingUrl || "")) await chrome.tabs.remove(t.id!);
+    }, urls);
+    return `2 background tabs in window ${W1}; repeating the operation opened none`;
+  });
+
   section("Groups");
   let pinnedId = "";
   await check("create a pinned group from the selection", async () => {

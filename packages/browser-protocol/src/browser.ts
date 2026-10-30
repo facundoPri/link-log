@@ -181,6 +181,12 @@ export type HelloAck = {
 
 export type ItemResult = { tabId: number; ok: boolean; error?: string };
 
+/** How one requested URL ended up. */
+export type OpenOutcome =
+  | { url: string; outcome: "opened" } // a tab was created for it by this operation (now or in an earlier attempt of the same operationId)
+  | { url: string; outcome: "already-open" } // a tab with the same documentKey was already in the window; nothing created
+  | { url: string; outcome: "failed"; error: string };
+
 export type MoveTarget =
   | { kind: "group"; groupId: number }
   | { kind: "new"; title: string; color: GroupColor; description: string }
@@ -294,6 +300,12 @@ export type Commands = {
   };
   unbindPinned: { args: { pinnedId: string }; result: { groups: number } };
   focusTab: { args: { tab: TabRef }; result: {} };
+  openTabs: {
+    /** `operationId` makes a retry of an unconfirmed request replay instead of opening duplicates. */
+    args: { operationId: string; urls: string[] };
+    /** One outcome per requested URL, same order. */
+    result: { items: OpenOutcome[] };
+  };
   openPermissions: { args: {}; result: {} };
   /**
    * Sign-out: drop this connection's library-scope results and pending requests, then end the
