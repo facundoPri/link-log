@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Plus } from "lucide-react";
 import type { Lens } from "../types";
-import { actionForKey, ACTION_GROUPS, type ActionState, type BulkAction } from "../bulkActions";
+import { ACTION_GROUPS, type ActionState, type BulkAction } from "../bulkActions";
 import { Kbd } from "@/components/ui/kbd";
 import {
   CommandDialog,
@@ -60,7 +60,7 @@ export function BulkPalette({
             <span className="flex-1">
               Acting on <b className="tabular text-foreground">{selected} selected</b>
             </span>
-            <span>Press a key to run directly</span>
+            <span>Keys work without opening this menu</span>
           </>
         )}
       </div>
@@ -69,15 +69,7 @@ export function BulkPalette({
         onValueChange={setSearch}
         placeholder={page ? "Pick a lens…" : "Filter actions…"}
         onKeyDown={(e) => {
-          if (page) {
-            if (e.key === "Backspace" && !search) onPage(null);
-            return;
-          }
-          if (search) return;
-          const action = actionForKey(e);
-          if (!action) return;
-          e.preventDefault();
-          onInvoke(action);
+          if (page && e.key === "Backspace" && !search) onPage(null);
         }}
       />
       <CommandList className="max-h-[60vh]">

@@ -111,13 +111,32 @@ export default (async ({ page, api, fixture, step, check, shot, note }) => {
   await check("Typing filters the actions", async () => (await palette.getByRole("option", { name: /^Auto-tag/ }).isVisible()) && !(await palette.getByRole("option", { name: /^Lens/ }).isVisible()));
   await snap("04-palette-filtered");
 
-  await step("The lens sub-page lists lenses and New lens…, and picking one runs it");
+  await step("Typing in the palette only filters: no letter runs an action, and the palette keeps the selection");
   await page.keyboard.press("Escape");
   await check("Palette closed", async () => !(await palette.isVisible()));
   await check("Selection kept", () => countButton(7).isVisible());
+  const batchesBefore = (await api.library()).batches.length;
+  const toastsBefore = await page.locator("[data-sonner-toast]").count();
   await page.keyboard.press("ControlOrMeta+k");
   await check("Palette reopened", () => palette.isVisible());
-  await page.keyboard.press("l");
+  await page.keyboard.type("copy");
+  await check("Both Copy rows are listed and nothing else", async () => (await palette.getByRole("option").count()) === 2 && (await palette.getByRole("option", { name: /^Copy URLs \+ titles/ }).isVisible()) && (await palette.getByRole("option", { name: /^Copy URLs(?! \+)/ }).isVisible()));
+  await page.waitForTimeout(500);
+  await check("Nothing ran: no copy toast, no confirm, no new batch, no extra toast, palette still open", async () =>
+    (await page.locator("[data-sonner-toast]").filter({ hasText: /copied|Connecting/ }).count()) === 0 &&
+    (await page.locator("[data-sonner-toast]").count()) <= toastsBefore &&
+    !(await page.getByRole("alertdialog").isVisible()) &&
+    (await api.library()).batches.length === batchesBefore &&
+    (await palette.isVisible()));
+  await snap("04b-palette-typed-copy");
+  await page.keyboard.press("Escape");
+  await check("Escape closes the palette and keeps the selection", async () => !(await palette.isVisible()) && (await countButton(7).isVisible()));
+
+  await step("The lens sub-page lists lenses and New lens…, and picking one runs it");
+  await page.keyboard.press("ControlOrMeta+k");
+  await check("Palette reopened", () => palette.isVisible());
+  await page.keyboard.type("lens");
+  await page.keyboard.press("Enter");
   await check("Lens page offers New lens…", () => palette.getByRole("option", { name: "New lens…" }).isVisible());
   await check("Lens page lists Worth reading?", () => palette.getByRole("option", { name: /Worth reading\?/ }).isVisible());
   await snap("05-palette-lens-page");
