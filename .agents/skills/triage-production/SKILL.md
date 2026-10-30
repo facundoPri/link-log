@@ -64,4 +64,16 @@ Write `planning/triage/<YYYY-MM-DD>-<slug>.md`:
 - **Suggested fix**: the change, where it goes, and how to prove it (the measurement that should change). Not implemented.
 - **Observability gaps**: every signal this triage needed and couldn't get, with the cheapest fix.
 
-Add each new gap to the Gaps list in `docs/agents/production-observability.md`, or extend an existing entry with this triage as evidence. Then summarise the cause and fix to the user and offer to file it in Linear (`docs/agents/issue-tracker.md`; `triage` sets its labels).
+Add each new gap to the Gaps list in `docs/agents/production-observability.md`, or extend an existing entry with this triage as evidence. Commit the report and the ledger on the worktree branch.
+
+Done when the report has all five sections and every gap is in the ledger.
+
+## 6. Next steps
+
+Summarise the cause and the suggested fix to the user, then put the route to them with your recommendation (one structured question). Every route ends with a Linear ticket: read `docs/agents/issue-tracker.md` and `docs/agents/triage-labels.md`, look for an existing ticket first, and write the ticket from the report (redacted as above, with its path on the branch).
+
+- **In place.** The cause is certain, the fix is small, and it needs no product or design call: one code path, a measurement that proves it. Create the ticket (`ready-for-agent`), fix it in this worktree, and verify with the same measurement the report names. Under `poteto-mode`, continue its Bug fix playbook (or Perf issue, for a slowdown) from step 3, plan the fix: this triage already did steps 1–2, and the timeline is the baseline. Otherwise follow `diagnosing-bugs` from its fix phase. The PR links the ticket.
+- **Grill now.** The fix hangs on a decision only the user can make (behaviour, scope, cost, a tradeoff the evidence can't settle). Run `grilling` in this session over the decisions the triage surfaced, seeded with the report. Then create the ticket, or `to-tickets` when the work splits into several slices, with the decisions recorded and the state the grill reached (`ready-for-agent` or `ready-for-human`).
+- **Ticket for later.** The decision can wait. Create the ticket (`needs-triage`) with the report and the open decisions listed as questions, so a later grill starts from them.
+
+Done when the ticket exists, read back with its identifier and URL, and the chosen route has started (fix in progress, grill under way, or the ticket parked).
