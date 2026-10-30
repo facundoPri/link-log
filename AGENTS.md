@@ -21,7 +21,7 @@ acting. Ordinary repository work does not need the canvas manual.
 
 ### Issue tracker
 
-Track Linklog issues and specs in the existing Linear project. Before reading, creating, or updating tickets, read `docs/agents/issue-tracker.md`.
+Track Linklog issues and specs in the existing Linear project. Before starting ticket work, reading or updating tickets, opening a PR, or reporting completion, read `docs/agents/issue-tracker.md`. Apply its authorized lifecycle transitions without asking for confirmation.
 
 ### Triage labels
 
