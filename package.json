@@ -20,6 +20,7 @@
     "preview": "bun run build && wrangler dev --ip 127.0.0.1 --port 8787",
     "demo": "bun run build && bun scripts/demo.ts",
     "demo:connected": "LINKLOG_WRANGLER_LOCAL=0 bun run demo",
+    "prototype:bulk": "bun scripts/prototype-bulk.ts",
     "test:e2e": "bun run build && bun scripts/e2e-auth.ts",
     "legacy:adjudicate": "bun scripts/adjudicate-legacy.ts"
   },

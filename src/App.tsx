@@ -10,6 +10,7 @@ import { Toolbar, type ContextFilter } from "./components/Toolbar";
 import { LinkList } from "./components/LinkList";
 import { PendingLinks } from "./components/PendingLinks";
 import { SelectionBar } from "./components/SelectionBar";
+import { BulkActionsPrototype, useBulkPrototypeVariant } from "./components/BulkActions.prototype";
 import { Inspector } from "./components/Inspector";
 import { TagDialog } from "./components/TagDialog";
 import { AddLinkDialog } from "./components/AddLinkDialog";
@@ -87,6 +88,7 @@ export function App({
   const [loadError, setLoadError] = useState("");
   const [activeId, setActiveId] = useState<string | null>(null);
   const [picked, setPicked] = useState<string[]>([]);
+  const bulkPrototype = useBulkPrototypeVariant();
   const [view, setView] = useState<View>("all");
   const [query, setQuery] = useState("");
   const [tagIds, setTagIds] = useState<string[]>([]);
@@ -1117,7 +1119,18 @@ export function App({
           {inspector}
         </SheetContent>
       </Sheet>
-      {!!picked.length && view !== "browser" && (
+      {bulkPrototype && view !== "browser" && (
+        <BulkActionsPrototype
+          variant={bulkPrototype}
+          links={pickedLinks}
+          visible={filtered}
+          tags={library.tags}
+          lenses={libraryLenses}
+          jevReason={jevReason}
+          onSelect={setPicked}
+        />
+      )}
+      {!bulkPrototype && !!picked.length && view !== "browser" && (
         <SelectionBar
           links={pickedLinks}
           tags={library.tags}
