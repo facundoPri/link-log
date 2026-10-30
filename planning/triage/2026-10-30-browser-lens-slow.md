@@ -19,7 +19,7 @@ Workflow instances are created one at a time. `dispatch` (`worker/jobs.ts:251`) 
 
 The user's guess is refuted: no limit of 5 applies. `browser-lens` uses the `jev` pool (16 slots, `worker/jobs.ts:9`), and the three instances inspected got their slot on the first try (`provider-slot-0` → `true`). The early burst of 5 is the start of the sequential loop overlapping with Workflow startup.
 
-Confidence: high for the sequential `create()`, which matches every instance's "Queued" time. The split of the first ~8 s between Queue delivery and the POST is inferred: nothing logs it.
+Confidence: high for the sequential `create()`, which matches the "Queued" times of the three instances described and the one-by-one spacing of all 21 Jev calls. The split of the first ~8 s between Queue delivery and the POST is inferred: nothing logs it.
 
 ## Suggested fix
 
