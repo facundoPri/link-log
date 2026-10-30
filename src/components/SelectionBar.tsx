@@ -1,5 +1,4 @@
 import { Copy, ExternalLink, FileText, Plus, Sparkles, Telescope, X } from "lucide-react";
-import { toast } from "sonner";
 import type { Lens, Link, Tag } from "../types";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -28,6 +27,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { copyLinks } from "../lib/copy-links";
 import { lensIcon } from "./Sidebar";
 
 export function SelectionBar({
@@ -86,21 +86,7 @@ export function SelectionBar({
         : missing
           ? `${missing} of ${links.length} links have no content and will be skipped`
           : null);
-  const copy = async (withTitles: boolean) => {
-    const text = links
-      .map((link) =>
-        withTitles && link.title ? `${link.url} — ${link.title}` : link.url,
-      )
-      .join("\n");
-    try {
-      await navigator.clipboard.writeText(text);
-      toast.success(
-        `${links.length} ${links.length === 1 ? "link" : "links"} copied`,
-      );
-    } catch {
-      toast.error("Could not copy links");
-    }
-  };
+  const copy = (withTitles: boolean) => copyLinks(links, withTitles);
   return (
     <div aria-label="Selected link actions" className="selection-bar fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] left-1/2 z-40 flex -translate-x-1/2 items-center gap-1 rounded-xl border bg-popover p-1.5 shadow-lg animate-in fade-in slide-in-from-bottom-2 duration-200 max-[700px]:grid max-[700px]:grid-cols-[minmax(0,1fr)_auto] max-[700px]:gap-y-1">
       <div className="flex shrink-0 items-center max-[700px]:col-start-1 max-[700px]:row-start-1">
