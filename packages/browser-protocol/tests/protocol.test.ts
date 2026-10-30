@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   applyPatch,
+  BROWSER_LIMITS,
   diffSnapshots,
   documentKey,
   lensFingerprint,
@@ -116,6 +117,19 @@ describe("messages", () => {
     expect(parsePageRequest({ id: "r1", command: "closeTabs", args: { tabs: [{ tabId: "1" }] } })).toBeNull();
     expect(parsePageRequest({ id: "r1", command: "moveToGroup", args: { tabs: [], target: { kind: "new", title: "x", color: "neon", description: "" } } })).toBeNull();
     expect(parsePageRequest({ id: "<script>", command: "snapshot", args: {} })).toBeNull();
+  });
+
+  test("openTabs takes one operation id and 1 to 50 URLs", () => {
+    const open = (args: unknown) => parsePageRequest({ id: "r1", command: "openTabs", args });
+    const urls = (n: number) => Array.from({ length: n }, (_, i) => `https://a.dev/${i}`);
+    expect(open({ operationId: "op-1", urls: urls(1) })?.command).toBe("openTabs");
+    expect(open({ operationId: "op-1", urls: urls(BROWSER_LIMITS.maxOpenUrls) })?.command).toBe("openTabs");
+    expect(open({ operationId: "op-1", urls: [] })).toBeNull();
+    expect(open({ operationId: "op-1", urls: urls(BROWSER_LIMITS.maxOpenUrls + 1) })).toBeNull();
+    expect(open({ operationId: "op-1", urls: ["https://a.dev/", 7] })).toBeNull();
+    expect(open({ operationId: "op-1", urls: ["https://a.dev/" + "x".repeat(BROWSER_LIMITS.maxUrlChars)] })).toBeNull();
+    expect(open({ operationId: "bad id!", urls: urls(1) })).toBeNull();
+    expect(open({ urls: urls(1) })).toBeNull();
   });
 });
 

@@ -17,6 +17,8 @@ export const BROWSER_LIMITS = {
   /** URLs per Save request (same as a library import batch). */
   maxSaveItems: 100,
   maxUrlChars: 4096,
+  /** Links opened as tabs by one Open request. */
+  maxOpenUrls: 50,
   maxTitleChars: 1000,
 } as const;
 

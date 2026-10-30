@@ -17,6 +17,7 @@ import {
   type TabRef,
 } from "@linklog/browser-protocol";
 import type { Lens, Library } from "../types";
+import { plural } from "../lib/format";
 import { call, evaluationStatus, postEvaluation } from "./api";
 import type { BrowserWorkspace, Destination } from "./useBrowserWorkspace";
 import type { GroupDraft } from "../components/browser/GroupDialog";
@@ -24,7 +25,6 @@ import { groupTitle } from "../components/browser/groups";
 
 /** The tab as the page saw it: commands refuse it if it navigated since. */
 const ref = (t: BrowserTab): TabRef => ({ tabId: t.tabId, tabInstanceId: t.tabInstanceId, documentRevision: t.documentRevision });
-export const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 export type Suggestion = { key: string | null; confidence: number | null; error?: string };
 export type AutogroupResult = { suggestions: Map<number, Suggestion>; catalogVersion: string };

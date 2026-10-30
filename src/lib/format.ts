@@ -15,3 +15,4 @@ export function duration(ms: number): string {
   const h = Math.floor(m / 60);
   return m % 60 ? `${h}h ${m % 60}m` : `${h}h`;
 }
+export const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;

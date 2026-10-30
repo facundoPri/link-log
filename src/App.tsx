@@ -21,6 +21,7 @@ import { BrowserView } from "./components/browser/BrowserView";
 import { BrowserSidebar } from "./components/browser/BrowserSidebar";
 import { tabDomain, useBrowserWorkspace } from "./browser/useBrowserWorkspace";
 import { useSavedLookup } from "./browser/saved";
+import { useOpenLinks } from "./browser/openLinks";
 import { BrowserInspector } from "./components/browser/BrowserInspector";
 import { BrowserDialogs } from "./components/browser/BrowserDialogs";
 import { useBrowserActions } from "./browser/useBrowserActions";
@@ -150,6 +151,7 @@ export function App({
   const narrow = useMedia("(max-width: 1099px)");
   const mobile = useMedia("(max-width: 767px)");
   const ws = useBrowserWorkspace(library, view === "browser", loaded && !loadError);
+  const openLinks = useOpenLinks(ws.browser);
   const browserController = useBrowserActions(
     ws,
     setLibrary,
@@ -1124,6 +1126,9 @@ export function App({
           lenses={libraryLenses}
           running={running}
           jevReason={jevReason}
+          openReason={openLinks.reason(pickedLinks.length)}
+          opening={openLinks.opening}
+          onOpen={() => void openLinks.open(pickedLinks)}
           onAutoTag={() => {
             if (noContent.length) setConfirmNoContent(true);
             else proceedAutoTag(false);

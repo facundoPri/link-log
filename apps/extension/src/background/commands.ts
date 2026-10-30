@@ -7,6 +7,7 @@ import {
   type ClaimTarget,
   type Commands,
   type ItemResult,
+  type OpenOutcome,
   type PageRequest,
   type TabPreview,
   type TabRef,
@@ -16,6 +17,7 @@ import type { ResultCache } from "./cache";
 import { captureTab, CaptureError, metadataCapture, previewTab } from "./capture";
 import type { GroupMetaStore } from "./groups";
 import type { Connection, Hub } from "./hub";
+import type { OpenLedger } from "./opens";
 import type { TabRegistry } from "./registry";
 
 export type Services = {
@@ -23,6 +25,7 @@ export type Services = {
   cache: ResultCache;
   groups: GroupMetaStore;
   hub: Hub;
+  opens: OpenLedger;
   ids: { installationId: string; browserSessionId: string };
 };
 
@@ -77,6 +80,15 @@ function requireScope(c: Connection): string {
   return c.scope ?? fail("Connect first.");
 }
 
+function isWebUrl(url: string) {
+  try {
+    const { protocol } = new URL(url);
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 /** A capture belongs to the document the caller expected; a navigation in between is an error. */
 function sameDocument(capture: { url: string }, expectedUrl: string) {
   if (capture.url && documentKey(capture.url) !== documentKey(expectedUrl))
@@ -103,7 +115,7 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
       installationId: s.ids.installationId,
       browserSessionId: s.ids.browserSessionId,
       windowId,
-      capabilities: ["tabs", "groups", "lenses", "capture", "save", "close", "forget"],
+      capabilities: ["tabs", "groups", "lenses", "capture", "save", "close", "open", "forget"],
       contentAccess: s.hub.granted,
     };
   },
@@ -393,6 +405,41 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
     const tab = await ownTab(args.tab, windowId, s);
     await chrome.tabs.update(tab.id!, { active: true });
     return {};
+  },
+  async openTabs(args, { c, windowId, s }) {
+    const scope = requireScope(c);
+    const items = await s.opens.run(scope, args.operationId, async (ledger) => {
+      const present = new Set(
+        (await chrome.tabs.query({ windowId })).map((t) => documentKey(t.url || t.pendingUrl || "")),
+      );
+      const items: OpenOutcome[] = [];
+      for (const url of args.urls) {
+        if (ledger.has(url)) {
+          items.push({ url, outcome: "opened" });
+          continue;
+        }
+        if (!isWebUrl(url)) {
+          items.push({ url, outcome: "failed", error: "Only web links can be opened." });
+          continue;
+        }
+        const key = documentKey(url);
+        if (present.has(key)) {
+          items.push({ url, outcome: "already-open" });
+          continue;
+        }
+        try {
+          const tab = await chrome.tabs.create({ url, windowId, active: false });
+          present.add(key);
+          await ledger.record(url, tab.id!);
+          items.push({ url, outcome: "opened" });
+        } catch (error) {
+          items.push({ url, outcome: "failed", error: (error as Error).message || "Chrome could not open the tab." });
+        }
+      }
+      return items;
+    });
+    s.hub.schedule(0);
+    return { items };
   },
   async openPermissions(_args, { c, windowId }) {
     const tab = await chrome.tabs.get(c.tabId).catch(() => null);

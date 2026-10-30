@@ -6,7 +6,9 @@ export function fakeChrome() {
   const groups = new Map<number, chrome.tabGroups.TabGroup>();
   /** What the injected extractor returns per tab (page content). */
   const pages = new Map<number, { url: string; markdown: string; title?: string }>();
+  const createErrors = new Map<string, string>();
   let scripts = 0;
+  let nextTabId = 1000;
   const api = {
     tabs: {
       get: async (id: number) => {
@@ -19,7 +21,13 @@ export function fakeChrome() {
       remove: async (id: number) => void tabs.delete(id),
       group: async () => 1,
       ungroup: async () => {},
-      create: async () => ({}),
+      create: async ({ url, windowId = 1 }: { url?: string; windowId?: number; active?: boolean }) => {
+        const error = createErrors.get(url ?? "");
+        if (error) throw new Error(error);
+        const tab = { id: nextTabId++, pendingUrl: url, url: "", windowId, index: tabs.size, status: "loading", active: false, pinned: false, discarded: false, groupId: -1, title: "" } as Tab;
+        tabs.set(tab.id!, tab);
+        return { ...tab };
+      },
     },
     tabGroups: {
       get: async (id: number) => groups.get(id) ?? Promise.reject(new Error("no group")),
@@ -57,6 +65,7 @@ export function fakeChrome() {
     tabs,
     groups,
     pages,
+    createErrors,
     get scripts() {
       return scripts;
     },
