@@ -809,6 +809,8 @@ export function App({
   const pickedSet = new Set(picked);
   const allVisibleSelected = filtered.length > 0 && filtered.every((l) => pickedSet.has(l.id));
   const progress = bulkProgress(library.batches, selectionBatches.current);
+  // The bar, chip or mobile bar covers the list's end while links are selected and while it reports a run.
+  const bulkSurfaceShown = view !== "browser" && (picked.length > 0 || !!progress || results.length > 0);
   const selectFailed = (r: BulkResult) => {
     const ids = new Set(library.links.map((l) => l.id));
     setPicked(r.failed.map((f) => f.linkId).filter((id) => ids.has(id)));
@@ -1106,7 +1108,7 @@ export function App({
             onEdit={() => setDialog({ lens: activeLens })}
           />
         )}
-        <div ref={listScroll} className={`min-h-0 flex-1 overflow-y-auto ${picked.length ? "pb-24 max-[700px]:pb-32" : ""}`}>
+        <div ref={listScroll} className={`min-h-0 flex-1 overflow-y-auto ${bulkSurfaceShown ? "pb-24 max-[700px]:pb-32" : ""}`}>
           <PendingLinks urls={pendingNewUrls} />
           {loadError ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center">

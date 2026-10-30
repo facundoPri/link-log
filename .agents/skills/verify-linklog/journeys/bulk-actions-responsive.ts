@@ -72,6 +72,28 @@ export default (async ({ page, api, fixture, step, check, shot, note }) => {
   await rowBox(links[0]!.title).click();
   await check("Bar shows 1 selected and Select all N", async () => /1 selected/.test((await bar.textContent()) ?? "") && (await bar.getByRole("button", { name: new RegExp(`Select all ${visible}$`) }).isVisible()));
   await snap("04-mobile-bar");
+  // A fixed element with an explicit width ignores `right`, so measure that the bar really spans the viewport minus 12px margins.
+  const geometry = async () =>
+    bar.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      return { viewport: window.innerWidth, left: Math.round(r.left), right: Math.round(window.innerWidth - r.right), width: Math.round(r.width) };
+    });
+  const spans = (g: Awaited<ReturnType<typeof geometry>>) => Math.abs(g.left - 12) <= 1 && Math.abs(g.right - 12) <= 1 && Math.abs(g.left - g.right) <= 1 && g.width === g.viewport - 24;
+  const at390 = await check("At 390px the bar is full width with equal 12px margins", async () => {
+    const g = await geometry();
+    return spans(g) && g;
+  });
+  await note("mobile-bar-geometry-390", at390);
+  await page.setViewportSize({ width: 740, height: 844 });
+  await page.waitForTimeout(400);
+  const at740 = await check("At 740px (still the mobile layout) the bar is full width with equal 12px margins", async () => {
+    const g = await geometry();
+    return spans(g) && g;
+  });
+  await note("mobile-bar-geometry-740", at740);
+  await shot("04b-mobile-bar-740");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(400);
   const targets = await check("Bar buttons are at least 44px tall", async () => {
     const boxes = await bar.getByRole("button").evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().height)));
     return boxes.every((h) => h >= 44) && boxes;

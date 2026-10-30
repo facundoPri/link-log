@@ -52,6 +52,7 @@ export function BulkDock({
       ))}
       {selected > 0 && (
         <div
+          role="toolbar"
           aria-label="Selected link actions"
           className="selection-bar flex items-center gap-1 rounded-xl border bg-popover p-1.5 shadow-lg animate-in fade-in slide-in-from-bottom-2 duration-200"
         >
@@ -139,6 +140,7 @@ export function BulkChip({
   const failed = results.reduce((n, r) => n + r.failed.length, 0);
   return (
     <div
+      role="toolbar"
       aria-label="Selected link actions"
       className="selection-bar fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] left-1/2 z-40 flex max-w-[calc(100vw-1.5rem)] -translate-x-1/2 items-center gap-1 rounded-full border bg-popover p-1 pl-3 shadow-lg animate-in fade-in slide-in-from-bottom-2 duration-200"
     >

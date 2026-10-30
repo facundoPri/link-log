@@ -43,8 +43,9 @@ export function BulkMobileBar({
   );
   return (
     <div
+      role="toolbar"
       aria-label="Selected link actions"
-      className="selection-bar fixed right-3 bottom-[calc(0.75rem+env(safe-area-inset-bottom))] left-3 z-40 flex min-h-16 items-center gap-1 rounded-[22px] border bg-popover/95 p-1.5 shadow-lg backdrop-blur-xl animate-in fade-in slide-in-from-bottom-3 duration-200"
+      className="fixed right-3 bottom-[calc(0.75rem+env(safe-area-inset-bottom))] left-3 z-40 flex min-h-16 items-center gap-1 rounded-[22px] border bg-popover/95 p-1.5 shadow-lg backdrop-blur-xl animate-in fade-in slide-in-from-bottom-3 duration-200"
     >
       {selected > 0 ? (
         <>
