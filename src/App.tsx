@@ -445,19 +445,24 @@ export function App({
   // inspector, ↑/↓ navigate while inspector open.
   const hasPicked = picked.length > 0;
   const invokeBulkRef = useRef<(action: BulkAction, detail?: string) => void>(() => {});
+  // The confirms are alert dialogs of their own, not `dialog`, but block the keys the same way.
+  const confirming = confirmNoContent || confirmAutoTag || !!confirmExtract || !!deleteLink || !!deleteTag || !!deleteLens;
+  const paletteOpen = !!palette;
   const filteredRef = useRef<Link[]>([]);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
+        // The open palette is itself an overlay, and ⌘K closes it.
+        if (dialog || confirming || (!paletteOpen && overlayOpen())) return;
         // With links selected ⌘K is the actions palette; otherwise it adds a link.
-        if (hasPicked && view !== "browser" && !dialog) setPalette((p) => (p ? null : { page: null }));
+        if (hasPicked && view !== "browser") setPalette((p) => (p ? null : { page: null }));
         else setDialog("add");
         return;
       }
       // Browser view has its own search, selection and Escape handling.
       if (view === "browser" && e.key !== "\\") return;
-      if (hasPicked && !e.repeat && !dialog && !isInput(e.target) && !overlayOpen()) {
+      if (hasPicked && !e.repeat && !dialog && !confirming && !isInput(e.target) && !overlayOpen()) {
         const action = actionForKey(e);
         if (action) {
           e.preventDefault();
@@ -526,7 +531,7 @@ export function App({
       window.removeEventListener("keydown", key);
       window.removeEventListener("paste", paste);
     };
-  }, [dialog, activeId, activityOpen, capture, view, hasPicked]);
+  }, [dialog, confirming, paletteOpen, activeId, activityOpen, capture, view, hasPicked]);
 
   useEffect(() => {
     setTagIds((current) => current.filter((id) => library.tags.some((t) => t.id === id)));

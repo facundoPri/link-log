@@ -160,6 +160,11 @@ export default (async ({ page, api, fixture, step, check, shot, note }) => {
   const confirm = page.getByRole("alertdialog", { name: "Extract context for 7 links?" });
   await check("Extract confirm dialog opened", () => confirm.isVisible());
   await snap("06-extract-confirm");
+  await page.keyboard.press("ControlOrMeta+k");
+  await page.keyboard.press("t");
+  await page.waitForTimeout(400);
+  await check("⌘K and T do nothing under the confirm: no palette, no second dialog, still the same confirm", async () =>
+    !(await palette.isVisible()) && (await page.getByRole("alertdialog").count()) === 1 && (await confirm.isVisible()));
   const before = (await api.library()).batches.length;
   await confirm.getByRole("button", { name: "Extract", exact: true }).click();
   const batch = await check(
