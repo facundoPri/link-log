@@ -9,6 +9,9 @@ export const SESSION_EXPIRES_IN = 60 * 60 * 24 * 7;
 export const SESSION_UPDATE_AGE = 60 * 60 * 24;
 export const MAGIC_LINK_EXPIRES_IN = 60 * 5;
 export const API_KEY_PREFIX = "lk_";
+export const API_KEY_LENGTH = 64;
+/** What a secret we issued looks like: the prefix and API_KEY_LENGTH letters (the plugin's default alphabet). */
+export const API_KEY_SHAPE = new RegExp(`^${API_KEY_PREFIX}[A-Za-z]{${API_KEY_LENGTH}}$`);
 export const API_KEY_NAME_MAX = 32;
 
 // Core endpoints outside the initial scope (social login, account linking, profile/email changes,
@@ -127,6 +130,7 @@ export function authOptions(
       // never turned into sessions: enableSessionForAPIKeys stays false.
       apiKey({
         defaultPrefix: API_KEY_PREFIX,
+        defaultKeyLength: API_KEY_LENGTH,
         requireName: true,
         maximumNameLength: API_KEY_NAME_MAX,
         startingCharactersConfig: { shouldStore: true, charactersLength: API_KEY_PREFIX.length + 6 },

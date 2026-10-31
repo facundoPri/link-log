@@ -267,6 +267,39 @@ describe("authentication", () => {
     expect(logs.join("\n")).not.toContain(keyA.key.slice(9));
   });
 
+  test("a failed key lookup is logged with its cause but never the key", async () => {
+    await quiet(async () => {
+      const prepare = db.prepare.bind(db);
+      db.prepare = ((sql: string) => {
+        if (/apikey/i.test(sql)) throw new Error("D1_ERROR: Network connection lost.");
+        return prepare(sql);
+      }) as typeof db.prepare;
+      expect((await submit(keyA.key, body)).status).toBe(503);
+      db.prepare = prepare;
+    });
+    const line = logs.find((l) => l.includes("api_key_lookup_failed"))!;
+    expect(JSON.parse(line).detail).toContain("Network connection lost");
+    expect(line).not.toContain(keyA.key.slice(9));
+  });
+
+  test("an unknown or revoked key costs one key lookup; a bearer that cannot be a key costs none", async () => {
+    await call(`/api/api-keys/${keyA.id}/revoke`, { cookie: A.cookie, body: {} });
+    let reads = 0;
+    const prepare = db.prepare.bind(db);
+    db.prepare = ((sql: string) => {
+      if (/apikey/i.test(sql)) reads++;
+      return prepare(sql);
+    }) as typeof db.prepare;
+    const readsFor = async (key: string) => {
+      reads = 0;
+      await quiet(async () => void (await expect401(await submit(key, body))));
+      return reads;
+    };
+    const results = [await readsFor(`lk_${"x".repeat(64)}`), await readsFor(keyA.key), await readsFor("lk_short"), await readsFor("x".repeat(67)), await readsFor(`lk_${"x".repeat(65)}`)];
+    db.prepare = prepare;
+    expect(results).toEqual([1, 1, 0, 0, 0]);
+  });
+
   test("a key whose use cannot be recorded is 503, not 401; an unknown key stays 401", async () => {
     db.sqlite.exec("CREATE TRIGGER no_use BEFORE UPDATE ON apikey BEGIN SELECT RAISE(ABORT, 'update failed'); END");
     await quiet(async () => {

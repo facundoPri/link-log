@@ -1,9 +1,10 @@
 import { isAPIError } from "better-auth/api";
 import { Hono } from "hono";
 import type { ApiKey } from "../../src/types";
+import * as keyTable from "../api-key-table";
 import { API_KEY_NAME_MAX } from "../auth";
 import { json, text } from "../store";
-import { badRequest, HttpError, notFound, ownerOf, type AppContext, type AppEnv } from "../http/context";
+import { badRequest, failureDetail, HttpError, notFound, ownerOf, type AppContext, type AppEnv } from "../http/context";
 
 type PluginKey = { id: string; name: string | null; start: string | null; createdAt: Date; lastRequest: Date | null; enabled: boolean };
 
@@ -26,20 +27,21 @@ const API_KEY_ACTIVE_MAX = 10;
  * key stays listed and there is no delete or re-enable.
  *
  * D1 has no transaction across the plugin's calls, so the rules that must hold under concurrent
- * requests are re-checked after the write and undone by revoking the key just created: at most 10
- * active keys, and one new key per regenerated key. Under a race that can refuse more requests
- * than strictly needed, never fewer.
+ * requests are re-checked after the write and undone by removing the key just created, whose secret
+ * nobody received (so it is no Revoked API key and is not listed): at most 10 active keys, and one
+ * new key per regenerated key. Under a race that can refuse more requests than strictly needed,
+ * never fewer.
  */
 export const apiKeyRoutes = new Hono<AppEnv>()
   .get("/api-keys", async (c) => json({ apiKeys: (await ownKeys(c)).map(view) }))
   .post("/api-keys", async (c) => {
     const name = text(c.get("body").name, API_KEY_NAME_MAX);
     if (!name) throw badRequest("Name the API key.");
-    if ((await activeCount(c)) >= API_KEY_ACTIVE_MAX) throw roomError();
+    if ((await keyTable.activeCount(c.env.DB, ownerOf(c))) >= API_KEY_ACTIVE_MAX) throw roomError();
     const created = await c.get("auth").api.createApiKey({ body: { name, userId: ownerOf(c) } });
     // Requests that passed the check together each created a key: whoever then sees more than the
     // cap takes its own key back, so the key that lands last never stays.
-    if ((await activeCount(c)) > API_KEY_ACTIVE_MAX) {
+    if ((await keyTable.activeCount(c.env.DB, ownerOf(c))) > API_KEY_ACTIVE_MAX) {
       await takeBack(c, created.id);
       throw roomError();
     }
@@ -48,22 +50,31 @@ export const apiKeyRoutes = new Hono<AppEnv>()
   })
   .post("/api-keys/:id/regenerate", async (c) => {
     const oldId = c.req.param("id");
-    const old = await c.env.DB.prepare("SELECT name,enabled FROM apikey WHERE id=? AND referenceId=?")
-      .bind(oldId, ownerOf(c))
-      .first<{ name: string | null; enabled: number }>();
+    const old = await keyTable.findOwn(c.env.DB, oldId, ownerOf(c));
     if (!old) throw notFound("API key");
     if (!old.enabled) throw revokedError();
     // The new key replaces an active one, so the cap does not apply: a user at 10 can regenerate.
     // Create first: if that fails the old key stays active.
     const created = await c.get("auth").api.createApiKey({ body: { name: old.name ?? "", userId: ownerOf(c) } });
+    // Only one request can turn the old key off. A concurrent regenerate of it loses and takes its
+    // own new key back, so a key never gets two replacements.
+    const at = new Date().toISOString();
+    let claimed;
     try {
-      // Only one request can turn the old key off. A concurrent regenerate of it loses and takes
-      // its own new key back, so a key never gets two replacements.
-      if (!(await claimRevoke(c, oldId))) throw revokedError();
+      claimed = await keyTable.claimRevoke(c.env.DB, oldId, ownerOf(c), at);
     } catch (error) {
-      // Never leave both keys active: the secret would be lost with this error.
+      // D1 can commit and still fail to answer. If the old key shows the stamp of this claim, it
+      // landed and the new key is the only one left: take nothing back, or the user has none.
+      if (!(await claimLanded(c, oldId, at))) {
+        // Never leave both keys active: the secret would be lost with this error.
+        await takeBack(c, created.id);
+        throw error;
+      }
+      claimed = true;
+    }
+    if (!claimed) {
       await takeBack(c, created.id);
-      throw error;
+      throw revokedError();
     }
     return json({ apiKey: view(created), secret: created.key }, 201);
   })
@@ -82,27 +93,33 @@ async function revoke(c: AppContext, keyId: string) {
   }
 }
 
-/** Turns the key off only if it is still on; false when another request got there first. */
-async function claimRevoke(c: AppContext, keyId: string) {
-  const { meta } = await c.env.DB.prepare("UPDATE apikey SET enabled=0,updatedAt=? WHERE id=? AND referenceId=? AND enabled=1")
-    .bind(new Date().toISOString(), keyId, ownerOf(c))
-    .run();
-  return meta.changes > 0;
+/** Whether the old key is off because of the claim stamped `at`; false when that cannot be told. */
+async function claimLanded(c: AppContext, keyId: string, at: string) {
+  try {
+    const key = await keyTable.findOwn(c.env.DB, keyId, ownerOf(c));
+    return !!key && !key.enabled && key.updatedAt === at;
+  } catch {
+    return false;
+  }
 }
 
 /**
- * Compensating revoke for a key whose secret nobody saw: the guarded update used by claimRevoke,
- * once more if it fails. If it still fails an active key nobody can use stays behind, so it is
- * logged by id (never the secret) for the owner to revoke.
+ * Removes a key whose secret nobody saw: once more after a short pause if it fails. If it still
+ * fails an active key nobody can use stays behind, so it is logged by id and cause (never the
+ * secret) for the owner to revoke.
  */
 async function takeBack(c: AppContext, keyId: string) {
+  let cause: unknown;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      await claimRevoke(c, keyId);
+      await keyTable.remove(c.env.DB, keyId, ownerOf(c));
       return;
-    } catch {}
+    } catch (error) {
+      cause = error;
+      if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 100));
+    }
   }
-  console.error(JSON.stringify({ event: "api_key_rollback_failed", keyId }));
+  console.error(JSON.stringify({ event: "api_key_rollback_failed", keyId, detail: failureDetail(cause) }));
 }
 
 // Only the Settings list loads every key. listApiKeys resolves the owner from the request's own
@@ -112,15 +129,4 @@ async function takeBack(c: AppContext, keyId: string) {
 async function ownKeys(c: AppContext) {
   const { apiKeys } = await c.get("auth").api.listApiKeys({ headers: c.req.raw.headers, query: { sortBy: "createdAt", sortDirection: "asc" } });
   return apiKeys.reverse();
-}
-
-/**
- * How many active keys the owner holds, in one query. Raw SQL on the plugin's table
- * (migrations/0026_api_keys.sql): "referenceId" is the owning user and "enabled" is 1 for an active
- * key, 0 once revoked. claimRevoke and the regenerate lookup rely on the same columns; if the
- * plugin changes them, those change together.
- */
-async function activeCount(c: AppContext) {
-  const row = await c.env.DB.prepare('SELECT count(*) AS n FROM apikey WHERE "referenceId"=? AND enabled=1').bind(ownerOf(c)).first<{ n: number }>();
-  return row?.n ?? 0;
 }
