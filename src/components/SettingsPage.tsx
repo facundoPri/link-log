@@ -3,7 +3,7 @@ import { ArrowLeft, Copy, KeyRound, Loader2, LogOut, RefreshCw } from "lucide-re
 import { toast } from "sonner";
 import { api } from "../api";
 import { relativeTime } from "../lib/time";
-import type { ApiKey } from "../types";
+import type { ApiKey, QuotaUsage, Usage } from "../types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -33,8 +33,19 @@ function Section({ title, description, children }: { title: string; description?
   );
 }
 
-/** Settings: the account basics and the owner's API keys. */
+/** Settings: the account basics, usage and the owner's API keys. */
 export function SettingsPage({ account, onSignOut, onBack }: { account: { email: string }; onSignOut: () => void; onBack: () => void }) {
+  const [usage, setUsage] = useState<Usage | null>(null);
+  const [usageError, setUsageError] = useState("");
+  useEffect(() => {
+    let live = true;
+    api<Usage>("/usage/summary")
+      .then((r) => live && setUsage(r))
+      .catch((e: Error) => live && setUsageError(e.message));
+    return () => {
+      live = false;
+    };
+  }, []);
   return (
     <div className="min-h-dvh bg-background">
       <div className="mx-auto flex max-w-2xl flex-col gap-8 px-4 py-6 md:py-10">
@@ -56,13 +67,67 @@ export function SettingsPage({ account, onSignOut, onBack }: { account: { email:
             </Button>
           </div>
         </Section>
-        <ApiKeys />
+        <UsageSection usage={usage} error={usageError} />
+        <ApiKeys monthly={usage && Object.fromEntries(usage.month.apiKeys.map((k) => [k.id, k.links]))} />
       </div>
     </div>
   );
 }
 
-function ApiKeys() {
+const monthName = new Intl.DateTimeFormat("en", { month: "long", year: "numeric", timeZone: "UTC" });
+const windowUnit = (seconds: number) => (seconds === 3600 ? "hour" : seconds === 60 ? "minute" : `${seconds} s`);
+
+function QuotaRow({ label, quota }: { label: string; quota: QuotaUsage }) {
+  return (
+    <li className="flex items-baseline justify-between gap-3 p-4">
+      <span className="text-sm font-medium">{label}</span>
+      <span className="text-right text-sm tabular-nums">
+        {quota.used} / {quota.max} this {windowUnit(quota.windowSeconds)}
+        <span className="block text-xs text-muted-foreground">resets {relativeTime(quota.resetsAt)}</span>
+      </span>
+    </li>
+  );
+}
+
+function UsageSection({ usage, error }: { usage: Usage | null; error: string }) {
+  return (
+    <Section title="Usage" description="Your current limits and the new Links you added this month. Duplicates do not count.">
+      {error ? (
+        <p className="p-4 text-sm text-destructive">{error}</p>
+      ) : !usage ? (
+        <p className="p-4 text-sm text-muted-foreground" aria-busy="true">Loading…</p>
+      ) : (
+        <>
+          <ul aria-label="Limits" className="divide-y">
+            <QuotaRow label="Links" quota={usage.quotas.links} />
+            <QuotaRow label="Jobs" quota={usage.quotas.jobs} />
+          </ul>
+          <div className="border-t p-4">
+            <div className="flex items-baseline justify-between gap-3">
+              <h3 className="text-sm font-medium">New Links in {monthName.format(new Date(usage.month.start))}</h3>
+              <span className="text-sm tabular-nums">{usage.month.links}</span>
+            </div>
+            <ul aria-label="New Links by source" className="mt-2 flex flex-col gap-1 text-sm text-muted-foreground">
+              <li className="flex justify-between gap-3">
+                <span>Web</span>
+                <span className="tabular-nums">{usage.month.web}</span>
+              </li>
+              {usage.month.apiKeys.map((key) => (
+                <li key={key.id} className="flex justify-between gap-3">
+                  <span className="truncate">API key: {key.name}</span>
+                  <span className="tabular-nums">{key.links}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </>
+      )}
+    </Section>
+  );
+}
+
+/** `monthly`: this month's new Links per key id (null while loading); keys that added none are absent. */
+function ApiKeys({ monthly }: { monthly: Record<string, number> | null }) {
   const [keys, setKeys] = useState<ApiKey[] | null>(null);
   const [loadError, setLoadError] = useState("");
   const [name, setName] = useState("");
@@ -188,6 +253,7 @@ function ApiKeys() {
                   <code className="font-mono">{key.prefix}…</code>
                   <span>Created {day.format(new Date(key.createdAt))}</span>
                   <span>{key.lastUsedAt ? `Last used ${relativeTime(key.lastUsedAt)}` : "Never used"}</span>
+                  {monthly && <span>{monthly[key.id] ?? 0} {(monthly[key.id] ?? 0) === 1 ? "link" : "links"} this month</span>}
                 </div>
               </div>
               {key.status === "active" && (

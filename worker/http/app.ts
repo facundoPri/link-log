@@ -9,6 +9,7 @@ import { browserRoutes } from "../routes/browser";
 import { linkRoutes } from "../routes/links";
 import { publicApiRoutes } from "../routes/public-api";
 import { taxonomyRoutes } from "../routes/taxonomy";
+import { usageSummaryRoutes } from "../routes/usage-summary";
 import { HttpError, type AppEnv } from "./context";
 import { apiKeyQuotaAndBody, requireApiKey, requireSession, sameOriginWrites, withConfig, writeQuotaAndBody } from "./middleware";
 
@@ -54,6 +55,7 @@ export function createApp() {
   privateApi.route("/", activityRoutes);
   privateApi.route("/", browserRoutes);
   privateApi.route("/", apiKeyRoutes);
+  privateApi.route("/", usageSummaryRoutes);
   privateApi.notFound(() => json({ error: "Not found." }, 404));
   app.route("/api", privateApi);
 
