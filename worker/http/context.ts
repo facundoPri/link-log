@@ -47,3 +47,9 @@ export function apiKeyOf(c: AppContext) {
   if (principal.kind !== "apiKey") throw new HttpError(401, "A valid API key is required.");
   return principal;
 }
+
+/** Why something failed, short enough for a log line: error name and message, never key material. */
+export function failureDetail(error: unknown) {
+  const text = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  return text.replace(/lk_[A-Za-z]+/g, "lk_…").slice(0, 200);
+}

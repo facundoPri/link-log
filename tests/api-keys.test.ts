@@ -160,7 +160,7 @@ describe("concurrent requests", () => {
 
   test("creating keys at the same time never leaves more than 10 active, and every answered key works", async () => {
     await fillKeys(A, 8);
-    const responses = await Promise.all(["One", "Two", "Three", "Four"].map((name) => as(A).create(name)));
+    const responses = await Promise.all(["One", "Two", "Three", "Four", "Five"].map((name) => as(A).create(name)));
     const created = responses.filter((r) => r.status === 201);
     for (const refused of responses.filter((r) => r.status !== 201)) {
       expect(refused.status).toBe(409);
@@ -168,12 +168,14 @@ describe("concurrent requests", () => {
     }
     expect(await activeKeys(A)).toHaveLength(8 + created.length);
     expect(8 + created.length).toBeLessThanOrEqual(10);
+    // A refused create leaves nothing behind: no Revoked API key whose secret nobody received.
+    expect((await as(A).list()).apiKeys).toHaveLength(8 + created.length);
     for (const res of created) expect(await verified(((await res.json()) as { secret: string }).secret)).toBe(true);
   });
 
   test("if taking back an over-cap key fails, the request is still refused and the stray key is logged by id only", async () => {
     await fillKeys(A, 9);
-    db.sqlite.exec("CREATE TRIGGER keep_keys BEFORE UPDATE OF enabled ON apikey WHEN new.enabled = 0 BEGIN SELECT RAISE(ABORT, 'update failed'); END");
+    db.sqlite.exec("CREATE TRIGGER keep_keys BEFORE DELETE ON apikey BEGIN SELECT RAISE(ABORT, 'delete failed'); END");
     const logs: string[] = [];
     const { error } = console;
     console.error = (...args: unknown[]) => void logs.push(args.map(String).join(" "));
@@ -192,6 +194,8 @@ describe("concurrent requests", () => {
     expect(stray.length).toBe(responses.length - secrets.length);
     for (const id of stray) expect(active.map((k) => k.id)).toContain(id);
     expect(logs.join("\n")).not.toMatch(/lk_[A-Za-z]{20}/);
+    // The record says why the key could not be taken back.
+    expect(logs.find((l) => l.includes("api_key_rollback_failed"))).toContain("delete failed");
   });
 
   test("regenerating one key twice at the same time creates one new key; the other request is refused", async () => {
@@ -263,13 +267,32 @@ describe("regenerating", () => {
     expect(await verified(key)).toBe(true);
   });
 
-  test("if revoking the old key fails, no extra key is left active", async () => {
+  test("if the old key was revoked although the error reached us, the new key is returned, not taken back", async () => {
+    const { id, key } = await testApiKey(env, A.userId, "Mine");
+    // Setup: D1 commits the revoke, then the connection drops before the answer arrives.
+    const prepare = db.prepare.bind(db);
+    db.prepare = ((sql: string) => {
+      const statement = prepare(sql);
+      if (!/^UPDATE apikey SET enabled=0/.test(sql)) return statement;
+      return { bind: (...params: unknown[]) => ({ run: async () => (await statement.bind(...params).run(), Promise.reject(new Error("D1_ERROR: Network connection lost."))) }) };
+    }) as typeof db.prepare;
+    const res = await as(A).regenerate(id);
+    db.prepare = prepare;
+    expect(res.status).toBe(201);
+    const { apiKey, secret } = (await res.json()) as { apiKey: Key; secret: string };
+    expect((await as(A).list()).apiKeys.map((k) => [k.id, k.status])).toEqual([[apiKey.id, "active"], [id, "revoked"]]);
+    expect(await verified(secret)).toBe(true);
+    expect(await verified(key)).toBe(false);
+  });
+
+  test("if revoking the old key fails, no extra key is left active, and the refused attempt leaves no row", async () => {
     const { id, key } = await testApiKey(env, A.userId, "Mine");
     db.sqlite.exec(`CREATE TRIGGER keep_old BEFORE UPDATE OF enabled ON apikey WHEN old.id = '${id}' BEGIN SELECT RAISE(ABORT, 'update failed'); END`);
     expect((await as(A).regenerate(id)).status).toBe(500);
     const listed = (await as(A).list()).apiKeys;
     expect(listed.find((k) => k.id === id)!.status).toBe("active");
     expect(listed.filter((k) => k.status === "active")).toHaveLength(1);
+    expect(listed).toHaveLength(1);
     expect(await verified(key)).toBe(true);
   });
 

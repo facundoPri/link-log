@@ -1,11 +1,11 @@
-import { defaultKeyHasher } from "@better-auth/api-key";
 import { isAPIError } from "better-auth/api";
 import { createMiddleware } from "hono/factory";
-import { createAuth } from "../auth";
+import { findBySecret } from "../api-key-table";
+import { API_KEY_SHAPE, createAuth } from "../auth";
 import { ConfigError, hostAllowed, readConfig } from "../config";
 import { LIMITS, chargeOrThrow } from "../limits";
 import { json } from "../store";
-import { HttpError, apiKeyOf, type AppContext, type AppEnv } from "./context";
+import { HttpError, apiKeyOf, failureDetail, type AppContext, type AppEnv } from "./context";
 
 let configErrorLogged = false;
 
@@ -121,21 +121,25 @@ export const writeQuotaAndBody = createMiddleware<AppEnv>(async (c, next) => {
  * Principal whose owner is the key's owner. Cookies are ignored. A missing, invalid or Revoked API
  * key is 401, logged to Workers Logs only (never the key itself). A failed lookup is 503, so the
  * integration retries instead of treating its key as dead.
+ *
+ * One hashed read decides first: a bearer that cannot be one of our keys, an unknown key and a
+ * Revoked one are 401 without calling the plugin, so garbage costs at most one D1 read. Only an
+ * active key is verified by the plugin, which also records its use.
  */
 export const requireApiKey = createMiddleware<AppEnv>(async (c, next) => {
   const key = /^Bearer\s+(\S+)$/i.exec(c.req.header("authorization") ?? "")?.[1];
   let verified;
-  if (key) {
+  if (key && API_KEY_SHAPE.test(key)) {
     try {
-      verified = await c.get("auth").api.verifyApiKey({ body: { key } });
-      // The plugin catches every error while validating and answers it like an unknown key, so a
-      // D1 failure looks like a 401. A genuinely unknown key has no active row; one that has a
-      // row, or a lookup that fails again, was a failure.
-      if (!verified.valid && verified.error?.code === "INVALID_API_KEY" && (await activeKeyExists(c.env.DB, key)))
-        throw new Error("API key validation failed");
+      if ((await findBySecret(c.env.DB, key))?.enabled) {
+        verified = await c.get("auth").api.verifyApiKey({ body: { key } });
+        // The plugin catches every error while validating and answers it like an unknown key. The
+        // key was just found active, so that answer means its own read or update failed.
+        if (!verified.valid && verified.error?.code === "INVALID_API_KEY") throw new Error("API key validation failed");
+      }
     } catch (error) {
       if (!isAPIError(error)) {
-        console.error(JSON.stringify({ event: "api_key_lookup_failed" }));
+        console.error(JSON.stringify({ event: "api_key_lookup_failed", detail: failureDetail(error) }));
         return json({ error: "Could not check the API key. Try again." }, 503);
       }
     }
@@ -147,14 +151,6 @@ export const requireApiKey = createMiddleware<AppEnv>(async (c, next) => {
   c.set("principal", { kind: "apiKey", userId: verified.key.referenceId, keyId: verified.key.id, keyName: verified.key.name ?? "" });
   await next();
 });
-
-/** Whether an active key with this secret exists. Throws when the lookup itself fails. */
-async function activeKeyExists(db: D1Database, key: string) {
-  // Couples to the plugin's apikey table: "key" holds the SHA-256 hash (defaultKeyHasher) and
-  // "enabled" is 1 for an active key. migrations/0026_api_keys.sql indexes "key".
-  const row = await db.prepare('SELECT 1 AS found FROM apikey WHERE "key"=? AND enabled=1').bind(await defaultKeyHasher(key)).first();
-  return row !== null;
-}
 
 /** Per-key request limit (every request counts), then a bounded JSON object body. */
 export const apiKeyQuotaAndBody = createMiddleware<AppEnv>(async (c, next) => {

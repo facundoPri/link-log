@@ -106,15 +106,6 @@ describe("Duplicates and invalid inputs", () => {
     expect(((await res.json()) as { error: string }).error).toBe("Each string can be at most 8192 characters.");
     await nothingSaved();
   });
-
-  test("a string at the limit is scanned quickly, whatever it ends with", async () => {
-    const tail = ")".repeat(8192 - "http://api.example/x".length);
-    const started = performance.now();
-    const res = await submit(keyA.key, { urls: [`http://api.example/x${tail}`] });
-    expect(res.status).toBe(202);
-    expect(((await res.json()) as Submitted).results.map((r) => r.url)).toEqual(["http://api.example/x"]);
-    expect(performance.now() - started).toBeLessThan(2000);
-  });
 });
 
 describe("URLs inside text", () => {
@@ -181,6 +172,48 @@ describe("URLs inside text", () => {
   });
 });
 
+describe("work per request", () => {
+  // Distinct URLs are capped at 100, but repeats collapse before that, so the cost of a request
+  // cannot hang on the number of distinct URLs. Budgets are generous: the old code took seconds.
+  const heavy = `http://api.example/p?${Array.from({ length: 430 }, (_, i) => `utm_${i}=`).join("&")}`;
+
+  test("many repeats of a URL with hundreds of tracking parameters are answered quickly", async () => {
+    const started = performance.now();
+    const res = await submit(keyA.key, { urls: Array.from({ length: 250 }, () => `${heavy} ${heavy}`) });
+    expect(res.status).toBe(202);
+    expect(((await res.json()) as Submitted).results.map((r) => r.url)).toEqual(["http://api.example/p"]);
+    expect(performance.now() - started).toBeLessThan(2000);
+  });
+
+  test("strings at the length limit, ending in a long run of closing parentheses, are answered quickly", async () => {
+    const text = `http://api.example/x${")".repeat(8192 - "http://api.example/x".length)}`;
+    const started = performance.now();
+    const res = await submit(keyA.key, { urls: Array.from({ length: 250 }, () => text) });
+    expect(res.status).toBe(202);
+    expect(((await res.json()) as Submitted).results.map((r) => r.url)).toEqual(["http://api.example/x"]);
+    expect(performance.now() - started).toBeLessThan(2000);
+  });
+
+  test("1000 URLs found are fine, repeats included", async () => {
+    const res = await submit(keyA.key, { urls: Array.from({ length: 10 }, () => Array.from({ length: 100 }, () => "https://api.example/same").join(" ")) });
+    expect(res.status).toBe(202);
+    expect(((await res.json()) as Submitted).results).toHaveLength(1);
+  });
+
+  test("more than 1000 URLs found, repeats included, is 400 and saves nothing", async () => {
+    const same = "https://api.example/same";
+    for (const urls of [
+      [...Array.from({ length: 500 }, () => `${same} ${same}`), same],
+      [...Array.from({ length: 10 }, () => Array.from({ length: 100 }, () => same).join(" ")), same],
+    ]) {
+      const res = await submit(keyA.key, { urls });
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { error: string }).error).toBe("Send at most 1000 links per request, repeats included.");
+    }
+    await nothingSaved();
+  });
+});
+
 describe("authentication", () => {
   let logs: string[];
   const quiet = async (run: () => Promise<void>) => {
@@ -232,6 +265,39 @@ describe("authentication", () => {
     });
     expect(logs.filter((l) => l.includes("api_key_lookup_failed"))).toHaveLength(1);
     expect(logs.join("\n")).not.toContain(keyA.key.slice(9));
+  });
+
+  test("a failed key lookup is logged with its cause but never the key", async () => {
+    await quiet(async () => {
+      const prepare = db.prepare.bind(db);
+      db.prepare = ((sql: string) => {
+        if (/apikey/i.test(sql)) throw new Error("D1_ERROR: Network connection lost.");
+        return prepare(sql);
+      }) as typeof db.prepare;
+      expect((await submit(keyA.key, body)).status).toBe(503);
+      db.prepare = prepare;
+    });
+    const line = logs.find((l) => l.includes("api_key_lookup_failed"))!;
+    expect(JSON.parse(line).detail).toContain("Network connection lost");
+    expect(line).not.toContain(keyA.key.slice(9));
+  });
+
+  test("an unknown or revoked key costs one key lookup; a bearer that cannot be a key costs none", async () => {
+    await call(`/api/api-keys/${keyA.id}/revoke`, { cookie: A.cookie, body: {} });
+    let reads = 0;
+    const prepare = db.prepare.bind(db);
+    db.prepare = ((sql: string) => {
+      if (/apikey/i.test(sql)) reads++;
+      return prepare(sql);
+    }) as typeof db.prepare;
+    const readsFor = async (key: string) => {
+      reads = 0;
+      await quiet(async () => void (await expect401(await submit(key, body))));
+      return reads;
+    };
+    const results = [await readsFor(`lk_${"x".repeat(64)}`), await readsFor(keyA.key), await readsFor("lk_short"), await readsFor("x".repeat(67)), await readsFor(`lk_${"x".repeat(65)}`)];
+    db.prepare = prepare;
+    expect(results).toEqual([1, 1, 0, 0, 0]);
   });
 
   test("a key whose use cannot be recorded is 503, not 401; an unknown key stays 401", async () => {
