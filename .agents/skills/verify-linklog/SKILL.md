@@ -104,6 +104,8 @@ V down                 # or: V down --run .cache/verify-linklog/<run>
 
 `down` sends SIGTERM to `serve`, which stops `scripts/dev.ts`, Wrangler, workerd and the UI server. It then stops whatever is left in the run's process group, sending SIGTERM and then SIGKILL after 5 s. It never kills processes by name or touches other listeners. It then deletes `session.json`, `state/`, the generated Wrangler config and `.wrangler/`, which hold live session tokens and sign-in links. It keeps `evidence/` and `logs/`. Run `down` after every attempt, including failed ones. A failed `up` already cleans up its own processes and leaves `logs/` for diagnosis.
 
+As a safety net, `serve` also stops its process group on its own about 10 s after the UI or API port stops listening, or after `session.json` or the worktree is deleted. It logs the reason in `logs/verify.log`. That does not replace `down`, which also deletes the instance state.
+
 ## Isolation
 
 Each `up` uses its own ports, its own D1/R2 under the run directory, and its own process group. Several instances can therefore run side by side, and none of them touches `.wrangler/state`, `bun run dev` (3000/8787), `bun run demo` (3100/8800), the QA video harness (3300/8990) or browser tests (3010/8790). Don't drive an instance whose `doctor` fails, and don't drive one you didn't start.
