@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { Cloudflare } from "../scripts/preview/cloudflare";
-import { authSecret, config, desired, names, type PullRequest } from "../scripts/preview/model";
+import { authSecret, config, desired, hashPassword, names, seedSql, testAccount, type PullRequest } from "../scripts/preview/model";
+import { body, MARKER } from "../scripts/preview/comment";
+import { TestD1 } from "./support/d1";
+import { client, cookieOf, makeEnv } from "./support/env";
 import { cleanup, resources, settleDeployment } from "../scripts/preview/lifecycle";
 
 const repo = "12345";
@@ -66,6 +69,41 @@ describe("preview trust and identity", () => {
     expect(cfg.browser.binding).toBe("BROWSER");
     expect(cfg.send_email[0]?.name).toBe("EMAIL");
     expect(() => config(repo, pr, dbId, "evil.workers.dev/path", "auth@example.com")).toThrow();
+  });
+});
+
+describe("preview test account and PR comment", () => {
+  const seed = "a-random-preview-only-seed-value-123456789";
+  test("the seeded account signs in through the real Worker, stays put across redeploys", async () => {
+    const tester = testAccount(seed, repo, pr);
+    expect(testAccount(seed, repo, pr)).toEqual(tester);
+    expect(testAccount(seed, repo, "6").password).not.toBe(tester.password);
+    expect(tester.password).not.toBe(authSecret(seed, repo, pr).slice(0, 24));
+    const db = await TestD1.migrated();
+    db.sqlite.exec(seedSql(tester.email, hashPassword(tester.password)));
+    db.sqlite.exec(seedSql(tester.email, hashPassword(tester.password)));
+    expect(db.sqlite.query(`SELECT count(*) AS n FROM account WHERE "providerId"='credential'`).get()).toEqual({ n: 1 });
+    const call = client(makeEnv(db).env);
+    const signIn = await call("/api/auth/sign-in/email", { body: { email: tester.email, password: tester.password } });
+    expect(signIn.status).toBe(200);
+    expect(cookieOf(signIn)).not.toBe("");
+    expect((await call("/api/auth/sign-in/email", { body: { email: tester.email, password: "wrong password!!" } })).status).toBe(401);
+  });
+  test("seed SQL rejects anything that could break out of its literals", () => {
+    expect(() => seedSql("a'@example.com", hashPassword("x".repeat(12)))).toThrow();
+    expect(() => seedSql("a@example.com", "'; DROP TABLE user; --")).toThrow();
+  });
+  test("each stage carries its links; only the ready stage carries credentials", () => {
+    const run = "https://github.com/o/r/actions/runs/1";
+    const sha = "a".repeat(40);
+    const building = body(repo, pr, run, { stage: "building", sha });
+    expect(building.startsWith(MARKER)).toBe(true);
+    expect(building).toContain(`https://dash.cloudflare.com/?to=/:account/workers/services/view/${n.worker}/production/deployments`);
+    expect(building).toContain(run);
+    const ready = body(repo, pr, run, { stage: "ready", sha, url: "https://p.example", email: "t@example.com", password: "secret-pass" });
+    for (const part of ["https://p.example", "t@example.com", "secret-pass", "/production/observability/logs", "/production/deployments"]) expect(ready).toContain(part);
+    expect(body(repo, pr, run, { stage: "failed", sha })).not.toContain("secret-pass");
+    expect(body(repo, pr, run, { stage: "removed" })).toContain(n.worker);
   });
 });
 

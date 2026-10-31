@@ -2,7 +2,8 @@ import { appendFile, lstat, readdir, rm, chmod } from "node:fs/promises";
 import { resolve } from "node:path";
 import { Cloudflare } from "./cloudflare";
 import { current, required } from "./github";
-import { authSecret, config, names, WRANGLER_VERSION } from "./model";
+import { authSecret, config, hashPassword, names, seedSql, testAccount, WRANGLER_VERSION } from "./model";
+import { publish } from "./comment";
 import { cleanup, resources, settleDeployment } from "./lifecycle";
 
 const repositoryId = required("GITHUB_REPOSITORY_ID");
@@ -15,6 +16,7 @@ const state = await current();
 if (action === "cleanup" && state.action === "cleanup") {
   await cleanup(cf, repositoryId, pr);
   console.log(`Removed isolated preview ${n.worker}`);
+  await publish({ stage: "removed" });
 } else if (action === "deploy" && state.action === "deploy" && state.sha === expectedSha) {
   await deploy();
 } else {
@@ -46,7 +48,9 @@ async function deploy() {
   if (manifest.sha !== expectedSha || manifest.wrangler !== WRANGLER_VERSION) throw new Error("Artifact identity mismatch");
   const subdomain = required("PREVIEW_WORKERS_SUBDOMAIN");
   const sender = required("PREVIEW_EMAIL_FROM");
-  const secret = authSecret(required("PREVIEW_AUTH_SEED"), repositoryId, pr);
+  const seed = required("PREVIEW_AUTH_SEED");
+  const secret = authSecret(seed, repositoryId, pr);
+  const tester = testAccount(seed, repositoryId, pr);
   // Validate all setup values before provisioning anything.
   config(repositoryId, pr, "00000000-0000-0000-0000-000000000001", subdomain, sender);
   const remoteSubdomain = (await cf.api("/workers/subdomain")).result?.subdomain;
@@ -64,8 +68,12 @@ async function deploy() {
   const secretsPath = resolve(required("RUNNER_TEMP"), `preview-secrets-${n.worker}.json`);
   await Bun.write(secretsPath, JSON.stringify({ BETTER_AUTH_SECRET: secret }));
   await chmod(secretsPath, 0o600);
+  // Holds only the password hash, never the password.
+  const seedPath = resolve(required("RUNNER_TEMP"), `preview-seed-${n.worker}.sql`);
+  await Bun.write(seedPath, seedSql(tester.email, hashPassword(tester.password)));
   try {
     await run(["d1", "migrations", "apply", "DB", "--remote", "--config", configPath]);
+    await run(["d1", "execute", "DB", "--remote", "--config", configPath, "--file", seedPath, "--yes"]);
     const before = await current();
     if (before.action !== "deploy" || before.sha !== expectedSha) {
       if (before.action === "cleanup") await cleanup(cf, repositoryId, pr);
@@ -79,7 +87,9 @@ async function deploy() {
     const url = cfg.vars.BETTER_AUTH_URL;
     await appendFile(required("GITHUB_STEP_SUMMARY"), `Preview: ${url}\n\nCommit: ${expectedSha}\n\nHosted email and extraction still require an end-to-end smoke test.\n`);
     console.log(`Preview deployed: ${url}`);
+    await publish({ stage: "ready", sha: expectedSha!, url, ...tester });
   } finally {
     await rm(secretsPath, { force: true });
+    await rm(seedPath, { force: true });
   }
 }

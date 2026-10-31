@@ -6,14 +6,15 @@ export function required(name: string) {
   if (!value) throw new Error(`Missing ${name}`);
   return value;
 }
-export async function github(path: string) {
+export async function github(path: string, method = "GET", body?: unknown) {
   const repository = required("GITHUB_REPOSITORY");
   if (!/^[\w.-]+\/[\w.-]+$/.test(repository)) throw new Error("Invalid repository");
   const response = await fetch(`https://api.github.com/repos/${repository}/${path}`, {
+    method, body: body === undefined ? undefined : JSON.stringify(body),
     headers: { Authorization: `Bearer ${required("GH_TOKEN")}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" },
     signal: AbortSignal.timeout(30_000),
   });
-  if (!response.ok) throw new Error(`GitHub read failed (${response.status})`);
+  if (!response.ok) throw new Error(`GitHub ${method} failed (${response.status})`);
   return response.json();
 }
 export async function current() {

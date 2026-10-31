@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHmac, randomBytes, scryptSync } from "node:crypto";
 
 export const WRANGLER_VERSION = "4.136.1";
 export function names(repositoryId: string, pr: string) {
@@ -26,6 +26,30 @@ export function authSecret(seed: string, repositoryId: string, pr: string) {
   const { worker } = names(repositoryId, pr);
   if (seed.length < 32) throw new Error("PREVIEW_AUTH_SEED must contain at least 32 random characters");
   return createHmac("sha256", seed).update(`linklog-preview-v1:${worker}`).digest("hex");
+}
+// A verified email+password account seeded into each preview, published in the PR comment.
+// Derived from the seed so it stays stable across pushes and differs per PR and from authSecret.
+export function testAccount(seed: string, repositoryId: string, pr: string) {
+  const { worker } = names(repositoryId, pr);
+  if (seed.length < 32) throw new Error("PREVIEW_AUTH_SEED must contain at least 32 random characters");
+  const password = createHmac("sha256", seed).update(`linklog-preview-tester-v1:${worker}`).digest("base64url").slice(0, 24);
+  return { email: "preview-tester@example.com", password };
+}
+// Better Auth's scrypt format (@better-auth/utils/password): hex salt, colon, hex key.
+export function hashPassword(password: string, salt = randomBytes(16).toString("hex")) {
+  const key = scryptSync(password.normalize("NFKC"), salt, 64, { N: 16384, r: 16, p: 1, maxmem: 128 * 16384 * 16 * 2 });
+  return `${salt}:${key.toString("hex")}`;
+}
+export function seedSql(email: string, passwordHash: string, now = new Date().toISOString()) {
+  if (!/^[^\s'"<>@]+@[^\s'"<>@]+\.[a-z]+$/.test(email) || !/^[a-f0-9]{32}:[a-f0-9]{128}$/.test(passwordHash)) {
+    throw new Error("Invalid test account");
+  }
+  const id = "preview-tester";
+  // Idempotent: keep the user (and its content) across deploys, reset only its password.
+  return `INSERT INTO "user"(id,name,email,"emailVerified","createdAt","updatedAt") VALUES('${id}','Preview tester','${email}',1,'${now}','${now}') ON CONFLICT(email) DO UPDATE SET "emailVerified"=1;
+DELETE FROM account WHERE "providerId"='credential' AND "userId"=(SELECT id FROM "user" WHERE email='${email}');
+INSERT INTO account(id,"accountId","providerId","userId",password,"createdAt","updatedAt") SELECT 'preview-tester-credential',id,'credential',id,'${passwordHash}','${now}','${now}' FROM "user" WHERE email='${email}';
+`;
 }
 export function config(repositoryId: string, pr: string, databaseId: string, subdomain: string, sender: string) {
   const n = names(repositoryId, pr);
