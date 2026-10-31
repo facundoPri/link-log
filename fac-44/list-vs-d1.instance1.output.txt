@@ -1,0 +1,88 @@
+PASS demo-a@linklog.test: status 200, listed 74, d1 74, mismatched 0, extra fields 0
+  Main fvmvvxwi14  lk_rbsVmc enabled=0 listed=revoked replacedBy=-
+  Second fvmvvxwi14 lk_mEiKvc enabled=0 listed=revoked replacedBy=-
+  Revoke fvmvvxwi14 lk_AVIOeA enabled=0 listed=revoked replacedBy=-
+  Regen fvmvvxwi14 lk_Hpunmk enabled=0 listed=revoked replacedBy=2WBK32nvLKUUZs6o9DoO85OgzHP1JxBf
+  Regen fvmvvxwi14 lk_MTRZOV enabled=1 listed=active replacedBy=-
+  Rate fvmvvxwi14  lk_VxrihM enabled=1 listed=active replacedBy=-
+  R2 fvmvvxwi14    lk_CDkJoD enabled=0 listed=revoked replacedBy=KypePVYGs8sDilAO5Z3wUjOWWHoliezj
+  Pad 5 fvmvvxwi14 lk_gqQJNx enabled=1 listed=active replacedBy=-
+  Pad 6 fvmvvxwi14 lk_kaIVjK enabled=1 listed=active replacedBy=-
+  Pad 7 fvmvvxwi14 lk_ntoQCj enabled=1 listed=active replacedBy=-
+  Race 1.0 fvmvvxwi14 lk_VRfStk enabled=0 listed=revoked replacedBy=-
+  Race 2.0 fvmvvxwi14 lk_jAxsLf enabled=0 listed=revoked replacedBy=-
+  Race 3.0 fvmvvxwi14 lk_TEGcLt enabled=0 listed=revoked replacedBy=-
+  Race 4.0 fvmvvxwi14 lk_BAzgSZ enabled=1 listed=active replacedBy=-
+  Pad 9 fvmvvxwi14 lk_dZdjqk enabled=1 listed=active replacedBy=-
+  R2 fvmvvxwi14    lk_Acqsdc enabled=0 listed=revoked replacedBy=-
+  R3 fvmvvxwi14    lk_FOPGOp enabled=0 listed=revoked replacedBy=HeprqcxyxoJglAuRxh2WFjU9dAPBCRjV
+  R3 revoke fvmvvxwi14 lk_OireuV enabled=0 listed=revoked replacedBy=-
+  R3 fvmvvxwi14    lk_KTZZrQ enabled=1 listed=active replacedBy=-
+  R4 intl fvmvvxwi14 lk_NwDThl enabled=0 listed=revoked replacedBy=-
+  R4 regen 1 fvmvvxwi14 lk_eLKPdc enabled=0 listed=revoked replacedBy=QeU9oNjsR7coDznG9D3DyTzlLSm4RPHa
+  R4 regen 1 fvmvvxwi14 lk_aJrfPI enabled=0 listed=revoked replacedBy=-
+  R4 regen 2 fvmvvxwi14 lk_IBDZDN enabled=0 listed=revoked replacedBy=0Yox1K5hcCzucme0vee2NW5qKRYo7b2J
+  R4 regen 2 fvmvvxwi14 lk_QXQfdk enabled=0 listed=revoked replacedBy=-
+  R4 regen 3 fvmvvxwi14 lk_DUqKXl enabled=0 listed=revoked replacedBy=ZYQTMhMQCaxQwIMmE3k3lB4JtWNocNK2
+  R4 regen 3 fvmvvxwi14 lk_wjdlms enabled=0 listed=revoked replacedBy=-
+  R4 regen 4 fvmvvxwi14 lk_gmVFZk enabled=0 listed=revoked replacedBy=pLpV9y7V1EHnoeh6NTrwhuUxp8fSdagD
+  R4 regen 4 fvmvvxwi14 lk_RzQGeu enabled=0 listed=revoked replacedBy=-
+  R4 regen 5 fvmvvxwi14 lk_anbiXM enabled=0 listed=revoked replacedBy=NnwT1MZTWsjBbbstK7PI7f3BaKMBaBQr
+  R4 regen 5 fvmvvxwi14 lk_VLigcB enabled=0 listed=revoked replacedBy=-
+  R5 stuck fvmvvxwi14 lk_uzaPVt enabled=0 listed=revoked replacedBy=-
+  R5 stuck fvmvvxwi14 lk_PFlyLs enabled=1 listed=active replacedBy=-
+  R6 pair 1 fvmvvxwi14 lk_fWcPNJ enabled=0 listed=revoked replacedBy=oJZBFBB59aQeR6abnNK5MUI2Rp1JE1kX
+  R6 pair 1 fvmvvxwi14 lk_HdHlMa enabled=0 listed=revoked replacedBy=-
+  R6 pair 2 fvmvvxwi14 lk_aYKGHe enabled=0 listed=revoked replacedBy=uwT9cVCi0EzULlZCXkY7xBQfWX02ZEKH
+  R6 pair 2 fvmvvxwi14 lk_svexsi enabled=0 listed=revoked replacedBy=-
+  R6 pair 3 fvmvvxwi14 lk_YShOCn enabled=0 listed=revoked replacedBy=m7p7q1f2iypVEEJPJN19X6ul7T0Djqcu
+  R6 pair 3 fvmvvxwi14 lk_DZxRRQ enabled=0 listed=revoked replacedBy=-
+  R6 pair 4 fvmvvxwi14 lk_YjLSpj enabled=0 listed=revoked replacedBy=8owWHXU9nEy8jBRr73w3mILVAHjrS8At
+  R6 pair 4 fvmvvxwi14 lk_NqHiBA enabled=0 listed=revoked replacedBy=-
+  R6 pair 5 fvmvvxwi14 lk_CHOgxk enabled=0 listed=revoked replacedBy=mqrihxrfHVGACVjmkrM9JsYfzjWTw8yU
+  R6 pair 5 fvmvvxwi14 lk_agAnRv enabled=0 listed=revoked replacedBy=-
+  R6 probe 1 pmvvy1x6p lk_eqySsx enabled=0 listed=revoked replacedBy=mL6iYXuWpHVdtz00lzm7c7YxcfOFuBfg
+  R6 probe 1 pmvvy1x6p lk_DvIuyz enabled=0 listed=revoked replacedBy=-
+  R6 probe 2 pmvvy1x6p lk_bghzDu enabled=0 listed=revoked replacedBy=FRoh68zwVdpW0YPhME1AADhNIaDJ26i0
+  R6 probe 2 pmvvy1x6p lk_NZHRwx enabled=0 listed=revoked replacedBy=-
+  R6 probe 3 pmvvy1x6p lk_PohCGZ enabled=0 listed=revoked replacedBy=0cv2LFdYWR0qdh2CVyjG5jH7UoQqgZBM
+  R6 probe 3 pmvvy1x6p lk_cisfBp enabled=0 listed=revoked replacedBy=-
+  R6 probe 4 pmvvy1x6p lk_tefKCf enabled=0 listed=revoked replacedBy=5BVfQl9j8qmFHdUT1RUXRnIcLlNa0kS4
+  R6 probe 4 pmvvy1x6p lk_ZozRRJ enabled=0 listed=revoked replacedBy=-
+  R6 probe 5 pmvvy1x6p lk_wiSAfe enabled=0 listed=revoked replacedBy=oacCTFTuTknuPyasDXHov0Zpy9YmV474
+  R6 probe 5 pmvvy1x6p lk_TCDepU enabled=0 listed=revoked replacedBy=-
+  R6 probe 1 pmvvy2ak1 lk_HVvVdg enabled=0 listed=revoked replacedBy=iRnBnCW7JbRbT7LcsWwN2YpBb46metcj
+  R6 probe 1 pmvvy2ak1 lk_KjJDwx enabled=0 listed=revoked replacedBy=-
+  R6 probe 2 pmvvy2ak1 lk_lcpIOv enabled=0 listed=revoked replacedBy=rvyojw2I5Raqanz87HAZkWUQKOuR97Gs
+  R6 probe 2 pmvvy2ak1 lk_fgSZJT enabled=0 listed=revoked replacedBy=-
+  R6 probe 3 pmvvy2ak1 lk_jpDBSr enabled=0 listed=revoked replacedBy=wUQpvCalGV0WACRwFXfMER6VVBC1InDZ
+  R6 probe 3 pmvvy2ak1 lk_LrhGsN enabled=0 listed=revoked replacedBy=-
+  R6 probe 4 pmvvy2ak1 lk_vziTER enabled=0 listed=revoked replacedBy=3Zem5wKL5LjnMjIEC4WeG9sSm2yGejhO
+  R6 probe 4 pmvvy2ak1 lk_kOrgyZ enabled=0 listed=revoked replacedBy=-
+  R6 probe 5 pmvvy2ak1 lk_ORQAdl enabled=0 listed=revoked replacedBy=Gtj3J8IRGcCPtpHqjccyBBbpU7Qm8zcb
+  R6 probe 5 pmvvy2ak1 lk_UkIueB enabled=0 listed=revoked replacedBy=-
+  R6 probe 1 pmvvy32sb lk_gWMoJK enabled=0 listed=revoked replacedBy=SMdFvMvHjGSeBk4QzGXkvwFsOrJzKogL
+  R6 probe 1 pmvvy32sb lk_iOdiph enabled=0 listed=revoked replacedBy=-
+  R6 probe 2 pmvvy32sb lk_NPTCVp enabled=0 listed=revoked replacedBy=5KtZ2r5h6FQTJIEKRCPWktDE8Knpsauq
+  R6 probe 2 pmvvy32sb lk_yotMfv enabled=0 listed=revoked replacedBy=-
+  R6 probe 3 pmvvy32sb lk_pZJUdJ enabled=0 listed=revoked replacedBy=xp1JjX3w7TxgWfEFQLXH27ky3KoUNlb1
+  R6 probe 3 pmvvy32sb lk_MeqhXV enabled=0 listed=revoked replacedBy=-
+  R6 probe 4 pmvvy32sb lk_bbsTSr enabled=0 listed=revoked replacedBy=IhXxzrM5RVScUIttvXlGrRXpcMIwJB13
+  R6 probe 4 pmvvy32sb lk_UDokTU enabled=0 listed=revoked replacedBy=-
+  R6 probe 5 pmvvy32sb lk_QjccbV enabled=0 listed=revoked replacedBy=VN2lvWiQ5oxizqHTpDtSKckbdGsQD6YM
+  R6 probe 5 pmvvy32sb lk_xGzmpN enabled=0 listed=revoked replacedBy=-
+  Rotate R84036    lk_KuPiJo enabled=0 listed=revoked replacedBy=YbFkc4hG6F9p9NFt6F48xMx44Ej88U7H
+  Rotate R84036    lk_pWcGSF enabled=1 listed=active replacedBy=-
+PASS demo-b@linklog.test: status 200, listed 12, d1 12, mismatched 0, extra fields 0
+  Fill 0 fvmvvxwi14 lk_BehUup enabled=1 listed=active replacedBy=-
+  Fill 1 fvmvvxwi14 lk_zMaZkW enabled=1 listed=active replacedBy=-
+  Fill 2 fvmvvxwi14 lk_MyALWm enabled=1 listed=active replacedBy=-
+  Fill 3 fvmvvxwi14 lk_EHvvQN enabled=1 listed=active replacedBy=-
+  Fill 4 fvmvvxwi14 lk_bNssuy enabled=1 listed=active replacedBy=-
+  Fill 5 fvmvvxwi14 lk_cdjdOp enabled=1 listed=active replacedBy=-
+  Fill 6 fvmvvxwi14 lk_bqxPBh enabled=1 listed=active replacedBy=-
+  Fill 7 fvmvvxwi14 lk_ZjqzaP enabled=1 listed=active replacedBy=-
+  Fill 8 fvmvvxwi14 lk_rDMWfz enabled=1 listed=active replacedBy=-
+  Fill 9 fvmvvxwi14 lk_aMwwnM enabled=0 listed=revoked replacedBy=5IHe0TTINk4wIKlOzNx24Sh59oTaBGRs
+  Fill 9 fvmvvxwi14 lk_bQFiVB enabled=0 listed=revoked replacedBy=-
+  B Main fvmvvxwi14 lk_FdMllm enabled=1 listed=active replacedBy=-

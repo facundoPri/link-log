@@ -1,0 +1,40 @@
+FAC-44 final verification round 6, branch fac-44-url-upload @ 19f085a. Four fresh verify-linklog instances. Each was doctor-clean (6/6, code unchanged) at start and end, and each was shut down with `V down`. No tracked file was edited.
+#1 20261031-050724-3400 (api-checks-r6, r6-race-probe x3, ui-settings-after-r6, ui-usage-regenerate, ui-add-dialog-long-url, list-vs-d1)
+#2 20261031-051327-3400 (ui-journey-r6)
+#3 20261031-051434-3400 (ui-unconfirmed-r6 run 1, implementer journeys api-keys-regenerate-unconfirmed and api-keys-regenerate, list-vs-d1)
+#4 20261031-051540-3400 (ui-unconfirmed-r6 final run, with the screenshots scrolled to the key rows)
+
+Check | Result | Evidence
+A. API regression for all nine story groups plus R2..R5 edges. Covers bare and text submits, created/duplicate/rejected, 400 zero-valid/>100/>1000 candidates/>8192/encoded >4096, 401 missing/malformed/unknown/revoked, regenerate old 401 new 202, 11th refused, 429 api_key/links/jobs with code + Retry-After and nothing saved, usage windows and month by source with Duplicates excluded, two-user isolation, no private route, no CORS incl. OPTIONS, list = D1 | PASS 94/94 | api-checks-r6.output.txt
+A. Regenerate under a concurrent burst (5 trials) never leaves 0 active | PASS | api-checks-r6.output.txt [R4-regen-race]
+A. UI: Settings via user menu, create once, copy curl and run it (202), revoke, regenerate, Activity label + cancel, Usage, Demo B isolation, 11th refused | PASS 41/41 | instance2/evidence/ui-journey-r6-*/
+A. Usage rows told apart after regenerate; Settings list and Usage = API after the races; Add link dialog 4096/4097 | PASS 10/10, 8/8, 7/7 | instance1/evidence/ui-usage-regenerate-*, ui-settings-after-r6-*, ui-add-dialog-long-url-*
+A. Key list matches D1 (A 74 rows, B 12 on #1; A 17 on #3; 0 mismatches, no extra fields) | PASS | list-vs-d1.instance1.output.txt, list-vs-d1.instance3.output.txt
+A. Implementer journeys api-keys-regenerate / api-keys-regenerate-unconfirmed | PASS 18/18, 10/10 | instance3/evidence/
+B. Unconfirmed regenerate via HTTP: 201, oldKey {id, status:"unconfirmed"}, both keys authenticate, log event without secrets, hand revoke then old 401 / new 202 | PASS | api-checks-r6.output.txt [R5-unconfirmed]
+B. Unconfirmed regenerate in the UI. The response says unconfirmed. The alert reads "The old key (lk_AIAaZb…) may still work. Revoke it now.". Exactly one "Revoke pending" badge, on the lk_AIAaZb row, which stays after Done. Revoking that row gives old 401 and new 202 created. No badge after revoke or after reload | PASS 21/21 | instance4/evidence/ui-unconfirmed-r6-*/ (+ unconfirmed-regenerate-response.json, after-revoke-submits.json)
+B. Normal regenerate: oldKey.status "revoked", no alert, no badge | PASS | same journey (B4), ui-journey-r6 normal-regenerate-response.json
+B. 409 regenerate (key revoked behind the page): Settings refetches, the row reads Revoked with no reload | PASS | same journey (B5)
+B. Two concurrent regenerates of the same key at 10 active, 5 trials: [201,409 api_key_revoked] every trial. One replacement (2 rows by name, old enabled=0 replacedBy=new). Old 401, new authenticates. 10 active after | PASS | api-checks-r6.output.txt [R6-same-key-race], r6-race-probe*.output.txt
+B. "never >10 active" during that race | PASS on what users can see; FINDING in D1 | r6-race-probe.timed.output.txt
+   A D1 logging trigger shows enabled rows go 10 -> 11 (winner's insert) -> 12 (loser's insert) -> 11 (old revoked) -> 10 (loser's row deleted) within 2-3 ms locally, every trial. The loser's secret is never returned. In 4 to 16 parallel GET /api-keys samplers (~600 samples total) the list never showed more than 10. A list read inside that window would show 11-12 Active. This is the create-then-take-back design documented in worker/routes/api-keys.ts and is not new in round 6.
+C. Screenshots | PASS | instance4/evidence/ui-unconfirmed-r6-*/B1-unconfirmed-alert-and-badge.png (alert + badge on the matching prefix), B2-badge-after-done.png, B3-after-revoke.png
+
+Script changes vs round 5 (each one follows from a round-6 change):
+- api-checks-r6.ts: R5-unconfirmed expects oldKey.status "unconfirmed" (was "active"). New R6-same-key-race section, run after a fresh writes window.
+- ui-journey-r6.ts: captures the normal regenerate's response and asserts oldKey.status "revoked". The no-warning check matches /may still work|could not be revoked/ and also requires no "Revoke pending" text.
+- ui-settings-after-r6.ts: screenshot names only. ui-usage-regenerate.ts, ui-add-dialog-long-url.ts and list-vs-d1.ts are unchanged.
+- New: ui-unconfirmed-r6.ts, r6-race-probe.ts (D1 logging trigger; SAMPLERS env var).
+
+Failures caused by my own scripts:
+- attempt1-script-scope-*: newPrefix was declared inside the try block and read after it ("newPrefix is not defined", instance3a/). The 10 checks before it passed. I hoisted the variables. The final run passes 21/21.
+- attempt2-order-10-active-*: I reran ui-unconfirmed-r6 on #3 after the implementer journeys had left 10 active keys. The API answered 409 api_key_limit "You have 10 active API keys...". I reran it on fresh #4.
+
+Not covered over HTTP: owner-idempotent claim after a lost answer, where the first UPDATE lands but its answer is lost. A SQLite trigger cannot fake a lost answer. Only the repo's unit test covers it.
+
+Rerun (repo root, V = bun .agents/skills/verify-linklog/scripts/verify.ts, E = this directory, R = run dir printed by `V up`):
+  V up; bun $E/api-checks-r6.ts --session $R/session.json --d1-dump $E/d1-apikey-rows.json; bun $E/r6-race-probe.ts --session $R/session.json
+  V run $E/ui-settings-after-r6.ts; V run $E/ui-usage-regenerate.ts; V run $E/ui-add-dialog-long-url.ts; bun $E/list-vs-d1.ts --session $R/session.json; V down
+  V up; V run $E/ui-journey-r6.ts; V down
+  V up; V run $E/ui-unconfirmed-r6.ts; V down
+  V up; V run .agents/skills/verify-linklog/journeys/api-keys-regenerate-unconfirmed.ts; V run .agents/skills/verify-linklog/journeys/api-keys-regenerate.ts; bun $E/list-vs-d1.ts --session $R/session.json; V down

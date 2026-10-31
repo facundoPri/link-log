@@ -1,0 +1,10 @@
+PASS trial 1: before=10 statuses=201,409 lost=api_key_revoked rowsByName=2 keysInserted=2 loserRowDeleted=true old=401 new=400 listSamples=24 listMaxActive=10 d1MaxEnabledAfterAnyWrite=12
+  d1 log: INSERT:new:n=11@+0ms INSERT:loser:n=12@+0ms UPDATE:old:n=11@+1ms DELETE:loser:n=10@+2ms
+PASS trial 2: before=10 statuses=201,409 lost=api_key_revoked rowsByName=2 keysInserted=2 loserRowDeleted=true old=401 new=400 listSamples=25 listMaxActive=10 d1MaxEnabledAfterAnyWrite=12
+  d1 log: INSERT:new:n=11@+0ms INSERT:loser:n=12@+0ms UPDATE:old:n=11@+1ms DELETE:loser:n=10@+2ms
+PASS trial 3: before=10 statuses=201,409 lost=api_key_revoked rowsByName=2 keysInserted=2 loserRowDeleted=true old=401 new=400 listSamples=22 listMaxActive=10 d1MaxEnabledAfterAnyWrite=12
+  d1 log: INSERT:new:n=11@+0ms INSERT:loser:n=12@+0ms UPDATE:old:n=11@+1ms DELETE:loser:n=10@+2ms
+PASS trial 4: before=10 statuses=201,409 lost=api_key_revoked rowsByName=2 keysInserted=2 loserRowDeleted=true old=401 new=400 listSamples=25 listMaxActive=10 d1MaxEnabledAfterAnyWrite=12
+  d1 log: INSERT:new:n=11@+0ms INSERT:loser:n=12@+0ms UPDATE:old:n=11@+1ms DELETE:loser:n=10@+2ms
+PASS trial 5: before=10 statuses=201,409 lost=api_key_revoked rowsByName=2 keysInserted=2 loserRowDeleted=true old=401 new=400 listSamples=30 listMaxActive=10 d1MaxEnabledAfterAnyWrite=12
+  d1 log: INSERT:new:n=11@+0ms INSERT:loser:n=12@+0ms UPDATE:old:n=11@+2ms DELETE:loser:n=10@+3ms
