@@ -197,3 +197,13 @@ export type UsageTotals = {
   calls: number;
   unknown_cost_calls: number;
 };
+/** An API key as Settings lists it. The secret itself is only in the create response. */
+export type ApiKey = {
+  id: string;
+  name: string;
+  /** Visible start of the secret (`lk_` plus a few characters). */
+  prefix: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+  status: "active" | "revoked";
+};

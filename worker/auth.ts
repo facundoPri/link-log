@@ -1,3 +1,4 @@
+import { apiKey } from "@better-auth/api-key";
 import { betterAuth, type BetterAuthOptions } from "better-auth";
 import { magicLink } from "better-auth/plugins/magic-link";
 import { isLocalEnv, readConfig, type AppConfig } from "./config";
@@ -7,6 +8,8 @@ export const AUTH_BASE_PATH = "/api/auth";
 export const SESSION_EXPIRES_IN = 60 * 60 * 24 * 7;
 export const SESSION_UPDATE_AGE = 60 * 60 * 24;
 export const MAGIC_LINK_EXPIRES_IN = 60 * 5;
+export const API_KEY_PREFIX = "lk_";
+export const API_KEY_NAME_MAX = 32;
 
 // Core endpoints outside the initial scope (social login, account linking, profile/email changes,
 // account deletion). Unused routes stay unreachable instead of relying on missing configuration.
@@ -24,6 +27,14 @@ const DISABLED_PATHS = [
   "/update-session",
   "/update-user",
   "/verify-password",
+  // API key plugin: keys are managed only through the session API (worker/routes/api-keys.ts),
+  // which calls the plugin server-side. Its HTTP routes would also allow deleting and re-enabling
+  // keys; verify and delete-all-expired are server-only already and answer 404 over HTTP.
+  "/api-key/create",
+  "/api-key/get",
+  "/api-key/list",
+  "/api-key/update",
+  "/api-key/delete",
 ];
 
 type Mailer = ReturnType<typeof createMailer>;
@@ -105,6 +116,17 @@ export function authOptions(
         expiresIn: MAGIC_LINK_EXPIRES_IN,
         storeToken: "hashed",
         sendMagicLink: async ({ email, url }) => mailer.send({ kind: "magic", to: email, url }),
+      }),
+      // User-owned, hashed, never-expiring keys. The plugin's rate limit only resets after a full
+      // idle window, which would block steady low-volume integrations, so it stays off. Keys are
+      // never turned into sessions: enableSessionForAPIKeys stays false.
+      apiKey({
+        defaultPrefix: API_KEY_PREFIX,
+        requireName: true,
+        maximumNameLength: API_KEY_NAME_MAX,
+        startingCharactersConfig: { shouldStore: true, charactersLength: API_KEY_PREFIX.length + 6 },
+        keyExpiration: { defaultExpiresIn: null, disableCustomExpiresTime: true },
+        rateLimit: { enabled: false },
       }),
     ],
   } satisfies BetterAuthOptions;

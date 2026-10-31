@@ -4,6 +4,7 @@ import { NothingToRun } from "../jobs";
 import { LimitError } from "../limits";
 import { json } from "../store";
 import { activityRoutes } from "../routes/activity";
+import { apiKeyRoutes } from "../routes/api-keys";
 import { browserRoutes } from "../routes/browser";
 import { linkRoutes } from "../routes/links";
 import { taxonomyRoutes } from "../routes/taxonomy";
@@ -40,6 +41,7 @@ export function createApp() {
   privateApi.route("/", taxonomyRoutes);
   privateApi.route("/", activityRoutes);
   privateApi.route("/", browserRoutes);
+  privateApi.route("/", apiKeyRoutes);
   privateApi.notFound(() => json({ error: "Not found." }, 404));
   app.route("/api", privateApi);
 
