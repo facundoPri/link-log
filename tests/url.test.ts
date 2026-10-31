@@ -108,6 +108,26 @@ describe("scanning cost", () => {
   });
 });
 
+describe("tracking parameter cost", () => {
+  // Deleting parameters one at a time re-serialized the query for each, quadratic in their number:
+  // 430 distinct utm_ parameters (the longest URL normalizeUrl accepts) cost over a second for 100 URLs.
+  const withParams = (n: number) => `http://a.co/?${Array.from({ length: n }, (_, i) => `utm_${i}=`).join("&")}`;
+
+  test("a URL with hundreds of distinct tracking parameters normalizes in linear time", () => {
+    const url = withParams(430);
+    const started = performance.now();
+    for (let i = 0; i < 100; i++) expect(normalizeUrl(url)).toBe("http://a.co/");
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
+  test("only tracking parameters are dropped, in any mix with the others", () => {
+    expect(normalizeUrl("http://a.co/p?a=1&utm_x=2&b=&fbclid=3&B=4&gclid=5&UTM_y=6&utm_x=7#h")).toBe("http://a.co/p?a=1&b=&B=4#h");
+    expect(normalizeUrl("http://a.co/p?utm_x=1&fbclid=2")).toBe("http://a.co/p");
+    expect(normalizeUrl("http://a.co/p?a=1&b=2")).toBe("http://a.co/p?a=1&b=2");
+    expect(normalizeUrl("http://a.co/p?a=1&b=a%20b+c")).toBe("http://a.co/p?a=1&b=a%20b+c");
+  });
+});
+
 describe("why a text yielded no URL", () => {
   test("a URL-looking candidate that breaks a URL rule reports that rule's reason", () => {
     expect(scanUrls("https://user:pw@example.com")).toEqual({ urls: [], reason: "Use a public http or https link." });

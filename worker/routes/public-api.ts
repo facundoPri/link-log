@@ -10,13 +10,17 @@ const MAX_URLS = 100;
 const MAX_STRINGS = 1000;
 // A URL longer than 4096 characters is refused anyway; this bounds the text scanned per string.
 const MAX_STRING_LENGTH = 8192;
+// Normalizing a URL costs time, and repeats collapse only after that, so the URLs found across all
+// strings are counted before the 100 distinct limit can apply.
+const MAX_FOUND = 1000;
 const NO_LINK = "No valid http or https link found.";
 
 /**
  * Public API (POST /api/v1/links), behind requireApiKey: a thin adapter over the add-links service.
  * The owner and the batch source come from the verified key only. Each string is scanned for http(s)
  * URLs; repeats across the request collapse into one result and strings without a valid URL are
- * listed in `rejected`. Zero valid URLs, or more than 100 after extraction, is 400.
+ * listed in `rejected`. Zero valid URLs, more than 100 after extraction, or more than 1000 found
+ * counting repeats, is 400.
  */
 export const publicApiRoutes = new Hono<AppEnv>().post("/links", async (c) => {
   const principal = apiKeyOf(c);
@@ -26,8 +30,10 @@ export const publicApiRoutes = new Hono<AppEnv>().post("/links", async (c) => {
   if ((body.urls as string[]).some((u) => u.length > MAX_STRING_LENGTH)) throw badRequest(`Each string can be at most ${MAX_STRING_LENGTH} characters.`);
   const accepted = new Map<string, string>();
   const rejected: { input: string; error: string }[] = [];
+  const budget = { left: MAX_FOUND };
   for (const input of body.urls as string[]) {
-    const { urls, reason } = scanUrls(input);
+    const { urls, reason, overBudget } = scanUrls(input, budget);
+    if (overBudget) throw badRequest(`Send at most ${MAX_FOUND} links per request, repeats included.`);
     if (!urls.length) rejected.push({ input, error: reason ?? NO_LINK });
     for (const url of urls) if (!accepted.has(url)) accepted.set(url, input);
     if (accepted.size > MAX_URLS) throw badRequest(`Send at most ${MAX_URLS} links per request.`);

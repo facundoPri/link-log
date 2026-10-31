@@ -106,15 +106,6 @@ describe("Duplicates and invalid inputs", () => {
     expect(((await res.json()) as { error: string }).error).toBe("Each string can be at most 8192 characters.");
     await nothingSaved();
   });
-
-  test("a string at the limit is scanned quickly, whatever it ends with", async () => {
-    const tail = ")".repeat(8192 - "http://api.example/x".length);
-    const started = performance.now();
-    const res = await submit(keyA.key, { urls: [`http://api.example/x${tail}`] });
-    expect(res.status).toBe(202);
-    expect(((await res.json()) as Submitted).results.map((r) => r.url)).toEqual(["http://api.example/x"]);
-    expect(performance.now() - started).toBeLessThan(2000);
-  });
 });
 
 describe("URLs inside text", () => {
@@ -178,6 +169,48 @@ describe("URLs inside text", () => {
     const res = await submit(keyA.key, { urls: Array.from({ length: 150 }, () => "https://api.example/same https://api.example/same") });
     expect(res.status).toBe(202);
     expect(((await res.json()) as Submitted).results).toHaveLength(1);
+  });
+});
+
+describe("work per request", () => {
+  // Distinct URLs are capped at 100, but repeats collapse before that, so the cost of a request
+  // cannot hang on the number of distinct URLs. Budgets are generous: the old code took seconds.
+  const heavy = `http://api.example/p?${Array.from({ length: 430 }, (_, i) => `utm_${i}=`).join("&")}`;
+
+  test("many repeats of a URL with hundreds of tracking parameters are answered quickly", async () => {
+    const started = performance.now();
+    const res = await submit(keyA.key, { urls: Array.from({ length: 250 }, () => `${heavy} ${heavy}`) });
+    expect(res.status).toBe(202);
+    expect(((await res.json()) as Submitted).results.map((r) => r.url)).toEqual(["http://api.example/p"]);
+    expect(performance.now() - started).toBeLessThan(2000);
+  });
+
+  test("strings at the length limit, ending in a long run of closing parentheses, are answered quickly", async () => {
+    const text = `http://api.example/x${")".repeat(8192 - "http://api.example/x".length)}`;
+    const started = performance.now();
+    const res = await submit(keyA.key, { urls: Array.from({ length: 250 }, () => text) });
+    expect(res.status).toBe(202);
+    expect(((await res.json()) as Submitted).results.map((r) => r.url)).toEqual(["http://api.example/x"]);
+    expect(performance.now() - started).toBeLessThan(2000);
+  });
+
+  test("1000 URLs found are fine, repeats included", async () => {
+    const res = await submit(keyA.key, { urls: Array.from({ length: 10 }, () => Array.from({ length: 100 }, () => "https://api.example/same").join(" ")) });
+    expect(res.status).toBe(202);
+    expect(((await res.json()) as Submitted).results).toHaveLength(1);
+  });
+
+  test("more than 1000 URLs found, repeats included, is 400 and saves nothing", async () => {
+    const same = "https://api.example/same";
+    for (const urls of [
+      [...Array.from({ length: 500 }, () => `${same} ${same}`), same],
+      [...Array.from({ length: 10 }, () => Array.from({ length: 100 }, () => same).join(" ")), same],
+    ]) {
+      const res = await submit(keyA.key, { urls });
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { error: string }).error).toBe("Send at most 1000 links per request, repeats included.");
+    }
+    await nothingSaved();
   });
 });
 
