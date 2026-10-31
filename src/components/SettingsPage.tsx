@@ -163,7 +163,7 @@ function ApiKeys({
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
   // The full secret lives only in this state: it is gone once dismissed or the page is left.
-  const [created, setCreated] = useState<{ name: string; secret: string; replaced: boolean } | null>(null);
+  const [created, setCreated] = useState<{ name: string; secret: string; replaced: "revoked" | "unconfirmed" | null } | null>(null);
   const [createError, setCreateError] = useState("");
   const [revoking, setRevoking] = useState<ApiKey | null>(null);
   const [regenerating, setRegenerating] = useState<ApiKey | null>(null);
@@ -175,7 +175,7 @@ function ApiKeys({
     try {
       const r = await api<{ apiKey: ApiKey; secret: string }>("/api-keys", "POST", { name });
       setKeys((list) => [r.apiKey, ...(list ?? [])]);
-      setCreated({ name: r.apiKey.name, secret: r.secret, replaced: false });
+      setCreated({ name: r.apiKey.name, secret: r.secret, replaced: null });
       setName("");
     } catch (error) {
       setCreateError((error as Error).message);
@@ -198,9 +198,11 @@ function ApiKeys({
   // The new key is created before the old one is revoked, so a failure leaves the old key working.
   const regenerate = async (key: ApiKey) => {
     try {
-      const r = await api<{ apiKey: ApiKey; secret: string }>(`/api-keys/${key.id}/regenerate`, "POST", {});
-      setKeys((list) => [r.apiKey, ...(list ?? []).map((k) => (k.id === key.id ? { ...k, status: "revoked" as const } : k))]);
-      setCreated({ name: r.apiKey.name, secret: r.secret, replaced: true });
+      const r = await api<{ apiKey: ApiKey; secret: string; oldKey: { id: string; status: ApiKey["status"] } }>(`/api-keys/${key.id}/regenerate`, "POST", {});
+      // Only a confirmed revoke marks the old key revoked here; otherwise it stays Active to be revoked.
+      const revoked = r.oldKey.status === "revoked";
+      setKeys((list) => [r.apiKey, ...(list ?? []).map((k) => (k.id === key.id && revoked ? { ...k, status: "revoked" as const } : k))]);
+      setCreated({ name: r.apiKey.name, secret: r.secret, replaced: revoked ? "revoked" : "unconfirmed" });
     } catch (error) {
       toast.error((error as Error).message);
     }
@@ -227,8 +229,14 @@ function ApiKeys({
       {created && (
         <div role="status" className="flex flex-col gap-2 border-b bg-muted/40 p-4">
           <p className="text-sm">
-            {created.replaced ? `Copy the new key for “${created.name}” now. The old key no longer works.` : `Copy the key for “${created.name}” now.`} It will not be shown again.
+            {created.replaced ? `Copy the new key for “${created.name}” now.` : `Copy the key for “${created.name}” now.`}
+            {created.replaced === "revoked" && " The old key no longer works."} It will not be shown again.
           </p>
+          {created.replaced === "unconfirmed" && (
+            <p role="alert" className="text-sm font-medium text-destructive">
+              The old key could not be revoked. Revoke it now.
+            </p>
+          )}
           <div className="flex items-center gap-2">
             <code className="min-w-0 flex-1 truncate rounded-md border bg-background px-2 py-1.5 font-mono text-xs" aria-label="New API key">
               {created.secret}
@@ -329,8 +337,8 @@ function ApiKeys({
           <AlertDialogHeader>
             <AlertDialogTitle>Regenerate “{regenerating?.name}”?</AlertDialogTitle>
             <AlertDialogDescription>
-              Linklog creates a new key with the same name and shows its secret once. The current key stops working
-              immediately and stays listed as revoked.
+              Linklog creates a new key with the same name and shows its secret once, then revokes the current key,
+              which stays listed as revoked. If that fails, you are told to revoke it yourself.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

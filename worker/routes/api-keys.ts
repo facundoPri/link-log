@@ -30,7 +30,9 @@ const API_KEY_ACTIVE_MAX = 10;
  * requests are re-checked after the write and undone by removing the key just created, whose secret
  * nobody received (so it is no Revoked API key and is not listed): at most 10 active keys, and one
  * new key per regenerated key. Under a race that can refuse more requests than strictly needed,
- * never fewer.
+ * never fewer. The one exception is a regenerate whose old key cannot be revoked or asked about:
+ * it still returns the new key (deleting it could leave the owner with no working key) and says in
+ * `oldKey.status` that the old key is not confirmed revoked, so the owner revokes it.
  */
 export const apiKeyRoutes = new Hono<AppEnv>()
   .get("/api-keys", async (c) => json({ apiKeys: (await ownKeys(c)).map(view) }))
@@ -58,27 +60,16 @@ export const apiKeyRoutes = new Hono<AppEnv>()
     const created = await c.get("auth").api.createApiKey({ body: { name: old.name ?? "", userId: ownerOf(c) } });
     // Only one request can turn the old key off. A concurrent regenerate of it loses and takes its
     // own new key back, so a key never gets two replacements.
-    let claimed;
-    try {
-      claimed = await keyTable.claimRevoke(c.env.DB, oldId, ownerOf(c));
-    } catch {
-      // D1 can commit and still fail to answer, so try again (the claim is idempotent). Either
-      // answer means the old key is off, by this request or another, and the new key is the only one
-      // left. A replacement is never deleted: if the old key stays active it is still listed in
-      // Settings, whereas deleting the new key could leave the user without any working key.
-      await pause();
-      try {
-        await keyTable.claimRevoke(c.env.DB, oldId, ownerOf(c));
-      } catch (error) {
-        console.error(JSON.stringify({ event: "api_key_revoke_unconfirmed", keyId: created.id, oldKeyId: oldId, errorType: errorType(error) }));
-      }
-      claimed = true;
-    }
-    if (!claimed) {
+    const outcome = await claimOld(c, oldId, created.id);
+    if (outcome === "lost") {
       await takeBack(c, created.id);
       throw revokedError();
     }
-    return json({ apiKey: view(created), secret: created.key }, 201);
+    // A replacement is never deleted once the old key's fate is unknown: it may still work, and
+    // deleting the new key could leave the user without any working key. So the response says
+    // whether the old key is confirmed revoked and Settings tells the owner to revoke it.
+    const oldKey = { id: oldId, status: outcome === "revoked" ? "revoked" : "active" };
+    return json({ apiKey: view(created), secret: created.key, oldKey }, 201);
   })
   .post("/api-keys/:id/revoke", async (c) => json({ apiKey: view(await revoke(c, c.req.param("id"))) }));
 
@@ -92,6 +83,33 @@ async function revoke(c: AppContext, keyId: string) {
     // The plugin answers NOT_FOUND for missing and foreign keys alike.
     if (isAPIError(error) && error.statusCode === 404) throw notFound("API key");
     throw error;
+  }
+}
+
+/**
+ * Turns the old key off, marked with the new key's id. "lost": another request or the owner did.
+ * "unconfirmed": the answers were lost and the database could not be asked. When the first claim
+ * fails without an answer it may or may not have landed, so the marker decides: only a key marked
+ * with this request's new id was turned off by this request.
+ */
+async function claimOld(c: AppContext, oldId: string, newId: string): Promise<"revoked" | "lost" | "unconfirmed"> {
+  const claim = () => keyTable.claimRevoke(c.env.DB, oldId, ownerOf(c), newId);
+  try {
+    return (await claim()) ? "revoked" : "lost";
+  } catch {
+    await pause();
+  }
+  try {
+    let state = await keyTable.revokeState(c.env.DB, oldId, ownerOf(c));
+    if (state?.enabled) {
+      // The first claim did not land: repeat it, and if it finds the key off, someone else just did.
+      if (await claim()) return "revoked";
+      state = await keyTable.revokeState(c.env.DB, oldId, ownerOf(c));
+    }
+    return state?.replacedBy === newId ? "revoked" : "lost";
+  } catch (error) {
+    console.error(JSON.stringify({ event: "api_key_revoke_unconfirmed", keyId: newId, oldKeyId: oldId, errorType: errorType(error) }));
+    return "unconfirmed";
   }
 }
 

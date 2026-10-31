@@ -8,6 +8,7 @@ import { client, makeEnv } from "./support/env";
 import { createTestAuth, testApiKey, testSession } from "./support/auth.test-instance";
 
 type Key = { id: string; name: string; prefix: string; createdAt: string; lastUsedAt: string | null; status: "active" | "revoked" };
+type OldKey = { id: string; status: "active" | "revoked" };
 let db: TestD1, env: Env, call: ReturnType<typeof client>;
 let A: { userId: string; cookie: string }, B: { userId: string; cookie: string };
 
@@ -217,7 +218,8 @@ describe("regenerating", () => {
     createdMinutesAgo(old.id, 1);
     const res = await as(A).regenerate(old.id);
     expect(res.status).toBe(201);
-    const { apiKey, secret } = (await res.json()) as { apiKey: Key; secret: string };
+    const { apiKey, secret, oldKey } = (await res.json()) as { apiKey: Key; secret: string; oldKey: OldKey };
+    expect(oldKey).toEqual({ id: old.id, status: "revoked" });
     expect(secret).toMatch(/^lk_[A-Za-z]{40,}$/);
     expect(secret).not.toBe(old.key);
     expect(apiKey).toMatchObject({ name: "Shortcuts", status: "active", lastUsedAt: null });
@@ -292,13 +294,75 @@ describe("regenerating", () => {
     return () => void (db.prepare = prepare);
   };
 
+  // Setup: the first claim of the old key fails before it reaches the database. `meanwhile` runs
+  // then (another request touching the row), and every later statement behaves normally.
+  const failedFirstClaim = (meanwhile?: () => void) => {
+    const prepare = db.prepare.bind(db);
+    let failed = false;
+    db.prepare = ((sql: string) => {
+      const statement = prepare(sql);
+      if (!/^UPDATE apikey SET enabled=0/.test(sql)) return statement;
+      return {
+        bind: (...params: unknown[]) => ({
+          run: async () => {
+            if (failed) return statement.bind(...params).run();
+            failed = true;
+            meanwhile?.();
+            throw new Error("D1_ERROR: Network connection lost.");
+          },
+        }),
+      };
+    }) as typeof db.prepare;
+    return () => void (db.prepare = prepare);
+  };
+
+  test("a first claim that never landed is repeated: the old key is revoked and the response says so", async () => {
+    const { id, key } = await testApiKey(env, A.userId, "Mine");
+    const restore = failedFirstClaim();
+    const res = await as(A).regenerate(id);
+    restore();
+    expect(res.status).toBe(201);
+    const { apiKey, secret, oldKey } = (await res.json()) as { apiKey: Key; secret: string; oldKey: OldKey };
+    expect(oldKey).toEqual({ id, status: "revoked" });
+    expect((await as(A).list()).apiKeys.map((k) => [k.id, k.status])).toEqual([[apiKey.id, "active"], [id, "revoked"]]);
+    expect(await verified(secret)).toBe(true);
+    expect(await verified(key)).toBe(false);
+  });
+
+  test("after a lost answer, a rival regenerate that won the old key means this request takes its own key back", async () => {
+    const { id, key } = await testApiKey(env, A.userId, "Mine");
+    // The rival's claim landed while this request's first claim failed: it left its own marker.
+    const restore = failedFirstClaim(() => db.sqlite.exec(`UPDATE apikey SET enabled=0, metadata='{"replacedBy":"rival-key"}' WHERE id='${id}'`));
+    const res = await as(A).regenerate(id);
+    restore();
+    expect(res.status).toBe(409);
+    expect((await res.json()) as object).toEqual({ error: "That API key is revoked. Create a new one instead.", code: "api_key_revoked" });
+    // One replacement for one key: nothing of this request stays active.
+    expect((await as(A).list()).apiKeys.map((k) => [k.id, k.status])).toEqual([[id, "revoked"]]);
+    expect(await verified(key)).toBe(false);
+  });
+
+  test("a revoked key keeps listing and verifying correctly with the plugin's own metadata and with none", async () => {
+    // The plugin has metadata disabled here, so setup writes what it would have stored.
+    const withMetadata = await testApiKey(env, A.userId, "Meta");
+    db.sqlite.query("UPDATE apikey SET metadata=? WHERE id=?").run(JSON.stringify({ team: "x" }), withMetadata.id);
+    const plain = await testApiKey(env, A.userId, "Plain");
+    const regenerated = (await (await as(A).regenerate(withMetadata.id)).json()) as { oldKey: OldKey };
+    await as(A).regenerate(plain.id);
+    expect(regenerated.oldKey.status).toBe("revoked");
+    expect((await as(A).list()).apiKeys.filter((k) => k.status === "revoked").map((k) => k.name).sort()).toEqual(["Meta", "Plain"]);
+    expect(await verified(withMetadata.key)).toBe(false);
+    expect(await verified(plain.key)).toBe(false);
+  });
+
   test("if the old key was revoked although the error reached us, the new key is returned, not taken back", async () => {
     const { id, key } = await testApiKey(env, A.userId, "Mine");
     const restore = droppedAfterCommit();
     const res = await as(A).regenerate(id);
     restore();
     expect(res.status).toBe(201);
-    const { apiKey, secret } = (await res.json()) as { apiKey: Key; secret: string };
+    const { apiKey, secret, oldKey } = (await res.json()) as { apiKey: Key; secret: string; oldKey: OldKey };
+    expect(oldKey).toEqual({ id, status: "revoked" });
     expect((await as(A).list()).apiKeys.map((k) => [k.id, k.status])).toEqual([[apiKey.id, "active"], [id, "revoked"]]);
     expect(await verified(secret)).toBe(true);
     expect(await verified(key)).toBe(false);
@@ -311,7 +375,8 @@ describe("regenerating", () => {
     const res = await as(A).regenerate(id);
     restore();
     expect(res.status).toBe(201);
-    const { apiKey, secret } = (await res.json()) as { apiKey: Key; secret: string };
+    const { apiKey, secret, oldKey } = (await res.json()) as { apiKey: Key; secret: string; oldKey: OldKey };
+    expect(oldKey).toEqual({ id, status: "revoked" });
     expect((await as(A).list()).apiKeys.map((k) => [k.id, k.status])).toEqual([[apiKey.id, "active"], [id, "revoked"]]);
     expect(await verified(secret)).toBe(true);
     expect(await verified(key)).toBe(false);
@@ -331,7 +396,9 @@ describe("regenerating", () => {
     }
     // A replacement is never deleted: the old key may still work, and stays listed for the owner to revoke.
     expect(res.status).toBe(201);
-    const { apiKey, secret } = (await res.json()) as { apiKey: Key; secret: string };
+    const { apiKey, secret, oldKey } = (await res.json()) as { apiKey: Key; secret: string; oldKey: OldKey };
+    // The response says the old key is not confirmed revoked, so Settings can tell the owner.
+    expect(oldKey).toEqual({ id, status: "active" });
     expect((await as(A).list()).apiKeys.map((k) => [k.id, k.status])).toEqual([[apiKey.id, "active"], [id, "active"]]);
     expect(await verified(secret)).toBe(true);
     expect(await verified(key)).toBe(true);
