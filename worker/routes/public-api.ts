@@ -47,6 +47,7 @@ export const publicApiRoutes = new Hono<AppEnv>().post("/links", async (c) => {
   const results = [];
   let batchId: string | undefined;
   for (const [i, r] of saved.entries()) {
+    // Defensive: scanUrls only yields normalized URLs, but addLinks' result type includes errors.
     if ("error" in r) {
       rejected.push({ input: inputs[i]!, error: r.error });
       continue;

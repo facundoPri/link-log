@@ -215,3 +215,12 @@ export type ApiKey = {
   lastUsedAt: string | null;
   status: "active" | "revoked";
 };
+/**
+ * The answer to regenerating a key. `oldKey.status` is "revoked" only when the revoke is confirmed;
+ * "unconfirmed" means it may still work and the owner must revoke it.
+ */
+export type RegenerateKeyResponse = {
+  apiKey: ApiKey;
+  secret: string;
+  oldKey: { id: string; status: "revoked" | "unconfirmed" };
+};

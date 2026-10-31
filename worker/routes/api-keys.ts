@@ -1,6 +1,6 @@
 import { isAPIError } from "better-auth/api";
 import { Hono } from "hono";
-import type { ApiKey } from "../../src/types";
+import type { ApiKey, RegenerateKeyResponse } from "../../src/types";
 import * as keyTable from "../api-key-table";
 import { API_KEY_NAME_MAX } from "../auth";
 import { json, text } from "../store";
@@ -68,8 +68,8 @@ export const apiKeyRoutes = new Hono<AppEnv>()
     // A replacement is never deleted once the old key's fate is unknown: it may still work, and
     // deleting the new key could leave the user without any working key. So the response says
     // whether the old key is confirmed revoked and Settings tells the owner to revoke it.
-    const oldKey = { id: oldId, status: outcome === "revoked" ? "revoked" : "active" };
-    return json({ apiKey: view(created), secret: created.key, oldKey }, 201);
+    const body: RegenerateKeyResponse = { apiKey: view(created), secret: created.key, oldKey: { id: oldId, status: outcome } };
+    return json(body, 201);
   })
   .post("/api-keys/:id/revoke", async (c) => json({ apiKey: view(await revoke(c, c.req.param("id"))) }));
 
@@ -88,9 +88,9 @@ async function revoke(c: AppContext, keyId: string) {
 
 /**
  * Turns the old key off, marked with the new key's id. "lost": another request or the owner did.
- * "unconfirmed": the answers were lost and the database could not be asked. When the first claim
- * fails without an answer it may or may not have landed, so the marker decides: only a key marked
- * with this request's new id was turned off by this request.
+ * "unconfirmed": both attempts failed without an answer, so the key may or may not be off. The claim
+ * is idempotent for the same new id, so when the first attempt landed and only its answer was lost,
+ * the second still answers "revoked".
  */
 async function claimOld(c: AppContext, oldId: string, newId: string): Promise<"revoked" | "lost" | "unconfirmed"> {
   const claim = () => keyTable.claimRevoke(c.env.DB, oldId, ownerOf(c), newId);
@@ -100,13 +100,7 @@ async function claimOld(c: AppContext, oldId: string, newId: string): Promise<"r
     await pause();
   }
   try {
-    let state = await keyTable.revokeState(c.env.DB, oldId, ownerOf(c));
-    if (state?.enabled) {
-      // The first claim did not land: repeat it, and if it finds the key off, someone else just did.
-      if (await claim()) return "revoked";
-      state = await keyTable.revokeState(c.env.DB, oldId, ownerOf(c));
-    }
-    return state?.replacedBy === newId ? "revoked" : "lost";
+    return (await claim()) ? "revoked" : "lost";
   } catch (error) {
     console.error(JSON.stringify({ event: "api_key_revoke_unconfirmed", keyId: newId, oldKeyId: oldId, errorType: errorType(error) }));
     return "unconfirmed";

@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { api } from "../api";
 import { relativeTime } from "../lib/time";
 import { uploadCurl } from "../lib/upload-curl";
-import type { ApiKey, QuotaUsage, Usage } from "../types";
+import type { ApiKey, QuotaUsage, RegenerateKeyResponse, Usage } from "../types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -163,7 +163,9 @@ function ApiKeys({
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
   // The full secret lives only in this state: it is gone once dismissed or the page is left.
-  const [created, setCreated] = useState<{ name: string; secret: string; replaced: "revoked" | "unconfirmed" | null } | null>(null);
+  const [created, setCreated] = useState<{ name: string; secret: string; replaced: "revoked" | "unconfirmed" | null; oldPrefix?: string } | null>(null);
+  // The old key of a regenerate whose revoke is not confirmed: marked in the list until revoked.
+  const [pendingRevokeId, setPendingRevokeId] = useState<string | null>(null);
   const [createError, setCreateError] = useState("");
   const [revoking, setRevoking] = useState<ApiKey | null>(null);
   const [regenerating, setRegenerating] = useState<ApiKey | null>(null);
@@ -197,16 +199,25 @@ function ApiKeys({
 
   // The new key is created before the old one is revoked, so a failure leaves the old key working.
   const regenerate = async (key: ApiKey) => {
+    let confirmed = false;
     try {
-      const r = await api<{ apiKey: ApiKey; secret: string; oldKey: { id: string; status: ApiKey["status"] } }>(`/api-keys/${key.id}/regenerate`, "POST", {});
-      // Only a confirmed revoke marks the old key revoked here; otherwise it stays Active to be revoked.
-      const revoked = r.oldKey.status === "revoked";
-      setKeys((list) => [r.apiKey, ...(list ?? []).map((k) => (k.id === key.id && revoked ? { ...k, status: "revoked" as const } : k))]);
-      setCreated({ name: r.apiKey.name, secret: r.secret, replaced: revoked ? "revoked" : "unconfirmed" });
+      const r = await api<RegenerateKeyResponse>(`/api-keys/${key.id}/regenerate`, "POST", {});
+      confirmed = r.oldKey.status === "revoked";
+      setKeys((list) => [r.apiKey, ...(list ?? []).map((k) => (k.id === key.id && confirmed ? { ...k, status: "revoked" as const } : k))]);
+      setCreated({ name: r.apiKey.name, secret: r.secret, replaced: confirmed ? "revoked" : "unconfirmed", oldPrefix: key.prefix });
+      if (!confirmed) setPendingRevokeId(key.id);
     } catch (error) {
       toast.error((error as Error).message);
     }
     setRegenerating(null);
+    // Unless the old key is confirmed revoked the list may be stale (even a refused regenerate means
+    // the key changed under us): the server's list decides what shows as Active.
+    if (!confirmed) {
+      void api<{ apiKeys: ApiKey[] }>("/api-keys").then(
+        (r) => setKeys(r.apiKeys),
+        () => {},
+      );
+    }
   };
 
   return (
@@ -234,7 +245,7 @@ function ApiKeys({
           </p>
           {created.replaced === "unconfirmed" && (
             <p role="alert" className="text-sm font-medium text-destructive">
-              The old key could not be revoked. Revoke it now.
+              The old key ({created.oldPrefix}…) may still work. Revoke it now.
             </p>
           )}
           <div className="flex items-center gap-2">
@@ -295,6 +306,7 @@ function ApiKeys({
                   <Badge variant={key.status === "active" ? "secondary" : "outline"} className={key.status === "revoked" ? "text-muted-foreground" : undefined}>
                     {key.status === "active" ? "Active" : "Revoked"}
                   </Badge>
+                  {key.status === "active" && key.id === pendingRevokeId && <Badge variant="destructive">Revoke pending</Badge>}
                 </div>
                 <div className="flex flex-wrap gap-x-3 text-xs text-muted-foreground">
                   <code className="font-mono">{key.prefix}…</code>
