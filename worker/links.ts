@@ -27,11 +27,21 @@ export type AddResult = { input: string; id: string; created: boolean; batchId?:
  *
  * An exhausted quota throws a LimitError naming it (`links` or `jobs`) and its seconds to reset.
  * An optional `source` is stored in the created batch's config (web calls store none).
+ *
+ * `normalized` says the inputs already went through normalizeUrl (a caller that had to check them
+ * first): they are used as they are. Normalizing again would apply normalizeUrl's input length
+ * limit to the percent-encoded form, which can be longer than the input it was made from.
  */
-export async function addLinks(env: Env, userId: string, inputs: string[], source?: BatchSource): Promise<AddResult[]> {
+export async function addLinks(
+  env: Env,
+  userId: string,
+  inputs: string[],
+  { source, normalized }: { source?: BatchSource; normalized?: boolean } = {},
+): Promise<AddResult[]> {
   const now = new Date().toISOString();
   type Parsed = { input: string; url: string } | { input: string; error: string };
   const parsed = inputs.map((input): Parsed => {
+    if (normalized) return { input, url: input };
     try {
       return { input, url: normalizeUrl(input) };
     } catch (error) {

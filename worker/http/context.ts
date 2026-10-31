@@ -48,8 +48,12 @@ export function apiKeyOf(c: AppContext) {
   return principal;
 }
 
-/** Why something failed, short enough for a log line: error name and message, never key material. */
-export function failureDetail(error: unknown) {
-  const text = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-  return text.replace(/lk_[A-Za-z]+/g, "lk_…").slice(0, 200);
+/**
+ * What kind of failure, for a log line: the error name plus a D1 code (`D1_ERROR`) if its message
+ * starts with one. Never the message, which can quote stored data or key material (see onError).
+ */
+export function errorType(error: unknown) {
+  if (!(error instanceof Error)) return typeof error;
+  const code = /^D1_[A-Z_]+/.exec(error.message)?.[0];
+  return code ? `${error.name} ${code}` : error.name;
 }

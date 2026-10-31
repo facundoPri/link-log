@@ -21,7 +21,7 @@ export const linkRoutes = new Hono<AppEnv>()
       throw badRequest("Import up to 100 URLs per batch.");
     // Every URL must be valid; quotas are admitted before anything is saved (see addLinks).
     const urls = [...new Set((body.urls as string[]).map(urlInput))];
-    const results = await addLinks(env, userId, urls);
+    const results = await addLinks(env, userId, urls, { normalized: true });
     const imported = results.filter((r) => "created" in r && r.created).length;
     return json({ ...(await library(env, userId)), imported, duplicates: urls.length - imported });
   })

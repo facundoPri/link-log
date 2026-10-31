@@ -40,3 +40,12 @@ test("a failed mixed import also rolls back the recency change", async () => {
   expect(response.status).toBe(500);
   expect(db.sqlite.query("SELECT id,last_saved_at FROM links").all()).toEqual([{ id: "old", last_saved_at: "2026-02-01" }]);
 });
+
+test("importing a long non-ASCII URL saves it, though its percent-encoded form passes 4096 characters", async () => {
+  const db = await TestD1.migrated();
+  const { env } = makeEnv(db);
+  const user = await testSession(env, "long@example.test");
+  const response = await client(env)("/api/import", { cookie: user.cookie, body: { urls: [`http://example.com/${"日".repeat(500)}`] } });
+  expect(response.status).toBe(200);
+  expect(((await response.json()) as any).imported).toBe(1);
+});
