@@ -39,6 +39,13 @@ export async function consume(db: D1Database, key: string, limit: Limit, cost = 
   return row !== null;
 }
 
+/** What a key has taken from a quota in the current window, and when that window ends. Read-only. */
+export async function windowUsage(db: D1Database, key: string, limit: Limit, now = Date.now()) {
+  const windowStart = Math.floor(now / 1000 / limit.window) * limit.window;
+  const row = await db.prepare("SELECT count FROM app_rate_limits WHERE key=? AND window_start=?").bind(key, windowStart).first<{ count: number }>();
+  return { used: row?.count ?? 0, max: limit.max, windowSeconds: limit.window, resetsAt: new Date((windowStart + limit.window) * 1000).toISOString() };
+}
+
 /** Quota taken up front for an operation; `release` gives back what it did not use. */
 export type Charge = {
   /** Gives back `cost` from every quota, or per key with a map (default: everything taken). */

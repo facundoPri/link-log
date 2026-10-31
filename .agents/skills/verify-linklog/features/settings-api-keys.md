@@ -11,6 +11,7 @@ A signed-in user opens Settings from the user menu at the bottom of the sidebar.
 - `key-revoke` `Revoke` asks for confirmation; the row then shows `Revoked` and loses its `Revoke` button.
 - `key-regenerate` `Regenerate` on an active row asks for confirmation, then shows a new secret once (same name) and the old row reads `Revoked`. Revoked rows have no `Regenerate`.
 - `key-cap` at 10 active keys `Create key` shows the alert `You have 10 active API keys. Revoke one to create another.`; revoking one allows creating again. Regenerating at 10 still works (it replaces a key).
+- `usage` the `Usage` region (between Account and API keys) lists `Links` and `Jobs` as `<used> / <max> this hour` with `resets in N minutes`, then `New Links in <Month Year>` (UTC calendar month) with a `Web` row and one `API key: <name>` row per key that added Links, Revoked API keys included. Duplicates never count. Each API key row also reads `N links this month` (`0 links` for a key that added none). API: `GET /api/usage/summary` -> `{ quotas: { links, jobs }, month: { start, links, web, apiKeys: [{ id, name, links }] } }`. Reference: `journeys/usage-settings.ts` (seeds with real Bearer secrets and uses deltas, so it can be rerun on one instance).
 - `key-isolation` Demo B never sees Demo A's keys; revoking or regenerating a foreign key answers 404.
 
 ## How to get to it (user POV)
