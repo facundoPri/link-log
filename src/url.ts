@@ -36,15 +36,9 @@ export function pastedUrl(text: string): string | null {
  * Every valid http(s) URL in free text, normalized, in order, without repeats. Text around a URL,
  * trailing punctuation and an unbalanced closing parenthesis (markdown, prose) are not part of it;
  * other schemes are ignored. A lone scheme-less token ("example.com") counts as a bare URL.
- */
-export function extractUrls(text: string): string[] {
-  return scanUrls(text).urls;
-}
-
-/**
- * `extractUrls` plus why a candidate was refused: `reason` is the first URL rule broken by an
- * http(s) URL in the text. A text with no such candidate (prose, other schemes, a bare token that
- * is not a URL) has no reason.
+ * `reason` is the first URL rule broken by an http(s) URL in the text. A text with no such
+ * candidate (prose, other schemes, a bare token that is not a URL) has no reason.
+ * Cost is linear in the text length.
  */
 export function scanUrls(text: string): { urls: string[]; reason?: string } {
   const found = new Set<string>();
@@ -58,14 +52,22 @@ export function scanUrls(text: string): { urls: string[]; reason?: string } {
   };
   const matches = text.match(/(?<![a-z\d+.-])https?:\/\/[^\s<>"[\]`]+/gi) ?? [];
   for (const match of matches) {
-    let url = match;
-    for (;;) {
-      const last = url.slice(-1);
-      const unbalanced = last === ")" && url.split(")").length > url.split("(").length;
-      if (!unbalanced && !/[.,;:!?'*_]/.test(last)) break;
-      url = url.slice(0, -1);
+    // Count parentheses once and update the counts as characters are trimmed.
+    let end = match.length;
+    let open = 0;
+    let close = 0;
+    for (const ch of match) {
+      if (ch === "(") open++;
+      else if (ch === ")") close++;
     }
-    add(url);
+    while (end > 0) {
+      const last = match[end - 1]!;
+      const unbalanced = last === ")" && close > open;
+      if (!unbalanced && !/[.,;:!?'*_]/.test(last)) break;
+      if (last === ")") close--;
+      end--;
+    }
+    add(match.slice(0, end));
   }
   if (!matches.length && /^[^\s<>"[\]`]+$/.test(text.trim())) add(text, false);
   return { urls: [...found], ...(reason && { reason }) };

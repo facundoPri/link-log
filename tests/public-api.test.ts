@@ -99,6 +99,22 @@ describe("Duplicates and invalid inputs", () => {
       expect((await submit(keyA.key, body)).status).toBe(400);
     await nothingSaved();
   });
+
+  test("a string longer than 8192 characters is 400 naming the limit and saves nothing, even next to valid ones", async () => {
+    const res = await submit(keyA.key, { urls: ["https://api.example/a", `http://api.example/x${")".repeat(1_000_000)}`] });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe("Each string can be at most 8192 characters.");
+    await nothingSaved();
+  });
+
+  test("a string at the limit is scanned quickly, whatever it ends with", async () => {
+    const tail = ")".repeat(8192 - "http://api.example/x".length);
+    const started = performance.now();
+    const res = await submit(keyA.key, { urls: [`http://api.example/x${tail}`] });
+    expect(res.status).toBe(202);
+    expect(((await res.json()) as Submitted).results.map((r) => r.url)).toEqual(["http://api.example/x"]);
+    expect(performance.now() - started).toBeLessThan(2000);
+  });
 });
 
 describe("URLs inside text", () => {
@@ -196,6 +212,34 @@ describe("authentication", () => {
     const rejections = logs.filter((l) => l.includes("api_key_rejected")).map((l) => JSON.parse(l).reason);
     expect(rejections).toEqual(["missing", "missing", "missing", "missing", "invalid", "invalid"]);
     expect(logs.join("\n")).not.toContain(keyA.key.slice(9));
+    // api_key_rejected is the one record of a rejection; the plugin's own error line is dropped.
+    expect(logs.filter((l) => l.includes("[auth]"))).toEqual([]);
+    await nothingSaved();
+  });
+
+  test("a failed key lookup is 503 (retry), not 401; the key works again once the database does", async () => {
+    await quiet(async () => {
+      const prepare = db.prepare.bind(db);
+      db.prepare = ((sql: string) => {
+        if (/apikey/i.test(sql)) throw new Error("D1_ERROR: Network connection lost."); // setup: a D1 outage on the key table
+        return prepare(sql);
+      }) as typeof db.prepare;
+      const down = await submit(keyA.key, body);
+      expect(down.status).toBe(503);
+      expect(((await down.json()) as { error: string }).error).toBe("Could not check the API key. Try again.");
+      db.prepare = prepare;
+      expect((await submit(keyA.key, body)).status).toBe(202);
+    });
+    expect(logs.filter((l) => l.includes("api_key_lookup_failed"))).toHaveLength(1);
+    expect(logs.join("\n")).not.toContain(keyA.key.slice(9));
+  });
+
+  test("a key whose use cannot be recorded is 503, not 401; an unknown key stays 401", async () => {
+    db.sqlite.exec("CREATE TRIGGER no_use BEFORE UPDATE ON apikey BEGIN SELECT RAISE(ABORT, 'update failed'); END");
+    await quiet(async () => {
+      expect((await submit(keyA.key, body)).status).toBe(503);
+      expect((await submit(`lk_${"x".repeat(64)}`, body)).status).toBe(401);
+    });
     await nothingSaved();
   });
 

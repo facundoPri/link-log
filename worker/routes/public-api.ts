@@ -8,6 +8,8 @@ const MAX_URLS = 100;
 // Only an abuse bound on the strings array (the body size is capped separately): the real limit is
 // MAX_URLS after extraction, so 50 strings holding 100 URLs must pass.
 const MAX_STRINGS = 1000;
+// A URL longer than 4096 characters is refused anyway; this bounds the text scanned per string.
+const MAX_STRING_LENGTH = 8192;
 const NO_LINK = "No valid http or https link found.";
 
 /**
@@ -21,6 +23,7 @@ export const publicApiRoutes = new Hono<AppEnv>().post("/links", async (c) => {
   const body = c.get("body");
   if (!Array.isArray(body.urls) || !body.urls.length || body.urls.length > MAX_STRINGS || body.urls.some((u) => typeof u !== "string"))
     throw badRequest(`Send \`urls\`: 1 to ${MAX_STRINGS} strings.`);
+  if ((body.urls as string[]).some((u) => u.length > MAX_STRING_LENGTH)) throw badRequest(`Each string can be at most ${MAX_STRING_LENGTH} characters.`);
   const accepted = new Map<string, string>();
   const rejected: { input: string; error: string }[] = [];
   for (const input of body.urls as string[]) {

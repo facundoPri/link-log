@@ -30,7 +30,7 @@ The endpoint sends no CORS headers, so browsers on other sites cannot call it. D
 
 | Field | Type | Rules |
 | --- | --- | --- |
-| `urls` | array of strings | 1 to 1000 strings. Each string can be a bare URL or any text. |
+| `urls` | array of strings | 1 to 1000 strings, each at most 8192 characters. Each string can be a bare URL or any text. |
 
 The whole body can be at most 2.1 MB. The `Content-Type` header is not checked, but send `application/json`.
 
@@ -77,6 +77,7 @@ Every error body is JSON with an `error` message. Some also carry `code` or `rej
 | Status | When | Body |
 | --- | --- | --- |
 | 400 | `urls` is missing, not an array, empty, longer than 1000, or holds a non-string. | `{ "error": "Send `urls`: 1 to 1000 strings." }` |
+| 400 | A string in `urls` is longer than 8192 characters. Nothing is saved. | `{ "error": "Each string can be at most 8192 characters." }` |
 | 400 | The body is not a JSON object. | `{ "error": "Invalid request." }` |
 | 400 | No valid URL in the whole request. | `{ "error": "No valid http or https link found.", "rejected": [...] }` |
 | 400 | More than 100 distinct URLs after extraction. Nothing is saved. | `{ "error": "Send at most 100 links per request." }` |
@@ -106,6 +107,7 @@ Windows are fixed, not sliding: `Retry-After` is the time to the end of the curr
 | --- | --- |
 | URLs per request, after extraction | 100 |
 | Strings in `urls` | 1000 |
+| Length of one string | 8192 characters |
 | Request body | 2.1 MB |
 | Requests per API key | 60 per minute |
 | New Links per account | 500 per hour (web and API together) |

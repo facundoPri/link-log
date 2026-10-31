@@ -35,19 +35,22 @@ export const apiKeyRoutes = new Hono<AppEnv>()
   .post("/api-keys", async (c) => {
     const name = text(c.get("body").name, API_KEY_NAME_MAX);
     if (!name) throw badRequest("Name the API key.");
-    if (await atCap(c, API_KEY_ACTIVE_MAX)) throw roomError();
+    if ((await activeCount(c)) >= API_KEY_ACTIVE_MAX) throw roomError();
     const created = await c.get("auth").api.createApiKey({ body: { name, userId: ownerOf(c) } });
     // Requests that passed the check together each created a key: whoever then sees more than the
     // cap takes its own key back, so the key that lands last never stays.
-    if (await atCap(c, API_KEY_ACTIVE_MAX + 1)) {
-      await revoke(c, created.id).catch(() => undefined);
+    if ((await activeCount(c)) > API_KEY_ACTIVE_MAX) {
+      await takeBack(c, created.id);
       throw roomError();
     }
     // The full secret is returned here once; the database only keeps its hash.
     return json({ apiKey: view(created), secret: created.key }, 201);
   })
   .post("/api-keys/:id/regenerate", async (c) => {
-    const old = (await ownKeys(c)).find((k) => k.id === c.req.param("id"));
+    const oldId = c.req.param("id");
+    const old = await c.env.DB.prepare("SELECT name,enabled FROM apikey WHERE id=? AND referenceId=?")
+      .bind(oldId, ownerOf(c))
+      .first<{ name: string | null; enabled: number }>();
     if (!old) throw notFound("API key");
     if (!old.enabled) throw revokedError();
     // The new key replaces an active one, so the cap does not apply: a user at 10 can regenerate.
@@ -56,10 +59,10 @@ export const apiKeyRoutes = new Hono<AppEnv>()
     try {
       // Only one request can turn the old key off. A concurrent regenerate of it loses and takes
       // its own new key back, so a key never gets two replacements.
-      if (!(await claimRevoke(c, old.id))) throw revokedError();
+      if (!(await claimRevoke(c, oldId))) throw revokedError();
     } catch (error) {
       // Never leave both keys active: the secret would be lost with this error.
-      await revoke(c, created.id).catch(() => undefined);
+      await takeBack(c, created.id);
       throw error;
     }
     return json({ apiKey: view(created), secret: created.key }, 201);
@@ -87,15 +90,37 @@ async function claimRevoke(c: AppContext, keyId: string) {
   return meta.changes > 0;
 }
 
-// listApiKeys resolves the owner from the request's own session cookie. Newest first: sorted by
-// creation time ascending and reversed. Keys created in the same millisecond have no defined
-// order beyond what the database returns (insertion order in practice), so nothing relies on it.
+/**
+ * Compensating revoke for a key whose secret nobody saw: the guarded update used by claimRevoke,
+ * once more if it fails. If it still fails an active key nobody can use stays behind, so it is
+ * logged by id (never the secret) for the owner to revoke.
+ */
+async function takeBack(c: AppContext, keyId: string) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      await claimRevoke(c, keyId);
+      return;
+    } catch {}
+  }
+  console.error(JSON.stringify({ event: "api_key_rollback_failed", keyId }));
+}
+
+// Only the Settings list loads every key. listApiKeys resolves the owner from the request's own
+// session cookie. Newest first: sorted by creation time ascending and reversed. Keys created in the
+// same millisecond have no defined order beyond what the database returns (insertion order in
+// practice), so nothing relies on it.
 async function ownKeys(c: AppContext) {
   const { apiKeys } = await c.get("auth").api.listApiKeys({ headers: c.req.raw.headers, query: { sortBy: "createdAt", sortDirection: "asc" } });
   return apiKeys.reverse();
 }
 
-/** Whether the owner holds `limit` or more active keys. */
-async function atCap(c: AppContext, limit: number) {
-  return (await ownKeys(c)).filter((k) => k.enabled).length >= limit;
+/**
+ * How many active keys the owner holds, in one query. Raw SQL on the plugin's table
+ * (migrations/0026_api_keys.sql): "referenceId" is the owning user and "enabled" is 1 for an active
+ * key, 0 once revoked. claimRevoke and the regenerate lookup rely on the same columns; if the
+ * plugin changes them, those change together.
+ */
+async function activeCount(c: AppContext) {
+  const row = await c.env.DB.prepare('SELECT count(*) AS n FROM apikey WHERE "referenceId"=? AND enabled=1').bind(ownerOf(c)).first<{ n: number }>();
+  return row?.n ?? 0;
 }

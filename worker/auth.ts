@@ -62,7 +62,12 @@ export function authOptions(
     logger: {
       level: "warn",
       // Better Auth may pass request details as extra arguments; keep only its message.
-      log: (level, message) => console[level === "debug" ? "log" : level](`[auth] ${message}`),
+      // The API key plugin logs every invalid key as an error; requireApiKey records those
+      // (api_key_rejected, api_key_lookup_failed), so that line would only duplicate it.
+      log: (level, message) => {
+        if (message.startsWith("Failed to validate API key")) return;
+        console[level === "debug" ? "log" : level](`[auth] ${message}`);
+      },
     },
     emailAndPassword: {
       enabled: true,
