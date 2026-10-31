@@ -51,7 +51,11 @@ export function createApp() {
   app.onError((error, c) => {
     if (error instanceof NothingToRun) return json({ error: error.message, skipped: error.skipped }, 400);
     if (error instanceof HttpError) return json({ error: error.message, ...(error.code ? { code: error.code } : {}) }, error.status);
-    if (error instanceof LimitError) return json({ error: error.message }, 429);
+    if (error instanceof LimitError) {
+      const res = json({ error: error.message, ...(error.code ? { code: error.code } : {}) }, 429);
+      if (error.retryAfter) res.headers.set("Retry-After", String(error.retryAfter));
+      return res;
+    }
     const message = error instanceof Error ? error.message : "";
     if (/D1_|SQLITE|constraint|owner|cross-owner/i.test(message)) {
       console.error("Database operation failed");
