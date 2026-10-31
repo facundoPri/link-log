@@ -42,5 +42,6 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 - [Accounts and privacy](./accounts.md) covers sign-in, sign-out, sign-up with emailed verification, magic link, password reset, and library isolation between accounts.
 - [Bulk open](./bulk-open.md) covers the bulk `Open` action (toolbar, palette, drawer and `O` key): gating on the extension's connection and capability, opening background tabs, partial failure, and retry safety. Only its missing-extension state is proven live here; the rest uses a scripted stand-in for the extension bridge (see the file's own caveats).
 - [Settings and API keys](./settings-api-keys.md) covers opening Settings from the user menu, the Account section, and creating, listing and revoking API keys. Proven by `journeys/api-keys-settings.ts`.
+- Public API submit (`POST /api/v1/links` with a Bearer API key): 202 results, Duplicates, 401s, a key refused on private routes, the Activity label `Extract context · API · <key name>` and cancelling the batch. Proven by `journeys/api-submit-activity.ts` (launch with `--var BROWSER_CONCURRENCY=1`).
 
 Not mapped here: the Browser view and the rest of the Chrome extension (`bun run test:browser`), Usage, the inspector's Links and Analysis tabs, transcript upload, and YouTube and social adapters, which have no fixtures.
