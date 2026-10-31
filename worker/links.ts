@@ -1,5 +1,5 @@
 import { domainOf, normalizeUrl } from "../src/url";
-import { LIMITS, limitError, tryCharge } from "./limits";
+import { LIMITS, chargeOrThrow } from "./limits";
 
 /** Where a batch of added links came from, kept in the batch's config. Web calls pass none. */
 export type BatchSource = { source: "api"; apiKeyId: string; apiKeyName: string };
@@ -62,12 +62,14 @@ export async function addLinks(env: Env, userId: string, inputs: string[], sourc
   const orphans = [...new Set([...known.values()].filter((row) => row?.orphan).map((row) => row!.id))].map((id) => ({ id, jobId: crypto.randomUUID() }));
 
   const linksKey = `links:${userId}`, jobsKey = `jobs:${userId}`;
-  const admitted = await tryCharge(env.DB, [
-    { key: linksKey, limit: LIMITS.linksPerUser, cost: fresh.length, code: "links" },
-    { key: jobsKey, limit: LIMITS.jobsPerUser, cost: fresh.length + orphans.length, code: "jobs" },
-  ]);
-  if ("exhausted" in admitted) throw limitError(admitted.exhausted, "Link or processing limit reached. Try again later.");
-  const charged = admitted.charge;
+  const charged = await chargeOrThrow(
+    env.DB,
+    [
+      { key: linksKey, limit: LIMITS.linksPerUser, cost: fresh.length, code: "links" },
+      { key: jobsKey, limit: LIMITS.jobsPerUser, cost: fresh.length + orphans.length, code: "jobs" },
+    ],
+    "Link or processing limit reached. Try again later.",
+  );
 
   const createdLinks = new Set<string>();
   const queuedJobs: string[] = [];

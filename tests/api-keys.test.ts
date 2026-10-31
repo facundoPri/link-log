@@ -27,6 +27,10 @@ const as = (who: { cookie: string }) => ({
   revoke: (id: string) => call(`/api/api-keys/${id}/revoke`, { cookie: who.cookie, body: {} }),
   regenerate: (id: string) => call(`/api/api-keys/${id}/regenerate`, { cookie: who.cookie, body: {} }),
 });
+// Setup only: keys made back to back can share a millisecond, so tests that read the list order give
+// each key its own creation time first.
+const createdMinutesAgo = (id: string, minutes: number) =>
+  db.sqlite.query("UPDATE apikey SET createdAt=? WHERE id=?").run(new Date(Date.now() - minutes * 60_000).toISOString(), id);
 const fillKeys = async (who: { userId: string }, count: number) => {
   const keys = [];
   for (let i = 1; i <= count; i++) keys.push(await testApiKey(env, who.userId, `Key ${i}`));
@@ -58,8 +62,10 @@ describe("creating and listing", () => {
   });
 
   test("newest keys are listed first, with last use once the key has been verified", async () => {
-    await as(A).create("Old");
-    const { key } = await testApiKey(env, A.userId, "Server");
+    const old = (await (await as(A).create("Old")).json()) as { apiKey: Key };
+    const { id, key } = await testApiKey(env, A.userId, "Server");
+    createdMinutesAgo(old.apiKey.id, 2);
+    createdMinutesAgo(id, 1);
     expect(await verified(key)).toBe(true);
     const keys = (await as(A).list()).apiKeys;
     expect(keys.map((k) => k.name)).toEqual(["Server", "Old"]);
@@ -149,9 +155,37 @@ describe("the cap of 10 active keys", () => {
   });
 });
 
+describe("concurrent requests", () => {
+  const activeKeys = async (who: { cookie: string }) => (await as(who).list()).apiKeys.filter((k) => k.status === "active");
+
+  test("creating keys at the same time never leaves more than 10 active, and every answered key works", async () => {
+    await fillKeys(A, 8);
+    const responses = await Promise.all(["One", "Two", "Three", "Four"].map((name) => as(A).create(name)));
+    const created = responses.filter((r) => r.status === 201);
+    for (const refused of responses.filter((r) => r.status !== 201)) {
+      expect(refused.status).toBe(409);
+      expect(((await refused.json()) as { code: string }).code).toBe("api_key_limit");
+    }
+    expect(await activeKeys(A)).toHaveLength(8 + created.length);
+    expect(8 + created.length).toBeLessThanOrEqual(10);
+    for (const res of created) expect(await verified(((await res.json()) as { secret: string }).secret)).toBe(true);
+  });
+
+  test("regenerating one key twice at the same time creates one new key; the other request is refused", async () => {
+    const old = await testApiKey(env, A.userId, "Shortcuts");
+    const responses = await Promise.all([as(A).regenerate(old.id), as(A).regenerate(old.id)]);
+    expect(responses.map((r) => r.status).sort()).toEqual([201, 409]);
+    const winner = (await responses.find((r) => r.status === 201)!.json()) as { apiKey: Key; secret: string };
+    expect((await activeKeys(A)).map((k) => k.id)).toEqual([winner.apiKey.id]);
+    expect(await verified(winner.secret)).toBe(true);
+    expect(await verified(old.key)).toBe(false);
+  });
+});
+
 describe("regenerating", () => {
   test("a new key with the same name replaces the old one, whose secret stops authenticating", async () => {
     const old = await testApiKey(env, A.userId, "Shortcuts");
+    createdMinutesAgo(old.id, 1);
     const res = await as(A).regenerate(old.id);
     expect(res.status).toBe(201);
     const { apiKey, secret } = (await res.json()) as { apiKey: Key; secret: string };

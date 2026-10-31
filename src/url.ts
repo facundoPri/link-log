@@ -38,11 +38,23 @@ export function pastedUrl(text: string): string | null {
  * other schemes are ignored. A lone scheme-less token ("example.com") counts as a bare URL.
  */
 export function extractUrls(text: string): string[] {
+  return scanUrls(text).urls;
+}
+
+/**
+ * `extractUrls` plus why a candidate was refused: `reason` is the first URL rule broken by an
+ * http(s) URL in the text. A text with no such candidate (prose, other schemes, a bare token that
+ * is not a URL) has no reason.
+ */
+export function scanUrls(text: string): { urls: string[]; reason?: string } {
   const found = new Set<string>();
-  const add = (candidate: string) => {
+  let reason: string | undefined;
+  const add = (candidate: string, explain = true) => {
     try {
       found.add(normalizeUrl(candidate));
-    } catch {}
+    } catch (error) {
+      if (explain) reason ??= error instanceof Error && error.message ? error.message : "Invalid link.";
+    }
   };
   const matches = text.match(/(?<![a-z\d+.-])https?:\/\/[^\s<>"[\]`]+/gi) ?? [];
   for (const match of matches) {
@@ -55,8 +67,8 @@ export function extractUrls(text: string): string[] {
     }
     add(url);
   }
-  if (!matches.length && /^[^\s<>"[\]`]+$/.test(text.trim())) add(text);
-  return [...found];
+  if (!matches.length && /^[^\s<>"[\]`]+$/.test(text.trim())) add(text, false);
+  return { urls: [...found], ...(reason && { reason }) };
 }
 
 export function pastedUrls(text: string): string[] {

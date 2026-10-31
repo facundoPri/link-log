@@ -2,9 +2,9 @@ import { isAPIError } from "better-auth/api";
 import { createMiddleware } from "hono/factory";
 import { createAuth } from "../auth";
 import { ConfigError, hostAllowed, readConfig } from "../config";
-import { LIMITS, limitError, tryCharge } from "../limits";
+import { LIMITS, chargeOrThrow } from "../limits";
 import { json } from "../store";
-import { HttpError, type AppContext, type AppEnv } from "./context";
+import { HttpError, apiKeyOf, type AppContext, type AppEnv } from "./context";
 
 let configErrorLogged = false;
 
@@ -109,8 +109,7 @@ async function readJsonObject(c: AppContext): Promise<Record<string, unknown>> {
 /** Per-user write quota, then a bounded JSON object body. */
 export const writeQuotaAndBody = createMiddleware<AppEnv>(async (c, next) => {
   if (c.req.method !== "GET" && c.req.method !== "HEAD") {
-    const admitted = await tryCharge(c.env.DB, [{ key: `writes:${c.get("principal").userId}`, limit: LIMITS.writesPerUser, cost: 1, code: "writes" }]);
-    if ("exhausted" in admitted) throw limitError(admitted.exhausted);
+    await chargeOrThrow(c.env.DB, [{ key: `writes:${c.get("principal").userId}`, limit: LIMITS.writesPerUser, cost: 1, code: "writes" }]);
   }
   c.set("body", await readJsonObject(c));
   await next();
@@ -144,10 +143,7 @@ export const requireApiKey = createMiddleware<AppEnv>(async (c, next) => {
 
 /** Per-key request limit (every request counts), then a bounded JSON object body. */
 export const apiKeyQuotaAndBody = createMiddleware<AppEnv>(async (c, next) => {
-  const principal = c.get("principal");
-  if (principal.kind !== "apiKey") return json({ error: "A valid API key is required." }, 401);
-  const admitted = await tryCharge(c.env.DB, [{ key: `apikey:${principal.keyId}`, limit: LIMITS.requestsPerApiKey, cost: 1, code: "api_key" }]);
-  if ("exhausted" in admitted) throw limitError(admitted.exhausted, "API key request limit reached. Try again later.");
+  await chargeOrThrow(c.env.DB, [{ key: `apikey:${apiKeyOf(c).keyId}`, limit: LIMITS.requestsPerApiKey, cost: 1, code: "api_key" }], "API key request limit reached. Try again later.");
   c.set("body", await readJsonObject(c));
   await next();
 });

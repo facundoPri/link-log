@@ -6,7 +6,7 @@ export type Limit = { window: number; max: number };
 export type QuotaCode = "links" | "jobs" | "writes" | "api_key";
 
 /** Seconds until the fixed window containing `now` resets (at least 1, for a Retry-After header). */
-export const retryAfter = (limit: Limit, now = Date.now()) =>
+const retryAfter = (limit: Limit, now = Date.now()) =>
   Math.max(1, Math.ceil((Math.floor(now / 1000 / limit.window) + 1) * limit.window - now / 1000));
 
 export const LIMITS = {
@@ -56,7 +56,7 @@ export type Charge = {
  * Takes every quota or none (earlier ones are given back if a later one is exhausted). The
  * refund targets the same fixed window, so a rollover never inflates the next window.
  */
-export async function tryCharge(db: D1Database, items: { key: string; limit: Limit; cost: number; code?: QuotaCode }[], now = Date.now()): Promise<{ charge: Charge } | { exhausted: { code?: QuotaCode; retryAfter: number } }> {
+async function tryCharge(db: D1Database, items: { key: string; limit: Limit; cost: number; code?: QuotaCode }[], now = Date.now()): Promise<{ charge: Charge } | { exhausted: { code?: QuotaCode; retryAfter: number } }> {
   const taken: typeof items = [];
   const release = async (cost?: number | Record<string, number>) => {
     for (const item of taken) {
@@ -81,6 +81,13 @@ export async function tryCharge(db: D1Database, items: { key: string; limit: Lim
   return { charge: { release } };
 }
 
+/** Like `tryCharge`, but a refusal throws the 429 (`LimitError`) naming the exhausted quota. */
+export async function chargeOrThrow(db: D1Database, items: { key: string; limit: Limit; cost: number; code?: QuotaCode }[], message?: string, now = Date.now()) {
+  const result = await tryCharge(db, items, now);
+  if ("exhausted" in result) throw new LimitError(message, result.exhausted.code, result.exhausted.retryAfter);
+  return result.charge;
+}
+
 /** Like `tryCharge`, for callers that only need to know whether the quotas were taken. */
 export async function charge(db: D1Database, items: { key: string; limit: Limit; cost: number }[], now = Date.now()) {
   const result = await tryCharge(db, items, now);
@@ -102,7 +109,3 @@ export class LimitError extends Error {
     super(message);
   }
 }
-
-/** The 429 for a refused `tryCharge`. */
-export const limitError = (exhausted: { code?: QuotaCode; retryAfter: number }, message?: string) =>
-  new LimitError(message, exhausted.code, exhausted.retryAfter);

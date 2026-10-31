@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { normalizeUrl, domainOf, pastedUrl, extractUrls } from "../src/url";
+import { normalizeUrl, domainOf, pastedUrl, extractUrls, scanUrls } from "../src/url";
 import { publicAddress } from "../worker/metadata";
 describe("link capture", () => {
   test("normalizes scheme and trackers while preserving meaningful parameters and fragments", () => {
@@ -92,5 +92,18 @@ describe("extracting URLs from text", () => {
     expect(extractUrls("https://user:pw@example.com https://localhost/x")).toEqual([]);
     expect(extractUrls("no links here, just example.com in prose")).toEqual([]);
     expect(extractUrls("")).toEqual([]);
+  });
+});
+
+describe("why a text yielded no URL", () => {
+  test("a URL-looking candidate that breaks a URL rule reports that rule's reason", () => {
+    expect(scanUrls("https://user:pw@example.com")).toEqual({ urls: [], reason: "Use a public http or https link." });
+    expect(scanUrls("visit https://localhost/x today")).toEqual({ urls: [], reason: "Use a public http or https link." });
+    expect(scanUrls(`https://example.com/${"a".repeat(4100)}`)).toEqual({ urls: [], reason: "Paste a valid URL." });
+  });
+  test("with no candidate there is no reason, and valid URLs next to a refused one are still found", () => {
+    for (const text of ["", "no links here", "ftp://example.com/x mailto:a@example.com", "localhost"]) expect(scanUrls(text)).toEqual({ urls: [] });
+    expect(scanUrls("https://localhost/x https://ok.example")).toEqual({ urls: ["https://ok.example/"], reason: "Use a public http or https link." });
+    expect(scanUrls("https://ok.example")).toEqual({ urls: ["https://ok.example/"] });
   });
 });
