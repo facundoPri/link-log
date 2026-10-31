@@ -5,7 +5,7 @@ import { API_KEY_SHAPE, createAuth } from "../auth";
 import { ConfigError, hostAllowed, readConfig } from "../config";
 import { LIMITS, chargeOrThrow } from "../limits";
 import { json } from "../store";
-import { HttpError, apiKeyOf, failureDetail, type AppContext, type AppEnv } from "./context";
+import { HttpError, apiKeyOf, errorType, type AppContext, type AppEnv } from "./context";
 
 let configErrorLogged = false;
 
@@ -139,7 +139,7 @@ export const requireApiKey = createMiddleware<AppEnv>(async (c, next) => {
       }
     } catch (error) {
       if (!isAPIError(error)) {
-        console.error(JSON.stringify({ event: "api_key_lookup_failed", detail: failureDetail(error) }));
+        console.error(JSON.stringify({ event: "api_key_lookup_failed", errorType: errorType(error) }));
         return json({ error: "Could not check the API key. Try again." }, 503);
       }
     }

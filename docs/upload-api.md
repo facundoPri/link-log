@@ -43,7 +43,7 @@ Linklog scans every string for `http` and `https` URLs, then saves each URL thro
 - Other schemes (`ftp:`, `mailto:`, `javascript:`) are ignored. URLs with credentials or a host without a dot are not valid and are dropped.
 - If a string has no `http` or `https` URL and is a single token with no whitespace, Linklog treats it as a bare URL and adds `https://`, as the web app does: `example.com` and `example.com/page` are saved as `https://example.com/` and `https://example.com/page`. The host needs a dot, so `localhost` is not a link.
 - One string can hold several URLs. Each becomes its own result, and all of them report that string as `input`.
-- A URL that appears more than once in the request is saved once. The first string that contains it is its `input`. Every occurrence still counts toward the 1000 URLs found per request.
+- A URL that appears more than once in the request is saved once. The first string that contains it is its `input`. Every occurrence still counts toward the 1000 URL candidates per request (see Limits).
 - A string with no valid URL is reported in `rejected` and is never stored. If it held an `http` or `https` URL that broke a rule above, the `error` is that rule's message (for example `Use a public http or https link.`). Otherwise it is `No valid http or https link found.`
 
 ### Duplicates
@@ -81,7 +81,7 @@ Every error body is JSON with an `error` message. Some also carry `code` or `rej
 | 400 | The body is not a JSON object. | `{ "error": "Invalid request." }` |
 | 400 | No valid URL in the whole request. | `{ "error": "No valid http or https link found.", "rejected": [...] }` |
 | 400 | More than 100 distinct URLs after extraction. Nothing is saved. | `{ "error": "Send at most 100 links per request." }` |
-| 400 | More than 1000 URLs found in the request, counting every occurrence. Nothing is saved. | `{ "error": "Send at most 1000 links per request, repeats included." }` |
+| 400 | More than 1000 URL candidates in the request, counting every occurrence and every invalid one. Nothing is saved. | `{ "error": "Send at most 1000 URL candidates per request, repeats and invalid ones included." }` |
 | 401 | The key is missing, malformed, unknown or revoked. | `{ "error": "A valid API key is required." }` |
 | 404 | With a valid key, any path under `/api/v1` other than `/api/v1/links`, or a method other than `POST`. Without a valid key, those requests are `401`. | `{ "error": "Not found." }` |
 | 413 | The body is larger than 2.1 MB. | `{ "error": "Request too large." }` |
@@ -107,7 +107,7 @@ Windows are fixed, not sliding: `Retry-After` is the time to the end of the curr
 | Limit | Value |
 | --- | --- |
 | URLs per request, after extraction | 100 |
-| URLs found per request, repeats included | 1000 |
+| URL candidates per request (text starting with `http://` or `https://`, or a bare token), repeats and invalid ones included | 1000 |
 | Strings in `urls` | 1000 |
 | Length of one string | 8192 characters |
 | Request body | 2.1 MB |

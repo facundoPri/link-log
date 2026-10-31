@@ -165,6 +165,21 @@ describe("URLs inside text", () => {
     expect(((await ok.json()) as Submitted).results).toHaveLength(100);
   });
 
+  test("a long non-ASCII URL is saved as the web app saves it, though its percent-encoded form passes 4096 characters", async () => {
+    const input = `http://api.example/${"日".repeat(500)}`;
+    const web = await call("/api/links", { cookie: B.cookie, body: { url: input } });
+    expect(web.status).toBe(201);
+    const [webLink] = (await libraryOf(B)).links;
+    expect(webLink!.url.length).toBeGreaterThan(4096);
+
+    const res = await submit(keyA.key, { urls: [input] });
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as Submitted;
+    expect(body.rejected).toEqual([]);
+    expect(body.results.map((r) => [r.url, r.status])).toEqual([[webLink!.url, "created"]]);
+    expect((await libraryOf(A)).links.map((l) => l.url)).toEqual([webLink!.url]);
+  });
+
   test("repeats do not count toward the limit", async () => {
     const res = await submit(keyA.key, { urls: Array.from({ length: 150 }, () => "https://api.example/same https://api.example/same") });
     expect(res.status).toBe(202);
@@ -194,21 +209,23 @@ describe("work per request", () => {
     expect(performance.now() - started).toBeLessThan(2000);
   });
 
-  test("1000 URLs found are fine, repeats included", async () => {
+  test("1000 URL candidates are fine, repeats included", async () => {
     const res = await submit(keyA.key, { urls: Array.from({ length: 10 }, () => Array.from({ length: 100 }, () => "https://api.example/same").join(" ")) });
     expect(res.status).toBe(202);
     expect(((await res.json()) as Submitted).results).toHaveLength(1);
   });
 
-  test("more than 1000 URLs found, repeats included, is 400 and saves nothing", async () => {
+  test("more than 1000 URL candidates, repeats and invalid ones included, is 400 and saves nothing", async () => {
     const same = "https://api.example/same";
+    const invalid = "http://nodot"; // an http candidate that breaks a URL rule
     for (const urls of [
       [...Array.from({ length: 500 }, () => `${same} ${same}`), same],
       [...Array.from({ length: 10 }, () => Array.from({ length: 100 }, () => same).join(" ")), same],
+      [...Array.from({ length: 10 }, () => Array.from({ length: 100 }, () => invalid).join(" ")), same],
     ]) {
       const res = await submit(keyA.key, { urls });
       expect(res.status).toBe(400);
-      expect(((await res.json()) as { error: string }).error).toBe("Send at most 1000 links per request, repeats included.");
+      expect(((await res.json()) as { error: string }).error).toBe("Send at most 1000 URL candidates per request, repeats and invalid ones included.");
     }
     await nothingSaved();
   });
@@ -267,7 +284,7 @@ describe("authentication", () => {
     expect(logs.join("\n")).not.toContain(keyA.key.slice(9));
   });
 
-  test("a failed key lookup is logged with its cause but never the key", async () => {
+  test("a failed key lookup is logged by error type, never its message or the key", async () => {
     await quiet(async () => {
       const prepare = db.prepare.bind(db);
       db.prepare = ((sql: string) => {
@@ -278,7 +295,8 @@ describe("authentication", () => {
       db.prepare = prepare;
     });
     const line = logs.find((l) => l.includes("api_key_lookup_failed"))!;
-    expect(JSON.parse(line).detail).toContain("Network connection lost");
+    expect(JSON.parse(line).errorType).toBe("Error D1_ERROR");
+    expect(line).not.toContain("Network connection lost");
     expect(line).not.toContain(keyA.key.slice(9));
   });
 

@@ -4,7 +4,7 @@ import type { ApiKey } from "../../src/types";
 import * as keyTable from "../api-key-table";
 import { API_KEY_NAME_MAX } from "../auth";
 import { json, text } from "../store";
-import { badRequest, failureDetail, HttpError, notFound, ownerOf, type AppContext, type AppEnv } from "../http/context";
+import { badRequest, errorType, HttpError, notFound, ownerOf, type AppContext, type AppEnv } from "../http/context";
 
 type PluginKey = { id: string; name: string | null; start: string | null; createdAt: Date; lastRequest: Date | null; enabled: boolean };
 
@@ -58,17 +58,19 @@ export const apiKeyRoutes = new Hono<AppEnv>()
     const created = await c.get("auth").api.createApiKey({ body: { name: old.name ?? "", userId: ownerOf(c) } });
     // Only one request can turn the old key off. A concurrent regenerate of it loses and takes its
     // own new key back, so a key never gets two replacements.
-    const at = new Date().toISOString();
     let claimed;
     try {
-      claimed = await keyTable.claimRevoke(c.env.DB, oldId, ownerOf(c), at);
-    } catch (error) {
-      // D1 can commit and still fail to answer. If the old key shows the stamp of this claim, it
-      // landed and the new key is the only one left: take nothing back, or the user has none.
-      if (!(await claimLanded(c, oldId, at))) {
-        // Never leave both keys active: the secret would be lost with this error.
-        await takeBack(c, created.id);
-        throw error;
+      claimed = await keyTable.claimRevoke(c.env.DB, oldId, ownerOf(c));
+    } catch {
+      // D1 can commit and still fail to answer, so try again (the claim is idempotent). Either
+      // answer means the old key is off, by this request or another, and the new key is the only one
+      // left. A replacement is never deleted: if the old key stays active it is still listed in
+      // Settings, whereas deleting the new key could leave the user without any working key.
+      await pause();
+      try {
+        await keyTable.claimRevoke(c.env.DB, oldId, ownerOf(c));
+      } catch (error) {
+        console.error(JSON.stringify({ event: "api_key_revoke_unconfirmed", keyId: created.id, oldKeyId: oldId, errorType: errorType(error) }));
       }
       claimed = true;
     }
@@ -93,19 +95,11 @@ async function revoke(c: AppContext, keyId: string) {
   }
 }
 
-/** Whether the old key is off because of the claim stamped `at`; false when that cannot be told. */
-async function claimLanded(c: AppContext, keyId: string, at: string) {
-  try {
-    const key = await keyTable.findOwn(c.env.DB, keyId, ownerOf(c));
-    return !!key && !key.enabled && key.updatedAt === at;
-  } catch {
-    return false;
-  }
-}
+const pause = () => new Promise((resolve) => setTimeout(resolve, 100));
 
 /**
  * Removes a key whose secret nobody saw: once more after a short pause if it fails. If it still
- * fails an active key nobody can use stays behind, so it is logged by id and cause (never the
+ * fails an active key nobody can use stays behind, so it is logged by id and error type (never the
  * secret) for the owner to revoke.
  */
 async function takeBack(c: AppContext, keyId: string) {
@@ -116,10 +110,10 @@ async function takeBack(c: AppContext, keyId: string) {
       return;
     } catch (error) {
       cause = error;
-      if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 100));
+      if (attempt === 0) await pause();
     }
   }
-  console.error(JSON.stringify({ event: "api_key_rollback_failed", keyId, detail: failureDetail(cause) }));
+  console.error(JSON.stringify({ event: "api_key_rollback_failed", keyId, errorType: errorType(cause) }));
 }
 
 // Only the Settings list loads every key. listApiKeys resolves the owner from the request's own

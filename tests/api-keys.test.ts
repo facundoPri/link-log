@@ -194,8 +194,10 @@ describe("concurrent requests", () => {
     expect(stray.length).toBe(responses.length - secrets.length);
     for (const id of stray) expect(active.map((k) => k.id)).toContain(id);
     expect(logs.join("\n")).not.toMatch(/lk_[A-Za-z]{20}/);
-    // The record says why the key could not be taken back.
-    expect(logs.find((l) => l.includes("api_key_rollback_failed"))).toContain("delete failed");
+    // The record says what kind of failure it was, never its message.
+    const record = logs.find((l) => l.includes("api_key_rollback_failed"))!;
+    expect(JSON.parse(record).errorType).toEqual(expect.any(String));
+    expect(record).not.toContain("delete failed");
   });
 
   test("regenerating one key twice at the same time creates one new key; the other request is refused", async () => {
@@ -267,17 +269,34 @@ describe("regenerating", () => {
     expect(await verified(key)).toBe(true);
   });
 
-  test("if the old key was revoked although the error reached us, the new key is returned, not taken back", async () => {
-    const { id, key } = await testApiKey(env, A.userId, "Mine");
-    // Setup: D1 commits the revoke, then the connection drops before the answer arrives.
+  // Setup: D1 commits the first revoke of an old key, then the connection drops before the answer
+  // arrives. `meanwhile` runs at the moment of the commit (another request touching that row).
+  const droppedAfterCommit = (meanwhile?: () => void) => {
     const prepare = db.prepare.bind(db);
+    let dropped = false;
     db.prepare = ((sql: string) => {
       const statement = prepare(sql);
       if (!/^UPDATE apikey SET enabled=0/.test(sql)) return statement;
-      return { bind: (...params: unknown[]) => ({ run: async () => (await statement.bind(...params).run(), Promise.reject(new Error("D1_ERROR: Network connection lost."))) }) };
+      return {
+        bind: (...params: unknown[]) => ({
+          run: async () => {
+            const result = await statement.bind(...params).run();
+            if (dropped) return result;
+            dropped = true;
+            meanwhile?.();
+            throw new Error("D1_ERROR: Network connection lost.");
+          },
+        }),
+      };
     }) as typeof db.prepare;
+    return () => void (db.prepare = prepare);
+  };
+
+  test("if the old key was revoked although the error reached us, the new key is returned, not taken back", async () => {
+    const { id, key } = await testApiKey(env, A.userId, "Mine");
+    const restore = droppedAfterCommit();
     const res = await as(A).regenerate(id);
-    db.prepare = prepare;
+    restore();
     expect(res.status).toBe(201);
     const { apiKey, secret } = (await res.json()) as { apiKey: Key; secret: string };
     expect((await as(A).list()).apiKeys.map((k) => [k.id, k.status])).toEqual([[apiKey.id, "active"], [id, "revoked"]]);
@@ -285,15 +304,41 @@ describe("regenerating", () => {
     expect(await verified(key)).toBe(false);
   });
 
-  test("if revoking the old key fails, no extra key is left active, and the refused attempt leaves no row", async () => {
+  test("a key in active use keeps its replacement when the revoke committed but its answer was lost", async () => {
+    const { id, key } = await testApiKey(env, A.userId, "Leaked");
+    // A verification of the old key that started before the revoke writes its last-use time after it.
+    const restore = droppedAfterCommit(() => db.sqlite.exec(`UPDATE apikey SET updatedAt='${new Date(Date.now() + 5).toISOString()}' WHERE id='${id}'`));
+    const res = await as(A).regenerate(id);
+    restore();
+    expect(res.status).toBe(201);
+    const { apiKey, secret } = (await res.json()) as { apiKey: Key; secret: string };
+    expect((await as(A).list()).apiKeys.map((k) => [k.id, k.status])).toEqual([[apiKey.id, "active"], [id, "revoked"]]);
+    expect(await verified(secret)).toBe(true);
+    expect(await verified(key)).toBe(false);
+  });
+
+  test("if the old key cannot be revoked at all, the new key is still returned and the failure is logged by ids and error type", async () => {
     const { id, key } = await testApiKey(env, A.userId, "Mine");
     db.sqlite.exec(`CREATE TRIGGER keep_old BEFORE UPDATE OF enabled ON apikey WHEN old.id = '${id}' BEGIN SELECT RAISE(ABORT, 'update failed'); END`);
-    expect((await as(A).regenerate(id)).status).toBe(500);
-    const listed = (await as(A).list()).apiKeys;
-    expect(listed.find((k) => k.id === id)!.status).toBe("active");
-    expect(listed.filter((k) => k.status === "active")).toHaveLength(1);
-    expect(listed).toHaveLength(1);
+    const logs: string[] = [];
+    const { error } = console;
+    console.error = (...args: unknown[]) => void logs.push(args.map(String).join(" "));
+    let res: Response;
+    try {
+      res = await as(A).regenerate(id);
+    } finally {
+      console.error = error;
+    }
+    // A replacement is never deleted: the old key may still work, and stays listed for the owner to revoke.
+    expect(res.status).toBe(201);
+    const { apiKey, secret } = (await res.json()) as { apiKey: Key; secret: string };
+    expect((await as(A).list()).apiKeys.map((k) => [k.id, k.status])).toEqual([[apiKey.id, "active"], [id, "active"]]);
+    expect(await verified(secret)).toBe(true);
     expect(await verified(key)).toBe(true);
+    const line = logs.find((l) => l.includes("api_key_revoke_unconfirmed"))!;
+    expect(JSON.parse(line)).toMatchObject({ event: "api_key_revoke_unconfirmed", keyId: apiKey.id, oldKeyId: id });
+    expect(line).not.toContain("update failed");
+    expect(logs.join("\n")).not.toMatch(/lk_[A-Za-z]{20}/);
   });
 
   test("regenerating requires a session", async () => {
