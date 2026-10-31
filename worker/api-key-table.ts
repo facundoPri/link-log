@@ -31,27 +31,20 @@ export async function activeCount(db: D1Database, userId: string) {
 }
 
 /**
- * Turns the key off only if it is still on, marking it with the id of the key that replaces it
- * (`replacedBy`, in the plugin's metadata object); false when it was already off. Repeating it
- * after a lost answer is safe, and the marker (see revokeState) says whose claim turned the key off.
+ * Turns the key off, marking it with the id of the key that replaces it (`replacedBy`, in the
+ * plugin's metadata object). True when this request owns the revoke: the key was on, or it was
+ * already turned off by a claim with the same `replacedBy`. False when it was off for any other
+ * reason. SQLite counts matched rows as changed, so repeating the claim after a lost answer says
+ * whether the first one landed.
  */
 export async function claimRevoke(db: D1Database, keyId: string, userId: string, replacedBy: string) {
   const { meta } = await db
     .prepare(
-      `UPDATE apikey SET enabled=0,updatedAt=?,metadata=json_set(CASE WHEN json_valid(metadata) THEN CASE WHEN json_type(metadata)='object' THEN metadata ELSE '{}' END ELSE '{}' END,'$.replacedBy',?) WHERE id=? AND "referenceId"=? AND enabled=1`,
+      `UPDATE apikey SET enabled=0,updatedAt=?1,metadata=json_set(CASE WHEN json_valid(metadata) THEN CASE WHEN json_type(metadata)='object' THEN metadata ELSE '{}' END ELSE '{}' END,'$.replacedBy',?2) WHERE id=?3 AND "referenceId"=?4 AND (enabled=1 OR (json_valid(metadata) AND json_extract(metadata,'$.replacedBy')=?2))`,
     )
     .bind(new Date().toISOString(), replacedBy, keyId, userId)
     .run();
   return meta.changes > 0;
-}
-
-/** Whether the user's key is on and, if a claim turned it off, the id it was marked with. Null when it does not exist. */
-export async function revokeState(db: D1Database, keyId: string, userId: string) {
-  const row = await db
-    .prepare(`SELECT enabled,CASE WHEN json_valid(metadata) THEN json_extract(metadata,'$.replacedBy') END replacedBy FROM apikey WHERE id=? AND "referenceId"=?`)
-    .bind(keyId, userId)
-    .first<{ enabled: number | null; replacedBy: string | null }>();
-  return row && { enabled: row.enabled === 1, replacedBy: row.replacedBy };
 }
 
 /** Removes a key row. Only for a key whose secret was never given to anyone. */

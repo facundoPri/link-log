@@ -6,9 +6,10 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { TestD1 } from "./support/d1";
 import { client, makeEnv } from "./support/env";
 import { createTestAuth, testApiKey, testSession } from "./support/auth.test-instance";
+import type { RegenerateKeyResponse } from "../src/types";
 
 type Key = { id: string; name: string; prefix: string; createdAt: string; lastUsedAt: string | null; status: "active" | "revoked" };
-type OldKey = { id: string; status: "active" | "revoked" };
+type OldKey = RegenerateKeyResponse["oldKey"];
 let db: TestD1, env: Env, call: ReturnType<typeof client>;
 let A: { userId: string; cookie: string }, B: { userId: string; cookie: string };
 
@@ -398,7 +399,7 @@ describe("regenerating", () => {
     expect(res.status).toBe(201);
     const { apiKey, secret, oldKey } = (await res.json()) as { apiKey: Key; secret: string; oldKey: OldKey };
     // The response says the old key is not confirmed revoked, so Settings can tell the owner.
-    expect(oldKey).toEqual({ id, status: "active" });
+    expect(oldKey).toEqual({ id, status: "unconfirmed" });
     expect((await as(A).list()).apiKeys.map((k) => [k.id, k.status])).toEqual([[apiKey.id, "active"], [id, "active"]]);
     expect(await verified(secret)).toBe(true);
     expect(await verified(key)).toBe(true);
@@ -406,6 +407,37 @@ describe("regenerating", () => {
     expect(JSON.parse(line)).toMatchObject({ event: "api_key_revoke_unconfirmed", keyId: apiKey.id, oldKeyId: id });
     expect(line).not.toContain("update failed");
     expect(logs.join("\n")).not.toMatch(/lk_[A-Za-z]{20}/);
+  });
+
+  test("if both answers about the revoke were lost, the response does not claim the old key is active", async () => {
+    const { id, key } = await testApiKey(env, A.userId, "Mine");
+    // Every revoke commits and then loses its answer, so the request can never learn the outcome.
+    const prepare = db.prepare.bind(db);
+    db.prepare = ((sql: string) => {
+      const statement = prepare(sql);
+      if (!/^UPDATE apikey SET enabled=0/.test(sql)) return statement;
+      return {
+        bind: (...params: unknown[]) => ({
+          run: async () => {
+            await statement.bind(...params).run();
+            throw new Error("D1_ERROR: Network connection lost.");
+          },
+        }),
+      };
+    }) as typeof db.prepare;
+    const { error } = console;
+    console.error = () => {};
+    let res: Response;
+    try {
+      res = await as(A).regenerate(id);
+    } finally {
+      console.error = error;
+      db.prepare = prepare;
+    }
+    expect(res.status).toBe(201);
+    const { oldKey } = (await res.json()) as { oldKey: OldKey };
+    expect(oldKey).toEqual({ id, status: "unconfirmed" });
+    expect(await verified(key)).toBe(false);
   });
 
   test("regenerating requires a session", async () => {
