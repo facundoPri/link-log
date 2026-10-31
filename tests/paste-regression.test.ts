@@ -40,3 +40,17 @@ test("a failed mixed import also rolls back the recency change", async () => {
   expect(response.status).toBe(500);
   expect(db.sqlite.query("SELECT id,last_saved_at FROM links").all()).toEqual([{ id: "old", last_saved_at: "2026-02-01" }]);
 });
+
+test("a long non-ASCII URL is accepted when its percent-encoded form fits 4096 characters and rejected when it does not", async () => {
+  const db = await TestD1.migrated();
+  const { env } = makeEnv(db);
+  const user = await testSession(env, "long@example.test");
+  const send = client(env);
+  const fits = await send("/api/import", { cookie: user.cookie, body: { urls: [`http://example.com/${"日".repeat(400)}`] } });
+  expect(fits.status).toBe(200);
+  expect(((await fits.json()) as any).imported).toBe(1);
+  // Stored URLs are always ones normalizeUrl accepts again, so Extraction can normalize them.
+  const tooLong = { cookie: user.cookie, body: { urls: [`http://example.com/${"日".repeat(500)}`] } };
+  expect((await send("/api/import", tooLong)).status).toBe(400);
+  expect((await send("/api/links", { cookie: user.cookie, body: { url: tooLong.body.urls[0] } })).status).toBe(400);
+});

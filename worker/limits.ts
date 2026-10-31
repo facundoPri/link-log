@@ -2,6 +2,13 @@
 // requests in different isolates cannot all pass a stale read.
 export type Limit = { window: number; max: number };
 
+/** Which quota ran out; clients back off per quota. */
+export type QuotaCode = "links" | "jobs" | "writes" | "api_key";
+
+/** Seconds until the fixed window containing `now` resets (at least 1, for a Retry-After header). */
+const retryAfter = (limit: Limit, now = Date.now()) =>
+  Math.max(1, Math.ceil((Math.floor(now / 1000 / limit.window) + 1) * limit.window - now / 1000));
+
 export const LIMITS = {
   /** Auth emails per recipient address (hashed key). */
   emailPerRecipient: { window: 3600, max: 5 },
@@ -11,6 +18,8 @@ export const LIMITS = {
   jobsPerUser: { window: 3600, max: 300 },
   /** Writes per user per minute across the private API. */
   writesPerUser: { window: 60, max: 120 },
+  /** Requests per API key per minute on the public API. */
+  requestsPerApiKey: { window: 60, max: 60 },
 } satisfies Record<string, Limit>;
 
 export async function consume(db: D1Database, key: string, limit: Limit, cost = 1, now = Date.now()) {
@@ -30,6 +39,13 @@ export async function consume(db: D1Database, key: string, limit: Limit, cost = 
   return row !== null;
 }
 
+/** What a key has taken from a quota in the current window, and when that window ends. Read-only. */
+export async function windowUsage(db: D1Database, key: string, limit: Limit, now = Date.now()) {
+  const windowStart = Math.floor(now / 1000 / limit.window) * limit.window;
+  const row = await db.prepare("SELECT count FROM app_rate_limits WHERE key=? AND window_start=?").bind(key, windowStart).first<{ count: number }>();
+  return { used: row?.count ?? 0, max: limit.max, windowSeconds: limit.window, resetsAt: new Date((windowStart + limit.window) * 1000).toISOString() };
+}
+
 /** Quota taken up front for an operation; `release` gives back what it did not use. */
 export type Charge = {
   /** Gives back `cost` from every quota, or per key with a map (default: everything taken). */
@@ -40,7 +56,7 @@ export type Charge = {
  * Takes every quota or none (earlier ones are given back if a later one is exhausted). The
  * refund targets the same fixed window, so a rollover never inflates the next window.
  */
-export async function charge(db: D1Database, items: { key: string; limit: Limit; cost: number }[], now = Date.now()) {
+async function tryCharge(db: D1Database, items: { key: string; limit: Limit; cost: number; code?: QuotaCode }[], now = Date.now()): Promise<{ charge: Charge } | { exhausted: { code?: QuotaCode; retryAfter: number } }> {
   const taken: typeof items = [];
   const release = async (cost?: number | Record<string, number>) => {
     for (const item of taken) {
@@ -58,11 +74,24 @@ export async function charge(db: D1Database, items: { key: string; limit: Limit;
     if (item.cost <= 0) continue;
     if (!(await consume(db, item.key, item.limit, item.cost, now))) {
       await release();
-      return null;
+      return { exhausted: { code: item.code, retryAfter: retryAfter(item.limit, now) } };
     }
     taken.push(item);
   }
-  return { release } satisfies Charge;
+  return { charge: { release } };
+}
+
+/** Like `tryCharge`, but a refusal throws the 429 (`LimitError`) naming the exhausted quota. */
+export async function chargeOrThrow(db: D1Database, items: { key: string; limit: Limit; cost: number; code?: QuotaCode }[], message?: string, now = Date.now()) {
+  const result = await tryCharge(db, items, now);
+  if ("exhausted" in result) throw new LimitError(message, result.exhausted.code, result.exhausted.retryAfter);
+  return result.charge;
+}
+
+/** Like `tryCharge`, for callers that only need to know whether the quotas were taken. */
+export async function charge(db: D1Database, items: { key: string; limit: Limit; cost: number }[], now = Date.now()) {
+  const result = await tryCharge(db, items, now);
+  return "charge" in result ? result.charge : null;
 }
 
 export async function sha256(value: string) {
@@ -70,8 +99,13 @@ export async function sha256(value: string) {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+/** A quota refused the request: answers 429 with the quota's `code` and a `Retry-After` header. */
 export class LimitError extends Error {
-  constructor(message = "Too many requests. Try again later.") {
+  constructor(
+    message = "Too many requests. Try again later.",
+    readonly code?: QuotaCode,
+    readonly retryAfter?: number,
+  ) {
     super(message);
   }
 }

@@ -13,7 +13,7 @@ import {
   type TargetStatus,
 } from "@linklog/browser-protocol";
 import type { Lens } from "../src/types";
-import { charge, LIMITS } from "./limits";
+import { chargeOrThrow, LIMITS } from "./limits";
 import { addLinks } from "./links";
 import { capabilities, json, parseLensDefinition, text } from "./store";
 import { jevUnavailable } from "../src/attention";
@@ -240,8 +240,7 @@ export async function createEvaluation(env: Env, userId: string, body: Obj): Pro
   }
   // Browser evaluations share the owner's job quota with the library; it is taken before any
   // receipt, snapshot or queue message exists, and only a new request is charged.
-  const charged = await charge(env.DB, [{ key: `jobs:${userId}`, limit: LIMITS.jobsPerUser, cost: req.targets.length }]);
-  if (!charged) return json({ error: "Processing limit reached. Try again later.", code: "rate-limited" }, 429);
+  const charged = await chargeOrThrow(env.DB, [{ key: `jobs:${userId}`, limit: LIMITS.jobsPerUser, cost: req.targets.length, code: "jobs" }], "Processing limit reached. Try again later.");
   const now = new Date().toISOString();
   const batchId = crypto.randomUUID();
   const targets = req.targets.map((t) => ({
