@@ -22,8 +22,8 @@ export default (async ({ page, api, apiAs, step, check, shot, aria, note }) => {
   await step("Regenerate it");
   await row(name).getByRole("button", { name: "Regenerate" }).click();
   const confirm = page.getByRole("alertdialog");
-  await check("Confirmation names the key and says the old one stops working", async () =>
-    (await confirm.getByText(`Regenerate “${name}”?`).isVisible()) && (await confirm.getByText(/stops working immediately/).isVisible()));
+  await check("Confirmation names the key and says the old one is revoked, or that the owner is told if that fails", async () =>
+    (await confirm.getByText(`Regenerate “${name}”?`).isVisible()) && (await confirm.getByText(/then revokes the current key/).isVisible()));
   await shot("01-regenerate-confirm");
   await confirm.getByRole("button", { name: "Regenerate" }).click();
   const second = await check("A new lk_ secret is shown once, different from the first", async () => {
