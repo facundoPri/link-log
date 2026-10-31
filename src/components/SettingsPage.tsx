@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { ArrowLeft, Copy, KeyRound, Loader2, LogOut } from "lucide-react";
+import { ArrowLeft, Copy, KeyRound, Loader2, LogOut, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../api";
 import { relativeTime } from "../lib/time";
@@ -68,8 +68,10 @@ function ApiKeys() {
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
   // The full secret lives only in this state: it is gone once dismissed or the page is left.
-  const [created, setCreated] = useState<{ name: string; secret: string } | null>(null);
+  const [created, setCreated] = useState<{ name: string; secret: string; replaced: boolean } | null>(null);
+  const [createError, setCreateError] = useState("");
   const [revoking, setRevoking] = useState<ApiKey | null>(null);
+  const [regenerating, setRegenerating] = useState<ApiKey | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -84,13 +86,14 @@ function ApiKeys() {
   const create = async (e: FormEvent) => {
     e.preventDefault();
     setCreating(true);
+    setCreateError("");
     try {
       const r = await api<{ apiKey: ApiKey; secret: string }>("/api-keys", "POST", { name });
       setKeys((list) => [r.apiKey, ...(list ?? [])]);
-      setCreated({ name: r.apiKey.name, secret: r.secret });
+      setCreated({ name: r.apiKey.name, secret: r.secret, replaced: false });
       setName("");
     } catch (error) {
-      toast.error((error as Error).message);
+      setCreateError((error as Error).message);
     } finally {
       setCreating(false);
     }
@@ -107,6 +110,18 @@ function ApiKeys() {
     setRevoking(null);
   };
 
+  // The new key is created before the old one is revoked, so a failure leaves the old key working.
+  const regenerate = async (key: ApiKey) => {
+    try {
+      const r = await api<{ apiKey: ApiKey; secret: string }>(`/api-keys/${key.id}/regenerate`, "POST", {});
+      setKeys((list) => [r.apiKey, ...(list ?? []).map((k) => (k.id === key.id ? { ...k, status: "revoked" as const } : k))]);
+      setCreated({ name: r.apiKey.name, secret: r.secret, replaced: true });
+    } catch (error) {
+      toast.error((error as Error).message);
+    }
+    setRegenerating(null);
+  };
+
   return (
     <Section title="API keys" description="Keys only submit URLs to your library. They cannot read it.">
       <form onSubmit={create} className="flex items-end gap-2 border-b p-4">
@@ -119,10 +134,15 @@ function ApiKeys() {
           Create key
         </Button>
       </form>
+      {createError && (
+        <p role="alert" className="border-b p-4 text-sm text-destructive">
+          {createError}
+        </p>
+      )}
       {created && (
         <div role="status" className="flex flex-col gap-2 border-b bg-muted/40 p-4">
           <p className="text-sm">
-            Copy the key for “{created.name}” now. It will not be shown again.
+            {created.replaced ? `Copy the new key for “${created.name}” now. The old key no longer works.` : `Copy the key for “${created.name}” now.`} It will not be shown again.
           </p>
           <div className="flex items-center gap-2">
             <code className="min-w-0 flex-1 truncate rounded-md border bg-background px-2 py-1.5 font-mono text-xs" aria-label="New API key">
@@ -171,9 +191,15 @@ function ApiKeys() {
                 </div>
               </div>
               {key.status === "active" && (
-                <Button variant="ghost" size="sm" onClick={() => setRevoking(key)}>
-                  Revoke
-                </Button>
+                <>
+                  <Button variant="ghost" size="sm" onClick={() => setRegenerating(key)}>
+                    <RefreshCw />
+                    Regenerate
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => setRevoking(key)}>
+                    Revoke
+                  </Button>
+                </>
               )}
             </li>
           ))}
@@ -190,6 +216,21 @@ function ApiKeys() {
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={() => revoking && void revoke(revoking)}>Revoke</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={!!regenerating} onOpenChange={(o) => !o && setRegenerating(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Regenerate “{regenerating?.name}”?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Linklog creates a new key with the same name and shows its secret once. The current key stops working
+              immediately and stays listed as revoked.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => regenerating && void regenerate(regenerating)}>Regenerate</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
