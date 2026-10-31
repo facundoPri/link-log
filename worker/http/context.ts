@@ -40,3 +40,10 @@ export const notFound = (what = "link") => new HttpError(404, `The ${what} no lo
 
 /** Owner of the request; only available behind requireSession or requireApiKey. */
 export const ownerOf = (c: AppContext) => c.get("principal").userId;
+
+/** The verified API key behind a public API request; anything else is not authenticated for it. */
+export function apiKeyOf(c: AppContext) {
+  const principal = c.get("principal");
+  if (principal.kind !== "apiKey") throw new HttpError(401, "A valid API key is required.");
+  return principal;
+}

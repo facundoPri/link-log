@@ -16,7 +16,7 @@ const fp = lensFingerprint({ type: "noul", question: "Relevant?", options: [], l
 const as = (who: User) => {
   const send = async (path: string, method: string, body?: unknown) => {
     const r = await call(`/api${path}`, { cookie: who.cookie, method, body: method === "GET" ? undefined : (body ?? {}) });
-    return { status: r.status, data: (await r.json()) as any };
+    return { status: r.status, retryAfter: r.headers.get("retry-after"), data: (await r.json()) as any };
   };
   return {
     send,
@@ -226,7 +226,8 @@ describe("Browser evaluations share the owner's job quota (R1)", () => {
   test("an exhausted quota answers 429 before any receipt, capture, job or queue message", async () => {
     exhaust(A, 300);
     const res = await as(A).evaluation("req", ["a"]);
-    expect(res).toMatchObject({ status: 429, data: { code: "rate-limited" } });
+    expect(res).toMatchObject({ status: 429, data: { code: "jobs" } });
+    expect(Number(res.retryAfter)).toBeGreaterThanOrEqual(1);
     expect(created()).toEqual({ r: 0, t: 0, j: 0, b: 0 });
     expect(r2.objects.size).toBe(0);
     expect(queued).toHaveLength(0);

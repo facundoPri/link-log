@@ -1,5 +1,5 @@
 import type { JobConfig, Pool } from "./handlers";
-import { LIMITS, limitError, tryCharge } from "./limits";
+import { LIMITS, chargeOrThrow } from "./limits";
 import { badRequest } from "./http/context";
 import { capabilities, parseLensDefinition } from "./store";
 import { jevUnavailable } from "../src/attention";
@@ -185,9 +185,7 @@ export async function enqueue(
   const redone = retryOf
     ? " AND NOT EXISTS (SELECT 1 FROM batches ob, jobs r JOIN batches rb ON rb.id=r.batch_id WHERE ob.id=? AND r.link_id=? AND rb.kind=ob.kind AND rb.rowid>ob.rowid AND r.status IN ('queued','running','waiting','done') AND json_extract(rb.config,'$.lens.id') IS json_extract(ob.config,'$.lens.id'))"
     : "";
-  const admitted = await tryCharge(env.DB, [{ key: `jobs:${userId}`, limit: LIMITS.jobsPerUser, cost: ids.length, code: "jobs" }]);
-  if ("exhausted" in admitted) throw limitError(admitted.exhausted, "Processing limit reached. Try again later.");
-  const charged = admitted.charge;
+  const charged = await chargeOrThrow(env.DB, [{ key: `jobs:${userId}`, limit: LIMITS.jobsPerUser, cost: ids.length, code: "jobs" }], "Processing limit reached. Try again later.");
   try {
   await env.DB.batch([
     env.DB.prepare(

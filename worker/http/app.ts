@@ -13,7 +13,7 @@ import { usageSummaryRoutes } from "../routes/usage-summary";
 import { HttpError, type AppEnv } from "./context";
 import { apiKeyQuotaAndBody, requireApiKey, requireSession, sameOriginWrites, withConfig, writeQuotaAndBody } from "./middleware";
 
-export const PUBLIC_API_BASE_PATH = "/api/v1";
+const PUBLIC_API_BASE_PATH = "/api/v1";
 
 /**
  * HTTP layer. Order matters:

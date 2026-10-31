@@ -5,6 +5,8 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { TestD1 } from "./support/d1";
 import { client, makeEnv } from "./support/env";
 import { testApiKey, testSession } from "./support/auth.test-instance";
+import { libraryOf as library, quotaUsed } from "./support/library";
+import { expect429, setUsed, stayInsideWindow } from "./support/quota";
 
 type Result = { input: string; url: string; id: string; status: "created" | "duplicate" };
 type Submitted = { results: Result[]; rejected: { input: string; error: string }[]; batchId?: string };
@@ -24,14 +26,12 @@ beforeEach(async () => {
 /** What an integration sends: a Bearer key, a JSON body and no browser Origin or cookie. */
 const submit = (key: string | null, body: unknown, headers: Record<string, string> = {}) =>
   call("/api/v1/links", { body, origin: null, headers: { ...(key === null ? {} : { authorization: `Bearer ${key}` }), ...headers } });
-const used = (key: string) => (db.sqlite.query("SELECT count FROM app_rate_limits WHERE key=?").get(key) as { count: number } | null)?.count ?? 0;
-const rows = () =>
-  db.sqlite.query("SELECT (SELECT count(*) FROM links) links,(SELECT count(*) FROM jobs) jobs,(SELECT count(*) FROM batches) batches").get();
-const libraryOf = async (who: { cookie: string }) =>
-  (await (await call("/api/library", { cookie: who.cookie })).json()) as {
-    links: { id: string; url: string }[];
-    batches: { id: string; kind: string; config: string; total: number; active: number; cancelled: number }[];
-  };
+const libraryOf = (who: { cookie: string }) => library(call, who);
+/** Nothing was saved or queued, as the owner's library and the Extraction queue show it. */
+const nothingSaved = async () => {
+  expect(await libraryOf(A)).toMatchObject({ links: [], batches: [] });
+  expect(queued).toHaveLength(0);
+};
 
 describe("submitting with a valid key", () => {
   test("new URLs are saved for the key's owner and answer 202 with one result per URL and the batch", async () => {
@@ -57,7 +57,7 @@ describe("Duplicates and invalid inputs", () => {
     const first = (await (await submit(keyA.key, { urls: ["https://api.example/a"] })).json()) as Submitted;
     await submit(keyA.key, { urls: ["https://api.example/b"] });
     queued.length = 0;
-    const charged = [used(`links:${A.userId}`), used(`jobs:${A.userId}`)];
+    const charged = await quotaUsed(call, A);
 
     const res = await submit(keyA.key, { urls: ["https://api.example/a"] });
     expect(res.status).toBe(202);
@@ -66,8 +66,21 @@ describe("Duplicates and invalid inputs", () => {
       rejected: [],
     });
     expect(queued).toHaveLength(0);
-    expect([used(`links:${A.userId}`), used(`jobs:${A.userId}`)]).toEqual(charged);
+    expect(await quotaUsed(call, A)).toEqual(charged);
     expect((await libraryOf(A)).links.map((l) => l.url)).toEqual(["https://api.example/a", "https://api.example/b"]);
+  });
+
+  test("a Link saved without any Extraction job is queued again: still a duplicate, with a batch, charging one job", async () => {
+    const first = (await (await submit(keyA.key, { urls: ["https://api.example/a"] })).json()) as Submitted;
+    db.sqlite.exec("DELETE FROM jobs"); // setup: what an interrupted save used to leave behind
+    queued.length = 0;
+    const before = await quotaUsed(call, A);
+
+    const body = (await (await submit(keyA.key, { urls: ["https://api.example/a"] })).json()) as Submitted;
+    expect(body.results.map((r) => [r.id, r.status])).toEqual([[first.results[0]!.id, "duplicate"]]);
+    expect(typeof body.batchId).toBe("string");
+    expect(queued).toHaveLength(1);
+    expect(await quotaUsed(call, A)).toEqual({ links: before.links, jobs: before.jobs + 1 });
   });
 
   test("the same URL twice in one request gives one result; invalid inputs are rejected and never stored", async () => {
@@ -84,7 +97,7 @@ describe("Duplicates and invalid inputs", () => {
     const tooManyStrings = Array.from({ length: 1001 }, (_, i) => `https://api.example/${i}`);
     for (const body of [{}, { urls: [] }, { urls: "https://api.example/a" }, { urls: [42] }, { urls: tooManyStrings }, ["https://api.example/a"]])
       expect((await submit(keyA.key, body)).status).toBe(400);
-    expect(rows()).toEqual({ links: 0, jobs: 0, batches: 0 });
+    await nothingSaved();
   });
 });
 
@@ -110,8 +123,18 @@ describe("URLs inside text", () => {
     expect(body.results.map((r) => r.url)).toEqual(["https://api.example/a"]);
     expect(body.rejected.map((r) => r.input)).toEqual(["call me maybe", "ftp://api.example/x see mailto:a@api.example"]);
     expect(body.rejected.every((r) => r.error.length > 0)).toBe(true);
-    const stored = JSON.stringify(await libraryOf(A)) + JSON.stringify(db.sqlite.query("SELECT * FROM jobs").all());
-    expect(stored).not.toContain("call me maybe");
+    expect(JSON.stringify(await libraryOf(A))).not.toContain("call me maybe");
+  });
+
+  test("a URL that breaks a URL rule is rejected with that rule's reason; prose keeps the generic one", async () => {
+    const res = await submit(keyA.key, { urls: ["https://user:pw@api.example/x", "see https://localhost/y", "just words", "ok https://api.example/a"] });
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as Submitted;
+    expect(body.rejected.map((r) => [r.input, r.error])).toEqual([
+      ["https://user:pw@api.example/x", "Use a public http or https link."],
+      ["see https://localhost/y", "Use a public http or https link."],
+      ["just words", "No valid http or https link found."],
+    ]);
   });
 
   test("zero valid URLs is 400 listing what was rejected, and saves nothing", async () => {
@@ -120,7 +143,7 @@ describe("URLs inside text", () => {
     const body = (await res.json()) as { error: string; rejected: { input: string; error: string }[] };
     expect(body.error).toBe("No valid http or https link found.");
     expect(body.rejected.map((r) => r.input)).toEqual(["nothing here", "ftp://api.example/x"]);
-    expect(rows()).toEqual({ links: 0, jobs: 0, batches: 0 });
+    await nothingSaved();
   });
 
   test("the 100 limit counts URLs after extraction: 101 is 400 and saves nothing, 100 in a few strings is fine", async () => {
@@ -128,7 +151,7 @@ describe("URLs inside text", () => {
     const res = await submit(keyA.key, { urls: [urls.slice(0, 50).join(" "), urls.slice(50).join("\n")] });
     expect(res.status).toBe(400);
     expect(((await res.json()) as { error: string }).error).toBe("Send at most 100 links per request.");
-    expect(rows()).toEqual({ links: 0, jobs: 0, batches: 0 });
+    await nothingSaved();
 
     const ok = await submit(keyA.key, { urls: [urls.slice(0, 50).join(" "), urls.slice(50, 100).join("\n")] });
     expect(ok.status).toBe(202);
@@ -173,7 +196,7 @@ describe("authentication", () => {
     const rejections = logs.filter((l) => l.includes("api_key_rejected")).map((l) => JSON.parse(l).reason);
     expect(rejections).toEqual(["missing", "missing", "missing", "missing", "invalid", "invalid"]);
     expect(logs.join("\n")).not.toContain(keyA.key.slice(9));
-    expect(rows()).toEqual({ links: 0, jobs: 0, batches: 0 });
+    await nothingSaved();
   });
 
   test("after regenerating, the new key submits under the same name and the old one is 401", async () => {
@@ -191,7 +214,7 @@ describe("authentication", () => {
     await quiet(async () => {
       await expect401(await call("/api/v1/links", { cookie: A.cookie, body }));
     });
-    expect(rows()).toEqual({ links: 0, jobs: 0, batches: 0 });
+    await nothingSaved();
   });
 });
 
@@ -214,9 +237,11 @@ describe("an API key reaches no private route", () => {
       ["DELETE", `/api/batches/${batchId}`, {}],
       ["DELETE", `/api/jobs/${batchId}`, {}],
       ["GET", "/api/usage"],
+      ["GET", "/api/usage/summary"],
       ["GET", "/api/api-keys"],
       ["POST", "/api/api-keys", { name: "Stolen" }],
       ["POST", `/api/api-keys/${keyA.id}/revoke`, {}],
+      ["POST", `/api/api-keys/${keyA.id}/regenerate`, {}],
     ];
     for (const [method, path, body] of attempts) {
       const res = await call(path, { method, body, headers: bearer });
@@ -261,38 +286,29 @@ describe("ownership", () => {
 });
 
 describe("limits", () => {
-  const setUsed = (key: string, count: number, window: number) =>
-    db.sqlite.query("INSERT OR REPLACE INTO app_rate_limits(key,window_start,count) VALUES(?,?,?)").run(key, Math.floor(Date.now() / 1000 / window) * window, count);
-  /** Seconds to the next fixed window boundary, as seen at `ms`. */
-  const untilReset = (window: number, ms: number) => Math.ceil((Math.floor(ms / 1000 / window) + 1) * window - ms / 1000);
-  async function expect429(request: () => Promise<Response>, code: string, window: number) {
-    const before = Date.now();
-    const res = await request();
-    const after = Date.now();
-    expect(res.status).toBe(429);
-    expect(((await res.json()) as { code?: string }).code).toBe(code);
-    const retryAfter = Number(res.headers.get("retry-after"));
-    expect(retryAfter).toBeGreaterThanOrEqual(untilReset(window, after));
-    expect(retryAfter).toBeLessThanOrEqual(untilReset(window, before));
-  }
   const one = () => submit(keyA.key, { urls: ["https://api.example/limited"] });
+  // A test that starts just before a window resets would see its counters start over mid-test.
+  beforeEach(async () => {
+    await stayInsideWindow(60);
+    await stayInsideWindow(3600);
+  });
 
   test("each key allows 60 requests a minute, then 429 `api_key` with Retry-After; another key is unaffected", async () => {
-    for (let i = 0; i < 60; i++) expect((await submit(keyA.key, { urls: ["https://api.example/limited"] })).status).toBe(202);
+    for (let i = 0; i < 60; i++) expect((await one()).status).toBe(202);
     await expect429(one, "api_key", 60);
-    expect(rows()).toEqual({ links: 1, jobs: 1, batches: 1 }); // only the first request saved; the 429 added nothing
+    const library = await libraryOf(A);
+    expect([library.links.length, library.batches.length]).toEqual([1, 1]); // only the first request saved; the 429 added nothing
     const other = await testApiKey(env, A.userId, "Server");
     expect((await submit(other.key, { urls: ["https://api.example/limited"] })).status).toBe(202);
   });
 
   test("the owner's links and jobs quotas answer with their codes and save nothing", async () => {
-    setUsed(`links:${A.userId}`, 500, 3600);
+    setUsed(db, `links:${A.userId}`, 500, 3600);
     await expect429(one, "links", 3600);
-    setUsed(`links:${A.userId}`, 0, 3600);
-    setUsed(`jobs:${A.userId}`, 300, 3600);
+    setUsed(db, `links:${A.userId}`, 0, 3600);
+    setUsed(db, `jobs:${A.userId}`, 300, 3600);
     await expect429(one, "jobs", 3600);
-    expect(rows()).toEqual({ links: 0, jobs: 0, batches: 0 });
-    expect(queued).toHaveLength(0);
+    await nothingSaved();
   });
 });
 
