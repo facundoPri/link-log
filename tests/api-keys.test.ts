@@ -171,6 +171,29 @@ describe("concurrent requests", () => {
     for (const res of created) expect(await verified(((await res.json()) as { secret: string }).secret)).toBe(true);
   });
 
+  test("if taking back an over-cap key fails, the request is still refused and the stray key is logged by id only", async () => {
+    await fillKeys(A, 9);
+    db.sqlite.exec("CREATE TRIGGER keep_keys BEFORE UPDATE OF enabled ON apikey WHEN new.enabled = 0 BEGIN SELECT RAISE(ABORT, 'update failed'); END");
+    const logs: string[] = [];
+    const { error } = console;
+    console.error = (...args: unknown[]) => void logs.push(args.map(String).join(" "));
+    let responses: Response[];
+    try {
+      responses = await Promise.all([as(A).create("One"), as(A).create("Two")]);
+    } finally {
+      console.error = error;
+    }
+    const secrets = await Promise.all(responses.filter((r) => r.status === 201).map(async (r) => ((await r.json()) as { secret: string }).secret));
+    expect(responses.filter((r) => r.status !== 201).length).toBeGreaterThan(0);
+    const active = (await as(A).list()).apiKeys.filter((k) => k.status === "active");
+    expect(active.length).toBe(9 + responses.length);
+    // Every key that stays active without its owner knowing the secret leaves a record naming it.
+    const stray = logs.filter((l) => l.includes("api_key_rollback_failed")).map((l) => JSON.parse(l).keyId as string);
+    expect(stray.length).toBe(responses.length - secrets.length);
+    for (const id of stray) expect(active.map((k) => k.id)).toContain(id);
+    expect(logs.join("\n")).not.toMatch(/lk_[A-Za-z]{20}/);
+  });
+
   test("regenerating one key twice at the same time creates one new key; the other request is refused", async () => {
     const old = await testApiKey(env, A.userId, "Shortcuts");
     const responses = await Promise.all([as(A).regenerate(old.id), as(A).regenerate(old.id)]);

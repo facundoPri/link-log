@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type Dispatch, type FormEvent, type ReactNode, type SetStateAction } from "react";
 import { ArrowLeft, Copy, KeyRound, Loader2, LogOut, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../api";
@@ -38,11 +38,17 @@ function Section({ title, description, children }: { title: string; description?
 export function SettingsPage({ account, onSignOut, onBack }: { account: { email: string }; onSignOut: () => void; onBack: () => void }) {
   const [usage, setUsage] = useState<Usage | null>(null);
   const [usageError, setUsageError] = useState("");
+  // Shared: the key list manages the keys and Usage names the same keys, so its rows can tell them apart.
+  const [keys, setKeys] = useState<ApiKey[] | null>(null);
+  const [keysError, setKeysError] = useState("");
   useEffect(() => {
     let live = true;
     api<Usage>("/usage/summary")
       .then((r) => live && setUsage(r))
       .catch((e: Error) => live && setUsageError(e.message));
+    api<{ apiKeys: ApiKey[] }>("/api-keys")
+      .then((r) => live && setKeys(r.apiKeys))
+      .catch((e: Error) => live && setKeysError(e.message));
     return () => {
       live = false;
     };
@@ -68,8 +74,8 @@ export function SettingsPage({ account, onSignOut, onBack }: { account: { email:
             </Button>
           </div>
         </Section>
-        <UsageSection usage={usage} error={usageError} />
-        <ApiKeys monthly={usage && Object.fromEntries(usage.month.apiKeys.map((k) => [k.id, k.links]))} />
+        <UsageSection usage={usage} error={usageError} keys={keys} />
+        <ApiKeys keys={keys} setKeys={setKeys} loadError={keysError} monthly={usage && Object.fromEntries(usage.month.apiKeys.map((k) => [k.id, k.links]))} />
       </div>
     </div>
   );
@@ -90,7 +96,8 @@ function QuotaRow({ label, quota }: { label: string; quota: QuotaUsage }) {
   );
 }
 
-function UsageSection({ usage, error }: { usage: Usage | null; error: string }) {
+/** `keys`: the owner's API keys (null while loading), to tell apart keys that share a name, as after a regenerate. */
+function UsageSection({ usage, error, keys }: { usage: Usage | null; error: string; keys: ApiKey[] | null }) {
   return (
     <Section title="Usage" description="Your current limits and the new Links you added this month. Duplicates do not count.">
       {error ? (
@@ -113,12 +120,23 @@ function UsageSection({ usage, error }: { usage: Usage | null; error: string }) 
                 <span>Web</span>
                 <span className="tabular-nums">{usage.month.web}</span>
               </li>
-              {usage.month.apiKeys.map((key) => (
-                <li key={key.id} className="flex justify-between gap-3">
-                  <span className="truncate">API key: {key.name}</span>
-                  <span className="tabular-nums">{key.links}</span>
-                </li>
-              ))}
+              {usage.month.apiKeys.map((key) => {
+                const listed = keys?.find((k) => k.id === key.id);
+                return (
+                  <li key={key.id} className="flex items-center justify-between gap-3">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="truncate">API key: {key.name}</span>
+                      {listed && <code className="font-mono text-xs">{listed.prefix}…</code>}
+                      {listed?.status === "revoked" && (
+                        <Badge variant="outline" className="text-muted-foreground">
+                          Revoked
+                        </Badge>
+                      )}
+                    </span>
+                    <span className="tabular-nums">{key.links}</span>
+                  </li>
+                );
+              })}
             </ul>
           </div>
         </>
@@ -127,10 +145,21 @@ function UsageSection({ usage, error }: { usage: Usage | null; error: string }) 
   );
 }
 
-/** `monthly`: this month's new Links per key id (null while loading); keys that added none are absent. */
-function ApiKeys({ monthly }: { monthly: Record<string, number> | null }) {
-  const [keys, setKeys] = useState<ApiKey[] | null>(null);
-  const [loadError, setLoadError] = useState("");
+/**
+ * `keys` and `setKeys`: the list, owned by the page (null while loading). `monthly`: this month's new
+ * Links per key id (null while loading); keys that added none are absent.
+ */
+function ApiKeys({
+  keys,
+  setKeys,
+  loadError,
+  monthly,
+}: {
+  keys: ApiKey[] | null;
+  setKeys: Dispatch<SetStateAction<ApiKey[] | null>>;
+  loadError: string;
+  monthly: Record<string, number> | null;
+}) {
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
   // The full secret lives only in this state: it is gone once dismissed or the page is left.
@@ -138,16 +167,6 @@ function ApiKeys({ monthly }: { monthly: Record<string, number> | null }) {
   const [createError, setCreateError] = useState("");
   const [revoking, setRevoking] = useState<ApiKey | null>(null);
   const [regenerating, setRegenerating] = useState<ApiKey | null>(null);
-
-  useEffect(() => {
-    let live = true;
-    api<{ apiKeys: ApiKey[] }>("/api-keys")
-      .then((r) => live && setKeys(r.apiKeys))
-      .catch((e: Error) => live && setLoadError(e.message));
-    return () => {
-      live = false;
-    };
-  }, []);
 
   const create = async (e: FormEvent) => {
     e.preventDefault();
