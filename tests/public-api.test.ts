@@ -80,11 +80,65 @@ describe("Duplicates and invalid inputs", () => {
     expect(JSON.stringify(await libraryOf(A))).not.toContain("not a url");
   });
 
-  test("a body that is not `{ urls: string[] }` (1 to 100) is 400 and saves nothing", async () => {
-    const tooMany = Array.from({ length: 101 }, (_, i) => `https://api.example/${i}`);
-    for (const body of [{}, { urls: [] }, { urls: "https://api.example/a" }, { urls: [42] }, { urls: tooMany }, ["https://api.example/a"]])
+  test("a body that is not `{ urls: string[] }` is 400 and saves nothing", async () => {
+    const tooManyStrings = Array.from({ length: 1001 }, (_, i) => `https://api.example/${i}`);
+    for (const body of [{}, { urls: [] }, { urls: "https://api.example/a" }, { urls: [42] }, { urls: tooManyStrings }, ["https://api.example/a"]])
       expect((await submit(keyA.key, body)).status).toBe(400);
     expect(rows()).toEqual({ links: 0, jobs: 0, batches: 0 });
+  });
+});
+
+describe("URLs inside text", () => {
+  test("every URL in a string is saved once across the request; the result input is the string it came from", async () => {
+    const text = "Example page: [https://api.example/a](<https://api.example/a>) and https://api.example/b.";
+    const res = await submit(keyA.key, { urls: [text, "https://api.example/b", "api.example/c"] });
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as Submitted;
+    expect(body.results.map((r) => [r.input, r.url, r.status])).toEqual([
+      [text, "https://api.example/a", "created"],
+      [text, "https://api.example/b", "created"],
+      ["api.example/c", "https://api.example/c", "created"],
+    ]);
+    expect(body.rejected).toEqual([]);
+    expect((await libraryOf(A)).links.map((l) => l.url).sort()).toEqual(["https://api.example/a", "https://api.example/b", "https://api.example/c"]);
+  });
+
+  test("strings without a valid URL are rejected with a reason and never stored; the others are saved", async () => {
+    const res = await submit(keyA.key, { urls: ["call me maybe", "ftp://api.example/x see mailto:a@api.example", "ok https://api.example/a"] });
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as Submitted;
+    expect(body.results.map((r) => r.url)).toEqual(["https://api.example/a"]);
+    expect(body.rejected.map((r) => r.input)).toEqual(["call me maybe", "ftp://api.example/x see mailto:a@api.example"]);
+    expect(body.rejected.every((r) => r.error.length > 0)).toBe(true);
+    const stored = JSON.stringify(await libraryOf(A)) + JSON.stringify(db.sqlite.query("SELECT * FROM jobs").all());
+    expect(stored).not.toContain("call me maybe");
+  });
+
+  test("zero valid URLs is 400 listing what was rejected, and saves nothing", async () => {
+    const res = await submit(keyA.key, { urls: ["nothing here", "ftp://api.example/x"] });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; rejected: { input: string; error: string }[] };
+    expect(body.error).toBe("No valid http or https link found.");
+    expect(body.rejected.map((r) => r.input)).toEqual(["nothing here", "ftp://api.example/x"]);
+    expect(rows()).toEqual({ links: 0, jobs: 0, batches: 0 });
+  });
+
+  test("the 100 limit counts URLs after extraction: 101 is 400 and saves nothing, 100 in a few strings is fine", async () => {
+    const urls = Array.from({ length: 101 }, (_, i) => `https://api.example/${i}`);
+    const res = await submit(keyA.key, { urls: [urls.slice(0, 50).join(" "), urls.slice(50).join("\n")] });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe("Send at most 100 links per request.");
+    expect(rows()).toEqual({ links: 0, jobs: 0, batches: 0 });
+
+    const ok = await submit(keyA.key, { urls: [urls.slice(0, 50).join(" "), urls.slice(50, 100).join("\n")] });
+    expect(ok.status).toBe(202);
+    expect(((await ok.json()) as Submitted).results).toHaveLength(100);
+  });
+
+  test("repeats do not count toward the limit", async () => {
+    const res = await submit(keyA.key, { urls: Array.from({ length: 150 }, () => "https://api.example/same https://api.example/same") });
+    expect(res.status).toBe(202);
+    expect(((await res.json()) as Submitted).results).toHaveLength(1);
   });
 });
 
@@ -224,9 +278,9 @@ describe("limits", () => {
   const one = () => submit(keyA.key, { urls: ["https://api.example/limited"] });
 
   test("each key allows 60 requests a minute, then 429 `api_key` with Retry-After; another key is unaffected", async () => {
-    for (let i = 0; i < 60; i++) expect((await submit(keyA.key, { urls: ["not a url"] })).status).toBe(202);
+    for (let i = 0; i < 60; i++) expect((await submit(keyA.key, { urls: ["https://api.example/limited"] })).status).toBe(202);
     await expect429(one, "api_key", 60);
-    expect(rows()).toEqual({ links: 0, jobs: 0, batches: 0 });
+    expect(rows()).toEqual({ links: 1, jobs: 1, batches: 1 }); // only the first request saved; the 429 added nothing
     const other = await testApiKey(env, A.userId, "Server");
     expect((await submit(other.key, { urls: ["https://api.example/limited"] })).status).toBe(202);
   });
