@@ -3,6 +3,7 @@ import { ArrowLeft, Copy, KeyRound, Loader2, LogOut, RefreshCw } from "lucide-re
 import { toast } from "sonner";
 import { api } from "../api";
 import { relativeTime } from "../lib/time";
+import { uploadCurl } from "../lib/upload-curl";
 import type { ApiKey } from "../types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -163,6 +164,25 @@ function ApiKeys() {
             </Button>
             <Button variant="ghost" size="sm" onClick={() => setCreated(null)}>
               Done
+            </Button>
+          </div>
+          <p className="text-sm text-muted-foreground">Try it from a terminal:</p>
+          <div className="flex items-start gap-2">
+            <pre className="min-w-0 flex-1 overflow-x-auto rounded-md border bg-background px-2 py-1.5 font-mono text-xs" aria-label="curl example">
+              <code>{uploadCurl(window.location.origin, created.secret)}</code>
+            </pre>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                void navigator.clipboard.writeText(uploadCurl(window.location.origin, created.secret)).then(
+                  () => toast("curl example copied"),
+                  () => toast.error("Could not copy. Select the example and copy it."),
+                );
+              }}
+            >
+              <Copy />
+              Copy curl
             </Button>
           </div>
         </div>
