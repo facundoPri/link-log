@@ -3,7 +3,7 @@
 export type Limit = { window: number; max: number };
 
 /** Which quota ran out; clients back off per quota. */
-export type QuotaCode = "links" | "jobs" | "writes";
+export type QuotaCode = "links" | "jobs" | "writes" | "api_key";
 
 /** Seconds until the fixed window containing `now` resets (at least 1, for a Retry-After header). */
 export const retryAfter = (limit: Limit, now = Date.now()) =>
@@ -18,6 +18,8 @@ export const LIMITS = {
   jobsPerUser: { window: 3600, max: 300 },
   /** Writes per user per minute across the private API. */
   writesPerUser: { window: 60, max: 120 },
+  /** Requests per API key per minute on the public API. */
+  requestsPerApiKey: { window: 60, max: 60 },
 } satisfies Record<string, Limit>;
 
 export async function consume(db: D1Database, key: string, limit: Limit, cost = 1, now = Date.now()) {
