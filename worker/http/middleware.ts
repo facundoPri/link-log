@@ -2,7 +2,7 @@ import { isAPIError } from "better-auth/api";
 import { createMiddleware } from "hono/factory";
 import { createAuth } from "../auth";
 import { ConfigError, hostAllowed, readConfig } from "../config";
-import { consume, LIMITS, LimitError } from "../limits";
+import { LIMITS, limitError, tryCharge } from "../limits";
 import { json } from "../store";
 import { HttpError, type AppEnv } from "./context";
 
@@ -95,7 +95,8 @@ export async function readBounded(request: Request, max: number) {
 export const writeQuotaAndBody = createMiddleware<AppEnv>(async (c, next) => {
   let body: Record<string, unknown> = {};
   if (c.req.method !== "GET" && c.req.method !== "HEAD") {
-    if (!(await consume(c.env.DB, `writes:${c.get("principal").userId}`, LIMITS.writesPerUser))) throw new LimitError();
+    const admitted = await tryCharge(c.env.DB, [{ key: `writes:${c.get("principal").userId}`, limit: LIMITS.writesPerUser, cost: 1, code: "writes" }]);
+    if ("exhausted" in admitted) throw limitError(admitted.exhausted);
     if (Number(c.req.header("content-length") || 0) > MAX_BODY_BYTES) throw new HttpError(413, "Request too large.");
     const raw = await readBounded(c.req.raw, MAX_BODY_BYTES);
     try {

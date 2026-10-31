@@ -1,5 +1,8 @@
 import { domainOf, normalizeUrl } from "../src/url";
-import { charge, LIMITS, LimitError } from "./limits";
+import { LIMITS, limitError, tryCharge } from "./limits";
+
+/** Where a batch of added links came from, kept in the batch's config. Web calls pass none. */
+export type BatchSource = { source: "api"; apiKeyId: string; apiKeyName: string };
 
 export type AddResult = { input: string; id: string; created: boolean } | { input: string; error: string };
 
@@ -20,8 +23,11 @@ export type AddResult = { input: string; id: string; created: boolean } | { inpu
  * After the commit, the Queue send is best effort: the jobs are durable in D1 (the outbox) and
  * cron recovery resends queued jobs if the send fails. Invalid URLs are reported per input and
  * never charged.
+ *
+ * An exhausted quota throws a LimitError naming it (`links` or `jobs`) and its seconds to reset.
+ * An optional `source` is stored in the created batch's config (web calls store none).
  */
-export async function addLinks(env: Env, userId: string, inputs: string[]): Promise<AddResult[]> {
+export async function addLinks(env: Env, userId: string, inputs: string[], source?: BatchSource): Promise<AddResult[]> {
   const now = new Date().toISOString();
   type Parsed = { input: string; url: string } | { input: string; error: string };
   const parsed = inputs.map((input): Parsed => {
@@ -55,11 +61,12 @@ export async function addLinks(env: Env, userId: string, inputs: string[]): Prom
   const orphans = [...new Set([...known.values()].filter((row) => row?.orphan).map((row) => row!.id))].map((id) => ({ id, jobId: crypto.randomUUID() }));
 
   const linksKey = `links:${userId}`, jobsKey = `jobs:${userId}`;
-  const charged = await charge(env.DB, [
-    { key: linksKey, limit: LIMITS.linksPerUser, cost: fresh.length },
-    { key: jobsKey, limit: LIMITS.jobsPerUser, cost: fresh.length + orphans.length },
+  const admitted = await tryCharge(env.DB, [
+    { key: linksKey, limit: LIMITS.linksPerUser, cost: fresh.length, code: "links" },
+    { key: jobsKey, limit: LIMITS.jobsPerUser, cost: fresh.length + orphans.length, code: "jobs" },
   ]);
-  if (!charged) throw new LimitError("Link or processing limit reached. Try again later.");
+  if ("exhausted" in admitted) throw limitError(admitted.exhausted, "Link or processing limit reached. Try again later.");
+  const charged = admitted.charge;
 
   const createdLinks = new Set<string>();
   const queuedJobs: string[] = [];
@@ -77,7 +84,7 @@ export async function addLinks(env: Env, userId: string, inputs: string[]): Prom
           .bind(f.id, userId, f.url, f.url, domainOf(f.url), domainOf(f.url), now, userId, f.url, f.url),
       ),
       ...(fresh.length || orphans.length ? [
-        db.prepare("INSERT INTO batches(id,user_id,kind,config,created_at) VALUES(?,?,'extract','{}',?)").bind(batchId, userId, now),
+        db.prepare("INSERT INTO batches(id,user_id,kind,config,created_at) VALUES(?,?,'extract',?,?)").bind(batchId, userId, JSON.stringify(source ?? {}), now),
         ...[...fresh, ...orphans].map((j) =>
           db
             .prepare(
