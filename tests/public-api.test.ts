@@ -122,6 +122,17 @@ describe("authentication", () => {
     expect(rows()).toEqual({ links: 0, jobs: 0, batches: 0 });
   });
 
+  test("after regenerating, the new key submits under the same name and the old one is 401", async () => {
+    const res = await call(`/api/api-keys/${keyA.id}/regenerate`, { cookie: A.cookie, body: {} });
+    const { apiKey, secret } = (await res.json()) as { apiKey: { id: string }; secret: string };
+    await quiet(async () => {
+      await expect401(await submit(keyA.key, body));
+    });
+    const { batchId } = (await (await submit(secret, body)).json()) as Submitted;
+    const batch = (await libraryOf(A)).batches.find((b) => b.id === batchId)!;
+    expect(JSON.parse(batch.config)).toEqual({ source: "api", apiKeyId: apiKey.id, apiKeyName: "Shortcuts" });
+  });
+
   test("a session cookie alone does not authorize the public API", async () => {
     await quiet(async () => {
       await expect401(await call("/api/v1/links", { cookie: A.cookie, body }));
