@@ -197,6 +197,14 @@ export type UsageTotals = {
   calls: number;
   unknown_cost_calls: number;
 };
+/** One quota in its current fixed window. */
+export type QuotaUsage = { used: number; max: number; windowSeconds: number; resetsAt: string };
+/** Settings > Usage: quota windows and this calendar month's (UTC) new Links by source. */
+export type Usage = {
+  quotas: { links: QuotaUsage; jobs: QuotaUsage };
+  /** `apiKeys` lists keys (Revoked API keys too) that added Links this month; absent keys added none. */
+  month: { start: string; links: number; web: number; apiKeys: { id: string; name: string; links: number }[] };
+};
 /** An API key as Settings lists it. The secret itself is only in the create response. */
 export type ApiKey = {
   id: string;
