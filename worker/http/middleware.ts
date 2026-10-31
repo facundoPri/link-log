@@ -4,7 +4,7 @@ import { createAuth } from "../auth";
 import { ConfigError, hostAllowed, readConfig } from "../config";
 import { LIMITS, limitError, tryCharge } from "../limits";
 import { json } from "../store";
-import { HttpError, type AppEnv } from "./context";
+import { HttpError, type AppContext, type AppEnv } from "./context";
 
 let configErrorLogged = false;
 
@@ -91,21 +91,63 @@ export async function readBounded(request: Request, max: number) {
   return new TextDecoder().decode(bytes);
 }
 
+/** A bounded JSON object body ({} for GET and HEAD). */
+async function readJsonObject(c: AppContext): Promise<Record<string, unknown>> {
+  if (c.req.method === "GET" || c.req.method === "HEAD") return {};
+  if (Number(c.req.header("content-length") || 0) > MAX_BODY_BYTES) throw new HttpError(413, "Request too large.");
+  const raw = await readBounded(c.req.raw, MAX_BODY_BYTES);
+  let body: unknown;
+  try {
+    body = raw ? JSON.parse(raw) : {};
+  } catch {
+    throw new HttpError(400, "Invalid request.");
+  }
+  if (!body || Array.isArray(body) || typeof body !== "object") throw new HttpError(400, "Invalid request.");
+  return body as Record<string, unknown>;
+}
+
 /** Per-user write quota, then a bounded JSON object body. */
 export const writeQuotaAndBody = createMiddleware<AppEnv>(async (c, next) => {
-  let body: Record<string, unknown> = {};
   if (c.req.method !== "GET" && c.req.method !== "HEAD") {
     const admitted = await tryCharge(c.env.DB, [{ key: `writes:${c.get("principal").userId}`, limit: LIMITS.writesPerUser, cost: 1, code: "writes" }]);
     if ("exhausted" in admitted) throw limitError(admitted.exhausted);
-    if (Number(c.req.header("content-length") || 0) > MAX_BODY_BYTES) throw new HttpError(413, "Request too large.");
-    const raw = await readBounded(c.req.raw, MAX_BODY_BYTES);
-    try {
-      body = raw ? JSON.parse(raw) : {};
-    } catch {
-      throw new HttpError(400, "Invalid request.");
-    }
-    if (!body || Array.isArray(body) || typeof body !== "object") throw new HttpError(400, "Invalid request.");
   }
-  c.set("body", body);
+  c.set("body", await readJsonObject(c));
+  await next();
+});
+
+/**
+ * Public API: `Authorization: Bearer lk_…`, verified by the API key plugin, becomes an API key
+ * Principal whose owner is the key's owner. Cookies are ignored. A missing, invalid or Revoked API
+ * key is 401, logged to Workers Logs only (never the key itself). A failed lookup is 503.
+ */
+export const requireApiKey = createMiddleware<AppEnv>(async (c, next) => {
+  const key = /^Bearer\s+(\S+)$/i.exec(c.req.header("authorization") ?? "")?.[1];
+  let verified;
+  if (key) {
+    try {
+      verified = await c.get("auth").api.verifyApiKey({ body: { key } });
+    } catch (error) {
+      if (!isAPIError(error)) {
+        console.error(JSON.stringify({ event: "api_key_lookup_failed" }));
+        return json({ error: "Could not check the API key. Try again." }, 503);
+      }
+    }
+  }
+  if (!verified?.valid || !verified.key) {
+    console.warn(JSON.stringify({ event: "api_key_rejected", reason: key ? "invalid" : "missing", method: c.req.method, path: c.req.path }));
+    return json({ error: "A valid API key is required." }, 401);
+  }
+  c.set("principal", { kind: "apiKey", userId: verified.key.referenceId, keyId: verified.key.id, keyName: verified.key.name ?? "" });
+  await next();
+});
+
+/** Per-key request limit (every request counts), then a bounded JSON object body. */
+export const apiKeyQuotaAndBody = createMiddleware<AppEnv>(async (c, next) => {
+  const principal = c.get("principal");
+  if (principal.kind !== "apiKey") return json({ error: "A valid API key is required." }, 401);
+  const admitted = await tryCharge(c.env.DB, [{ key: `apikey:${principal.keyId}`, limit: LIMITS.requestsPerApiKey, cost: 1, code: "api_key" }]);
+  if ("exhausted" in admitted) throw limitError(admitted.exhausted, "API key request limit reached. Try again later.");
+  c.set("body", await readJsonObject(c));
   await next();
 });

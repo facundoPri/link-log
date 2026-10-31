@@ -7,20 +7,24 @@ import { activityRoutes } from "../routes/activity";
 import { apiKeyRoutes } from "../routes/api-keys";
 import { browserRoutes } from "../routes/browser";
 import { linkRoutes } from "../routes/links";
+import { publicApiRoutes } from "../routes/public-api";
 import { taxonomyRoutes } from "../routes/taxonomy";
 import { HttpError, type AppEnv } from "./context";
-import { requireSession, sameOriginWrites, withConfig, writeQuotaAndBody } from "./middleware";
+import { apiKeyQuotaAndBody, requireApiKey, requireSession, sameOriginWrites, withConfig, writeQuotaAndBody } from "./middleware";
+
+export const PUBLIC_API_BASE_PATH = "/api/v1";
 
 /**
  * HTTP layer. Order matters:
  *  1. /api/* validates config (fail closed) and the host, and binds a per-request auth instance.
  *  2. Better Auth gets the untouched Request for /api/auth/* (its own methods, bodies, callbacks
  *     and CSRF/origin checks) before any app middleware or body parsing.
- *  3. Everything else under /api is private by default: same-origin JSON writes, a valid session,
+ *  3. /api/v1/* is the public API: a verified Bearer API key, the per-key request limit and a
+ *     bounded JSON body, then its routes; anything else under it is 404, never the private group.
+ *  4. Everything else under /api is private by default: same-origin JSON writes, a valid session,
  *     the per-user write quota and a bounded JSON body, then the route modules. Ownership is
  *     enforced again in every query (see worker/store.ts and the routes).
- *  4. Non-API paths are static assets (the public SPA shell; no library data).
- * Public API routes, if any are ever added, must be declared before the private group.
+ *  5. Non-API paths are static assets (the public SPA shell; no library data).
  */
 export function createApp() {
   const app = new Hono<AppEnv>();
@@ -34,6 +38,14 @@ export function createApp() {
     }
   });
   app.all(`${AUTH_BASE_PATH}/*`, () => json({ error: "Method not allowed." }, 405));
+
+  // Public API: an API key reaches only these routes, and only these accept one. No cookie or
+  // same-origin checks and no CORS headers (pages on other sites cannot read the responses).
+  const publicApi = new Hono<AppEnv>();
+  publicApi.use("*", requireApiKey, apiKeyQuotaAndBody);
+  publicApi.route("/", publicApiRoutes);
+  publicApi.all("*", () => json({ error: "Not found." }, 404));
+  app.route(PUBLIC_API_BASE_PATH, publicApi);
 
   const privateApi = new Hono<AppEnv>();
   privateApi.use("*", sameOriginWrites, requireSession, writeQuotaAndBody);

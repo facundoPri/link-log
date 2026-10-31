@@ -4,7 +4,8 @@ import { LIMITS, limitError, tryCharge } from "./limits";
 /** Where a batch of added links came from, kept in the batch's config. Web calls pass none. */
 export type BatchSource = { source: "api"; apiKeyId: string; apiKeyName: string };
 
-export type AddResult = { input: string; id: string; created: boolean } | { input: string; error: string };
+/** `batchId` is set when this call queued the link's Extraction (in the one batch it created). */
+export type AddResult = { input: string; id: string; created: boolean; batchId?: string } | { input: string; error: string };
 
 /**
  * Adds URLs to the owner's library the way All links does (normalization, URL rules, per-owner
@@ -70,6 +71,7 @@ export async function addLinks(env: Env, userId: string, inputs: string[], sourc
 
   const createdLinks = new Set<string>();
   const queuedJobs: string[] = [];
+  const queuedIn = new Map<string, string>();
   if (known.size) {
     const db = env.DB;
     const batchId = crypto.randomUUID();
@@ -115,7 +117,9 @@ export async function addLinks(env: Env, userId: string, inputs: string[], sourc
       throw error;
     }
     fresh.forEach((f, i) => results[i]!.meta.changes > 0 && createdLinks.add(f.id));
-    [...fresh, ...orphans].forEach((j, i) => results[fresh.length + 1 + i]!.meta.changes > 0 && queuedJobs.push(j.jobId));
+    [...fresh, ...orphans].forEach((j, i) => {
+      if (results[fresh.length + 1 + i]!.meta.changes > 0) queuedJobs.push(j.jobId), queuedIn.set(j.id, batchId);
+    });
     await charged.release({ [linksKey]: fresh.length - createdLinks.size, [jobsKey]: fresh.length + orphans.length - queuedJobs.length });
     try {
       if (queuedJobs.length) await env.JOBS.sendBatch(queuedJobs.map((id) => ({ body: { id } })));
@@ -133,6 +137,7 @@ export async function addLinks(env: Env, userId: string, inputs: string[], sourc
     if (!id) return { input: p.input, error: "Could not save the link." };
     const created = createdLinks.has(id) && !seen.has(p.url);
     seen.add(p.url);
-    return { input: p.input, id, created };
+    const batchId = queuedIn.get(id);
+    return { input: p.input, id, created, ...(batchId ? { batchId } : {}) };
   });
 }
