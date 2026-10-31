@@ -18,6 +18,11 @@ describe("link capture", () => {
       "youtube.com.example.com",
     );
   });
+  test("normalizing a normalized URL changes nothing, and a URL whose encoded form passes 4096 characters is rejected", () => {
+    const fits = normalizeUrl(`https://example.com/${"中".repeat(400)}?utm_x=1&q=${"é".repeat(50)}`);
+    expect(normalizeUrl(fits)).toBe(fits);
+    expect(() => normalizeUrl(`https://example.com/${"中".repeat(4096)}`)).toThrow("Paste a valid URL.");
+  });
   test("rejects non-web schemes, credentials and ordinary pasted prose", () => {
     for (const url of [
       "javascript:alert(1)",

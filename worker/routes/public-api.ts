@@ -42,7 +42,6 @@ export const publicApiRoutes = new Hono<AppEnv>().post("/links", async (c) => {
   if (!accepted.size) return json({ error: NO_LINK, rejected }, 400);
   const saved = await addLinks(c.env, principal.userId, [...accepted.keys()], {
     source: { source: "api", apiKeyId: principal.keyId, apiKeyName: principal.keyName },
-    normalized: true,
   });
   const inputs = [...accepted.values()];
   const results = [];

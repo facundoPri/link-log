@@ -165,19 +165,25 @@ describe("URLs inside text", () => {
     expect(((await ok.json()) as Submitted).results).toHaveLength(100);
   });
 
-  test("a long non-ASCII URL is saved as the web app saves it, though its percent-encoded form passes 4096 characters", async () => {
-    const input = `http://api.example/${"日".repeat(500)}`;
-    const web = await call("/api/links", { cookie: B.cookie, body: { url: input } });
+  test("a long non-ASCII URL is accepted as the web app accepts it when its percent-encoded form fits 4096 characters, and rejected with the reason when it does not", async () => {
+    const fits = `http://api.example/${"日".repeat(400)}`;
+    const web = await call("/api/links", { cookie: B.cookie, body: { url: fits } });
     expect(web.status).toBe(201);
     const [webLink] = (await libraryOf(B)).links;
-    expect(webLink!.url.length).toBeGreaterThan(4096);
 
-    const res = await submit(keyA.key, { urls: [input] });
+    const res = await submit(keyA.key, { urls: [fits] });
     expect(res.status).toBe(202);
     const body = (await res.json()) as Submitted;
     expect(body.rejected).toEqual([]);
     expect(body.results.map((r) => [r.url, r.status])).toEqual([[webLink!.url, "created"]]);
-    expect((await libraryOf(A)).links.map((l) => l.url)).toEqual([webLink!.url]);
+
+    const tooLong = `http://api.example/${"日".repeat(500)}`;
+    expect((await call("/api/links", { cookie: B.cookie, body: { url: tooLong } })).status).toBe(400);
+    const refused = await submit(keyA.key, { urls: [tooLong, "https://api.example/ok"] });
+    expect(refused.status).toBe(202);
+    const mixed = (await refused.json()) as Submitted;
+    expect(mixed.rejected).toEqual([{ input: tooLong, error: "Paste a valid URL." }]);
+    expect(mixed.results.map((r) => r.url)).toEqual(["https://api.example/ok"]);
   });
 
   test("repeats do not count toward the limit", async () => {

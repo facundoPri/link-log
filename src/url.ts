@@ -16,6 +16,9 @@ export function normalizeUrl(input: string): string {
   const params = [...url.searchParams];
   const kept = params.filter(([key]) => !(/^utm_/i.test(key) || key === "fbclid" || key === "gclid"));
   if (kept.length < params.length) url.search = new URLSearchParams(kept).toString();
+  // Percent-encoding can make the URL several times longer than the text it came from. The limit
+  // applies to the result too, so a stored URL is always one normalizeUrl accepts again.
+  if (url.href.length > 4096) throw new Error("Paste a valid URL.");
   return url.href;
 }
 export function domainOf(input: string): string {
