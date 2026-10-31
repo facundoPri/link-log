@@ -1,0 +1,198 @@
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { ArrowLeft, Copy, KeyRound, Loader2, LogOut } from "lucide-react";
+import { toast } from "sonner";
+import { api } from "../api";
+import { relativeTime } from "../lib/time";
+import type { ApiKey } from "../types";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+
+const day = new Intl.DateTimeFormat("en", { dateStyle: "medium" });
+
+function Section({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
+  return (
+    <section aria-label={title} className="flex flex-col gap-3">
+      <div>
+        <h2 className="text-sm font-semibold">{title}</h2>
+        {description && <p className="text-xs text-muted-foreground">{description}</p>}
+      </div>
+      <div className="rounded-lg border bg-card">{children}</div>
+    </section>
+  );
+}
+
+/** Settings: the account basics and the owner's API keys. */
+export function SettingsPage({ account, onSignOut, onBack }: { account: { email: string }; onSignOut: () => void; onBack: () => void }) {
+  return (
+    <div className="min-h-dvh bg-background">
+      <div className="mx-auto flex max-w-2xl flex-col gap-8 px-4 py-6 md:py-10">
+        <header className="flex items-center gap-2">
+          <Button variant="ghost" size="icon-sm" aria-label="Back to library" onClick={onBack}>
+            <ArrowLeft />
+          </Button>
+          <h1 className="text-lg font-semibold">Settings</h1>
+        </header>
+        <Section title="Account">
+          <div className="flex items-center justify-between gap-3 p-4">
+            <div className="min-w-0">
+              <div className="text-xs text-muted-foreground">Email</div>
+              <div className="truncate text-sm">{account.email}</div>
+            </div>
+            <Button variant="outline" onClick={onSignOut}>
+              <LogOut />
+              Sign out
+            </Button>
+          </div>
+        </Section>
+        <ApiKeys />
+      </div>
+    </div>
+  );
+}
+
+function ApiKeys() {
+  const [keys, setKeys] = useState<ApiKey[] | null>(null);
+  const [loadError, setLoadError] = useState("");
+  const [name, setName] = useState("");
+  const [creating, setCreating] = useState(false);
+  // The full secret lives only in this state: it is gone once dismissed or the page is left.
+  const [created, setCreated] = useState<{ name: string; secret: string } | null>(null);
+  const [revoking, setRevoking] = useState<ApiKey | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    api<{ apiKeys: ApiKey[] }>("/api-keys")
+      .then((r) => live && setKeys(r.apiKeys))
+      .catch((e: Error) => live && setLoadError(e.message));
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const create = async (e: FormEvent) => {
+    e.preventDefault();
+    setCreating(true);
+    try {
+      const r = await api<{ apiKey: ApiKey; secret: string }>("/api-keys", "POST", { name });
+      setKeys((list) => [r.apiKey, ...(list ?? [])]);
+      setCreated({ name: r.apiKey.name, secret: r.secret });
+      setName("");
+    } catch (error) {
+      toast.error((error as Error).message);
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const revoke = async (key: ApiKey) => {
+    try {
+      const r = await api<{ apiKey: ApiKey }>(`/api-keys/${key.id}/revoke`, "POST", {});
+      setKeys((list) => list?.map((k) => (k.id === key.id ? r.apiKey : k)) ?? null);
+      toast.success(`“${key.name}” revoked`);
+    } catch (error) {
+      toast.error((error as Error).message);
+    }
+    setRevoking(null);
+  };
+
+  return (
+    <Section title="API keys" description="Keys only submit URLs to your library. They cannot read it.">
+      <form onSubmit={create} className="flex items-end gap-2 border-b p-4">
+        <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+          <Label htmlFor="api-key-name">Name</Label>
+          <Input id="api-key-name" value={name} maxLength={32} placeholder="e.g. Shortcuts" onChange={(e) => setName(e.target.value)} />
+        </div>
+        <Button type="submit" disabled={creating || !name.trim()}>
+          {creating ? <Loader2 className="animate-spin" /> : <KeyRound />}
+          Create key
+        </Button>
+      </form>
+      {created && (
+        <div role="status" className="flex flex-col gap-2 border-b bg-muted/40 p-4">
+          <p className="text-sm">
+            Copy the key for “{created.name}” now. It will not be shown again.
+          </p>
+          <div className="flex items-center gap-2">
+            <code className="min-w-0 flex-1 truncate rounded-md border bg-background px-2 py-1.5 font-mono text-xs" aria-label="New API key">
+              {created.secret}
+            </code>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                void navigator.clipboard.writeText(created.secret).then(
+                  () => toast("API key copied"),
+                  () => toast.error("Could not copy. Select the key and copy it."),
+                );
+              }}
+            >
+              <Copy />
+              Copy
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setCreated(null)}>
+              Done
+            </Button>
+          </div>
+        </div>
+      )}
+      {loadError ? (
+        <p className="p-4 text-sm text-destructive">{loadError}</p>
+      ) : !keys ? (
+        <p className="p-4 text-sm text-muted-foreground" aria-busy="true">Loading…</p>
+      ) : !keys.length ? (
+        <p className="p-4 text-sm text-muted-foreground">No API keys yet.</p>
+      ) : (
+        <ul aria-label="API keys" className="divide-y">
+          {keys.map((key) => (
+            <li key={key.id} className="flex items-center gap-3 p-4">
+              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <div className="flex items-center gap-2">
+                  <span className="truncate text-sm font-medium">{key.name}</span>
+                  <Badge variant={key.status === "active" ? "secondary" : "outline"} className={key.status === "revoked" ? "text-muted-foreground" : undefined}>
+                    {key.status === "active" ? "Active" : "Revoked"}
+                  </Badge>
+                </div>
+                <div className="flex flex-wrap gap-x-3 text-xs text-muted-foreground">
+                  <code className="font-mono">{key.prefix}…</code>
+                  <span>Created {day.format(new Date(key.createdAt))}</span>
+                  <span>{key.lastUsedAt ? `Last used ${relativeTime(key.lastUsedAt)}` : "Never used"}</span>
+                </div>
+              </div>
+              {key.status === "active" && (
+                <Button variant="ghost" size="sm" onClick={() => setRevoking(key)}>
+                  Revoke
+                </Button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      <AlertDialog open={!!revoking} onOpenChange={(o) => !o && setRevoking(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Revoke “{revoking?.name}”?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Anything using this key stops working immediately. The key stays listed as revoked.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => revoking && void revoke(revoking)}>Revoke</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </Section>
+  );
+}
