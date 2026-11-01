@@ -1,0 +1,79 @@
+---
+// Large statement whose words light up one by one as it scrolls into view.
+const lines = ["Write down what matters to you once.", "Linklog keeps every link and tab in order after that."];
+let index = 0;
+---
+
+<section class="px-4 py-24 md:py-24" aria-label="What Linklog does">
+  <p class="heading-4 sm:heading-3 lg:heading-2 text-balance mx-auto max-w-[680px] text-center lg:max-w-4xl" data-tagline>
+    {
+      lines.map((line, li) => (
+        <>
+          {line.split(" ").map((w) => (
+            <>
+              <span class="tag-word" style={`--w:${index++}`}>{w}</span>{" "}
+            </>
+          ))}
+          {li < lines.length - 1 && <br class="hidden md:block" />}
+        </>
+      ))
+    }
+  </p>
+</section>
+
+<style>
+  .tag-word {
+    color: var(--color-ink);
+    opacity: 0.28;
+    transition: opacity 500ms var(--ease-base);
+  }
+  .tag-word.is-on { opacity: 1; }
+  .no-js .tag-word { opacity: 1; }
+  @media (prefers-reduced-motion: reduce) {
+    .tag-word { opacity: 1; transition: none; }
+  }
+</style>
+
+<script>
+  import { reducedMotion } from "../scripts/motion";
+  const el = document.querySelector<HTMLElement>("[data-tagline]");
+  if (el && !reducedMotion()) {
+    const words = [...el.querySelectorAll<HTMLElement>(".tag-word")];
+    let lit = 0;
+    let queued = false;
+    let listening = false;
+    const update = () => {
+      queued = false;
+      const r = el.getBoundingClientRect();
+      const vh = window.innerHeight;
+      // 0 when the block's top reaches 85% of the viewport, 1 when its bottom reaches 45%.
+      const start = vh * 0.85;
+      const end = vh * 0.45;
+      const progress = (start - r.top) / (start - end + r.height);
+      const target = Math.max(0, Math.min(words.length, Math.floor(progress * words.length)));
+      while (lit < target) words[lit++]!.classList.add("is-on");
+      if (lit >= words.length) stop();
+    };
+    const onScroll = () => {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(update);
+    };
+    const start = () => {
+      if (listening) return;
+      listening = true;
+      window.addEventListener("scroll", onScroll, { passive: true });
+      onScroll();
+    };
+    const stop = () => {
+      listening = false;
+      window.removeEventListener("scroll", onScroll);
+      io.disconnect();
+    };
+    // Only listen while the block is near the viewport.
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) e.isIntersecting ? start() : (listening = false, window.removeEventListener("scroll", onScroll));
+    });
+    io.observe(el);
+  }
+</script>

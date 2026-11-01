@@ -1,0 +1,197 @@
+---
+import Icon from "./Icon.astro";
+import SectionHeader from "./SectionHeader.astro";
+
+// Group definitions the user pinned, each with a sentence that tells Autogroup what belongs there.
+const groups = [
+  { id: "research", name: "Research", tone: 5, rule: "Papers and explainers for the thesis" },
+  { id: "dev", name: "Linklog dev", tone: 3, rule: "Docs and threads for building Linklog" },
+  { id: "recipes", name: "Recipes", tone: 1, rule: "Dinners to try this week" },
+  { id: "shopping", name: "Shopping", tone: 7, rule: "Things I am comparing before buying" },
+];
+
+const tabs = [
+  { id: 1, title: "facundoPri/link-log", domain: "github.com", letter: "G", tone: 4, group: "dev", saved: true },
+  { id: 2, title: "75% mechanical keyboard, hot swap", domain: "amazon.com", letter: "A", tone: 1, group: "shopping", saved: false },
+  { id: 3, title: "Attention is all you need", domain: "arxiv.org", letter: "A", tone: 0, group: "research", saved: true },
+  { id: 4, title: "One pan lemon orzo with spinach", domain: "seriouseats.com", letter: "S", tone: 2, group: "recipes", saved: false },
+  { id: 5, title: "chrome.tabGroups API reference", domain: "developer.chrome.com", letter: "D", tone: 4, group: "dev", saved: false },
+  { id: 6, title: "How diffusion models learn to denoise", domain: "youtube.com", letter: "Y", tone: 0, group: "research", saved: false },
+  { id: 7, title: "Weeknight dal with crispy shallots", domain: "bonappetit.com", letter: "B", tone: 0, group: "recipes", saved: true },
+  { id: 8, title: "Workflows: durable execution", domain: "developers.cloudflare.com", letter: "C", tone: 1, group: "dev", saved: false },
+  { id: 9, title: "Ultralight tents compared", domain: "rei.com", letter: "R", tone: 3, group: "shopping", saved: false },
+  { id: 10, title: "Local first software", domain: "inkandswitch.com", letter: "I", tone: 5, group: "research", saved: false },
+  { id: 11, title: "Crispy chickpea salad", domain: "cooking.nytimes.com", letter: "N", tone: 6, group: "recipes", saved: false },
+  { id: 12, title: "Debounce inside a service worker", domain: "stackoverflow.com", letter: "S", tone: 1, group: "dev", saved: true },
+];
+const toneOf = (g: string) => groups.find((x) => x.id === g)!.tone;
+---
+
+<section id="browser" class="bg-surface px-4 py-24">
+  <div class="mx-auto max-w-6xl">
+    <SectionHeader
+      eyebrow="Browser"
+      icon="browsers"
+      title="Forty open tabs, back in order"
+      lede="The Chrome extension brings the tabs and groups of your current window into Linklog. Autogroup files each tab into the groups you described, and the ones you already saved can close without losing anything."
+    />
+
+    <div class="mt-12" data-browser data-browser-data={JSON.stringify({ groups, tabs })} data-reveal style="--reveal-delay:120ms">
+      <div class="window">
+        <!-- Chrome tab strip -->
+        <div class="flex items-center gap-3 bg-subtle px-3 pt-2">
+          <div class="traffic hidden pb-2 sm:flex"><span></span><span></span><span></span></div>
+          <div class="flex min-w-0 flex-1 items-end gap-0.5" data-strip>
+            {
+              groups.map((g) => (
+                <span class={`glabel t${g.tone} caption-3 mb-1 flex h-6 shrink-0 items-center rounded-md px-2`} data-glabel={g.id} hidden>
+                  <span class="hidden lg:inline">{g.name}</span>
+                  <span class="dot bg-(--tag-fg) lg:hidden" />
+                </span>
+              ))
+            }
+            {
+              tabs.map((t) => (
+                <div class={`ctab t${toneOf(t.group)} flex h-8 min-w-0 flex-1 items-center justify-center rounded-t-lg px-2`} data-tab={t.id}>
+                  <span class={`favicon t${t.tone} size-4 rounded-sm`}>{t.letter}</span>
+                  <span class="sr-only">{t.title}</span>
+                </div>
+              ))
+            }
+            <span class="ctab-active mb-0 flex h-8 w-24 shrink-0 items-center gap-2 rounded-t-lg bg-white px-2 sm:w-32">
+              <span class="flex size-4 items-center justify-center rounded-sm bg-brand text-white">
+                <Icon name="link-simple" weight="bold" class="size-3" />
+              </span>
+              <span class="caption-4 truncate text-ink">Linklog</span>
+            </span>
+          </div>
+        </div>
+        <div class="flex items-center gap-2 bg-white px-3 py-2 shadow-[inset_0_-1px_0_var(--color-line)]">
+          <div class="caption-5 flex flex-1 items-center gap-2 rounded-full bg-subtle px-3 py-1 text-muted">
+            <Icon name="lock-simple" class="size-3" /> linklog.facundopri.com/browser
+          </div>
+        </div>
+
+        <!-- Linklog Browser view -->
+        <div class="grid grid-cols-1 md:grid-cols-[208px_1fr]">
+          <aside class="hidden flex-col gap-6 bg-surface p-3 shadow-[inset_-1px_0_0_var(--color-line)] md:flex">
+            <ul class="flex flex-col gap-0.5">
+              <li class="caption-4 flex items-center gap-2 rounded-md bg-white px-2 py-1 text-ink shadow-[0_0_0_1px_var(--color-line)]">
+                <Icon name="browsers" class="size-4 text-muted" /> This window
+                <span class="tabular ml-auto text-muted" data-tab-count>12</span>
+              </li>
+              <li class="caption-4 flex items-center gap-2 rounded-md px-2 py-1 text-muted">
+                <Icon name="folder-simple-dashed" class="size-4" /> Ungrouped
+                <span class="tabular ml-auto" data-ungrouped-count>12</span>
+              </li>
+            </ul>
+            <div>
+              <p class="caption-3 px-2 pb-1 text-faint">Groups</p>
+              <ul class="flex flex-col gap-1">
+                {
+                  groups.map((g) => (
+                    <li class={`t${g.tone} rounded-md px-2 py-1`}>
+                      <span class="caption-4 flex items-center gap-2 text-ink-2">
+                        <span class="dot" />
+                        {g.name}
+                        <span class="tabular ml-auto text-muted" data-group-count={g.id}>0</span>
+                      </span>
+                      <span class="caption-5 mt-0.5 block text-faint">{g.rule}</span>
+                    </li>
+                  ))
+                }
+              </ul>
+            </div>
+          </aside>
+
+          <div class="relative min-w-0 pb-24">
+            <ul class="flex flex-col p-2" data-tab-rows>
+              {
+                tabs.map((t) => (
+                  <li class="tab-row flex items-center gap-3 rounded-lg px-2 py-2" data-row={t.id}>
+                    <span class="flex size-4 shrink-0 items-center justify-center rounded bg-ink text-white">
+                      <Icon name="check" weight="bold" class="size-3" />
+                    </span>
+                    <span class={`favicon t${t.tone}`}>{t.letter}</span>
+                    <div class="min-w-0 flex-1">
+                      <span class="body-5 block truncate text-ink">{t.title}</span>
+                      <span class="caption-5 flex items-center gap-2 text-muted">
+                        <span class="truncate">{t.domain}</span>
+                        {t.saved && (
+                          <span class="flex shrink-0 items-center gap-1 text-brand">
+                            <Icon name="check" weight="bold" class="size-3" /> Saved
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                    <span class="flex shrink-0 justify-end sm:w-36" data-dest />
+                  </li>
+                ))
+              }
+            </ul>
+
+            <!-- Selection bar -->
+            <div class="absolute inset-x-0 bottom-4 flex justify-center px-4">
+              <div class="flex max-w-full flex-wrap items-center justify-center gap-1 rounded-xl bg-white p-1 shadow-[0_0_0_1px_var(--color-line),0_8px_24px_oklch(0.2_0.01_260/0.12)]">
+                <span class="caption-3 tabular hidden px-2 text-ink sm:inline" data-selected>12 selected</span>
+                <button type="button" class="step-btn" data-step="suggest">
+                  <Icon name="sparkle" weight="fill" class="size-4" /> Autogroup
+                </button>
+                <button type="button" class="step-btn" data-step="apply" disabled>
+                  <Icon name="squares-four" class="size-4" /> <span>Apply<span class="hidden sm:inline"> groups</span></span>
+                </button>
+                <button type="button" class="step-btn" data-step="close" disabled>
+                  <Icon name="broom" class="size-4" /> Close saved
+                </button>
+                <button type="button" class="step-btn" data-step="reset" aria-label="Start over">
+                  <Icon name="arrow-counter-clockwise" class="size-4" />
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="caption-5 mt-4 text-center text-muted" data-browser-status aria-live="polite">
+        Twelve tabs, no groups. Press Autogroup, or wait a moment.
+      </p>
+    </div>
+  </div>
+</section>
+
+<style>
+  .ctab { transition: background-color 300ms var(--ease-base), opacity 300ms var(--ease-base); }
+  .ctab:hover { background: oklch(1 0 0 / 0.6); }
+  .ctab.is-grouped { box-shadow: inset 0 -2px 0 var(--tag-dot); }
+  .ctab.is-closing, .tab-row.is-closing { opacity: 0; }
+  .glabel { background: var(--tag-bg); color: var(--tag-fg); }
+  .glabel.pop-in { animation: glabel-in 500ms var(--ease-base); }
+  @keyframes glabel-in { from { opacity: 0; transform: scale(0.6); } }
+  .tab-row { transition: opacity 300ms var(--ease-base), background-color 300ms var(--ease-base); }
+  .tab-row.is-flash { background: var(--color-brand-soft); }
+  .dest { transition: opacity 500ms var(--ease-base), transform 500ms var(--ease-base); }
+  .dest.is-new { opacity: 0; transform: translateX(8px); }
+
+  .step-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px;
+    border-radius: 8px;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    font-weight: 600;
+    color: var(--color-ink);
+    transition: background-color 300ms var(--ease-base), color 300ms var(--ease-base), transform 300ms var(--ease-base), opacity 300ms var(--ease-base);
+  }
+  @media (min-width: 640px) { .step-btn { padding: 8px 12px; } }
+  .step-btn:hover { background: var(--color-subtle); }
+  .step-btn:active { transform: scale(0.98); }
+  .step-btn:disabled { opacity: 0.35; pointer-events: none; }
+  .step-btn.is-next { background: var(--color-ink); color: white; }
+  .step-btn.is-next:hover { background: var(--color-ink-2); }
+</style>
+
+<script>
+  import { initBrowserDemo } from "../scripts/browser";
+  initBrowserDemo();
+</script>

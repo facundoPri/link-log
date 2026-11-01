@@ -1,0 +1,36 @@
+---
+import Icon from "./Icon.astro";
+import SectionHeader from "./SectionHeader.astro";
+import { FAQ } from "../data/faq";
+---
+
+<section id="faq" class="bg-surface px-4 py-24">
+  <div class="mx-auto grid max-w-6xl gap-12 lg:grid-cols-[1fr_1.4fr]">
+    <SectionHeader
+      eyebrow="FAQ"
+      icon="question"
+      title="Questions, answered"
+      lede="Something missing? Open an issue on GitHub and it will get an answer there."
+    />
+    <div class="flex flex-col gap-2" data-reveal>
+      {
+        FAQ.map((item) => (
+          <details class="faq group rounded-xl bg-white shadow-[0_0_0_1px_var(--color-line)] transition-shadow duration-300 ease-base open:shadow-[0_0_0_1px_var(--color-line-strong),0_4px_16px_oklch(0.2_0.01_260/0.06)]">
+            <summary class="title-3 flex cursor-pointer list-none items-center justify-between gap-4 rounded-xl p-4 text-ink [&::-webkit-details-marker]:hidden">
+              {item.q}
+              <span class="flex size-6 shrink-0 items-center justify-center rounded-md bg-subtle text-muted transition-transform duration-500 ease-base group-open:rotate-45">
+                <Icon name="plus" weight="bold" class="size-3" />
+              </span>
+            </summary>
+            <p class="faq-body body-6 px-4 pb-4 text-muted">{item.a}</p>
+          </details>
+        ))
+      }
+    </div>
+  </div>
+</section>
+
+<style>
+  .faq[open] .faq-body { animation: faq-in 500ms var(--ease-base); }
+  @keyframes faq-in { from { opacity: 0; transform: translateY(-4px); } }
+</style>

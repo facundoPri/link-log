@@ -1,0 +1,10 @@
+export const APP_URL = import.meta.env.PUBLIC_APP_URL ?? "https://linklog.facundopri.com";
+export const REPO_URL = "https://github.com/facundoPri/link-log";
+export const RELEASES_URL = `${REPO_URL}/releases`;
+
+export const NAV = [
+  { href: "#autotags", label: "Auto tags" },
+  { href: "#lenses", label: "Lenses" },
+  { href: "#browser", label: "Browser" },
+  { href: "#faq", label: "FAQ" },
+] as const;

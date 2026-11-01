@@ -1,0 +1,23 @@
+---
+import Icon from "./Icon.astro";
+import { APP_URL, RELEASES_URL } from "../data/site";
+---
+
+<section class="px-4 py-24">
+  <div class="mx-auto flex max-w-6xl flex-col items-center rounded-3xl bg-ink px-6 py-24 text-center" data-reveal>
+    <span class="flex size-12 items-center justify-center rounded-2xl bg-brand text-white">
+      <Icon name="link-simple" weight="bold" class="size-6" />
+    </span>
+    <h2 class="heading-4 md:heading-2 mt-8 max-w-[680px] text-white">Log it once.<br /> Find it whenever you need it.</h2>
+    <p class="body-3 md:title-2 mt-6 max-w-[560px] text-white/70 md:font-normal">
+      Start a private library, write your first tag and let the next link you save file itself.
+    </p>
+    <a href={APP_URL} class="btn button-md group mt-8 bg-white text-ink hover:-translate-y-px hover:bg-white/90">
+      Start your library
+      <Icon name="arrow-right" weight="bold" class="size-4 transition-transform duration-300 ease-base group-hover:translate-x-1" />
+    </a>
+    <a href={RELEASES_URL} class="caption-4 mt-4 flex items-center gap-2 rounded-sm text-white/60 transition-colors duration-300 ease-base hover:text-white">
+      <Icon name="google-chrome-logo" class="size-4" /> Get the Chrome extension
+    </a>
+  </div>
+</section>

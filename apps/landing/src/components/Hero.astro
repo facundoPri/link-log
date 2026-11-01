@@ -1,0 +1,211 @@
+---
+import Icon from "./Icon.astro";
+import TagChip from "./TagChip.astro";
+import { APP_URL, REPO_URL } from "../data/site";
+import { TAGS, LIBRARY, INCOMING } from "../data/demo";
+---
+
+<section class="relative overflow-hidden px-4 pb-24 pt-32 md:pt-40">
+  <div class="mx-auto flex max-w-6xl flex-col items-center text-center">
+    <a
+      href="#how"
+      class="caption-4 mb-6 inline-flex items-center gap-2 rounded-full bg-brand-soft py-1 pl-1 pr-3 text-brand-strong transition-transform duration-300 ease-base hover:-translate-y-px"
+      data-reveal
+    >
+      <span class="flex size-6 items-center justify-center rounded-full bg-white">
+        <Icon name="sparkle" weight="fill" class="size-3" />
+      </span>
+      Auto tags, lenses and tab groups<span class="hidden sm:inline"> in one library</span>
+    </a>
+
+    <h1 class="heading-4 sm:heading-2 lg:heading-1 hero-ink max-w-[680px] pb-2" data-reveal style="--reveal-delay:60ms">
+      Your links and tabs,<br /> sorted the way<br class="sm:hidden" /> you think
+    </h1>
+    <p class="body-3 mt-6 max-w-[680px] text-muted sm:title-1 sm:font-normal" data-reveal style="--reveal-delay:120ms">
+      Save any page in one keystroke. Linklog reads it, tags it with rules you write in plain words and
+      answers your questions about it, so your library and your browser stay in order.
+    </p>
+
+    <div class="mt-8 flex flex-col items-center gap-4" data-reveal style="--reveal-delay:180ms">
+      <a href={APP_URL} class="btn btn-primary button-md group">
+        Start your library
+        <Icon name="arrow-right" weight="bold" class="size-4 transition-transform duration-300 ease-base group-hover:translate-x-1" />
+      </a>
+      <ul class="caption-5 flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-muted">
+        <li class="flex items-center gap-2">
+          <Icon name="lock-simple" class="size-4" />
+          Private to your account
+        </li>
+        <li class="flex items-center gap-2">
+          <Icon name="google-chrome-logo" class="size-4" />
+          Chrome extension for open tabs
+        </li>
+        <li>
+          <a href={REPO_URL} class="flex items-center gap-2 rounded-sm underline-offset-4 hover:text-ink hover:underline">
+            <Icon name="github-logo" class="size-4" />
+            Open source on GitHub
+          </a>
+        </li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Product window: links arrive, get a preview, then get tagged. -->
+  <div class="mx-auto mt-16 max-w-5xl" data-reveal style="--reveal-delay:260ms">
+    <div class="window relative" data-hero-demo>
+      <div class="window-bar">
+        <div class="traffic"><span></span><span></span><span></span></div>
+        <div class="caption-5 mx-auto flex items-center gap-2 rounded-md bg-white px-3 py-0.5 text-muted shadow-[inset_0_0_0_1px_var(--color-line)]">
+          <Icon name="lock-simple" class="size-3" />
+          linklog.facundopri.com
+        </div>
+        <div class="w-12"></div>
+      </div>
+
+      <div class="grid min-h-[440px] grid-cols-1 md:grid-cols-[200px_1fr]">
+        <!-- Sidebar -->
+        <aside class="hidden flex-col gap-6 bg-surface p-3 text-left shadow-[inset_-1px_0_0_var(--color-line)] md:flex" aria-hidden="true">
+          <ul class="flex flex-col gap-0.5">
+            <li class="caption-4 flex items-center gap-2 rounded-md bg-white px-2 py-1 text-ink shadow-[0_0_0_1px_var(--color-line)]">
+              <Icon name="tray" class="size-4 text-muted" /> All links
+              <span class="tabular ml-auto text-muted" data-count="all" data-base="128">128</span>
+            </li>
+            <li class="caption-4 flex items-center gap-2 rounded-md px-2 py-1 text-muted">
+              <Icon name="folder-simple-dashed" class="size-4" /> Untagged
+              <span class="tabular ml-auto">6</span>
+            </li>
+            <li class="caption-4 flex items-center gap-2 rounded-md px-2 py-1 text-muted">
+              <Icon name="browsers" class="size-4" /> Browser
+              <span class="tabular ml-auto">23</span>
+            </li>
+          </ul>
+          <div>
+            <p class="caption-3 px-2 pb-1 text-faint">Tags</p>
+            <ul class="flex flex-col gap-0.5">
+              {
+                TAGS.map((t) => (
+                  <li class={`caption-4 flex items-center gap-2 rounded-md px-2 py-1 text-ink-2 t${t.tone}`}>
+                    <span class="dot" />
+                    {t.name}
+                    <span class="tabular ml-auto text-muted count-bump" data-count={t.name} data-base={t.count}>
+                      {t.count}
+                    </span>
+                  </li>
+                ))
+              }
+            </ul>
+          </div>
+          <div>
+            <p class="caption-3 px-2 pb-1 text-faint">Lenses</p>
+            <ul class="flex flex-col gap-0.5">
+              <li class="caption-4 flex items-center gap-2 rounded-md px-2 py-1 text-ink-2">
+                <Icon name="aperture" class="size-4 text-muted" /> Read this week?
+              </li>
+              <li class="caption-4 flex items-center gap-2 rounded-md px-2 py-1 text-ink-2">
+                <Icon name="aperture" class="size-4 text-muted" /> Which project?
+              </li>
+            </ul>
+          </div>
+        </aside>
+
+        <!-- Main column -->
+        <div class="flex min-w-0 flex-col text-left">
+          <div class="flex items-center gap-2 p-3 shadow-[inset_0_-1px_0_var(--color-line)]">
+            <div class="caption-5 flex h-8 flex-1 items-center gap-2 rounded-lg bg-surface px-3 text-faint shadow-[inset_0_0_0_1px_var(--color-line)]">
+              <Icon name="magnifying-glass" class="size-4" />
+              <span class="truncate">Search titles, domains and tags</span>
+              <span class="kbd ml-auto">/</span>
+            </div>
+            <span class="button-xsm hidden h-8 items-center gap-2 rounded-lg bg-ink px-3 text-white sm:flex" data-add-button>
+              <Icon name="plus" weight="bold" class="size-3" /> Add link <span class="opacity-60">⌘K</span>
+            </span>
+          </div>
+
+          <ul class="flex flex-col p-2" data-rows>
+            {
+              INCOMING.map((r) => (
+                <li class="hero-row incoming flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg px-2 py-2" data-incoming hidden>
+                  <span class={`favicon t${r.tone}`}>{r.letter}</span>
+                  <div class="min-w-0 flex-1">
+                    <div class="relative h-5">
+                      <span class="skeleton absolute left-0 top-1 h-3 w-3/4 max-w-64" data-skel />
+                      <span class="body-5 block truncate text-ink opacity-0" data-title>
+                        {r.title}
+                      </span>
+                    </div>
+                    <div class="caption-5 flex items-center gap-2 text-muted">
+                      <span class="truncate">{r.domain}</span>
+                      <span class="flex shrink-0 items-center gap-1 text-brand" data-status>
+                        <span class="pulse-dot size-1.5 rounded-full bg-brand" />
+                        <span data-status-text>Fetching preview</span>
+                      </span>
+                    </div>
+                  </div>
+                  <div class="flex w-full gap-1 pl-8 sm:w-auto sm:pl-0" data-chips>
+                    {r.tags.map((t) => (
+                      <TagChip name={t.name} score={t.score} auto class="pop pop-enter" data-chip={t.name} />
+                    ))}
+                  </div>
+                </li>
+              ))
+            }
+            {
+              LIBRARY.map((r) => (
+                <li class="hero-row flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg px-2 py-2">
+                  <span class={`favicon t${r.tone}`}>{r.letter}</span>
+                  <div class="min-w-0 flex-1">
+                    <span class="body-5 block truncate text-ink">{r.title}</span>
+                    <span class="caption-5 block truncate text-muted">{r.domain}</span>
+                  </div>
+                  <div class="flex w-full items-center gap-1 pl-8 sm:w-auto sm:pl-0">
+                    {r.tags.map((t) => (
+                      <TagChip name={t.name} />
+                    ))}
+                    <span class="caption-5 tabular ml-2 hidden w-6 text-right text-faint lg:inline">{r.ago}</span>
+                  </div>
+                </li>
+              ))
+            }
+          </ul>
+        </div>
+      </div>
+
+      <!-- Add link dialog -->
+      <div class="add-dialog pointer-events-none absolute inset-0 flex items-start justify-center bg-white/40 pt-16" data-dialog aria-hidden="true">
+        <div class="add-card w-[min(420px,calc(100%-32px))] rounded-xl bg-white p-3 text-left shadow-[0_0_0_1px_oklch(0.2_0.01_260/0.1),0_16px_40px_oklch(0.2_0.01_260/0.16)]">
+          <p class="title-4 text-ink">Add links</p>
+          <div class="caption-5 mt-2 min-h-[72px] whitespace-pre rounded-lg bg-surface p-2 text-ink-2 shadow-[inset_0_0_0_1px_var(--color-line)]"><span data-typed></span><span class="caret">|</span></div>
+          <div class="mt-3 flex items-center justify-between">
+            <span class="caption-5 text-muted" data-link-count>0 links</span>
+            <span class="button-xsm rounded-md bg-ink px-3 py-1 text-white transition-transform duration-300 ease-base" data-save>Save links</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="caption-5 mt-4 text-center text-faint">
+      Paste a list and each link gets a preview, its page text and the tags whose rules it matches.
+    </p>
+  </div>
+</section>
+
+<style>
+  .incoming { background: transparent; transition: background-color 600ms var(--ease-base); }
+  .incoming.is-fresh { background: var(--color-brand-soft); }
+  [data-title] { transition: opacity 500ms var(--ease-base); }
+  [data-skel] { transition: opacity 300ms var(--ease-base); }
+  [data-status] { transition: opacity 300ms var(--ease-base); }
+  .add-dialog { opacity: 0; transition: opacity 300ms var(--ease-base); }
+  .add-dialog.is-open { opacity: 1; }
+  .add-card { transform: translateY(8px) scale(0.98); transition: transform 500ms var(--ease-base); }
+  .add-dialog.is-open .add-card { transform: none; }
+  .caret { animation: blink 1s steps(1) infinite; color: var(--color-brand); }
+  @keyframes blink { 50% { opacity: 0; } }
+  .count-bump { display: inline-block; }
+  .count-bump.bumped { animation: bump 600ms var(--ease-base); color: var(--color-brand); }
+  @keyframes bump { 30% { transform: translateY(-3px); } }
+</style>
+
+<script>
+  import { initHeroDemo } from "../scripts/hero";
+  initHeroDemo();
+</script>

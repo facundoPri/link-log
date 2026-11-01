@@ -1,0 +1,142 @@
+---
+import Icon from "./Icon.astro";
+import SectionHeader from "./SectionHeader.astro";
+import TagChip from "./TagChip.astro";
+---
+
+<section id="how" class="px-4 py-24">
+  <div class="mx-auto max-w-6xl">
+    <SectionHeader
+      eyebrow="How it works"
+      icon="cursor-click"
+      title="Save it, describe it once, find it later"
+      lede="You keep doing what you already do in the browser. Linklog does the filing in the background, using the words you gave it."
+    />
+
+    <ol class="mt-12 grid gap-4 md:grid-cols-3">
+      <!-- 1 -->
+      <li class="flex flex-col overflow-hidden rounded-2xl bg-white shadow-[0_0_0_1px_var(--color-line)]" data-reveal>
+        <div class="relative flex h-48 items-center justify-center bg-surface p-6 shadow-[inset_0_-1px_0_var(--color-line)]" aria-hidden="true">
+          <div class="flex w-full max-w-60 flex-col gap-2">
+            <div class="caption-5 flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-muted shadow-[0_0_0_1px_var(--color-line)]">
+              <Icon name="link-simple" class="size-4 text-brand" />
+              <span class="typing truncate text-ink-2">inkandswitch.com/local-first</span>
+            </div>
+            <div class="flex items-center justify-center gap-2">
+              <span class="kbd key-a">⌘</span><span class="kbd key-b">K</span>
+              <span class="caption-5 text-faint">or paste anywhere</span>
+            </div>
+            <div class="caption-5 flex items-center justify-center gap-4 text-muted">
+              <span class="flex items-center gap-1"><Icon name="hand-pointing" class="size-4" /> Drag</span>
+              <span class="flex items-center gap-1"><Icon name="stack" class="size-4" /> Lists</span>
+              <span class="flex items-center gap-1"><Icon name="google-chrome-logo" class="size-4" /> Tabs</span>
+            </div>
+          </div>
+        </div>
+        <div class="flex flex-col gap-2 p-6">
+          <p class="caption-3 text-brand-strong">Step 1</p>
+          <h3 class="heading-6 text-ink">Save it your way</h3>
+          <p class="body-6 text-muted">
+            Paste one URL or a whole list, drag a link onto the page, press ⌘K or save open tabs from the
+            extension. Duplicates merge and tracking parameters are stripped.
+          </p>
+        </div>
+      </li>
+
+      <!-- 2 -->
+      <li class="flex flex-col overflow-hidden rounded-2xl bg-white shadow-[0_0_0_1px_var(--color-line)]" data-reveal style="--reveal-delay:100ms">
+        <div class="flex h-48 items-center justify-center bg-surface p-6 shadow-[inset_0_-1px_0_var(--color-line)]" aria-hidden="true">
+          <div class="w-full max-w-64 rounded-xl bg-white p-3 shadow-[0_0_0_1px_var(--color-line)]">
+            <div class="flex items-center justify-between">
+              <TagChip name="to read" />
+              <span class="caption-5 tabular text-muted">Threshold 80%</span>
+            </div>
+            <p class="caption-5 mt-2 text-ink-2">
+              Long reads worth a quiet hour. Not news, not product pages.<span class="caret-blink">|</span>
+            </p>
+            <div class="mt-3 flex items-center gap-2 rounded-lg bg-subtle px-2 py-1">
+              <Icon name="aperture" class="size-4 text-muted" />
+              <span class="caption-4 text-ink-2">Which project is this for?</span>
+            </div>
+          </div>
+        </div>
+        <div class="flex flex-col gap-2 p-6">
+          <p class="caption-3 text-brand-strong">Step 2</p>
+          <h3 class="heading-6 text-ink">Describe your criteria</h3>
+          <p class="body-6 text-muted">
+            Write a sentence for each tag and a question for each lens. That text is exactly what the model
+            reads, so the rules stay yours and you can change them any time.
+          </p>
+        </div>
+      </li>
+
+      <!-- 3 -->
+      <li class="flex flex-col overflow-hidden rounded-2xl bg-white shadow-[0_0_0_1px_var(--color-line)]" data-reveal style="--reveal-delay:200ms">
+        <div class="flex h-48 items-center justify-center bg-surface p-6 shadow-[inset_0_-1px_0_var(--color-line)]" aria-hidden="true">
+          <div class="flex w-full max-w-64 flex-col gap-2">
+            <div class="flex flex-wrap gap-1">
+              <TagChip name="research" />
+              <span class="caption-4 inline-flex items-center gap-1 rounded-md bg-brand-soft px-2 text-brand-strong">Read this week: Yes</span>
+            </div>
+            <div class="flex flex-col gap-1 rounded-xl bg-white p-2 shadow-[0_0_0_1px_var(--color-line)]">
+              <div class="result-row caption-5 flex items-center gap-2 rounded-md px-2 py-1 text-ink-2"><span class="favicon t5 size-4">I</span>Local first software</div>
+              <div class="result-row caption-5 flex items-center gap-2 rounded-md px-2 py-1 text-ink-2"><span class="favicon t0 size-4">Y</span>How diffusion models learn</div>
+            </div>
+            <div class="flex justify-end gap-1">
+              <span class="button-xsm flex items-center gap-1 rounded-md bg-ink px-2 py-1 text-white"><Icon name="arrow-right" weight="bold" class="size-3" /> Open 2</span>
+            </div>
+          </div>
+        </div>
+        <div class="flex flex-col gap-2 p-6">
+          <p class="caption-3 text-brand-strong">Step 3</p>
+          <h3 class="heading-6 text-ink">Find it and act on it</h3>
+          <p class="body-6 text-muted">
+            Filter by tag, domain or lens answer, search with the slash key, then open, copy, group or close
+            everything that matched in one go.
+          </p>
+        </div>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<style>
+  /* Typing: a white cover slides off the text. Transform only. */
+  .typing { position: relative; }
+  .typing::after {
+    content: "";
+    position: absolute;
+    inset: 0 -2px;
+    background: white;
+    transform-origin: right;
+    animation: type 4s steps(28) infinite;
+  }
+  @keyframes type {
+    0% { transform: scaleX(1); }
+    45%, 100% { transform: scaleX(0); }
+  }
+  .key-a, .key-b { animation: press 4s var(--ease-base) infinite; }
+  .key-b { animation-delay: 60ms; }
+  @keyframes press {
+    0%, 55%, 70%, 100% { transform: none; }
+    60% { transform: translateY(1px) scale(0.92); }
+  }
+  .caret-blink { color: var(--color-brand); animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .result-row { position: relative; isolation: isolate; }
+  .result-row:first-child::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: 6px;
+    background: var(--color-subtle);
+    opacity: 0;
+    animation: highlight 4s var(--ease-base) infinite;
+  }
+  @keyframes highlight { 0%, 30%, 100% { opacity: 0; } 50%, 80% { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) {
+    .typing::after { display: none; }
+    .key-a, .key-b, .caret-blink, .result-row::before { animation: none; }
+  }
+</style>

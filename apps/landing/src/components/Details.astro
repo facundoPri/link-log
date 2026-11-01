@@ -1,0 +1,65 @@
+---
+import Icon from "./Icon.astro";
+import SectionHeader from "./SectionHeader.astro";
+
+const items = [
+  {
+    icon: "article",
+    title: "It reads the whole page",
+    body: "Pages become Markdown, YouTube videos bring their public captions, and posts on X and Instagram keep the author's text plus the text found in their images.",
+  },
+  {
+    icon: "lock-simple",
+    title: "Private by default",
+    body: "Every library belongs to one account. The extension reads open tabs on your machine and only after you grant access from its Connect page.",
+  },
+  {
+    icon: "keyboard",
+    title: "Made for the keyboard",
+    body: "Select links, then T to auto tag, L to run a lens, O to open, C to copy. Slash searches and ⌘K opens the actions palette.",
+  },
+  {
+    icon: "coins",
+    title: "Costs you can see",
+    body: "Usage lists every model call with tokens, latency and status. Paid steps are never retried behind your back.",
+  },
+  {
+    icon: "shield-check",
+    title: "Scores you can audit",
+    body: "Each score keeps the description and threshold it ran with. Change a tag tomorrow and today's results still make sense.",
+  },
+  {
+    icon: "warning-circle",
+    title: "Nothing gets lost",
+    body: "A failed refresh keeps the previous content. Links that truly need you land in Needs attention, with the reason and a retry.",
+  },
+];
+---
+
+<section class="px-4 py-24">
+  <div class="mx-auto max-w-6xl">
+    <SectionHeader
+      eyebrow="Details"
+      icon="squares-four"
+      title="The small things that make it stick"
+      lede="A library you trust enough to stop keeping tabs open just in case."
+    />
+    <ul class="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      {
+        items.map((it, i) => (
+          <li
+            class="group flex flex-col gap-3 rounded-2xl bg-white p-6 shadow-[0_0_0_1px_var(--color-line)] transition-[transform,box-shadow] duration-500 ease-base hover:-translate-y-1 hover:shadow-[0_0_0_1px_var(--color-line-strong),0_12px_32px_oklch(0.2_0.01_260/0.08)]"
+            data-reveal
+            style={`--reveal-delay:${(i % 3) * 80}ms`}
+          >
+            <span class="flex size-10 items-center justify-center rounded-xl bg-brand-soft text-brand-strong transition-transform duration-500 ease-base group-hover:scale-105">
+              <Icon name={it.icon} class="size-5" />
+            </span>
+            <h3 class="title-2 text-ink">{it.title}</h3>
+            <p class="body-6 text-muted">{it.body}</p>
+          </li>
+        ))
+      }
+    </ul>
+  </div>
+</section>
