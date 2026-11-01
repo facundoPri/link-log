@@ -106,9 +106,16 @@ export default (async ({ page, api, apiAs, ui, fixture, step, check, shot, aria,
     const row = keys.getByRole("listitem").filter({ hasText: zapier });
     return (await row.getByText("Revoked").isVisible()) && (await row.getByText("2 links this month").isVisible());
   });
+  await section.scrollIntoViewIfNeeded();
   await page.waitForTimeout(400);
   await shot("02-settings-usage");
   await aria("02-settings-usage");
+  await step("The same Usage section on a phone: the table keeps its columns readable");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await section.scrollIntoViewIfNeeded();
+  await check("Phone: the table does not scroll sideways", () => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+  await shot("02b-settings-usage-phone");
+  await page.setViewportSize({ width: 1280, height: 800 });
 
   await step("A key that added nothing reads 0 links; Demo B's page shows only their own usage");
   const fresh = await api.send("POST", "/auth/api-key/create", { name: `Idle ${stamp}` });
