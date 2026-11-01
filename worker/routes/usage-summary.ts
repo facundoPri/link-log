@@ -2,10 +2,12 @@ import { Hono } from "hono";
 import type { Usage } from "../../src/types";
 import { LIMITS, windowUsage } from "../limits";
 import { json } from "../store";
+import { monthUsage } from "../usage-features";
 import { ownerOf, type AppEnv } from "../http/context";
 
 /**
- * Quota windows and this calendar month's (UTC) new Links of the signed-in owner, read live.
+ * The links window, this calendar month's (UTC) new Links and what the month's work cost per feature,
+ * of the signed-in owner, read live. Only links are capped; the per-feature totals are not.
  * Duplicates create no Link and no job, so they never count. A deleted Link leaves its month's count.
  * API keys come from the extract batches that addLinks labelled with the key, under the name stored
  * there: a Revoked API key keeps its row and a deleted one is marked "deleted", both still counted.
@@ -15,9 +17,9 @@ export const usageSummaryRoutes = new Hono<AppEnv>().get("/usage/summary", async
   const db = c.env.DB, userId = ownerOf(c), now = new Date();
   const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
   const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString();
-  const [links, jobs, total, byKey] = await Promise.all([
+  const [links, features, total, byKey] = await Promise.all([
     windowUsage(db, `links:${userId}`, LIMITS.linksPerUser),
-    windowUsage(db, `jobs:${userId}`, LIMITS.jobsPerUser),
+    monthUsage(db, userId, start, end),
     db.prepare("SELECT count(*) n FROM links WHERE user_id=? AND created_at>=? AND created_at<?").bind(userId, start, end).first<{ n: number }>(),
     // Only Links created this month, so a key's count never exceeds the total.
     db
@@ -37,8 +39,8 @@ export const usageSummaryRoutes = new Hono<AppEnv>().get("/usage/summary", async
     .map((r) => ({ id: r.key_id, name: r.name, links: r.n, status: !r.listed ? ("deleted" as const) : r.enabled === 1 ? ("active" as const) : ("revoked" as const) }));
   const monthLinks = total?.n ?? 0;
   const body: Usage = {
-    quotas: { links, jobs },
-    month: { start, links: monthLinks, web: Math.max(0, monthLinks - apiKeys.reduce((sum, k) => sum + k.links, 0)), apiKeys },
+    quotas: { links },
+    month: { start, links: monthLinks, web: Math.max(0, monthLinks - apiKeys.reduce((sum, k) => sum + k.links, 0)), apiKeys, ...features },
   };
   return json(body);
 });

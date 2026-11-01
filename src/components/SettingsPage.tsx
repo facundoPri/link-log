@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { api } from "../api";
 import { announceUnauthorized, authClient } from "../auth-client";
 import { relativeTime } from "../lib/time";
+import { featureCost, featureUnits, minutesUntil } from "../lib/usage-format";
 import { uploadCurl } from "../lib/upload-curl";
 import type { ApiKey, QuotaUsage, Usage } from "../types";
 import { Badge } from "@/components/ui/badge";
@@ -103,40 +104,86 @@ export function SettingsPage({ account, onSignOut, onBack }: { account: { email:
 }
 
 const monthName = new Intl.DateTimeFormat("en", { month: "long", year: "numeric", timeZone: "UTC" });
-const windowUnit = (seconds: number) => (seconds === 3600 ? "hour" : seconds === 60 ? "minute" : `${seconds} s`);
 
-function QuotaRow({ label, quota }: { label: string; quota: QuotaUsage }) {
+/** The one cap: links saved this hour, shared by the web and every API key. */
+function LinksWindow({ quota }: { quota: QuotaUsage }) {
+  const minutes = minutesUntil(quota.resetsAt);
   return (
-    <li className="flex items-baseline justify-between gap-3 p-4">
-      <span className="text-sm font-medium">{label}</span>
+    <div className="flex items-baseline justify-between gap-3 p-4">
+      <span className="text-sm font-medium">Links saved this hour</span>
       <span className="text-right text-sm tabular-nums">
-        {quota.used} / {quota.max} this {windowUnit(quota.windowSeconds)}
-        <span className="block text-xs text-muted-foreground">resets {relativeTime(quota.resetsAt)}</span>
+        {quota.used} / {quota.max}
+        <span className="text-muted-foreground"> · resets in {minutes} min</span>
       </span>
-    </li>
+    </div>
+  );
+}
+
+/** What each feature used this month. Nothing here is capped; "unpriced" calls have no known price, so the cost is at least what is shown. */
+function FeatureTable({ month }: { month: Usage["month"] }) {
+  const total = featureCost(month.total);
+  return (
+    <table aria-label="Usage by feature" className="mt-2 w-full text-sm">
+      <thead className="text-left text-xs text-muted-foreground">
+        <tr>
+          <th scope="col" className="pb-1 font-normal">Feature</th>
+          <th scope="col" className="pb-1 text-right font-normal">Runs</th>
+          <th scope="col" className="hidden pb-1 pl-3 text-right font-normal sm:table-cell">Units</th>
+          <th scope="col" className="pb-1 pl-3 text-right font-normal">Est. cost</th>
+        </tr>
+      </thead>
+      <tbody className="divide-y">
+        {month.features.map((f) => {
+          const units = featureUnits(f), cost = featureCost(f);
+          return (
+            <tr key={f.key}>
+              <th scope="row" className="py-1.5 pr-2 text-left font-normal">
+                {f.label}
+                {units && <span className="block text-xs text-muted-foreground sm:hidden">{units}</span>}
+              </th>
+              <td className="py-1.5 text-right tabular-nums">{f.runs}</td>
+              <td className="hidden py-1.5 pl-3 text-right tabular-nums text-muted-foreground sm:table-cell">{units || "—"}</td>
+              <td className="py-1.5 pl-3 text-right tabular-nums">
+                {cost.amount}
+                {cost.unpriced && <span className="block text-xs text-muted-foreground">{cost.unpriced}</span>}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+      <tfoot>
+        <tr className="border-t font-medium">
+          <th scope="row" className="pt-2 text-left font-medium">Total</th>
+          <td />
+          <td className="hidden sm:table-cell" />
+          <td className="pt-2 pl-3 text-right tabular-nums">
+            {total.amount}
+            {total.unpriced && <span className="block text-xs font-normal text-muted-foreground">{total.unpriced}</span>}
+          </td>
+        </tr>
+      </tfoot>
+    </table>
   );
 }
 
 /** `keys`: the owner's API keys (null while loading), to show the start of a key's secret and tell apart keys that share a name. */
 function UsageSection({ usage, error, keys }: { usage: Usage | null; error: string; keys: ApiKey[] | null }) {
   return (
-    <Section title="Usage" description="Your current limits and the new Links you added this month. Duplicates do not count.">
+    <Section title="Usage" description="Links you can save per hour, and what your work cost this month. Duplicates do not count.">
       {error ? (
         <p className="p-4 text-sm text-destructive">{error}</p>
       ) : !usage ? (
         <p className="p-4 text-sm text-muted-foreground" aria-busy="true">Loading…</p>
       ) : (
         <>
-          <ul aria-label="Limits" className="divide-y">
-            <QuotaRow label="Links" quota={usage.quotas.links} />
-            <QuotaRow label="Jobs" quota={usage.quotas.jobs} />
-          </ul>
+          <LinksWindow quota={usage.quotas.links} />
           <div className="border-t p-4">
-            <div className="flex items-baseline justify-between gap-3">
-              <h3 className="text-sm font-medium">New Links in {monthName.format(new Date(usage.month.start))}</h3>
+            <h3 className="text-sm font-medium">This month ({monthName.format(new Date(usage.month.start))})</h3>
+            <div className="mt-3 flex items-baseline justify-between gap-3">
+              <h4 className="text-sm">Links saved</h4>
               <span className="text-sm tabular-nums">{usage.month.links}</span>
             </div>
-            <ul aria-label="New Links by source" className="mt-2 flex flex-col gap-1 text-sm text-muted-foreground">
+            <ul aria-label="Links saved by source" className="mt-1 flex flex-col gap-1 text-sm text-muted-foreground">
               <li className="flex justify-between gap-3">
                 <span>Web</span>
                 <span className="tabular-nums">{usage.month.web}</span>
@@ -159,6 +206,8 @@ function UsageSection({ usage, error, keys }: { usage: Usage | null; error: stri
                 );
               })}
             </ul>
+            <h4 className="mt-5 text-sm">By feature</h4>
+            <FeatureTable month={usage.month} />
           </div>
         </>
       )}

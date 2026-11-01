@@ -11,8 +11,8 @@ export type AddResult = { input: string; id: string; created: boolean; batchId?:
  * Adds URLs to the owner's library the way All links does (normalization, URL rules, per-owner
  * dedupe), updates last-saved recency, and queues one extraction batch for the links it created.
  *
- * Quotas are admitted before anything is written: new links count against the link and job
- * quotas, so an exhausted quota answers 429 with nothing saved. The links, their batch and their
+ * The links quota is admitted before anything is written: new links count against it,
+ * so an exhausted quota answers 429 with nothing saved. The links, their batch and their
  * jobs are then written in ONE D1 batch, which D1 runs as a transaction (a failing statement rolls
  * back the whole sequence): a failure leaves no link without its extraction, and the whole charge
  * is given back. What dedupe or a concurrent insert of the same URL did not use is refunded.
@@ -25,7 +25,7 @@ export type AddResult = { input: string; id: string; created: boolean; batchId?:
  * cron recovery resends queued jobs if the send fails. Invalid URLs are reported per input and
  * never charged.
  *
- * An exhausted quota throws a LimitError naming it (`links` or `jobs`) and its seconds to reset.
+ * An exhausted quota throws a LimitError naming it (`links`) and its seconds to reset.
  * An optional `source` is stored in the created batch's config (web calls store none).
  */
 export async function addLinks(
@@ -66,15 +66,8 @@ export async function addLinks(
   const fresh = [...known].filter(([, row]) => !row).map(([url]) => ({ url, id: crypto.randomUUID(), jobId: crypto.randomUUID() }));
   const orphans = [...new Set([...known.values()].filter((row) => row?.orphan).map((row) => row!.id))].map((id) => ({ id, jobId: crypto.randomUUID() }));
 
-  const linksKey = `links:${userId}`, jobsKey = `jobs:${userId}`;
-  const charged = await chargeOrThrow(
-    env.DB,
-    [
-      { key: linksKey, limit: LIMITS.linksPerUser, cost: fresh.length, code: "links" },
-      { key: jobsKey, limit: LIMITS.jobsPerUser, cost: fresh.length + orphans.length, code: "jobs" },
-    ],
-    "Link or processing limit reached. Try again later.",
-  );
+  const linksKey = `links:${userId}`;
+  const charged = await chargeOrThrow(env.DB, [{ key: linksKey, limit: LIMITS.linksPerUser, cost: fresh.length, code: "links" }], "Link limit reached. Try again later.");
 
   const createdLinks = new Set<string>();
   const queuedJobs: string[] = [];
@@ -127,7 +120,7 @@ export async function addLinks(
     [...fresh, ...orphans].forEach((j, i) => {
       if (results[fresh.length + 1 + i]!.meta.changes > 0) queuedJobs.push(j.jobId), queuedIn.set(j.id, batchId);
     });
-    await charged.release({ [linksKey]: fresh.length - createdLinks.size, [jobsKey]: fresh.length + orphans.length - queuedJobs.length });
+    await charged.release(fresh.length - createdLinks.size);
     try {
       if (queuedJobs.length) await env.JOBS.sendBatch(queuedJobs.map((id) => ({ body: { id } })));
     } catch {

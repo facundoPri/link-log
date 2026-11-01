@@ -213,58 +213,29 @@ describe("Browser data is private per account", () => {
   });
 });
 
-describe("Browser evaluations share the owner's job quota (R1)", () => {
-  const used = (who: User) =>
-    (db.sqlite.query("SELECT count FROM app_rate_limits WHERE key=?").get(`jobs:${who.userId}`) as { count: number } | null)?.count ?? 0;
-  const exhaust = (who: User, count: number) =>
+describe("Browser evaluations take nothing from the upload quota", () => {
+  const used = (who: User, prefix: string) =>
+    (db.sqlite.query("SELECT count FROM app_rate_limits WHERE key=?").get(`${prefix}:${who.userId}`) as { count: number } | null)?.count ?? 0;
+  const exhaust = (who: User, key: string, count: number) =>
     db.sqlite
       .query("INSERT OR REPLACE INTO app_rate_limits(key,window_start,count) VALUES(?,?,?)")
-      .run(`jobs:${who.userId}`, Math.floor(Date.now() / 1000 / 3600) * 3600, count);
-  const created = () =>
-    db.sqlite.query("SELECT (SELECT count(*) FROM browser_requests) r,(SELECT count(*) FROM browser_targets) t,(SELECT count(*) FROM jobs) j,(SELECT count(*) FROM batches) b").get();
+      .run(`${key}:${who.userId}`, Math.floor(Date.now() / 1000 / 3600) * 3600, count);
 
-  test("an exhausted quota answers 429 before any receipt, capture, job or queue message", async () => {
-    exhaust(A, 300);
-    const res = await as(A).evaluation("req", ["a"]);
-    expect(res).toMatchObject({ status: 429, data: { code: "jobs" } });
-    expect(Number(res.retryAfter)).toBeGreaterThanOrEqual(1);
-    expect(created()).toEqual({ r: 0, t: 0, j: 0, b: 0 });
-    expect(r2.objects.size).toBe(0);
-    expect(queued).toHaveLength(0);
-    // Another account is independent.
-    lens(B, "lens-b");
-    expect((await as(B).evaluation("req-b", ["a"], "lens-b")).status).toBe(201);
+  test("a full links quota and an old jobs counter at its former limit refuse no evaluation", async () => {
+    exhaust(A, "links", 500);
+    exhaust(A, "jobs", 300);
+    const res = await as(A).evaluation("req", ["a", "b", "c"]);
+    expect(res.status).toBe(201);
+    expect(queued).toHaveLength(3);
+    expect([used(A, "links"), used(A, "jobs")]).toEqual([500, 300]);
   });
 
-  test("library and Browser draw from one quota", async () => {
-    exhaust(A, 298);
-    expect((await as(A).evaluation("big", ["a", "b", "c"])).status).toBe(429);
-    expect((await as(A).evaluation("fits", ["a", "b"])).status).toBe(201);
-    expect(used(A)).toBe(300);
-    const link = await call("/api/links", { cookie: A.cookie, body: { url: "https://quota.dev/x" } });
-    expect(link.status).toBe(429);
-  });
-
-  test("replays are not charged; a concurrent duplicate is refunded; lost snapshots are refunded", async () => {
+  test("replays and a concurrent duplicate still create each evaluation once", async () => {
     expect((await as(A).evaluation("req", ["a", "b"])).status).toBe(201);
     expect((await as(A).evaluation("req", ["a", "b"])).status).toBe(200);
-    expect(used(A)).toBe(2);
     const [x, y] = await Promise.all([as(A).evaluation("race", ["a", "b"]), as(A).evaluation("race", ["a", "b"])]);
     expect([x.status, y.status].sort()).toEqual([200, 201]);
-    expect(used(A)).toBe(4);
     expect(db.sqlite.query("SELECT count(*) n FROM jobs").get()).toEqual({ n: 4 });
-    r2.put = async () => {
-      throw new Error("R2 down");
-    };
-    expect((await as(A).evaluation("lost", ["a"])).status).toBe(201);
-    expect(used(A)).toBe(4);
-  });
-
-  test("two new requests racing at the threshold: exactly one is admitted", async () => {
-    exhaust(A, 298);
-    const results = await Promise.all([as(A).evaluation("r1", ["a", "b"]), as(A).evaluation("r2", ["a", "b"])]);
-    expect(results.map((r) => r.status).sort()).toEqual([201, 429]);
-    expect(used(A)).toBe(300);
-    expect(db.sqlite.query("SELECT count(*) n FROM jobs").get()).toEqual({ n: 2 });
+    expect(used(A, "links")).toBe(0);
   });
 });

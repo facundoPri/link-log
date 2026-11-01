@@ -1,17 +1,26 @@
 export const TYPESAFE_USD_PER_M_INPUT = 0.042;
 export const GEMMA_USD_PER_M_INPUT = 0.10;
 export const GEMMA_USD_PER_M_OUTPUT = 0.30;
+/**
+ * Browser Rendering, Quick Actions (the Markdown and content calls): $0.09 per browser hour, billed on browser
+ * time only. Cloudflare's pricing page (developers.cloudflare.com/browser-run/pricing, updated 2026-04-21, read
+ * 2026-11-01). This is the list price above the plan's 10 free hours a month, so it overstates a small account.
+ */
+export const BROWSER_USD_PER_HOUR = 0.09;
 export const OCR_USAGE_COLUMNS = "sum(service='image-ocr') ocr_images,sum(CASE WHEN service='image-ocr' THEN input_tokens ELSE 0 END) ocr_input_tokens,sum(CASE WHEN service='image-ocr' THEN output_tokens ELSE 0 END) ocr_output_tokens,max(CASE WHEN service='image-ocr' THEN model END) ocr_model,sum(CASE WHEN service='image-ocr' THEN estimated_usd END) ocr_usd,sum(service='image-ocr' AND estimated_usd IS NULL) ocr_unknown_cost_calls";
 export function priceUsage(u: {
   provider: string;
   input_tokens: number | null;
   output_tokens?: number | null;
   model?: string | null;
+  browser_ms?: number | null;
 }): number | null {
   if (u.provider === "cloudflare" && u.model === "@cf/google/gemma-4-26b-a4b-it")
     return u.input_tokens !== null && u.output_tokens != null
       ? (u.input_tokens * GEMMA_USD_PER_M_INPUT + u.output_tokens * GEMMA_USD_PER_M_OUTPUT) / 1e6
       : null;
+  // A Browser Rendering call is billed by the time it kept the browser, not by tokens.
+  if (u.provider === "cloudflare" && !u.model && u.browser_ms != null) return (u.browser_ms / 3_600_000) * BROWSER_USD_PER_HOUR;
   return u.provider === "typesafe" && u.input_tokens !== null
     ? (u.input_tokens * TYPESAFE_USD_PER_M_INPUT) / 1e6
     : null;
@@ -43,6 +52,7 @@ export async function finishUsage(env: Env, id: string, started: number, provide
     input_tokens: meter.input_tokens ?? null,
     output_tokens: meter.output_tokens ?? null,
     model: meter.model ?? null,
+    browser_ms: meter.browser_ms ?? null,
   });
   try {
     await env.DB.prepare(

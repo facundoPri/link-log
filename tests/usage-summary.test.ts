@@ -1,4 +1,4 @@
-// FAC-157: GET /api/usage/summary answers the signed-in user's current quota windows (links, jobs) and this
+// FAC-157: GET /api/usage/summary answers the signed-in user's current links window and this
 // calendar month's new Links split by API key and Web. Counts are read live from existing tables.
 import { beforeEach, describe, expect, test } from "bun:test";
 import { TestD1 } from "./support/d1";
@@ -9,7 +9,7 @@ import { keyRoutes } from "./support/api-key-routes";
 
 type Quota = { used: number; max: number; windowSeconds: number; resetsAt: string };
 type Month = { start: string; links: number; web: number; apiKeys: { id: string; name: string; links: number; status: "active" | "revoked" | "deleted" }[] };
-type Usage = { quotas: { links: Quota; jobs: Quota }; month: Month };
+type Usage = { quotas: { links: Quota }; month: Month };
 let db: TestD1, env: Env, call: ReturnType<typeof client>;
 let A: { userId: string; cookie: string }, B: { userId: string; cookie: string };
 let keyA: { id: string; key: string }, keyA2: { id: string; key: string };
@@ -48,31 +48,30 @@ describe("quota windows", () => {
     const before = Date.now();
     const { quotas } = await usageOf(A);
     expect(quotas.links).toMatchObject({ used: 0, max: 500, windowSeconds: 3600 });
-    expect(quotas.jobs).toMatchObject({ used: 0, max: 300, windowSeconds: 3600 });
     const reset = Date.parse(quotas.links.resetsAt);
     expect(reset).toBeGreaterThan(before);
     expect(reset).toBeLessThanOrEqual(Date.now() + 3600 * 1000);
     expect(reset % (3600 * 1000)).toBe(0);
   });
 
-  test("new Links count against both quotas; Duplicates do not", async () => {
+  test("new Links count against the links quota; Duplicates do not", async () => {
     await viaKey(keyA.key, ["https://usage.example/a", "https://usage.example/b"]);
     await viaWeb(A, ["https://usage.example/c", "https://usage.example/a"]);
     const { quotas } = await usageOf(A);
-    expect([quotas.links.used, quotas.jobs.used]).toEqual([3, 3]);
+    expect(quotas.links.used).toBe(3);
   });
 
   test("an elapsed window reads as unused", async () => {
     await viaKey(keyA.key, ["https://usage.example/a"]);
     db.sqlite.query("UPDATE app_rate_limits SET window_start=window_start-3600 WHERE key LIKE '%:'||?").run(A.userId);
     const { quotas } = await usageOf(A);
-    expect([quotas.links.used, quotas.jobs.used]).toEqual([0, 0]);
+    expect(quotas.links.used).toBe(0);
   });
 
   test("another user's usage is never included", async () => {
     await viaKey(keyA.key, ["https://usage.example/a"]);
     const b = await usageOf(B);
-    expect([b.quotas.links.used, b.quotas.jobs.used]).toEqual([0, 0]);
+    expect(b.quotas.links.used).toBe(0);
     expect(b.month).toMatchObject({ links: 0, web: 0, apiKeys: [] });
   });
 });
@@ -157,6 +156,92 @@ describe("this month's new Links", () => {
     const b = await usageOf(B);
     expect(b.month).toMatchObject({ links: 3, web: 1 });
     expect(b.month.apiKeys).toEqual([{ id: keyB.id, name: "Other", links: 2, status: "active" }]);
+  });
+});
+
+type FeatureRow = { key: string; label: string; runs: number; inputTokens: number; outputTokens: number; browserMs: number; usd: number; unknownCostCalls: number };
+type FeatureMonth = { features: FeatureRow[]; total: { usd: number; unknownCostCalls: number } };
+const featuresOf = async (who: { cookie: string }) => (await usageOf(who)).month as unknown as Month & FeatureMonth;
+const feature = (m: FeatureMonth, key: string) => m.features.find((f) => f.key === key)!;
+
+// Setup helpers for work that costs money. The summary is what is asserted, through the HTTP handler.
+let seeded = 0;
+/** A batch of `kind` with one job on a new Link of `userId`. */
+function seedRun(userId: string, kind: string, { at = new Date().toISOString(), status = "done", step = "Done" } = {}) {
+  const n = ++seeded, ids = { linkId: `seed-l${n}`, batchId: `seed-b${n}`, jobId: `seed-j${n}`, userId };
+  db.sqlite.query("INSERT INTO links(id,user_id,original_url,url,domain,title,created_at) VALUES(?,?,?,?,'seed.example','t',?)").run(ids.linkId, userId, `https://seed.example/${n}`, `https://seed.example/${n}`, at);
+  db.sqlite.query("INSERT INTO batches(id,user_id,kind,config,created_at) VALUES(?,?,?,'{}',?)").run(ids.batchId, userId, kind, at);
+  db.sqlite.query("INSERT INTO jobs(id,batch_id,link_id,status,step,created_at) VALUES(?,?,?,?,?,?)").run(ids.jobId, ids.batchId, ids.linkId, status, step, at);
+  return ids;
+}
+/** A finished (or `status`) call of `service` made for a seeded run. */
+function seedCall(run: ReturnType<typeof seedRun>, service: string, { provider = "typesafe", status = "done", input = null, output = null, browserMs = null, usd = null, at = new Date().toISOString() }: { provider?: string; status?: string; input?: number | null; output?: number | null; browserMs?: number | null; usd?: number | null; at?: string } = {}) {
+  db.sqlite
+    .query("INSERT INTO usage_events(id,user_id,batch_id,job_id,link_id,provider,service,operation,status,input_tokens,output_tokens,browser_ms,estimated_usd,created_at) VALUES(?,?,?,?,?,?,?,'op',?,?,?,?,?,?)")
+    .run(crypto.randomUUID(), run.userId, run.batchId, run.jobId, run.linkId, provider, service, status, input, output, browserMs, usd, at);
+}
+
+describe("this month's usage by feature", () => {
+  test("a user with no activity has every feature at zero, in a fixed order", async () => {
+    const m = await featuresOf(A);
+    expect(m.features.map((f) => f.key)).toEqual(["extract", "content", "lens", "autotag", "ocr", "autogroup"]);
+    expect(m.features.every((f) => f.label && f.runs === 0 && f.inputTokens === 0 && f.outputTokens === 0 && f.browserMs === 0 && f.usd === 0 && f.unknownCostCalls === 0)).toBe(true);
+    expect(m.total).toEqual({ usd: 0, unknownCostCalls: 0 });
+  });
+
+  test("runs are counted per feature from the jobs that ran: queued and cancelled ones are not runs, retries are", async () => {
+    for (const kind of ["extract", "extract", "preview"]) seedRun(A.userId, kind);
+    seedRun(A.userId, "extract", { status: "failed", step: "Failed" }); // a failed run is still a run
+    seedRun(A.userId, "extract", { status: "queued", step: "Queued" });
+    seedRun(A.userId, "extract", { status: "failed", step: "Cancelled" });
+    seedRun(A.userId, "lens"); seedRun(A.userId, "browser-lens");
+    for (let i = 0; i < 3; i++) seedRun(A.userId, "autotag");
+    seedRun(A.userId, "browser-autogroup");
+    const m = await featuresOf(A);
+    expect(Object.fromEntries(m.features.map((f) => [f.key, f.runs]))).toEqual({ extract: 4, content: 0, lens: 2, autotag: 3, ocr: 0, autogroup: 1 });
+  });
+
+  test("tokens, browser time and cost are summed per feature; a call with no price is counted as unknown, never as free", async () => {
+    const extract = seedRun(A.userId, "extract");
+    seedCall(extract, "browser-markdown", { provider: "cloudflare", browserMs: 12000, usd: 0.0003 });
+    seedCall(extract, "browser-content", { provider: "cloudflare", browserMs: 3000, usd: 0.000075 });
+    seedCall(extract, "browser-markdown", { provider: "cloudflare", status: "failed" }); // no browser time reported: unknown cost
+    seedCall(extract, "image-ocr", { provider: "cloudflare", input: 1200, output: 200, usd: 0.00018 });
+    seedCall(extract, "image-fetch", { provider: "public-cdn" }); // a free fetch: part of no feature
+    const lens = seedRun(A.userId, "lens");
+    seedCall(lens, "jev", { input: 1_000_000, output: 40, usd: 0.042 });
+    const tag = seedRun(A.userId, "autotag");
+    seedCall(tag, "jev", { provider: "fixture", input: 500, output: 8 });
+    seedCall(tag, "jev", { input: 100, output: 8, status: "started" }); // not finished: not counted yet
+
+    const m = await featuresOf(A);
+    expect(feature(m, "content")).toMatchObject({ runs: 3, browserMs: 15000, inputTokens: 0, unknownCostCalls: 1 });
+    expect(feature(m, "content").usd).toBeCloseTo(0.000375, 12);
+    expect(feature(m, "ocr")).toMatchObject({ runs: 1, inputTokens: 1200, outputTokens: 200, usd: 0.00018, unknownCostCalls: 0 });
+    expect(feature(m, "lens")).toMatchObject({ runs: 1, inputTokens: 1_000_000, outputTokens: 40, usd: 0.042, unknownCostCalls: 0 });
+    expect(feature(m, "autotag")).toMatchObject({ runs: 1, inputTokens: 500, outputTokens: 8, usd: 0, unknownCostCalls: 1 });
+    expect(feature(m, "extract")).toMatchObject({ runs: 1, usd: 0, unknownCostCalls: 0 });
+    expect(m.total.usd).toBeCloseTo(0.000375 + 0.00018 + 0.042, 9);
+    expect(m.total.unknownCostCalls).toBe(2);
+  });
+
+  test("a call of a service no feature knows is shown as Other, so the total never hides spend", async () => {
+    seedCall(seedRun(A.userId, "extract"), "video-asr", { provider: "cloudflare", input: 10, usd: 0.5 });
+    const m = await featuresOf(A);
+    expect(m.features.at(-1)).toMatchObject({ key: "other", label: "Other", runs: 1, inputTokens: 10, usd: 0.5 });
+    expect(m.total.usd).toBe(0.5);
+  });
+
+  test("a previous month and another user's work are excluded", async () => {
+    const old = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 0, 12)).toISOString();
+    const last = seedRun(A.userId, "lens", { at: old });
+    seedCall(last, "jev", { input: 7, usd: 1, at: old });
+    const theirs = seedRun(B.userId, "lens");
+    seedCall(theirs, "jev", { input: 9, usd: 2 });
+    const a = await featuresOf(A);
+    expect(feature(a, "lens")).toMatchObject({ runs: 0, inputTokens: 0, usd: 0 });
+    expect(a.total.usd).toBe(0);
+    expect(feature(await featuresOf(B), "lens")).toMatchObject({ runs: 1, inputTokens: 9, usd: 2 });
   });
 });
 
