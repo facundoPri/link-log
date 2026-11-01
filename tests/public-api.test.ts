@@ -71,7 +71,7 @@ describe("Duplicates and invalid inputs", () => {
     expect((await libraryOf(A)).links.map((l) => l.url)).toEqual(["https://api.example/a", "https://api.example/b"]);
   });
 
-  test("a Link saved without any Extraction job is queued again: still a duplicate, with a batch, charging one job", async () => {
+  test("a Link saved without any Extraction job is queued again: still a duplicate, with a batch, charging nothing", async () => {
     const first = (await (await submit(keyA.key, { urls: ["https://api.example/a"] })).json()) as Submitted;
     db.sqlite.exec("DELETE FROM jobs"); // setup: what an interrupted save used to leave behind
     queued.length = 0;
@@ -81,7 +81,7 @@ describe("Duplicates and invalid inputs", () => {
     expect(body.results.map((r) => [r.id, r.status])).toEqual([[first.results[0]!.id, "duplicate"]]);
     expect(typeof body.batchId).toBe("string");
     expect(queued).toHaveLength(1);
-    expect(await quotaUsed(call, A)).toEqual({ links: before.links, jobs: before.jobs + 1 });
+    expect(await quotaUsed(call, A)).toEqual(before);
   });
 
   test("the same URL twice in one request gives one result; invalid inputs are rejected and never stored", async () => {
@@ -495,11 +495,11 @@ describe("limits", () => {
   for (const action of ["revoke", "delete"] as const) {
     test(`${action === "revoke" ? "revoking" : "deleting"} a key never lowers the user's counters: the budget stays spent for the next key and the web`, async () => {
       setUsed(db, `writes:${A.userId}`, 117, 60);
-      expect((await one()).status).toBe(202); // 118 writes, 1 Link, 1 job
+      expect((await one()).status).toBe(202); // 118 writes, 1 Link
       expect((await one()).status).toBe(202); // 119 writes; a Duplicate
       const spent = await counters();
       const quotas = await quotaUsed(call, A);
-      expect(quotas).toEqual({ links: 1, jobs: 1 });
+      expect(quotas).toEqual({ links: 1 });
 
       const { revoke, remove } = keyRoutes(call, A);
       expect((await (action === "revoke" ? revoke : remove)(keyA.id)).status).toBe(200);
@@ -513,12 +513,9 @@ describe("limits", () => {
     });
   }
 
-  test("the owner's links and jobs quotas answer with their codes and save nothing", async () => {
+  test("the owner's links quota answers with its code and saves nothing", async () => {
     setUsed(db, `links:${A.userId}`, 500, 3600);
     await expect429(one, "links", 3600);
-    setUsed(db, `links:${A.userId}`, 0, 3600);
-    setUsed(db, `jobs:${A.userId}`, 300, 3600);
-    await expect429(one, "jobs", 3600);
     await nothingSaved();
   });
 });

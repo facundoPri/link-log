@@ -3,7 +3,7 @@
 export type Limit = { window: number; max: number };
 
 /** Which quota ran out; clients back off per quota. */
-export type QuotaCode = "links" | "jobs" | "writes";
+export type QuotaCode = "links" | "writes";
 
 /** Seconds until the fixed window containing `now` resets (at least 1, for a Retry-After header). */
 const retryAfter = (limit: Limit, now = Date.now()) =>
@@ -14,8 +14,6 @@ export const LIMITS = {
   emailPerRecipient: { window: 3600, max: 5 },
   /** Links a user may create (single add + import) per hour. */
   linksPerUser: { window: 3600, max: 500 },
-  /** Links a user may queue for paid/expensive processing per hour. */
-  jobsPerUser: { window: 3600, max: 300 },
   /** Writes per user per minute across the private and public API. */
   writesPerUser: { window: 60, max: 120 },
 } satisfies Record<string, Limit>;

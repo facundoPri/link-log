@@ -12,6 +12,6 @@ export const libraryOf = async (call: ReturnType<typeof client>, who: Who) => (a
 
 /** Quota used right now, as Settings shows it (GET /api/usage/summary). */
 export async function quotaUsed(call: ReturnType<typeof client>, who: Who) {
-  const { quotas } = (await (await call("/api/usage/summary", { cookie: who.cookie })).json()) as { quotas: { links: { used: number }; jobs: { used: number } } };
-  return { links: quotas.links.used, jobs: quotas.jobs.used };
+  const { quotas } = (await (await call("/api/usage/summary", { cookie: who.cookie })).json()) as { quotas: { links: { used: number } } };
+  return { links: quotas.links.used };
 }
