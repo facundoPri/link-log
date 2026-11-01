@@ -7,8 +7,9 @@ import { ownerOf, type AppEnv } from "../http/context";
 /**
  * Quota windows and this calendar month's (UTC) new Links of the signed-in owner, read live.
  * Duplicates create no Link and no job, so they never count. A deleted Link leaves its month's count.
- * API keys come from the extract batches that addLinks labelled with the key (Revoked API keys
- * included); Web is the month's total minus those.
+ * API keys come from the extract batches that addLinks labelled with the key, under the name stored
+ * there: a Revoked API key keeps its row and a deleted one is marked "deleted", both still counted.
+ * Web is the month's total minus those.
  */
 export const usageSummaryRoutes = new Hono<AppEnv>().get("/usage/summary", async (c) => {
   const db = c.env.DB, userId = ownerOf(c), now = new Date();
@@ -21,15 +22,19 @@ export const usageSummaryRoutes = new Hono<AppEnv>().get("/usage/summary", async
     // Only Links created this month, so a key's count never exceeds the total.
     db
       .prepare(
-        `SELECT json_extract(b.config,'$.apiKeyId') key_id,max(json_extract(b.config,'$.apiKeyName')) name,count(DISTINCT j.link_id) n
+        `SELECT json_extract(b.config,'$.apiKeyId') key_id,max(json_extract(b.config,'$.apiKeyName')) name,count(DISTINCT j.link_id) n,
+                max(k.id) listed,max(k.enabled) enabled
          FROM batches b JOIN jobs j ON j.batch_id=b.id JOIN links l ON l.id=j.link_id AND l.user_id=b.user_id
+         LEFT JOIN apikey k ON k.id=json_extract(b.config,'$.apiKeyId') AND k."referenceId"=b.user_id
          WHERE b.user_id=? AND b.kind='extract' AND json_extract(b.config,'$.source')='api'
            AND l.created_at>=? AND l.created_at<? GROUP BY key_id ORDER BY n DESC,key_id`,
       )
       .bind(userId, start, end)
-      .all<{ key_id: string; name: string; n: number }>(),
+      .all<{ key_id: string; name: string; n: number; listed: string | null; enabled: number | null }>(),
   ]);
-  const apiKeys = byKey.results.filter((r) => r.key_id).map((r) => ({ id: r.key_id, name: r.name, links: r.n }));
+  const apiKeys = byKey.results
+    .filter((r) => r.key_id)
+    .map((r) => ({ id: r.key_id, name: r.name, links: r.n, status: !r.listed ? ("deleted" as const) : r.enabled === 1 ? ("active" as const) : ("revoked" as const) }));
   const monthLinks = total?.n ?? 0;
   const body: Usage = {
     quotas: { links, jobs },

@@ -1,10 +1,11 @@
 import { useEffect, useState, type Dispatch, type FormEvent, type ReactNode, type SetStateAction } from "react";
-import { ArrowLeft, Copy, KeyRound, Loader2, LogOut, RefreshCw } from "lucide-react";
+import { ArrowLeft, ChevronRight, Copy, KeyRound, Loader2, LogOut } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../api";
+import { announceUnauthorized, authClient } from "../auth-client";
 import { relativeTime } from "../lib/time";
 import { uploadCurl } from "../lib/upload-curl";
-import type { ApiKey, QuotaUsage, RegenerateKeyResponse, Usage } from "../types";
+import type { ApiKey, QuotaUsage, Usage } from "../types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,6 +22,26 @@ import {
 } from "@/components/ui/alert-dialog";
 
 const day = new Intl.DateTimeFormat("en", { dateStyle: "medium" });
+
+// Keys are managed through the API key plugin's own routes (/api/auth/api-key/*), by Better Auth's client.
+type PluginKey = { id: string; name: string | null; start: string | null; enabled: boolean; createdAt: Date | string; lastRequest: Date | string | null };
+const keyView = (k: PluginKey): ApiKey => ({
+  id: k.id,
+  name: k.name ?? "",
+  prefix: k.start ?? "",
+  createdAt: new Date(k.createdAt).toISOString(),
+  lastUsedAt: k.lastRequest ? new Date(k.lastRequest).toISOString() : null,
+  status: k.enabled ? "active" : "revoked",
+});
+/** The client's `{ data, error }` answer as a value, or an Error with the server's message. */
+async function unwrap<T>(answer: Promise<{ data: T | null; error: { message?: string; status: number } | null }>) {
+  const { data, error } = await answer;
+  if (error?.status === 401) announceUnauthorized();
+  if (error || !data) throw new Error(error?.message || "Something went wrong.");
+  return data;
+}
+const listKeys = async () =>
+  (await unwrap(authClient.apiKey.list())).apiKeys.map(keyView).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
 
 function Section({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
   return (
@@ -46,8 +67,8 @@ export function SettingsPage({ account, onSignOut, onBack }: { account: { email:
     api<Usage>("/usage/summary")
       .then((r) => live && setUsage(r))
       .catch((e: Error) => live && setUsageError(e.message));
-    api<{ apiKeys: ApiKey[] }>("/api-keys")
-      .then((r) => live && setKeys(r.apiKeys))
+    listKeys()
+      .then((r) => live && setKeys(r))
       .catch((e: Error) => live && setKeysError(e.message));
     return () => {
       live = false;
@@ -96,7 +117,7 @@ function QuotaRow({ label, quota }: { label: string; quota: QuotaUsage }) {
   );
 }
 
-/** `keys`: the owner's API keys (null while loading), to tell apart keys that share a name, as after a regenerate. */
+/** `keys`: the owner's API keys (null while loading), to show the start of a key's secret and tell apart keys that share a name. */
 function UsageSection({ usage, error, keys }: { usage: Usage | null; error: string; keys: ApiKey[] | null }) {
   return (
     <Section title="Usage" description="Your current limits and the new Links you added this month. Duplicates do not count.">
@@ -127,9 +148,9 @@ function UsageSection({ usage, error, keys }: { usage: Usage | null; error: stri
                     <span className="flex min-w-0 items-center gap-2">
                       <span className="truncate">API key: {key.name}</span>
                       {listed && <code className="font-mono text-xs">{listed.prefix}…</code>}
-                      {listed?.status === "revoked" && (
+                      {key.status !== "active" && (
                         <Badge variant="outline" className="text-muted-foreground">
-                          Revoked
+                          {key.status === "revoked" ? "Revoked" : "Deleted"}
                         </Badge>
                       )}
                     </span>
@@ -163,21 +184,19 @@ function ApiKeys({
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
   // The full secret lives only in this state: it is gone once dismissed or the page is left.
-  const [created, setCreated] = useState<{ name: string; secret: string; replaced: "revoked" | "unconfirmed" | null; oldPrefix?: string } | null>(null);
-  // The old key of a regenerate whose revoke is not confirmed: marked in the list until revoked.
-  const [pendingRevokeId, setPendingRevokeId] = useState<string | null>(null);
+  const [created, setCreated] = useState<{ name: string; secret: string } | null>(null);
   const [createError, setCreateError] = useState("");
   const [revoking, setRevoking] = useState<ApiKey | null>(null);
-  const [regenerating, setRegenerating] = useState<ApiKey | null>(null);
+  const [deleting, setDeleting] = useState<ApiKey | null>(null);
 
   const create = async (e: FormEvent) => {
     e.preventDefault();
     setCreating(true);
     setCreateError("");
     try {
-      const r = await api<{ apiKey: ApiKey; secret: string }>("/api-keys", "POST", { name });
-      setKeys((list) => [r.apiKey, ...(list ?? [])]);
-      setCreated({ name: r.apiKey.name, secret: r.secret, replaced: null });
+      const r = await unwrap(authClient.apiKey.create({ name: name.trim() }));
+      setKeys((list) => [keyView(r), ...(list ?? [])]);
+      setCreated({ name: r.name ?? "", secret: r.key });
       setName("");
     } catch (error) {
       setCreateError((error as Error).message);
@@ -186,39 +205,47 @@ function ApiKeys({
     }
   };
 
-  const revoke = async (key: ApiKey) => {
+  const setEnabled = async (key: ApiKey, enabled: boolean) => {
     try {
-      const r = await api<{ apiKey: ApiKey }>(`/api-keys/${key.id}/revoke`, "POST", {});
-      setKeys((list) => list?.map((k) => (k.id === key.id ? r.apiKey : k)) ?? null);
-      toast.success(`“${key.name}” revoked`);
+      const r = await unwrap(authClient.apiKey.update({ keyId: key.id, enabled }));
+      setKeys((list) => list?.map((k) => (k.id === key.id ? keyView(r) : k)) ?? null);
+      toast.success(`“${key.name}” ${enabled ? "enabled" : "revoked"}`);
     } catch (error) {
       toast.error((error as Error).message);
     }
     setRevoking(null);
   };
 
-  // The new key is created before the old one is revoked, so a failure leaves the old key working.
-  const regenerate = async (key: ApiKey) => {
-    let confirmed = false;
+  const remove = async (key: ApiKey) => {
     try {
-      const r = await api<RegenerateKeyResponse>(`/api-keys/${key.id}/regenerate`, "POST", {});
-      confirmed = r.oldKey.status === "revoked";
-      setKeys((list) => [r.apiKey, ...(list ?? []).map((k) => (k.id === key.id && confirmed ? { ...k, status: "revoked" as const } : k))]);
-      setCreated({ name: r.apiKey.name, secret: r.secret, replaced: confirmed ? "revoked" : "unconfirmed", oldPrefix: key.prefix });
-      if (!confirmed) setPendingRevokeId(key.id);
+      await unwrap(authClient.apiKey.delete({ keyId: key.id }));
+      setKeys((list) => list?.filter((k) => k.id !== key.id) ?? null);
+      toast.success(`“${key.name}” deleted`);
     } catch (error) {
       toast.error((error as Error).message);
     }
-    setRegenerating(null);
-    // Unless the old key is confirmed revoked the list may be stale (even a refused regenerate means
-    // the key changed under us): the server's list decides what shows as Active.
-    if (!confirmed) {
-      void api<{ apiKeys: ApiKey[] }>("/api-keys").then(
-        (r) => setKeys(r.apiKeys),
-        () => {},
-      );
-    }
+    setDeleting(null);
   };
+
+  const active = keys?.filter((k) => k.status === "active") ?? [];
+  const revoked = keys?.filter((k) => k.status === "revoked") ?? [];
+
+  const details = (key: ApiKey) => (
+    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+      <div className="flex items-center gap-2">
+        <span className="truncate text-sm font-medium">{key.name}</span>
+        <Badge variant={key.status === "active" ? "secondary" : "outline"} className={key.status === "revoked" ? "text-muted-foreground" : undefined}>
+          {key.status === "active" ? "Active" : "Revoked"}
+        </Badge>
+      </div>
+      <div className="flex flex-wrap gap-x-3 text-xs text-muted-foreground">
+        <code className="font-mono">{key.prefix}…</code>
+        <span>Created {day.format(new Date(key.createdAt))}</span>
+        <span>{key.lastUsedAt ? `Last used ${relativeTime(key.lastUsedAt)}` : "Never used"}</span>
+        {monthly && <span>{monthly[key.id] ?? 0} {(monthly[key.id] ?? 0) === 1 ? "link" : "links"} this month</span>}
+      </div>
+    </div>
+  );
 
   return (
     <Section title="API keys" description="Keys only submit URLs to your library. They cannot read it.">
@@ -239,15 +266,7 @@ function ApiKeys({
       )}
       {created && (
         <div role="status" className="flex flex-col gap-2 border-b bg-muted/40 p-4">
-          <p className="text-sm">
-            {created.replaced ? `Copy the new key for “${created.name}” now.` : `Copy the key for “${created.name}” now.`}
-            {created.replaced === "revoked" && " The old key no longer works."} It will not be shown again.
-          </p>
-          {created.replaced === "unconfirmed" && (
-            <p role="alert" className="text-sm font-medium text-destructive">
-              The old key ({created.oldPrefix}…) may still work. Revoke it now.
-            </p>
-          )}
+          <p className="text-sm">Copy the key for “{created.name}” now. It will not be shown again.</p>
           <div className="flex items-center gap-2">
             <code className="min-w-0 flex-1 truncate rounded-md border bg-background px-2 py-1.5 font-mono text-xs" aria-label="New API key">
               {created.secret}
@@ -297,65 +316,74 @@ function ApiKeys({
       ) : !keys.length ? (
         <p className="p-4 text-sm text-muted-foreground">No API keys yet.</p>
       ) : (
-        <ul aria-label="API keys" className="divide-y">
-          {keys.map((key) => (
-            <li key={key.id} className="flex items-center gap-3 p-4">
-              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                <div className="flex items-center gap-2">
-                  <span className="truncate text-sm font-medium">{key.name}</span>
-                  <Badge variant={key.status === "active" ? "secondary" : "outline"} className={key.status === "revoked" ? "text-muted-foreground" : undefined}>
-                    {key.status === "active" ? "Active" : "Revoked"}
-                  </Badge>
-                  {key.status === "active" && key.id === pendingRevokeId && <Badge variant="destructive">Revoke pending</Badge>}
-                </div>
-                <div className="flex flex-wrap gap-x-3 text-xs text-muted-foreground">
-                  <code className="font-mono">{key.prefix}…</code>
-                  <span>Created {day.format(new Date(key.createdAt))}</span>
-                  <span>{key.lastUsedAt ? `Last used ${relativeTime(key.lastUsedAt)}` : "Never used"}</span>
-                  {monthly && <span>{monthly[key.id] ?? 0} {(monthly[key.id] ?? 0) === 1 ? "link" : "links"} this month</span>}
-                </div>
-              </div>
-              {key.status === "active" && (
-                <>
-                  <Button variant="ghost" size="sm" onClick={() => setRegenerating(key)}>
-                    <RefreshCw />
-                    Regenerate
-                  </Button>
+        <>
+          {active.length ? (
+            <ul aria-label="API keys" className="divide-y">
+              {active.map((key) => (
+                <li key={key.id} className="flex items-center gap-3 p-4">
+                  {details(key)}
                   <Button variant="ghost" size="sm" onClick={() => setRevoking(key)}>
                     Revoke
                   </Button>
-                </>
-              )}
-            </li>
-          ))}
-        </ul>
+                  <Button variant="ghost" size="sm" onClick={() => setDeleting(key)}>
+                    Delete
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="p-4 text-sm text-muted-foreground">No active API keys.</p>
+          )}
+          {revoked.length > 0 && (
+            <details className="group border-t">
+              <summary className="flex cursor-pointer list-none items-center gap-2 p-4 text-sm font-medium [&::-webkit-details-marker]:hidden">
+                <ChevronRight className="size-4 transition-transform group-open:rotate-90" />
+                Revoked keys ({revoked.length})
+              </summary>
+              <ul aria-label="Revoked API keys" className="max-h-72 divide-y overflow-y-auto border-t">
+                {revoked.map((key) => (
+                  <li key={key.id} className="flex items-center gap-3 p-4">
+                    {details(key)}
+                    <Button variant="ghost" size="sm" onClick={() => void setEnabled(key, true)}>
+                      Enable
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => setDeleting(key)}>
+                      Delete
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </>
       )}
       <AlertDialog open={!!revoking} onOpenChange={(o) => !o && setRevoking(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Revoke “{revoking?.name}”?</AlertDialogTitle>
             <AlertDialogDescription>
-              Anything using this key stops working immediately. The key stays listed as revoked.
+              Anything using this key stops working immediately. The key moves to Revoked keys, where you can enable or delete it.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => revoking && void revoke(revoking)}>Revoke</AlertDialogAction>
+            <AlertDialogAction onClick={() => revoking && void setEnabled(revoking, false)}>Revoke</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      <AlertDialog open={!!regenerating} onOpenChange={(o) => !o && setRegenerating(null)}>
+      <AlertDialog open={!!deleting} onOpenChange={(o) => !o && setDeleting(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Regenerate “{regenerating?.name}”?</AlertDialogTitle>
+            <AlertDialogTitle>Delete “{deleting?.name}”?</AlertDialogTitle>
             <AlertDialogDescription>
-              Linklog creates a new key with the same name and shows its secret once, then revokes the current key,
-              which stays listed as revoked. If that fails, you are told to revoke it yourself.
+              The key is removed for good and anything using it stops working. Links it already added stay in your library and in Usage, marked as deleted.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => regenerating && void regenerate(regenerating)}>Regenerate</AlertDialogAction>
+            <AlertDialogAction variant="destructive" onClick={() => deleting && void remove(deleting)}>
+              Delete
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

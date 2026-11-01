@@ -1,6 +1,6 @@
 # Settings and API keys
 
-A signed-in user opens Settings from the user menu at the bottom of the sidebar. The page lives at `/settings` and shows an Account section (email, sign out) and an API keys section. There the user creates a named API key, sees its full `lk_` secret once, lists their keys (name, visible prefix, creation date, last use, status) and revokes one. A Revoked API key stays listed and no longer authenticates.
+A signed-in user opens Settings from the user menu at the bottom of the sidebar. The page lives at `/settings` and shows an Account section (email, sign out) and an API keys section. There the user creates a named API key, sees its full `lk_` secret once, lists their keys (name, visible prefix, creation date, last use, status), revokes, enables and deletes them. A Revoked API key no longer authenticates and moves to a closed `Revoked keys (N)` section, where it can be enabled again or deleted. The page talks to Better Auth's API key plugin routes (`/api/auth/api-key/*`) through its client; there is no custom key route.
 
 ## Sub-features
 
@@ -8,12 +8,12 @@ A signed-in user opens Settings from the user menu at the bottom of the sidebar.
 - `settings-account` shows the email and a `Sign out` button.
 - `key-create` a name creates a key; the secret is shown once with `Copy` and `Done`, and is gone after `Done` or a reload.
 - `key-list` each row shows the name, an `Active`/`Revoked` badge, `lk_…` prefix, `Created <date>` and `Last used <relative>` or `Never used`.
-- `key-revoke` `Revoke` asks for confirmation; the row then shows `Revoked` and loses its `Revoke` button.
-- `key-regenerate` `Regenerate` on an active row asks for confirmation, then shows a new secret once (same name) and the old row reads `Revoked`. Revoked rows have no `Regenerate`.
-- `key-regenerate-unconfirmed` when the old key's revoke cannot be confirmed, the new secret is still shown, plus the alert `The old key (lk_abc…) may still work. Revoke it now.` (the old key's prefix). The old row stays `Active` and gains a `Revoke pending` badge that outlives the alert (`Done`) until the key is revoked; the list is refetched so no stale row stays Active. API: `oldKey.status` is `unconfirmed` instead of `revoked`.
-- `key-cap` at 10 active keys `Create key` shows the alert `You have 10 active API keys. Revoke one to create another.`; revoking one allows creating again. Regenerating at 10 still works (it replaces a key).
-- `usage` the `Usage` region (between Account and API keys) lists `Links` and `Jobs` as `<used> / <max> this hour` with `resets in N minutes`, then `New Links in <Month Year>` (UTC calendar month) with a `Web` row and one `API key: <name>` row per key that added Links, Revoked API keys included. Duplicates never count. Each API key row also reads `N links this month` (`0 links` for a key that added none). API: `GET /api/usage/summary` -> `{ quotas: { links, jobs }, month: { start, links, web, apiKeys: [{ id, name, links }] } }`. Reference: `journeys/usage-settings.ts` (seeds with real Bearer secrets and uses deltas, so it can be rerun on one instance).
-- `key-isolation` Demo B never sees Demo A's keys; revoking or regenerating a foreign key answers 404.
+- `key-revoke` `Revoke` asks for confirmation; the row then leaves the active list for the `Revoked keys (N)` section.
+- `key-revoked-section` `Revoked keys (N)` is a native disclosure, closed by default, only present when something is revoked; opened it lists the revoked keys in a scrollable list (bounded height), each with `Enable` and `Delete` and no `Revoke`. `Enable` returns the key to the active list and it authenticates again.
+- `key-delete` `Delete` (active or revoked rows) asks for confirmation naming the key; `Cancel` keeps it, `Delete` removes it for good (its secret answers 401). Names may repeat and there is no limit on keys.
+- `usage` the `Usage` region (between Account and API keys) lists `Links` and `Jobs` as `<used> / <max> this hour` with `resets in N minutes`, then `New Links in <Month Year>` (UTC calendar month) with a `Web` row and one `API key: <name>` row per key that added Links, under the name stored with those Links; a Revoked API key shows a `Revoked` badge and a deleted one a `Deleted` badge. Duplicates never count. Each API key row also reads `N links this month` (`0 links` for a key that added none). API: `GET /api/usage/summary` -> `{ quotas: { links, jobs }, month: { start, links, web, apiKeys: [{ id, name, links, status: "active" | "revoked" | "deleted" }] } }`. Reference: `journeys/usage-settings.ts` (seeds with real Bearer secrets and uses deltas, so it can be rerun on one instance).
+- `key-isolation` Demo B never sees Demo A's keys; getting, updating or deleting a foreign key answers 404.
+- `invalid-json` a body that is not valid JSON answers 400 `Body is not valid JSON.` (with the parser's position when it gives one); JSON that is not an object answers 400 `Send a JSON object as the body.`.
 
 ## How to get to it (user POV)
 
@@ -24,17 +24,17 @@ A signed-in user opens Settings from the user menu at the bottom of the sidebar.
 
 Preconditions:
 
-- The baseline from `README.md`. Keys persist across journeys on one instance: use a unique key name per run.
+- The baseline from `README.md`.
 
 - **Open.** `page.getByRole("button", { name: "demo-a@linklog.test" }).click()`, then `getByRole("menuitem", { name: "Settings" })`. The heading `Settings` is visible and the URL ends in `/settings`.
 - **Sections.** `getByRole("region", { name: "Account" })` and `getByRole("region", { name: "API keys" })`.
-- **Create.** In the API keys region, fill `getByLabel("Name")` and click `Create key`. The secret is the text of `getByLabel("New API key")`. Read back with `api.get("/api-keys")`: the list holds `{ id, name, prefix, createdAt, lastUsedAt, status }` and never the secret.
-- **Revoke.** `getByRole("listitem").filter({ hasText: name }).getByRole("button", { name: "Revoke" })`, then the `alertdialog`'s `Revoke` button.
-- **Isolation.** `apiAs(1).get("/api-keys")` and `apiAs(1).send("POST", "/api-keys/<id>/revoke", {})` (rejects with `→ 404`).
-- **Regenerate.** The row's `Regenerate` button, then the `alertdialog`'s `Regenerate` button. API: `POST /api-keys/<id>/regenerate` → 201 `{ apiKey, secret, oldKey: { id, status } }`, where `oldKey.status` is `revoked` once confirmed and `unconfirmed` when both revoke attempts lost their answer (the old key may still work; revoke it by hand). A 409 `api_key_revoked` means the key was already revoked.
-- **Unconfirmed regenerate.** Fault injection: a SQLite trigger in the instance's local D1 (`.cache/verify-linklog/current` → `state/qa-video/v3/d1/miniflare-D1DatabaseObject/*.sqlite`) that aborts `UPDATE OF enabled` for one key id; drop it before revoking by hand.
-- **Cap.** Create fillers with `api.send("POST", "/api-keys", { name })`; the 11th answers 409 `{ error, code: "api_key_limit" }`. A journey that fills the account to 10 leaves later journeys unable to create keys: `V down` and `V up` before running another.
-- Reference: `journeys/api-keys-settings.ts`, `journeys/api-keys-regenerate.ts`, `journeys/api-keys-regenerate-unconfirmed.ts`.
+- **Create.** In the API keys region, fill `getByLabel("Name")` and click `Create key`. The secret is the text of `getByLabel("New API key")`. Read back with `api.get("/auth/api-key/list")`: the list holds `{ id, name, start, enabled, createdAt, lastRequest, ... }` and never the secret. `api.send("POST", "/auth/api-key/create", { name })` answers `{ id, name, key, ... }`, where `key` is the secret.
+- **Revoke.** `getByRole("list", { name: "API keys" }).getByRole("listitem").filter({ hasText: name }).getByRole("button", { name: "Revoke" })`, then the `alertdialog`'s `Revoke` button. API: `POST /auth/api-key/update { keyId, enabled: false }`.
+- **Revoked section.** `keys.locator("details")`; its `summary` reads `Revoked keys (N)`; click it to open. Rows are in `getByRole("list", { name: "Revoked API keys" })` and the list is `overflow-y: auto` with a max height. `Enable` is `POST /auth/api-key/update { keyId, enabled: true }`.
+- **Delete.** The row's `Delete` button, then the `alertdialog`'s `Delete` button (or `Cancel`). API: `POST /auth/api-key/delete { keyId }`.
+- **Isolation.** `apiAs(1).get("/auth/api-key/list")` and `apiAs(1).send("POST", "/auth/api-key/update", { keyId, enabled: true })` (rejects with `→ 404`).
+- **Names and count.** Keys persist across journeys on one instance: use a unique key name per run and read the `Revoked keys (N)` count as a delta.
+- Reference: `journeys/api-keys-settings.ts` (create, revoke, isolation), `journeys/api-keys-revoked-section.ts` (revoked section, enable, delete, deleted key in Usage, invalid JSON), `journeys/usage-settings.ts`.
 
 ## Gotchas
 

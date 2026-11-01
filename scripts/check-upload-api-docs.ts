@@ -1,5 +1,6 @@
 // Runs every example in docs/upload-api.md against a running verify-linklog instance and compares
-// the response with the one the doc shows. Rerunnable: each run uses fresh API keys and rewrites
+// the response with the one the doc shows. Rerunnable: each run creates fresh API keys (through the
+// API key plugin's session routes, as Settings does) and rewrites
 // `example.com` to a run-unique host in both the command and the expected response.
 //
 //   bun .agents/skills/verify-linklog/scripts/verify.ts up
@@ -30,7 +31,7 @@ const send = async (method: string, path: string, body: unknown = {}) => {
   if (!r.ok) throw new Error(`${method} ${path} -> ${r.status}`);
   return r.json() as Promise<any>;
 };
-const newKey = async (label: string) => (await send("POST", "/api-keys", { name: `docs ${label} ${Date.now() % 100000}` })).secret as string;
+const newKey = async (label: string) => (await send("POST", "/auth/api-key/create", { name: `docs ${label} ${Date.now() % 100000}` })) as { id: string; key: string };
 
 const doc = readFileSync(join(root, "docs/upload-api.md"), "utf8").replaceAll("example.com", host);
 const examples = [...doc.matchAll(/<!-- example: ([\w-]+) -->\n```sh\n([\s\S]*?)\n```\n\nResponse `(\d+)`[^\n]*\n\n```\w*\n([\s\S]*?)\n```/g)].map((m) => ({ name: m[1]!, command: m[2]!, status: Number(m[3]), expected: m[4]! }));
@@ -54,12 +55,16 @@ const run = async (command: string, key: string) => {
 };
 
 let failed = 0;
-const key = await newKey("main");
+const key = (await newKey("main")).key;
 for (const ex of examples) {
-  const exKey = ex.name === "rate-limited" ? await newKey("limit") : key;
+  const exKey = key;
+  // The budget is the account's, shared by every key and the web app: send Duplicates (never charged
+  // against the links or jobs quotas) until it runs out, then run the example inside the same minute.
   if (ex.name === "rate-limited")
-    for (let i = 0; i < 60; i++)
-      await fetch(`${ui}/api/v1/links`, { method: "POST", headers: { Authorization: `Bearer ${exKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ urls: [`https://${host}/burst-${i}`] }) });
+    for (let i = 0; i < 300; i++) {
+      const r = await fetch(`${ui}/api/v1/links`, { method: "POST", headers: { Authorization: `Bearer ${exKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ urls: [`https://${host}/a`] }) });
+      if (r.status === 429) break;
+    }
   const out = await run(ex.command, exKey);
   let problem = "";
   let actual: any;
@@ -95,10 +100,8 @@ for (const ex of examples) {
 }
 
 // The doc says a revoked key is a 401 too.
-const revokedKey = await newKey("revoked");
-const keys = (await send("GET", "/api-keys")) as any;
-const id = keys.apiKeys.find((k: any) => revokedKey.startsWith(k.prefix))?.id;
-await send("POST", `/api-keys/${id}/revoke`);
+const { id, key: revokedKey } = await newKey("revoked");
+await send("POST", "/auth/api-key/update", { keyId: id, enabled: false });
 const revoked = await fetch(`${ui}/api/v1/links`, { method: "POST", headers: { Authorization: `Bearer ${revokedKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ urls: [`https://${host}/a`] }) });
 const revokedBody = (await revoked.json()) as { error?: string };
 const revokedOk = revoked.status === 401 && revokedBody.error === "A valid API key is required.";

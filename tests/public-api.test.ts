@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { TestD1 } from "./support/d1";
 import { client, makeEnv } from "./support/env";
 import { testApiKey, testSession } from "./support/auth.test-instance";
+import { keyRoutes } from "./support/api-key-routes";
 import { libraryOf as library, quotaUsed } from "./support/library";
 import { expect429, setUsed, stayInsideWindow } from "./support/quota";
 
@@ -262,11 +263,13 @@ describe("authentication", () => {
       await expect401(await submit(null, body, { authorization: `Basic ${keyA.key}` }));
       await expect401(await submit(null, body, { "x-api-key": keyA.key }));
       await expect401(await submit(`lk_${"x".repeat(64)}`, body));
-      expect((await call(`/api/api-keys/${keyA.id}/revoke`, { cookie: A.cookie, body: {} })).status).toBe(200);
+      expect((await keyRoutes(call, A).revoke(keyA.id)).status).toBe(200);
+      await expect401(await submit(keyA.key, body));
+      expect((await keyRoutes(call, A).remove(keyA.id)).status).toBe(200);
       await expect401(await submit(keyA.key, body));
     });
     const rejections = logs.filter((l) => l.includes("api_key_rejected")).map((l) => JSON.parse(l).reason);
-    expect(rejections).toEqual(["missing", "missing", "missing", "missing", "invalid", "invalid"]);
+    expect(rejections).toEqual(["missing", "missing", "missing", "missing", "invalid", "invalid", "invalid"]);
     expect(logs.join("\n")).not.toContain(keyA.key.slice(9));
     // api_key_rejected is the one record of a rejection; the plugin's own error line is dropped.
     expect(logs.filter((l) => l.includes("[auth]"))).toEqual([]);
@@ -306,8 +309,8 @@ describe("authentication", () => {
     expect(line).not.toContain(keyA.key.slice(9));
   });
 
-  test("an unknown or revoked key costs one key lookup; a bearer that cannot be a key costs none", async () => {
-    await call(`/api/api-keys/${keyA.id}/revoke`, { cookie: A.cookie, body: {} });
+  test("an unknown or revoked bearer costs one key lookup", async () => {
+    await keyRoutes(call, A).revoke(keyA.id);
     let reads = 0;
     const prepare = db.prepare.bind(db);
     db.prepare = ((sql: string) => {
@@ -319,9 +322,9 @@ describe("authentication", () => {
       await quiet(async () => void (await expect401(await submit(key, body))));
       return reads;
     };
-    const results = [await readsFor(`lk_${"x".repeat(64)}`), await readsFor(keyA.key), await readsFor("lk_short"), await readsFor("x".repeat(67)), await readsFor(`lk_${"x".repeat(65)}`)];
+    const results = [await readsFor(`lk_${"x".repeat(64)}`), await readsFor(keyA.key), await readsFor("lk_short"), await readsFor("x".repeat(67))];
     db.prepare = prepare;
-    expect(results).toEqual([1, 1, 0, 0, 0]);
+    expect(results).toEqual([1, 1, 1, 1]);
   });
 
   test("a key whose use cannot be recorded is 503, not 401; an unknown key stays 401", async () => {
@@ -333,15 +336,36 @@ describe("authentication", () => {
     await nothingSaved();
   });
 
-  test("after regenerating, the new key submits under the same name and the old one is 401", async () => {
-    const res = await call(`/api/api-keys/${keyA.id}/regenerate`, { cookie: A.cookie, body: {} });
-    const { apiKey, secret } = (await res.json()) as { apiKey: { id: string }; secret: string };
-    await quiet(async () => {
-      await expect401(await submit(keyA.key, body));
-    });
-    const { batchId } = (await (await submit(secret, body)).json()) as Submitted;
+  test("a key created in Settings submits under its name; revoked or deleted it is 401, and enabled again it works", async () => {
+    const res = await keyRoutes(call, A).create({ name: "Phone" });
+    const { id, key } = (await res.json()) as { id: string; key: string };
+    const { batchId } = (await (await submit(key, body)).json()) as Submitted;
     const batch = (await libraryOf(A)).batches.find((b) => b.id === batchId)!;
-    expect(JSON.parse(batch.config)).toEqual({ source: "api", apiKeyId: apiKey.id, apiKeyName: "Shortcuts" });
+    expect(JSON.parse(batch.config)).toEqual({ source: "api", apiKeyId: id, apiKeyName: "Phone" });
+
+    await quiet(async () => {
+      await keyRoutes(call, A).revoke(id);
+      await expect401(await submit(key, body));
+      await keyRoutes(call, A).enable(id);
+      expect((await submit(key, body)).status).toBe(202);
+      await keyRoutes(call, A).remove(id);
+      await expect401(await submit(key, body));
+    });
+  });
+
+  test("a body that is not valid JSON says so; JSON that is not an object has its own message", async () => {
+    // What zsh's url-quote-magic leaves in a single-quoted body: a backslash before `?` and `=`.
+    const send = (raw: string) =>
+      call("/api/v1/links", { method: "POST", origin: null, headers: { authorization: `Bearer ${keyA.key}` }, rawBody: raw });
+    const broken = await send('{"urls":["https://api.example/a\\?b\\=c"]}');
+    expect(broken.status).toBe(400);
+    expect(((await broken.json()) as { error: string }).error).toMatch(/^Body is not valid JSON( \(at position \d+\))?\.$/);
+    expect(((await (await send("{")).json()) as { error: string }).error).toMatch(/^Body is not valid JSON/);
+    for (const raw of ["[]", "42", "null", '"text"']) {
+      const res = await send(raw);
+      expect([raw, res.status, ((await res.json()) as { error: string }).error]).toEqual([raw, 400, "Send a JSON object as the body."]);
+    }
+    await nothingSaved();
   });
 
   test("a session cookie alone does not authorize the public API", async () => {
@@ -372,10 +396,6 @@ describe("an API key reaches no private route", () => {
       ["DELETE", `/api/jobs/${batchId}`, {}],
       ["GET", "/api/usage"],
       ["GET", "/api/usage/summary"],
-      ["GET", "/api/api-keys"],
-      ["POST", "/api/api-keys", { name: "Stolen" }],
-      ["POST", `/api/api-keys/${keyA.id}/revoke`, {}],
-      ["POST", `/api/api-keys/${keyA.id}/regenerate`, {}],
     ];
     for (const [method, path, body] of attempts) {
       const res = await call(path, { method, body, headers: bearer });
@@ -384,15 +404,25 @@ describe("an API key reaches no private route", () => {
     // Other paths under the public prefix are no way into the private group.
     for (const path of ["/api/v1/library", "/api/v1/api-keys", `/api/v1/batches/${batchId}`])
       expect([path, (await call(path, { headers: bearer })).status]).toEqual([path, 404]);
-    // Better Auth does not turn the key into a session, and its own key endpoints stay unreachable.
+    // Better Auth does not turn the key into a session, so its key management routes need a real one.
     expect(await (await call("/api/auth/get-session", { headers: bearer })).json()).toBeNull();
-    expect((await call("/api/auth/api-key/list", { headers: bearer })).status).toBe(404);
+    const management: [string, string, unknown?][] = [
+      ["GET", "/api/auth/api-key/list"],
+      ["GET", `/api/auth/api-key/get?id=${keyA.id}`],
+      ["POST", "/api/auth/api-key/create", { name: "Stolen" }],
+      ["POST", "/api/auth/api-key/update", { keyId: keyA.id, enabled: false }],
+      ["POST", "/api/auth/api-key/delete", { keyId: keyA.id }],
+    ];
+    for (const headers of [bearer, { "x-api-key": keyA.key }, { ...bearer, "x-api-key": keyA.key }])
+      for (const [method, path, body] of management) {
+        const res = await call(path, { method, body, headers });
+        expect([method, path, res.status]).toEqual([method, path, 401]);
+      }
 
     const library = await libraryOf(A);
     expect(library.links.map((l) => l.url)).toEqual(["https://api.example/a"]);
     expect(library.batches.map((b) => b.active)).toEqual([1]);
-    const keys = (await (await call("/api/api-keys", { cookie: A.cookie })).json()) as { apiKeys: { status: string }[] };
-    expect(keys.apiKeys.map((k) => k.status)).toEqual(["active"]);
+    expect((await keyRoutes(call, A).keys()).map((k) => [k.id, k.enabled])).toEqual([[keyA.id, true]]);
   });
 });
 
@@ -427,14 +457,61 @@ describe("limits", () => {
     await stayInsideWindow(3600);
   });
 
-  test("each key allows 60 requests a minute, then 429 `api_key` with Retry-After; another key is unaffected", async () => {
-    for (let i = 0; i < 60; i++) expect((await one()).status).toBe(202);
-    await expect429(one, "api_key", 60);
-    const library = await libraryOf(A);
-    expect([library.links.length, library.batches.length]).toEqual([1, 1]); // only the first request saved; the 429 added nothing
-    const other = await testApiKey(env, A.userId, "Server");
-    expect((await submit(other.key, { urls: ["https://api.example/limited"] })).status).toBe(202);
+  const webWrite = () => call("/api/tags", { cookie: A.cookie, body: { name: "x" } });
+  const counters = () => db.sqlite.query("SELECT key,window_start,count FROM app_rate_limits ORDER BY key").all();
+
+  test("no key has a limit of its own: one key sends more than 60 requests a minute", async () => {
+    for (let i = 0; i < 70; i++) expect((await one()).status).toBe(202);
   });
+
+  test("the budget is one per user, shared by the web app and every key: 120 writes a minute, then 429 `writes` with Retry-After", async () => {
+    setUsed(db, `writes:${A.userId}`, 118, 60);
+    expect((await one()).status).toBe(202);
+    expect((await webWrite()).status).toBe(200);
+    await expect429(one, "writes", 60);
+    await expect429(webWrite, "writes", 60);
+    const other = await testApiKey(env, A.userId, "Server");
+    await expect429(() => submit(other.key, { urls: ["https://api.example/limited"] }), "writes", 60);
+    // Reads are free, and another user's budget is theirs.
+    expect((await call("/api/library", { cookie: A.cookie })).status).toBe(200);
+    expect((await call("/api/tags", { cookie: B.cookie, body: { name: "x" } })).status).toBe(200);
+    const library = await libraryOf(A);
+    expect([library.links.length, library.batches.length]).toEqual([1, 1]); // the 429s saved nothing
+  });
+
+  test("a web write spends the budget an API request then finds", async () => {
+    setUsed(db, `writes:${A.userId}`, 119, 60);
+    expect((await webWrite()).status).toBe(200);
+    await expect429(one, "writes", 60);
+    await nothingSaved();
+  });
+
+  test("an API request that fails validation still takes from the budget", async () => {
+    setUsed(db, `writes:${A.userId}`, 119, 60);
+    expect((await submit(keyA.key, { urls: [] })).status).toBe(400);
+    await expect429(one, "writes", 60);
+  });
+
+  for (const action of ["revoke", "delete"] as const) {
+    test(`${action === "revoke" ? "revoking" : "deleting"} a key never lowers the user's counters: the budget stays spent for the next key and the web`, async () => {
+      setUsed(db, `writes:${A.userId}`, 117, 60);
+      expect((await one()).status).toBe(202); // 118 writes, 1 Link, 1 job
+      expect((await one()).status).toBe(202); // 119 writes; a Duplicate
+      const spent = await counters();
+      const quotas = await quotaUsed(call, A);
+      expect(quotas).toEqual({ links: 1, jobs: 1 });
+
+      const { revoke, remove } = keyRoutes(call, A);
+      expect((await (action === "revoke" ? revoke : remove)(keyA.id)).status).toBe(200);
+      expect(await counters()).toEqual(spent);
+      expect(await quotaUsed(call, A)).toEqual(quotas);
+
+      const next = await testApiKey(env, A.userId, "Next");
+      expect((await submit(next.key, { urls: ["https://api.example/limited"] })).status).toBe(202); // 120 writes
+      await expect429(() => submit(next.key, { urls: ["https://api.example/limited"] }), "writes", 60);
+      await expect429(webWrite, "writes", 60);
+    });
+  }
 
   test("the owner's links and jobs quotas answer with their codes and save nothing", async () => {
     setUsed(db, `links:${A.userId}`, 500, 3600);

@@ -202,10 +202,13 @@ export type QuotaUsage = { used: number; max: number; windowSeconds: number; res
 /** Settings > Usage: quota windows and this calendar month's (UTC) new Links by source. */
 export type Usage = {
   quotas: { links: QuotaUsage; jobs: QuotaUsage };
-  /** `apiKeys` lists keys (Revoked API keys too) that added Links this month; absent keys added none. */
-  month: { start: string; links: number; web: number; apiKeys: { id: string; name: string; links: number }[] };
+  /**
+   * `apiKeys` lists keys that added Links this month, under the name stored with those Links (so
+   * Revoked and deleted keys stay); absent keys added none.
+   */
+  month: { start: string; links: number; web: number; apiKeys: { id: string; name: string; links: number; status: "active" | "revoked" | "deleted" }[] };
 };
-/** An API key as Settings lists it. The secret itself is only in the create response. */
+/** An API key as Settings shows it, mapped from the API key plugin's list. The secret is only in the create response. */
 export type ApiKey = {
   id: string;
   name: string;
@@ -214,13 +217,4 @@ export type ApiKey = {
   createdAt: string;
   lastUsedAt: string | null;
   status: "active" | "revoked";
-};
-/**
- * The answer to regenerating a key. `oldKey.status` is "revoked" only when the revoke is confirmed;
- * "unconfirmed" means it may still work and the owner must revoke it.
- */
-export type RegenerateKeyResponse = {
-  apiKey: ApiKey;
-  secret: string;
-  oldKey: { id: string; status: "revoked" | "unconfirmed" };
 };

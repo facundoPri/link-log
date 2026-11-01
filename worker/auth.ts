@@ -10,8 +10,6 @@ export const SESSION_UPDATE_AGE = 60 * 60 * 24;
 export const MAGIC_LINK_EXPIRES_IN = 60 * 5;
 export const API_KEY_PREFIX = "lk_";
 export const API_KEY_LENGTH = 64;
-/** What a secret we issued looks like: the prefix and API_KEY_LENGTH letters (the plugin's default alphabet). */
-export const API_KEY_SHAPE = new RegExp(`^${API_KEY_PREFIX}[A-Za-z]{${API_KEY_LENGTH}}$`);
 export const API_KEY_NAME_MAX = 32;
 
 // Core endpoints outside the initial scope (social login, account linking, profile/email changes,
@@ -30,14 +28,6 @@ const DISABLED_PATHS = [
   "/update-session",
   "/update-user",
   "/verify-password",
-  // API key plugin: keys are managed only through the session API (worker/routes/api-keys.ts),
-  // which calls the plugin server-side. Its HTTP routes would also allow deleting and re-enabling
-  // keys; verify and delete-all-expired are server-only already and answer 404 over HTTP.
-  "/api-key/create",
-  "/api-key/get",
-  "/api-key/list",
-  "/api-key/update",
-  "/api-key/delete",
 ];
 
 type Mailer = ReturnType<typeof createMailer>;
@@ -125,9 +115,11 @@ export function authOptions(
         storeToken: "hashed",
         sendMagicLink: async ({ email, url }) => mailer.send({ kind: "magic", to: email, url }),
       }),
-      // User-owned, hashed, never-expiring keys. The plugin's rate limit only resets after a full
-      // idle window, which would block steady low-volume integrations, so it stays off. Keys are
-      // never turned into sessions: enableSessionForAPIKeys stays false.
+      // User-owned, hashed, never-expiring keys, managed through the plugin's own session routes
+      // (create, get, list, update, delete under /api/auth/api-key). verify and delete-all-expired
+      // are server-only and answer 404 over HTTP. The plugin's rate limit stays off: it lives on the
+      // key row, so deleting a key would drop it; the per-user quotas in worker/limits.ts cover
+      // every key. Keys are never turned into sessions: enableSessionForAPIKeys stays false.
       apiKey({
         defaultPrefix: API_KEY_PREFIX,
         defaultKeyLength: API_KEY_LENGTH,

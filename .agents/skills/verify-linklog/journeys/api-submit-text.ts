@@ -5,7 +5,7 @@ import type { Journey } from "../scripts/journey";
 
 export default (async ({ page, api, fixture, step, check, note }) => {
   const origin = new URL(page.url()).origin;
-  const { secret } = await api.send("POST", "/api-keys", { name: `Text ${Date.now() % 100000}` });
+  const { key: secret } = await api.send("POST", "/auth/api-key/create", { name: `Text ${Date.now() % 100000}` });
   const submit = (urls: unknown) =>
     fetch(`${origin}/api/v1/links`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${secret}` }, body: JSON.stringify({ urls }) });
   const [a, b, c] = [fixture("pool", "1"), fixture("pool", "2"), fixture("pool", "3")];
