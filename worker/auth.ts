@@ -1,6 +1,6 @@
 import { apiKey } from "@better-auth/api-key";
 import { betterAuth, type BetterAuthOptions } from "better-auth";
-import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
+import { APIError, createAuthMiddleware, getSessionFromCtx, isAPIError } from "better-auth/api";
 import { magicLink } from "better-auth/plugins/magic-link";
 import { isLocalEnv, readConfig, type AppConfig } from "./config";
 import { createMailer } from "./email";
@@ -34,15 +34,26 @@ const DISABLED_PATHS = [
 
 type Mailer = ReturnType<typeof createMailer>;
 
-// The plugin routes that write a key. They never reach app middleware, so this hook charges them.
-const KEY_WRITE_PATHS = ["/api-key/create", "/api-key/update", "/api-key/delete"];
+// The plugin routes that add or change a key. They never reach app middleware, so this hook charges them.
+const KEY_WRITE_PATHS = ["/api-key/create", "/api-key/update"];
+
+// Better Auth logs every error an endpoint throws, so the refusals keyRules is built to give would
+// show up as errors. Only those two messages are dropped, by the logger below.
+const EXPECTED_REFUSALS = ["Too many requests.", "Keys always start with lk_."];
+
+// Turning a key off and nothing else: the owner's way to stop a leaked key.
+const isRevoke = (body: Record<string, unknown>) => body.enabled === false && Object.keys(body).every((k) => k === "keyId" || k === "enabled");
 
 /**
  * Runs before every Better Auth endpoint, for HTTP clients only (a server call such as a test
  * helper passes neither a request nor headers, as the plugin itself tells them apart):
- *  - Writing a key (create, update, delete) with a session takes one from the user's writes budget,
- *    the one the private and public API share, and is refused with a 429 and Retry-After when it is
- *    spent. Better Auth's own per-IP limit cannot bound a user across IPs, and there is no key cap.
+ *  - Creating a key, or changing one in any way but revoking it, with a session takes one from the
+ *    user's writes budget, the one the private and public API share, and is refused with a 429 and
+ *    Retry-After when it is spent. Better Auth's own per-IP limit cannot bound a user across IPs,
+ *    and there is no key cap.
+ *  - Revoking a key (an update that only sets enabled to false) and deleting one are never charged
+ *    or refused. Whoever holds a leaked key can spend the owner's budget with submissions, and the
+ *    owner must still be able to kill it. A revoke that also renames is a change and is charged.
  *  - A key is created with the configured `lk_` prefix and configuration only: the prefix is what
  *    secret scanners recognize and a shorter one would put more of the secret in the stored start.
  */
@@ -55,6 +66,7 @@ const keyRules = (db: D1Database) =>
         throw new APIError("BAD_REQUEST", { message: "Keys always start with lk_. Do not send a prefix or configId.", code: "SERVER_ONLY_PROPERTY" });
     }
     if (!KEY_WRITE_PATHS.includes(ctx.path)) return;
+    if (ctx.path === "/api-key/update" && isRevoke((ctx.body ?? {}) as Record<string, unknown>)) return;
     const session = await getSessionFromCtx(ctx, { disableCookieCache: true });
     if (!session) return;
     try {
@@ -74,6 +86,9 @@ export function authOptions(
   database: NonNullable<BetterAuthOptions["database"]>,
   mailer: Mailer,
   waitUntil: (p: Promise<unknown>) => void,
+  // The D1 binding keyRules charges against. scripts/auth/print-schema.ts only compiles the
+  // schema over bun:sqlite and serves no request, so it leaves this out and gets no hook.
+  d1?: D1Database,
 ) {
   const local = isLocalEnv(config.appEnv);
   return {
@@ -84,8 +99,10 @@ export function authOptions(
     database,
     trustedOrigins: [config.baseURL],
     disabledPaths: DISABLED_PATHS,
-    // The Worker and the tests pass D1; scripts/auth/print-schema.ts only compiles the schema and serves no request.
-    hooks: { before: keyRules(database as D1Database) },
+    ...(d1 && { hooks: { before: keyRules(d1) } }),
+    // Its default handler logs through a logger of its own, which ignores the one below. This one
+    // sends the same errors through it, so expected refusals can be dropped there.
+    onAPIError: { onError: (error, ctx) => (isAPIError(error) ? ctx.logger.error(error.message) : ctx.logger.error(error instanceof Error ? error.name : "", error)) },
     telemetry: { enabled: false },
     logger: {
       level: "warn",
@@ -93,7 +110,7 @@ export function authOptions(
       // The API key plugin logs every invalid key as an error; requireApiKey records those
       // (api_key_rejected, api_key_lookup_failed), so that line would only duplicate it.
       log: (level, message) => {
-        if (message.startsWith("Failed to validate API key")) return;
+        if (message.startsWith("Failed to validate API key") || EXPECTED_REFUSALS.some((m) => message.startsWith(m))) return;
         console[level === "debug" ? "log" : level](`[auth] ${message}`);
       },
     },
@@ -154,7 +171,7 @@ export function authOptions(
       // (create, get, list, update, delete under /api/auth/api-key). verify and delete-all-expired
       // are server-only and answer 404 over HTTP. The plugin's rate limit stays off: it lives on the
       // key row, so deleting a key would drop it; the per-user quotas in worker/limits.ts cover
-      // every key, and keyRules above charges the key routes to the same writes budget.
+      // every key, and keyRules above charges key creation and changes to the same writes budget.
       // deferUpdates stays off: with database storage it defers nothing the request waits on (the
       // use is recorded by an awaited claim) and only adds an expired-key sweep to each verify.
       // Keys are never turned into sessions: enableSessionForAPIKeys stays false.
@@ -173,7 +190,7 @@ export function authOptions(
 
 export function createAuth(env: Env, ctx: Pick<ExecutionContext, "waitUntil">, config: AppConfig = readConfig(env)) {
   const waitUntil = (p: Promise<unknown>) => ctx.waitUntil(p);
-  return betterAuth(authOptions(config, env.DB, createMailer(env, config, waitUntil), waitUntil));
+  return betterAuth(authOptions(config, env.DB, createMailer(env, config, waitUntil), waitUntil, env.DB));
 }
 
 export type Auth = ReturnType<typeof createAuth>;

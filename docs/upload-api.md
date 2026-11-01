@@ -14,7 +14,7 @@ Settings lists your active keys, each with Revoke and Delete. A revoked key stop
 
 Settings uses the routes of Better Auth's API key plugin, under `/api/auth/api-key`: `create`, `get`, `list`, `update` and `delete`. They need your signed-in browser session and the app's own origin, so an API key cannot call them. The plugin's server-only fields (limits, refill, permissions, expiration) cannot be set from the browser, and neither can `prefix` or `configId`: a create that sends either answers `400` with code `SERVER_ONLY_PROPERTY`.
 
-Creating, renaming, revoking, enabling and deleting a key each count as one write against the account's writes budget (120 per minute, see 429 and Retry-After), the same budget the web app and every API key share. When it is spent these routes answer `429` with a `Retry-After` header, in Better Auth's error shape: `{ "message": "Too many requests. Try again later.", "code": "writes" }`. Listing and reading keys are free.
+Creating, renaming and enabling a key each count as one write against the account's writes budget (120 per minute, see 429 and Retry-After), the same budget the web app and every API key share. When it is spent these routes answer `429` with a `Retry-After` header, in Better Auth's error shape: `{ "message": "Too many requests. Try again later.", "code": "writes" }`. Revoking a key and deleting it always work, even with the budget spent, so a leaked key can always be shut off: they are not counted and never refused. A revoke that also renames the key counts as a change, not a revoke. Listing and reading keys are free.
 
 Links a deleted key already added stay in your library. Settings > Usage keeps counting them under the name of the key's most recent submission, marked as deleted. While a key exists, Usage shows its current name, so a rename shows at once.
 
@@ -107,7 +107,7 @@ A `429` carries `Retry-After`, the seconds until the quota window resets (at lea
 
 | `code` | Quota | Message |
 | --- | --- | --- |
-| `writes` | 120 write requests per minute for your account, shared by the web app, every API key and the key routes in Settings (create, update, delete). Every request with a valid key counts, including ones that end in `400`. | `Too many requests. Try again later.` |
+| `writes` | 120 write requests per minute for your account, shared by the web app, every API key and the key routes in Settings that create, rename or enable a key (revoking and deleting are never refused). Every request with a valid key counts, including ones that end in `400`. | `Too many requests. Try again later.` |
 | `links` | 500 new Links per hour for your account, shared with the web app. This is the only cap on what you can upload: extracting a Link, running a lens or auto-tag on it and retrying are not limited separately. | `Link limit reached. Try again later.` |
 
 Windows are fixed, not sliding: `Retry-After` is the time to the end of the current minute or hour window. Duplicates are not charged against `links`. A `429` saves nothing from that request. The quotas belong to your account, not to a key: revoking or deleting a key never gives any of them back.
