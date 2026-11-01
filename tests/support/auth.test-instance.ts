@@ -7,7 +7,7 @@ import { authOptions } from "../../worker/auth";
 import { readConfig } from "../../worker/config";
 
 export function createTestAuth(env: Env) {
-  const base = authOptions(readConfig(env), env.DB, { send() {} }, () => {});
+  const base = authOptions(readConfig(env), env.DB, { send() {} }, () => {}, env.DB);
   return betterAuth({ ...base, plugins: [...base.plugins, testUtils()] });
 }
 

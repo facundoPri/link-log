@@ -124,10 +124,11 @@ export const writeQuotaAndBody = createMiddleware<AppEnv>(async (c, next) => {
  * key is 401, logged to Workers Logs only (never the key itself). A failed lookup is 503, so the
  * integration retries instead of treating its key as dead.
  *
- * The plugin verifies first, so a valid key costs only the plugin's own reads and writes (which also
- * record its use). It answers a failed read or update like an unknown key (INVALID_API_KEY), so only
- * then does one hashed read tell the two apart: no such key is 401, a key that is still there means
- * the plugin's read or update failed (503). A key deleted meanwhile is gone for that read too: 401.
+ * The plugin verifies first, so a valid key costs only the plugin's own read (and the write that
+ * records its use) and an unknown key costs two reads. The plugin answers a failed read or update
+ * like an unknown key (INVALID_API_KEY), so only then does one hashed read tell the two apart: no
+ * such key is 401, a key that is still there means the plugin's read or update failed (503). A key
+ * deleted meanwhile is gone for that read too: 401.
  */
 export const requireApiKey = createMiddleware<AppEnv>(async (c, next) => {
   const key = /^Bearer\s+(\S+)$/i.exec(c.req.header("authorization") ?? "")?.[1];

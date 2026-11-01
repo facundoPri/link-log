@@ -15,17 +15,17 @@ import { ownerOf, type AppEnv } from "../http/context";
  * the Link's. A later batch that only re-queued the Link (an interrupted save) did not create it.
  * A creating batch labelled with an API key puts the Link under that key; any other, or none left,
  * leaves it to Web. A key that still exists shows its current name; a deleted one the name of its
- * newest batch, marked "deleted". A Revoked API key keeps its row. Web is the month's total minus
- * the keys.
+ * newest batch, marked "deleted". A Revoked API key keeps its row. One statement groups the Links
+ * by what created them: the group with no key is Web, and the month's total is the sum of the
+ * groups, so the three always add up.
  */
 export const usageSummaryRoutes = new Hono<AppEnv>().get("/usage/summary", async (c) => {
   const db = c.env.DB, userId = ownerOf(c), now = new Date();
   const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
   const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString();
-  const [links, features, total, byKey] = await Promise.all([
+  const [links, features, groups] = await Promise.all([
     windowUsage(db, `links:${userId}`, LIMITS.linksPerUser),
     monthUsage(db, userId, start, end),
-    db.prepare("SELECT count(*) n FROM links WHERE user_id=? AND created_at>=? AND created_at<?").bind(userId, start, end).first<{ n: number }>(),
     db
       .prepare(
         `SELECT s.key_id,count(*) n,max(k.id) listed,max(k.enabled) enabled,
@@ -38,16 +38,16 @@ export const usageSummaryRoutes = new Hono<AppEnv>().get("/usage/summary", async
                    ORDER BY b.id LIMIT 1) key_id
            FROM links l WHERE l.user_id=?1 AND l.created_at>=?2 AND l.created_at<?3
          ) s LEFT JOIN apikey k ON k.id=s.key_id AND k."referenceId"=?1
-         WHERE s.key_id IS NOT NULL GROUP BY s.key_id ORDER BY n DESC,s.key_id`,
+         GROUP BY s.key_id ORDER BY n DESC,s.key_id`,
       )
       .bind(userId, start, end)
-      .all<{ key_id: string; name: string; n: number; listed: string | null; enabled: number | null }>(),
+      .all<{ key_id: string | null; name: string; n: number; listed: string | null; enabled: number | null }>(),
   ]);
-  const apiKeys = byKey.results.map((r) => ({ id: r.key_id, name: r.name, links: r.n, status: !r.listed ? ("deleted" as const) : r.enabled === 1 ? ("active" as const) : ("revoked" as const) }));
-  const monthLinks = total?.n ?? 0;
+  const apiKeys = groups.results.filter((r) => r.key_id !== null).map((r) => ({ id: r.key_id!, name: r.name, links: r.n, status: !r.listed ? ("deleted" as const) : r.enabled === 1 ? ("active" as const) : ("revoked" as const) }));
+  const web = groups.results.find((r) => r.key_id === null)?.n ?? 0;
   const body: Usage = {
     quotas: { links },
-    month: { start, links: monthLinks, web: monthLinks - apiKeys.reduce((sum, k) => sum + k.links, 0), apiKeys, ...features },
+    month: { start, links: web + apiKeys.reduce((sum, k) => sum + k.links, 0), web, apiKeys, ...features },
   };
   return json(body);
 });

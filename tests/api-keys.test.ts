@@ -251,18 +251,61 @@ describe("access", () => {
 });
 
 describe("the write budget", () => {
-  // Creating, renaming, revoking and deleting a key are writes: they draw on the same per-user
+  // Creating, renaming and enabling a key are writes: they draw on the same per-user
   // writes-per-minute budget as the web app and the API keys, so a session cannot mint keys without bound.
-  test("once the budget is spent, a key cannot be created, changed or deleted, and nothing changes", async () => {
+  test("once the budget is spent, a key cannot be created, renamed or enabled, and nothing changes", async () => {
     const { id } = await created(A, "Mine");
+    await as(A).revoke(id);
     const before = await snapshot(A, id);
     setUsed(db, `writes:${A.userId}`, 120, 60);
     await expect429(() => as(A).create({ name: "More" }), "writes", 60);
     await expect429(() => as(A).update({ keyId: id, name: "Renamed" }), "writes", 60);
-    await expect429(() => as(A).revoke(id), "writes", 60);
-    await expect429(() => as(A).remove(id), "writes", 60);
+    await expect429(() => as(A).enable(id), "writes", 60);
+    // Revoking while renaming is not a plain revoke: it stays charged.
+    await expect429(() => as(A).update({ keyId: id, enabled: false, name: "Renamed" }), "writes", 60);
     expect(await as(A).keys()).toHaveLength(1);
     expect(await snapshot(A, id)).toEqual(before);
+  });
+
+  // Whoever holds a leaked key can spend the owner's budget with submissions, so the owner must
+  // still be able to kill the key.
+  test("a budget spent by the key's own submissions still lets the owner revoke and delete it", async () => {
+    const leaked = await testApiKey(env, A.userId, "Leaked");
+    const other = await testApiKey(env, A.userId, "Other");
+    const submit = (key: string) => call("/api/v1/links", { origin: null, headers: { authorization: `Bearer ${key}` }, body: { urls: ["not a url"] } });
+    for (let i = 0; i < 120; i++) await submit(leaked.key);
+    expect((await submit(leaked.key)).status).toBe(429);
+    await expect429(() => as(A).create({ name: "More" }), "writes", 60);
+
+    expect((await as(A).revoke(leaked.id)).status).toBe(200);
+    expect((await submit(leaked.key)).status).toBe(401);
+    expect((await as(A).remove(other.id)).status).toBe(200);
+    expect((await as(A).remove(leaked.id)).status).toBe(200);
+    expect(await as(A).keys()).toEqual([]);
+    expect((await submit(leaked.key)).status).toBe(401);
+  });
+
+  test("a refused key write is an answer, not an error line in the logs", async () => {
+    setUsed(db, `writes:${A.userId}`, 120, 60);
+    const logs: string[] = [];
+    const { warn, error, log } = console;
+    console.warn = console.error = console.log = (...args: unknown[]) => void logs.push(args.map(String).join(" "));
+    try {
+      expect((await as(A).create({ name: "More" })).status).toBe(429);
+      expect((await as(B).create({ name: "Mine", prefix: "x_" })).status).toBe(400);
+      expect(logs).toEqual([]);
+      // A real failure is still logged.
+      const prepare = db.prepare.bind(db);
+      db.prepare = ((sql: string) => {
+        if (/apikey/i.test(sql)) throw new Error("D1_ERROR: Network connection lost."); // setup: a D1 outage on the key table
+        return prepare(sql);
+      }) as typeof db.prepare;
+      expect((await as(A).list()).status).toBe(500);
+      db.prepare = prepare;
+    } finally {
+      Object.assign(console, { warn, error, log });
+    }
+    expect(logs.some((l) => l.startsWith("[auth] "))).toBe(true);
   });
 
   test("reading keys is free, and another user's budget is untouched", async () => {
