@@ -8,10 +8,15 @@ import { ownerOf, type AppEnv } from "../http/context";
 /**
  * The links window, this calendar month's (UTC) new Links and what the month's work cost per feature,
  * of the signed-in owner, read live. Only links are capped; the per-feature totals are not.
- * Duplicates create no Link and no job, so they never count. A deleted Link leaves its month's count.
- * API keys come from the extract batches that addLinks labelled with the key, under the name stored
- * there: a Revoked API key keeps its row and a deleted one is marked "deleted", both still counted.
- * Web is the month's total minus those.
+ * Duplicates create no Link and no job, so they never count. Links are hard-deleted, so a deleted
+ * Link drops out of its month's count.
+ * Each of the month's Links counts once, under what created it: addLinks writes a Link and its
+ * extract batch with the same timestamp, so the creating batch is the one whose created_at equals
+ * the Link's. A later batch that only re-queued the Link (an interrupted save) did not create it.
+ * A creating batch labelled with an API key puts the Link under that key; any other, or none left,
+ * leaves it to Web. A key that still exists shows its current name; a deleted one the name of its
+ * newest batch, marked "deleted". A Revoked API key keeps its row. Web is the month's total minus
+ * the keys.
  */
 export const usageSummaryRoutes = new Hono<AppEnv>().get("/usage/summary", async (c) => {
   const db = c.env.DB, userId = ownerOf(c), now = new Date();
@@ -21,26 +26,28 @@ export const usageSummaryRoutes = new Hono<AppEnv>().get("/usage/summary", async
     windowUsage(db, `links:${userId}`, LIMITS.linksPerUser),
     monthUsage(db, userId, start, end),
     db.prepare("SELECT count(*) n FROM links WHERE user_id=? AND created_at>=? AND created_at<?").bind(userId, start, end).first<{ n: number }>(),
-    // Only Links created this month, so a key's count never exceeds the total.
     db
       .prepare(
-        `SELECT json_extract(b.config,'$.apiKeyId') key_id,max(json_extract(b.config,'$.apiKeyName')) name,count(DISTINCT j.link_id) n,
-                max(k.id) listed,max(k.enabled) enabled
-         FROM batches b JOIN jobs j ON j.batch_id=b.id JOIN links l ON l.id=j.link_id AND l.user_id=b.user_id
-         LEFT JOIN apikey k ON k.id=json_extract(b.config,'$.apiKeyId') AND k."referenceId"=b.user_id
-         WHERE b.user_id=? AND b.kind='extract' AND json_extract(b.config,'$.source')='api'
-           AND l.created_at>=? AND l.created_at<? GROUP BY key_id ORDER BY n DESC,key_id`,
+        `SELECT s.key_id,count(*) n,max(k.id) listed,max(k.enabled) enabled,
+                coalesce(max(k.name),(SELECT json_extract(b2.config,'$.apiKeyName') FROM batches b2
+                  WHERE b2.user_id=?1 AND b2.kind='extract' AND json_extract(b2.config,'$.apiKeyId')=s.key_id
+                  ORDER BY b2.created_at DESC,b2.id DESC LIMIT 1)) name
+         FROM (
+           SELECT (SELECT json_extract(b.config,'$.apiKeyId') FROM jobs j JOIN batches b ON b.id=j.batch_id
+                   WHERE j.link_id=l.id AND b.user_id=l.user_id AND b.kind='extract' AND b.created_at=l.created_at
+                   ORDER BY b.id LIMIT 1) key_id
+           FROM links l WHERE l.user_id=?1 AND l.created_at>=?2 AND l.created_at<?3
+         ) s LEFT JOIN apikey k ON k.id=s.key_id AND k."referenceId"=?1
+         WHERE s.key_id IS NOT NULL GROUP BY s.key_id ORDER BY n DESC,s.key_id`,
       )
       .bind(userId, start, end)
       .all<{ key_id: string; name: string; n: number; listed: string | null; enabled: number | null }>(),
   ]);
-  const apiKeys = byKey.results
-    .filter((r) => r.key_id)
-    .map((r) => ({ id: r.key_id, name: r.name, links: r.n, status: !r.listed ? ("deleted" as const) : r.enabled === 1 ? ("active" as const) : ("revoked" as const) }));
+  const apiKeys = byKey.results.map((r) => ({ id: r.key_id, name: r.name, links: r.n, status: !r.listed ? ("deleted" as const) : r.enabled === 1 ? ("active" as const) : ("revoked" as const) }));
   const monthLinks = total?.n ?? 0;
   const body: Usage = {
     quotas: { links },
-    month: { start, links: monthLinks, web: Math.max(0, monthLinks - apiKeys.reduce((sum, k) => sum + k.links, 0)), apiKeys, ...features },
+    month: { start, links: monthLinks, web: monthLinks - apiKeys.reduce((sum, k) => sum + k.links, 0), apiKeys, ...features },
   };
   return json(body);
 });

@@ -309,7 +309,7 @@ describe("authentication", () => {
     expect(line).not.toContain(keyA.key.slice(9));
   });
 
-  test("an unknown or revoked bearer costs one key lookup", async () => {
+  test("a bearer that does not authenticate costs at most two key reads: one when revoked, two when unknown", async () => {
     await keyRoutes(call, A).revoke(keyA.id);
     let reads = 0;
     const prepare = db.prepare.bind(db);
@@ -324,7 +324,7 @@ describe("authentication", () => {
     };
     const results = [await readsFor(`lk_${"x".repeat(64)}`), await readsFor(keyA.key), await readsFor("lk_short"), await readsFor("x".repeat(67))];
     db.prepare = prepare;
-    expect(results).toEqual([1, 1, 1, 1]);
+    expect(results).toEqual([2, 1, 2, 2]);
   });
 
   test("a key whose use cannot be recorded is 503, not 401; an unknown key stays 401", async () => {

@@ -135,6 +135,36 @@ describe("this month's new Links", () => {
     ]);
   });
 
+  test("a key that was renamed shows its current name; a deleted key shows the name of its newest batch", async () => {
+    await viaKey(keyA.key, ["https://usage.example/a"]);
+    expect((await keyRoutes(call, A).update({ keyId: keyA.id, name: "Alpha" })).status).toBe(200);
+    await viaKey(keyA.key, ["https://usage.example/b"]);
+    expect((await usageOf(A)).month.apiKeys).toEqual([{ id: keyA.id, name: "Alpha", links: 2, status: "active" }]);
+
+    // A later rename shows at once, before the key submits again.
+    expect((await keyRoutes(call, A).update({ keyId: keyA.id, name: "Aardvark" })).status).toBe(200);
+    expect((await usageOf(A)).month.apiKeys.map((k) => k.name)).toEqual(["Aardvark"]);
+
+    expect((await keyRoutes(call, A).remove(keyA.id)).status).toBe(200);
+    expect((await usageOf(A)).month.apiKeys).toEqual([{ id: keyA.id, name: "Alpha", links: 2, status: "deleted" }]);
+  });
+
+  test("a Link counts once, under what created it: an orphan Duplicate a key queues later stays Web's", async () => {
+    const { id } = (await (await call("/api/links", { cookie: A.cookie, body: { url: "https://usage.example/a" } })).json()) as { id: string };
+    // Setup: the Link was left without any job and content, as an interrupted save did.
+    db.sqlite.query("DELETE FROM jobs WHERE link_id=?").run(id);
+    db.sqlite.query("DELETE FROM batches WHERE user_id=? AND id NOT IN (SELECT batch_id FROM jobs)").run(A.userId);
+    const res = await viaKey(keyA.key, ["https://usage.example/a", "https://usage.example/b"]);
+    const { results, batchId } = (await res.json()) as { results: { id: string; status: string }[]; batchId: string };
+    expect(results.map((r) => r.status)).toEqual(["duplicate", "created"]);
+    expect(results[0]!.id).toBe(id);
+    expect(batchId).toBeTruthy();
+
+    const { month } = await usageOf(A);
+    expect(month).toMatchObject({ links: 2, web: 1 });
+    expect(month.apiKeys).toEqual([{ id: keyA.id, name: "Shortcuts", links: 1, status: "active" }]);
+  });
+
   test("deleting a Link removes it from the count", async () => {
     const res = await viaKey(keyA.key, ["https://usage.example/a", "https://usage.example/b"]);
     const { results } = (await res.json()) as { results: { id: string }[] };
