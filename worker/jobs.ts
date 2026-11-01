@@ -1,5 +1,4 @@
 import type { JobConfig, Pool } from "./handlers";
-import { charge, LIMITS, LimitError } from "./limits";
 import { badRequest } from "./http/context";
 import { capabilities, parseLensDefinition } from "./store";
 import { jevUnavailable } from "../src/attention";
@@ -185,8 +184,6 @@ export async function enqueue(
   const redone = retryOf
     ? " AND NOT EXISTS (SELECT 1 FROM batches ob, jobs r JOIN batches rb ON rb.id=r.batch_id WHERE ob.id=? AND r.link_id=? AND rb.kind=ob.kind AND rb.rowid>ob.rowid AND r.status IN ('queued','running','waiting','done') AND json_extract(rb.config,'$.lens.id') IS json_extract(ob.config,'$.lens.id'))"
     : "";
-  const charged = await charge(env.DB, [{ key: `jobs:${userId}`, limit: LIMITS.jobsPerUser, cost: ids.length }]);
-  if (!charged) throw new LimitError("Processing limit reached. Try again later.");
   try {
   await env.DB.batch([
     env.DB.prepare(
@@ -208,12 +205,9 @@ export async function enqueue(
       : []),
   ]);
   } catch (error) {
-    await charged.release();
     if (!jev && await env.DB.prepare("SELECT 1 FROM jobs WHERE link_id IN (SELECT value FROM json_each(?)) AND status IN ('queued','running','waiting') LIMIT 1").bind(JSON.stringify(ids)).first()) throw badRequest("Some selected links are still processing.");
     throw error;
   }
-  const actual = await env.DB.prepare("SELECT count(*) n FROM jobs WHERE batch_id=?").bind(id).first<{ n: number }>();
-  await charged.release({ [`jobs:${userId}`]: ids.length - (actual?.n ?? 0) });
   if (retryOf && !(await env.DB.prepare("SELECT 1 FROM jobs WHERE batch_id=?").bind(id).first())) {
     await env.DB.prepare("DELETE FROM batches WHERE id=? AND NOT EXISTS (SELECT 1 FROM jobs WHERE batch_id=?)").bind(id, id).run();
     throw badRequest("These links were already retried.");

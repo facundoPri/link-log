@@ -1,14 +1,18 @@
 import { domainOf, normalizeUrl } from "../src/url";
-import { charge, LIMITS, LimitError } from "./limits";
+import { LIMITS, chargeOrThrow } from "./limits";
 
-export type AddResult = { input: string; id: string; created: boolean } | { input: string; error: string };
+/** Where a batch of added links came from, kept in the batch's config. Web calls pass none. */
+export type BatchSource = { source: "api"; apiKeyId: string; apiKeyName: string };
+
+/** `batchId` is set when this call queued the link's Extraction (in the one batch it created). */
+export type AddResult = { input: string; id: string; created: boolean; batchId?: string } | { input: string; error: string };
 
 /**
  * Adds URLs to the owner's library the way All links does (normalization, URL rules, per-owner
  * dedupe), updates last-saved recency, and queues one extraction batch for the links it created.
  *
- * Quotas are admitted before anything is written: new links count against the link and job
- * quotas, so an exhausted quota answers 429 with nothing saved. The links, their batch and their
+ * The links quota is admitted before anything is written: new links count against it,
+ * so an exhausted quota answers 429 with nothing saved. The links, their batch and their
  * jobs are then written in ONE D1 batch, which D1 runs as a transaction (a failing statement rolls
  * back the whole sequence): a failure leaves no link without its extraction, and the whole charge
  * is given back. What dedupe or a concurrent insert of the same URL did not use is refunded.
@@ -20,8 +24,16 @@ export type AddResult = { input: string; id: string; created: boolean } | { inpu
  * After the commit, the Queue send is best effort: the jobs are durable in D1 (the outbox) and
  * cron recovery resends queued jobs if the send fails. Invalid URLs are reported per input and
  * never charged.
+ *
+ * An exhausted quota throws a LimitError naming it (`links`) and its seconds to reset.
+ * An optional `source` is stored in the created batch's config (web calls store none).
  */
-export async function addLinks(env: Env, userId: string, inputs: string[]): Promise<AddResult[]> {
+export async function addLinks(
+  env: Env,
+  userId: string,
+  inputs: string[],
+  { source }: { source?: BatchSource } = {},
+): Promise<AddResult[]> {
   const now = new Date().toISOString();
   type Parsed = { input: string; url: string } | { input: string; error: string };
   const parsed = inputs.map((input): Parsed => {
@@ -54,15 +66,12 @@ export async function addLinks(env: Env, userId: string, inputs: string[]): Prom
   const fresh = [...known].filter(([, row]) => !row).map(([url]) => ({ url, id: crypto.randomUUID(), jobId: crypto.randomUUID() }));
   const orphans = [...new Set([...known.values()].filter((row) => row?.orphan).map((row) => row!.id))].map((id) => ({ id, jobId: crypto.randomUUID() }));
 
-  const linksKey = `links:${userId}`, jobsKey = `jobs:${userId}`;
-  const charged = await charge(env.DB, [
-    { key: linksKey, limit: LIMITS.linksPerUser, cost: fresh.length },
-    { key: jobsKey, limit: LIMITS.jobsPerUser, cost: fresh.length + orphans.length },
-  ]);
-  if (!charged) throw new LimitError("Link or processing limit reached. Try again later.");
+  const linksKey = `links:${userId}`;
+  const charged = await chargeOrThrow(env.DB, [{ key: linksKey, limit: LIMITS.linksPerUser, cost: fresh.length, code: "links" }], "Link limit reached. Try again later.");
 
   const createdLinks = new Set<string>();
   const queuedJobs: string[] = [];
+  const queuedIn = new Map<string, string>();
   if (known.size) {
     const db = env.DB;
     const batchId = crypto.randomUUID();
@@ -77,7 +86,7 @@ export async function addLinks(env: Env, userId: string, inputs: string[]): Prom
           .bind(f.id, userId, f.url, f.url, domainOf(f.url), domainOf(f.url), now, userId, f.url, f.url),
       ),
       ...(fresh.length || orphans.length ? [
-        db.prepare("INSERT INTO batches(id,user_id,kind,config,created_at) VALUES(?,?,'extract','{}',?)").bind(batchId, userId, now),
+        db.prepare("INSERT INTO batches(id,user_id,kind,config,created_at) VALUES(?,?,'extract',?,?)").bind(batchId, userId, JSON.stringify(source ?? {}), now),
         ...[...fresh, ...orphans].map((j) =>
           db
             .prepare(
@@ -108,8 +117,10 @@ export async function addLinks(env: Env, userId: string, inputs: string[]): Prom
       throw error;
     }
     fresh.forEach((f, i) => results[i]!.meta.changes > 0 && createdLinks.add(f.id));
-    [...fresh, ...orphans].forEach((j, i) => results[fresh.length + 1 + i]!.meta.changes > 0 && queuedJobs.push(j.jobId));
-    await charged.release({ [linksKey]: fresh.length - createdLinks.size, [jobsKey]: fresh.length + orphans.length - queuedJobs.length });
+    [...fresh, ...orphans].forEach((j, i) => {
+      if (results[fresh.length + 1 + i]!.meta.changes > 0) queuedJobs.push(j.jobId), queuedIn.set(j.id, batchId);
+    });
+    await charged.release(fresh.length - createdLinks.size);
     try {
       if (queuedJobs.length) await env.JOBS.sendBatch(queuedJobs.map((id) => ({ body: { id } })));
     } catch {
@@ -126,6 +137,7 @@ export async function addLinks(env: Env, userId: string, inputs: string[]): Prom
     if (!id) return { input: p.input, error: "Could not save the link." };
     const created = createdLinks.has(id) && !seen.has(p.url);
     seen.add(p.url);
-    return { input: p.input, id, created };
+    const batchId = queuedIn.get(id);
+    return { input: p.input, id, created, ...(batchId ? { batchId } : {}) };
   });
 }

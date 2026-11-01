@@ -135,7 +135,7 @@ describe("3. auth email budgets are taken together or not at all", () => {
   });
 });
 
-describe("4. enqueue refunds the job quota when its batch fails", () => {
+describe("4. a failed enqueue leaves nothing queued", () => {
   async function readyLinks(owner: User, count: number) {
     const ids = Array.from({ length: count }, () => crypto.randomUUID());
     for (const [i, id] of ids.entries())
@@ -149,12 +149,12 @@ describe("4. enqueue refunds the job quota when its batch fails", () => {
     db.sqlite.exec("CREATE TRIGGER inject_fault BEFORE INSERT ON jobs BEGIN SELECT RAISE(ABORT, 'injected D1 failure'); END");
     const failed = await send(A, "/batches", "POST", { ids, kind: "extract" });
     expect(failed.status).toBe(500);
-    expect([n("SELECT count(*) n FROM jobs"), n("SELECT count(*) n FROM batches"), quota(`jobs:${A.userId}`)]).toEqual([0, 0, 0]);
+    expect([n("SELECT count(*) n FROM jobs"), n("SELECT count(*) n FROM batches"), quota(`links:${A.userId}`)]).toEqual([0, 0, 0]);
     db.sqlite.exec("DROP TRIGGER inject_fault");
     expect((await send(A, "/batches", "POST", { ids, kind: "extract" })).status).toBe(200);
-    expect([n("SELECT count(*) n FROM jobs"), quota(`jobs:${A.userId}`)]).toEqual([3, 3]);
+    expect([n("SELECT count(*) n FROM jobs"), quota(`links:${A.userId}`)]).toEqual([3, 0]); // re-extraction saves no new link
   });
-  test("losing the race to a concurrent queue (unique active job) answers 'still processing' and refunds", async () => {
+  test("losing the race to a concurrent queue (unique active job) answers 'still processing'", async () => {
     const ids = await readyLinks(A, 2);
     // Another request queues ids[1] between this request's check and its batch.
     const batch = db.batch.bind(db);
@@ -167,7 +167,6 @@ describe("4. enqueue refunds the job quota when its batch fails", () => {
     }) as typeof db.batch;
     const lost = await send(A, "/batches", "POST", { ids, kind: "extract" });
     expect(lost).toMatchObject({ status: 400, data: { error: "Some selected links are still processing." } });
-    expect(quota(`jobs:${A.userId}`)).toBe(0);
     expect(db.sqlite.query("SELECT id FROM jobs").all()).toEqual([{ id: "rival-job" }]);
   });
 });

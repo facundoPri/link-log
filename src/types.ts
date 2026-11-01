@@ -197,3 +197,43 @@ export type UsageTotals = {
   calls: number;
   unknown_cost_calls: number;
 };
+/** One quota in its current fixed window. */
+export type QuotaUsage = { used: number; max: number; windowSeconds: number; resetsAt: string };
+/** What one feature cost this month: runs, tokens, browser time and estimated cost. */
+export type FeatureUsage = {
+  key: string;
+  label: string;
+  runs: number;
+  inputTokens: number;
+  outputTokens: number;
+  browserMs: number;
+  /** Estimated cost of the priced calls; `unknownCostCalls` finished calls had no price and are not in it. */
+  usd: number;
+  unknownCostCalls: number;
+};
+/** Settings > Usage: the links window, this calendar month's (UTC) new Links by source and the month's cost per feature. */
+export type Usage = {
+  quotas: { links: QuotaUsage };
+  /**
+   * `apiKeys` lists keys that added Links this month, under the name stored with those Links (so
+   * Revoked and deleted keys stay); absent keys added none.
+   */
+  month: {
+    start: string;
+    links: number;
+    web: number;
+    apiKeys: { id: string; name: string; links: number; status: "active" | "revoked" | "deleted" }[];
+    features: FeatureUsage[];
+    total: { usd: number; unknownCostCalls: number };
+  };
+};
+/** An API key as Settings shows it, mapped from the API key plugin's list. The secret is only in the create response. */
+export type ApiKey = {
+  id: string;
+  name: string;
+  /** Visible start of the secret (`lk_` plus a few characters). */
+  prefix: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+  status: "active" | "revoked";
+};
