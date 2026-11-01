@@ -56,9 +56,9 @@ Linklog scans every string for `http` and `https` URLs, then saves each URL thro
 
 ### Duplicates
 
-A URL you already have is a Duplicate. Linklog refreshes the Link's recency, does not extract it again and does not charge it against your quotas. It appears in `results` with `"status": "duplicate"`.
+A URL you already have is a Duplicate. Linklog refreshes the Link's recency, does not extract it again and does not charge it against your links quota. It appears in `results` with `"status": "duplicate"`.
 
-One exception, the same as in the web app: a Link that was saved but never got an Extraction job and has no Content (left behind by an interrupted save) is queued for Extraction when you send its URL again. It still reports `"status": "duplicate"`, but the response carries the `batchId` of that Extraction, and it counts one job against your jobs quota (not a new Link).
+One exception, the same as in the web app: a Link that was saved but never got an Extraction job and has no Content (left behind by an interrupted save) is queued for Extraction when you send its URL again. It still reports `"status": "duplicate"`, but the response carries the `batchId` of that Extraction, and it is not charged against your links quota (it is not a new Link).
 
 ## Response
 
@@ -94,7 +94,7 @@ Every error body is JSON with an `error` message. Some also carry `code` or `rej
 | 401 | The key is missing, malformed, unknown or revoked. | `{ "error": "A valid API key is required." }` |
 | 404 | With a valid key, any path under `/api/v1` other than `/api/v1/links`, or a method other than `POST`. Without a valid key, those requests are `401`. | `{ "error": "Not found." }` |
 | 413 | The body is larger than 2.1 MB. | `{ "error": "Request too large." }` |
-| 429 | A quota ran out. Nothing is saved. | `{ "error": "…", "code": "writes" \| "links" \| "jobs" }` and a `Retry-After` header |
+| 429 | A quota ran out. Nothing is saved. | `{ "error": "…", "code": "writes" \| "links" }` and a `Retry-After` header |
 | 503 | Linklog could not check the key. Retry. | `{ "error": "Could not check the API key. Try again." }` |
 
 A `rejected` entry that comes back with a `202` carries the message of the URL rule the string broke (for example `"Use a public http or https link."`), `"No valid http or https link found."` or `"Could not save the link."`.
@@ -106,10 +106,9 @@ A `429` carries `Retry-After`, the seconds until the quota window resets (at lea
 | `code` | Quota | Message |
 | --- | --- | --- |
 | `writes` | 120 write requests per minute for your account, shared by the web app and every API key. Every request with a valid key counts, including ones that end in `400`. | `Too many requests. Try again later.` |
-| `links` | 500 new Links per hour for your account, shared with the web app. | `Link or processing limit reached. Try again later.` |
-| `jobs` | 300 Extraction jobs per hour for your account, shared with the web app. | `Link or processing limit reached. Try again later.` |
+| `links` | 500 new Links per hour for your account, shared with the web app. This is the only cap on what you can upload: extracting a Link, running a lens or auto-tag on it and retrying are not limited separately. | `Link limit reached. Try again later.` |
 
-Windows are fixed, not sliding: `Retry-After` is the time to the end of the current minute or hour window. Duplicates are not charged against `links` or `jobs`, except the interrupted-save case described under Duplicates, which uses one job. A `429` saves nothing from that request. The quotas belong to your account, not to a key: revoking or deleting a key never gives any of them back.
+Windows are fixed, not sliding: `Retry-After` is the time to the end of the current minute or hour window. Duplicates are not charged against `links`. A `429` saves nothing from that request. The quotas belong to your account, not to a key: revoking or deleting a key never gives any of them back.
 
 ## Limits
 
@@ -122,7 +121,8 @@ Windows are fixed, not sliding: `Retry-After` is the time to the end of the curr
 | Request body | 2.1 MB |
 | Write requests per account | 120 per minute (web and API together) |
 | New Links per account | 500 per hour (web and API together) |
-| Extraction jobs per account | 300 per hour (web and API together) |
+
+Only new Links are capped. Settings > Usage shows the hour's count and, for the month, what the work cost per feature (extract, content, lenses, auto-tag, OCR, autogroup) as runs, tokens or browser time, and an estimated cost; none of those are limits.
 
 ## Examples
 
