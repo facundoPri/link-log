@@ -337,7 +337,7 @@ function ApiKeys({
           {revoked.length > 0 && (
             <details className="group border-t">
               <summary className="flex cursor-pointer list-none items-center gap-2 p-4 text-sm font-medium [&::-webkit-details-marker]:hidden">
-                <ChevronRight className="size-4 transition-transform group-open:rotate-90" />
+                <ChevronRight className="size-4 group-open:rotate-90" />
                 Revoked keys ({revoked.length})
               </summary>
               <ul aria-label="Revoked API keys" className="max-h-72 divide-y overflow-y-auto border-t">

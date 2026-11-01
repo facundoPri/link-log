@@ -17,6 +17,8 @@ export default (async ({ page, api, ui, fixture, step, check, shot, aria, note }
   const listOf = async () => (await api.get("/auth/api-key/list")).apiKeys as { id: string; name: string; enabled: boolean }[];
   const submit = (secret: string, urls: string[]) =>
     fetch(`${ui}/api/v1/links`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${secret}` }, body: JSON.stringify({ urls }) });
+  // The keys section sits below the fold: scroll to the bottom so the screenshots show it.
+  const bottom = () => page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
   const revokedCount = async () => Number(/\((\d+)\)/.exec((await summary.textContent()) ?? "")?.[1] ?? 0);
 
   await step("Set up: three keys, one of them used for a Link");
@@ -42,6 +44,7 @@ export default (async ({ page, api, ui, fixture, step, check, shot, aria, note }
   await check("The Revoked keys section shows the new count and is closed by default", async () =>
     (await revokedCount()) === before + 2 && (await section.evaluate((d: HTMLDetailsElement) => !d.open)));
   await check("The closed section hides its rows", async () => !(await keys.getByRole("list", { name: "Revoked API keys" }).isVisible()));
+  await bottom();
   await shot("01-revoked-section-closed");
 
   await step("Open the section: revoked rows have Enable and Delete and no Revoke; the list scrolls");
@@ -56,6 +59,7 @@ export default (async ({ page, api, ui, fixture, step, check, shot, aria, note }
   });
   await check("The revoked list is scrollable (bounded height, vertical scroll)", () =>
     revoked.evaluate((el) => getComputedStyle(el).overflowY === "auto" && getComputedStyle(el).maxHeight !== "none"));
+  await bottom();
   await shot("02-revoked-section-open");
   await aria("02-revoked-section-open");
   await check("API: the revoked key no longer authenticates", async () => (await submit(kOld.key, [fixture("pool", "late")])).status === 401);
@@ -67,11 +71,13 @@ export default (async ({ page, api, ui, fixture, step, check, shot, aria, note }
     return (await row.getByRole("button", { name: "Revoke" }).isVisible()) && (await row.getByRole("button", { name: "Delete" }).isVisible());
   });
   await check("API: enabled and submitting", async () => (await listOf()).some((k) => k.id === kAgain.id && k.enabled) && (await submit(kAgain.key, [fixture("pool", "again")])).status === 202);
+  await bottom();
   await shot("03-after-enable");
 
   await step("Delete asks for confirmation; Cancel keeps the key");
   await revoked.getByRole("listitem").filter({ hasText: old }).getByRole("button", { name: "Delete" }).click();
   await check("The confirmation names the key", () => confirm.getByText(`Delete “${old}”?`).isVisible());
+  await bottom();
   await shot("04-delete-confirm");
   await confirm.getByRole("button", { name: "Cancel" }).click();
   await check("Nothing was deleted", async () => (await listOf()).some((k) => k.id === kOld.id));
@@ -85,6 +91,7 @@ export default (async ({ page, api, ui, fixture, step, check, shot, aria, note }
   await confirm.getByRole("button", { name: "Delete" }).click();
   await check("API: the active key is gone and its secret no longer works", async () =>
     !(await listOf()).some((k) => k.id === kKeep.id) && (await submit(kKeep.key, [fixture("pool", "keep")])).status === 401);
+  await bottom();
   await shot("05-after-delete");
 
   await step("Usage keeps the deleted key's Links under its stored name, marked Deleted");
@@ -98,6 +105,7 @@ export default (async ({ page, api, ui, fixture, step, check, shot, aria, note }
     const row = page.getByRole("region", { name: "Usage" }).getByRole("listitem").filter({ hasText: old });
     return (await row.getByText("Deleted").isVisible()) && (await row.textContent())?.endsWith("1");
   });
+  await bottom();
   await shot("06-usage-deleted");
   await note("usage", usage.month.apiKeys);
 
