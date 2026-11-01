@@ -31,5 +31,9 @@ A named, user-owned secret that only submits URLs to that user's library. It can
 _Avoid_: Token, API token, credential
 
 **Revoked API key**:
-An API key that no longer authenticates but stays listed with its usage history.
-_Avoid_: Deleted key, disabled key
+An API key that no longer authenticates but stays listed, and can be enabled again or deleted.
+_Avoid_: Disabled key
+
+**Deleted API key**:
+An API key removed for good. Its Links stay, and Usage keeps counting them under the key's stored name, marked as deleted.
+_Avoid_: Revoked key

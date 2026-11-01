@@ -10,7 +10,7 @@ export default (async ({ page, api, apiAs, fixture, step, check, shot, aria, not
   const urls = [fixture("pool", "1"), fixture("pool", "2"), fixture("pool", "3")];
 
   await step("Set up: create an API key (Settings owns this; see api-keys-settings.ts)");
-  const { secret } = await api.send("POST", "/api-keys", { name });
+  const { key: secret } = await api.send("POST", "/auth/api-key/create", { name });
 
   await step("Integration: submit three URLs with the key, no cookie or Origin");
   const submit = (key: string | null, path = "/api/v1/links", body: unknown = { urls }) =>

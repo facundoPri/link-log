@@ -5,9 +5,10 @@ import { TestD1 } from "./support/d1";
 import { client, makeEnv } from "./support/env";
 import { testApiKey, testSession } from "./support/auth.test-instance";
 import { stayInsideWindow } from "./support/quota";
+import { keyRoutes } from "./support/api-key-routes";
 
 type Quota = { used: number; max: number; windowSeconds: number; resetsAt: string };
-type Month = { start: string; links: number; web: number; apiKeys: { id: string; name: string; links: number }[] };
+type Month = { start: string; links: number; web: number; apiKeys: { id: string; name: string; links: number; status: "active" | "revoked" | "deleted" }[] };
 type Usage = { quotas: { links: Quota; jobs: Quota }; month: Month };
 let db: TestD1, env: Env, call: ReturnType<typeof client>;
 let A: { userId: string; cookie: string }, B: { userId: string; cookie: string };
@@ -84,7 +85,7 @@ describe("this month's new Links", () => {
     const { month } = await usageOf(A);
     const now = new Date();
     expect(month).toMatchObject({ links: 6, web: 2, start: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString() });
-    expect(month.apiKeys).toEqual(expect.arrayContaining([{ id: keyA.id, name: "Shortcuts", links: 3 }, { id: keyA2.id, name: "Zapier", links: 1 }]));
+    expect(month.apiKeys).toEqual(expect.arrayContaining([{ id: keyA.id, name: "Shortcuts", links: 3, status: "active" }, { id: keyA2.id, name: "Zapier", links: 1, status: "active" }]));
     expect(month.apiKeys).toHaveLength(2);
   });
 
@@ -94,7 +95,7 @@ describe("this month's new Links", () => {
     await viaWeb(A, ["https://usage.example/a"]);
     const { month } = await usageOf(A);
     expect(month).toMatchObject({ links: 1, web: 0 });
-    expect(month.apiKeys).toEqual([{ id: keyA.id, name: "Shortcuts", links: 1 }]);
+    expect(month.apiKeys).toEqual([{ id: keyA.id, name: "Shortcuts", links: 1, status: "active" }]);
   });
 
   test("Links saved in a previous month are excluded", async () => {
@@ -104,16 +105,35 @@ describe("this month's new Links", () => {
     await viaKey(keyA.key, ["https://usage.example/new1"]);
     const { month } = await usageOf(A);
     expect(month).toMatchObject({ links: 1, web: 0 });
-    expect(month.apiKeys).toEqual([{ id: keyA.id, name: "Shortcuts", links: 1 }]);
+    expect(month.apiKeys).toEqual([{ id: keyA.id, name: "Shortcuts", links: 1, status: "active" }]);
   });
 
   test("a Revoked API key keeps its count; a key that submitted nothing is absent", async () => {
     await viaKey(keyA.key, ["https://usage.example/a", "https://usage.example/b"]);
-    expect((await call(`/api/api-keys/${keyA.id}/revoke`, { cookie: A.cookie, body: {} })).status).toBe(200);
+    expect((await keyRoutes(call, A).revoke(keyA.id)).status).toBe(200);
     expect((await viaKey(keyA.key, ["https://usage.example/c"])).status).toBe(401);
     const { month } = await usageOf(A);
     expect(month).toMatchObject({ links: 2, web: 0 });
-    expect(month.apiKeys).toEqual([{ id: keyA.id, name: "Shortcuts", links: 2 }]);
+    expect(month.apiKeys).toEqual([{ id: keyA.id, name: "Shortcuts", links: 2, status: "revoked" }]);
+
+    expect((await keyRoutes(call, A).enable(keyA.id)).status).toBe(200);
+    expect((await usageOf(A)).month.apiKeys).toEqual([{ id: keyA.id, name: "Shortcuts", links: 2, status: "active" }]);
+  });
+
+  test("a deleted API key still shows under the name stored with its Links, marked deleted, and Web does not absorb its count", async () => {
+    await viaKey(keyA.key, ["https://usage.example/a", "https://usage.example/b"]);
+    await viaKey(keyA2.key, ["https://usage.example/z1"]);
+    await viaWeb(A, ["https://usage.example/w1"]);
+    expect((await keyRoutes(call, A).update({ keyId: keyA.id, name: "Renamed" })).status).toBe(200);
+    expect((await keyRoutes(call, A).remove(keyA.id)).status).toBe(200);
+    expect((await keyRoutes(call, A).keys()).map((k) => k.id)).toEqual([keyA2.id]);
+
+    const { month } = await usageOf(A);
+    expect(month).toMatchObject({ links: 4, web: 1 });
+    expect(month.apiKeys).toEqual([
+      { id: keyA.id, name: "Shortcuts", links: 2, status: "deleted" },
+      { id: keyA2.id, name: "Zapier", links: 1, status: "active" },
+    ]);
   });
 
   test("deleting a Link removes it from the count", async () => {
@@ -123,7 +143,7 @@ describe("this month's new Links", () => {
     expect((await call(`/api/links/${results[0]!.id}`, { method: "DELETE", cookie: A.cookie, body: {} })).status).toBe(200);
     const { month } = await usageOf(A);
     expect(month).toMatchObject({ links: 1, web: 0 });
-    expect(month.apiKeys).toEqual([{ id: keyA.id, name: "Shortcuts", links: 1 }]);
+    expect(month.apiKeys).toEqual([{ id: keyA.id, name: "Shortcuts", links: 1, status: "active" }]);
   });
 
   test("another user's Links never reach the count, even with the same URLs", async () => {
@@ -133,10 +153,10 @@ describe("this month's new Links", () => {
     await viaKey(keyA.key, ["https://usage.example/a"]);
     const a = await usageOf(A);
     expect(a.month).toMatchObject({ links: 1, web: 0 });
-    expect(a.month.apiKeys).toEqual([{ id: keyA.id, name: "Shortcuts", links: 1 }]);
+    expect(a.month.apiKeys).toEqual([{ id: keyA.id, name: "Shortcuts", links: 1, status: "active" }]);
     const b = await usageOf(B);
     expect(b.month).toMatchObject({ links: 3, web: 1 });
-    expect(b.month.apiKeys).toEqual([{ id: keyB.id, name: "Other", links: 2 }]);
+    expect(b.month.apiKeys).toEqual([{ id: keyB.id, name: "Other", links: 2, status: "active" }]);
   });
 });
 

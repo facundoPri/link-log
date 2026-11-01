@@ -1,11 +1,11 @@
 import { isAPIError } from "better-auth/api";
 import { createMiddleware } from "hono/factory";
 import { findBySecret } from "../api-key-table";
-import { API_KEY_SHAPE, createAuth } from "../auth";
+import { createAuth } from "../auth";
 import { ConfigError, hostAllowed, readConfig } from "../config";
 import { LIMITS, chargeOrThrow } from "../limits";
 import { json } from "../store";
-import { HttpError, apiKeyOf, errorType, type AppContext, type AppEnv } from "./context";
+import { HttpError, errorType, type AppContext, type AppEnv } from "./context";
 
 let configErrorLogged = false;
 
@@ -100,14 +100,16 @@ async function readJsonObject(c: AppContext): Promise<Record<string, unknown>> {
   let body: unknown;
   try {
     body = raw ? JSON.parse(raw) : {};
-  } catch {
-    throw new HttpError(400, "Invalid request.");
+  } catch (error) {
+    // The parser's position, when its message has one, points at the broken character.
+    const position = /position (\d+)/.exec(error instanceof Error ? error.message : "")?.[1];
+    throw new HttpError(400, `Body is not valid JSON${position ? ` (at position ${position})` : ""}.`);
   }
-  if (!body || Array.isArray(body) || typeof body !== "object") throw new HttpError(400, "Invalid request.");
+  if (!body || Array.isArray(body) || typeof body !== "object") throw new HttpError(400, "Send a JSON object as the body.");
   return body as Record<string, unknown>;
 }
 
-/** Per-user write quota, then a bounded JSON object body. */
+/** Per-user write quota (shared by the private and the public API), then a bounded JSON object body. */
 export const writeQuotaAndBody = createMiddleware<AppEnv>(async (c, next) => {
   if (c.req.method !== "GET" && c.req.method !== "HEAD") {
     await chargeOrThrow(c.env.DB, [{ key: `writes:${c.get("principal").userId}`, limit: LIMITS.writesPerUser, cost: 1, code: "writes" }]);
@@ -122,14 +124,15 @@ export const writeQuotaAndBody = createMiddleware<AppEnv>(async (c, next) => {
  * key is 401, logged to Workers Logs only (never the key itself). A failed lookup is 503, so the
  * integration retries instead of treating its key as dead.
  *
- * One hashed read decides first: a bearer that cannot be one of our keys, an unknown key and a
- * Revoked one are 401 without calling the plugin, so garbage costs at most one D1 read. Only an
- * active key is verified by the plugin, which also records its use.
+ * One hashed read decides first: an unknown key and a Revoked one are 401 without calling the
+ * plugin, so garbage costs at most one D1 read. Only an active key is verified by the plugin, which
+ * also records its use. The read is also what tells a failed lookup from an invalid key, because
+ * verifyApiKey answers both as INVALID_API_KEY.
  */
 export const requireApiKey = createMiddleware<AppEnv>(async (c, next) => {
   const key = /^Bearer\s+(\S+)$/i.exec(c.req.header("authorization") ?? "")?.[1];
   let verified;
-  if (key && API_KEY_SHAPE.test(key)) {
+  if (key) {
     try {
       if ((await findBySecret(c.env.DB, key))?.enabled) {
         verified = await c.get("auth").api.verifyApiKey({ body: { key } });
@@ -149,12 +152,5 @@ export const requireApiKey = createMiddleware<AppEnv>(async (c, next) => {
     return json({ error: "A valid API key is required." }, 401);
   }
   c.set("principal", { kind: "apiKey", userId: verified.key.referenceId, keyId: verified.key.id, keyName: verified.key.name ?? "" });
-  await next();
-});
-
-/** Per-key request limit (every request counts), then a bounded JSON object body. */
-export const apiKeyQuotaAndBody = createMiddleware<AppEnv>(async (c, next) => {
-  await chargeOrThrow(c.env.DB, [{ key: `apikey:${apiKeyOf(c).keyId}`, limit: LIMITS.requestsPerApiKey, cost: 1, code: "api_key" }], "API key request limit reached. Try again later.");
-  c.set("body", await readJsonObject(c));
   await next();
 });

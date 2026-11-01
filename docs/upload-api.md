@@ -6,7 +6,15 @@ The examples use `$LINKLOG_URL` (your Linklog origin, for example `https://linkl
 
 ## Authentication
 
-Create an API key in Settings. Linklog shows the secret once, next to a ready `curl` example, and never again. Keys start with `lk_`, never expire, and work until you revoke them. You can have 10 active keys.
+Create an API key in Settings. Linklog shows the secret once, next to a ready `curl` example, and never again. Keys start with `lk_`, never expire, and work until you revoke or delete them. You can have as many keys as you like, and names can repeat.
+
+### Managing keys
+
+Settings lists your active keys, each with Revoke and Delete. A revoked key stops working at once and moves to a collapsed Revoked keys section, where you can Enable it again or Delete it. Deleting asks for confirmation and removes the key for good. To replace a key, create a new one and revoke or delete the old one.
+
+Settings uses the routes of Better Auth's API key plugin, under `/api/auth/api-key`: `create`, `get`, `list`, `update` and `delete`. They need your signed-in browser session and the app's own origin, so an API key cannot call them. The plugin's server-only fields (limits, refill, permissions, expiration) cannot be set from the browser.
+
+Links a deleted key already added stay in your library. Settings > Usage keeps counting them under the key's name, marked as deleted.
 
 Send the API key secret in the `Authorization` header, after `Bearer`:
 
@@ -78,14 +86,15 @@ Every error body is JSON with an `error` message. Some also carry `code` or `rej
 | --- | --- | --- |
 | 400 | `urls` is missing, not an array, empty, longer than 1000, or holds a non-string. | `{ "error": "Send `urls`: 1 to 1000 strings." }` |
 | 400 | A string in `urls` is longer than 8192 characters. Nothing is saved. | `{ "error": "Each string can be at most 8192 characters." }` |
-| 400 | The body is not a JSON object. | `{ "error": "Invalid request." }` |
+| 400 | The body is not valid JSON. The message adds the position of the broken character when the parser gives one. | `{ "error": "Body is not valid JSON (at position 11)." }` |
+| 400 | The body is valid JSON but not an object. | `{ "error": "Send a JSON object as the body." }` |
 | 400 | No valid URL in the whole request. | `{ "error": "No valid http or https link found.", "rejected": [...] }` |
 | 400 | More than 100 distinct URLs after extraction. Nothing is saved. | `{ "error": "Send at most 100 links per request." }` |
 | 400 | More than 1000 URL candidates in the request, counting every occurrence and every invalid one. Nothing is saved. | `{ "error": "Send at most 1000 URL candidates per request, repeats and invalid ones included." }` |
 | 401 | The key is missing, malformed, unknown or revoked. | `{ "error": "A valid API key is required." }` |
 | 404 | With a valid key, any path under `/api/v1` other than `/api/v1/links`, or a method other than `POST`. Without a valid key, those requests are `401`. | `{ "error": "Not found." }` |
 | 413 | The body is larger than 2.1 MB. | `{ "error": "Request too large." }` |
-| 429 | A quota ran out. Nothing is saved. | `{ "error": "…", "code": "api_key" \| "links" \| "jobs" }` and a `Retry-After` header |
+| 429 | A quota ran out. Nothing is saved. | `{ "error": "…", "code": "writes" \| "links" \| "jobs" }` and a `Retry-After` header |
 | 503 | Linklog could not check the key. Retry. | `{ "error": "Could not check the API key. Try again." }` |
 
 A `rejected` entry that comes back with a `202` carries the message of the URL rule the string broke (for example `"Use a public http or https link."`), `"No valid http or https link found."` or `"Could not save the link."`.
@@ -96,11 +105,11 @@ A `429` carries `Retry-After`, the seconds until the quota window resets (at lea
 
 | `code` | Quota | Message |
 | --- | --- | --- |
-| `api_key` | 60 requests per minute for this key. Every request counts, including ones that end in `400`. | `API key request limit reached. Try again later.` |
+| `writes` | 120 write requests per minute for your account, shared by the web app and every API key. Every request with a valid key counts, including ones that end in `400`. | `Too many requests. Try again later.` |
 | `links` | 500 new Links per hour for your account, shared with the web app. | `Link or processing limit reached. Try again later.` |
 | `jobs` | 300 Extraction jobs per hour for your account, shared with the web app. | `Link or processing limit reached. Try again later.` |
 
-Windows are fixed, not sliding: `Retry-After` is the time to the end of the current minute or hour window. Duplicates are not charged, except the interrupted-save case described under Duplicates, which uses one job. A `429` for `links` or `jobs` saves nothing from that request.
+Windows are fixed, not sliding: `Retry-After` is the time to the end of the current minute or hour window. Duplicates are not charged against `links` or `jobs`, except the interrupted-save case described under Duplicates, which uses one job. A `429` saves nothing from that request. The quotas belong to your account, not to a key: revoking or deleting a key never gives any of them back.
 
 ## Limits
 
@@ -111,10 +120,9 @@ Windows are fixed, not sliding: `Retry-After` is the time to the end of the curr
 | Strings in `urls` | 1000 |
 | Length of one string | 8192 characters |
 | Request body | 2.1 MB |
-| Requests per API key | 60 per minute |
+| Write requests per account | 120 per minute (web and API together) |
 | New Links per account | 500 per hour (web and API together) |
 | Extraction jobs per account | 300 per hour (web and API together) |
-| Active API keys per account | 10 |
 
 ## Examples
 
@@ -200,6 +208,24 @@ Response `400`:
 { "error": "Send `urls`: 1 to 1000 strings." }
 ```
 
+### Body is not valid JSON
+
+A shell can alter a quoted body. zsh's `url-quote-magic` turns `?` and `=` inside a pasted URL into `\?` and `\=`, which JSON does not allow. The error says so:
+
+<!-- example: bad-json -->
+```sh
+curl -s -X POST "$LINKLOG_URL/api/v1/links" \
+  -H "Authorization: Bearer $LINKLOG_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"urls":["\?"]}'
+```
+
+Response `400`:
+
+```json
+{ "error": "Body is not valid JSON (at position 11)." }
+```
+
 ### More than 100 URLs
 
 <!-- example: too-many -->
@@ -233,9 +259,9 @@ Response `401`:
 { "error": "A valid API key is required." }
 ```
 
-### Key limit reached
+### Write limit reached
 
-After 60 requests in one minute, `-i` shows the headers:
+After 120 write requests in one minute (from the web app and your keys together), `-i` shows the headers:
 
 <!-- example: rate-limited -->
 ```sh
@@ -249,5 +275,5 @@ Response `429`. `Retry-After` is the seconds until the next minute starts:
 
 ```
 Retry-After: 23
-{"error":"API key request limit reached. Try again later.","code":"api_key"}
+{"error":"Too many requests. Try again later.","code":"writes"}
 ```

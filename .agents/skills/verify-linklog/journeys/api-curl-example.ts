@@ -1,4 +1,4 @@
-// api-curl-example (FAC-159): a new or regenerated API key's one-time secret is shown with a copyable
+// api-curl-example (FAC-159): a new API key's one-time secret is shown with a copyable
 // curl example for the app's own origin. The copied command really submits a URL, and the example is
 // gone with the secret after Done or leaving Settings.
 import type { Journey } from "../scripts/journey";
@@ -37,22 +37,11 @@ export default (async ({ page, ui, step, check, shot, note }) => {
   await check("Both are gone", async () => (await example.count()) === 0 && (await keys.getByLabel("New API key").count()) === 0);
   await shot("03-after-done");
 
-  await step("Regenerate: a new secret and example appear; leaving Settings removes them");
-  await keys.getByRole("listitem").filter({ hasText: name }).getByRole("button", { name: "Regenerate" }).click();
-  await page.getByRole("alertdialog").getByRole("button", { name: "Regenerate" }).click();
-  const second = await check("A different secret is shown", async () => {
-    const s = await secretOf();
-    return /^lk_[A-Za-z]{40,}$/.test(s) && s !== secret && s;
-  });
-  await check("The example carries the new secret, not the old one", async () => {
-    const text = (await example.textContent()) ?? "";
-    return text.includes(second) && !text.includes(secret);
-  });
-  await shot("04-after-regenerate");
+  await step("Leaving Settings and coming back: neither the secret nor the example is in the page");
   await page.goBack();
   await page.getByRole("button", { name: "demo-a@linklog.test" }).click();
   await page.getByRole("menuitem", { name: "Settings" }).click();
-  await check("After leaving and returning, neither secret nor example is in the page", async () =>
-    (await example.count()) === 0 && !(await page.content()).includes(second) && !(await page.content()).includes("curl -X POST"));
-  await shot("05-after-leaving");
+  await check("Neither secret nor example is in the page", async () =>
+    (await example.count()) === 0 && !(await page.content()).includes(secret) && !(await page.content()).includes("curl -X POST"));
+  await shot("04-after-leaving");
 }) satisfies Journey;
