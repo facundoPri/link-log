@@ -6,15 +6,17 @@ The examples use `$LINKLOG_URL` (your Linklog origin, for example `https://linkl
 
 ## Authentication
 
-Create an API key in Settings. Linklog shows the secret once, next to a ready `curl` example, and never again. Keys start with `lk_`, never expire, and work until you revoke or delete them. You can have as many keys as you like, and names can repeat.
+Create an API key in Settings. Linklog shows the secret once, next to a ready `curl` example, and never again. Keys always start with `lk_` (a prefix secret scanners recognize; it cannot be changed), never expire, and work until you revoke or delete them. You can have as many keys as you like, and names can repeat.
 
 ### Managing keys
 
 Settings lists your active keys, each with Revoke and Delete. A revoked key stops working at once and moves to a collapsed Revoked keys section, where you can Enable it again or Delete it. Deleting asks for confirmation and removes the key for good. To replace a key, create a new one and revoke or delete the old one.
 
-Settings uses the routes of Better Auth's API key plugin, under `/api/auth/api-key`: `create`, `get`, `list`, `update` and `delete`. They need your signed-in browser session and the app's own origin, so an API key cannot call them. The plugin's server-only fields (limits, refill, permissions, expiration) cannot be set from the browser.
+Settings uses the routes of Better Auth's API key plugin, under `/api/auth/api-key`: `create`, `get`, `list`, `update` and `delete`. They need your signed-in browser session and the app's own origin, so an API key cannot call them. The plugin's server-only fields (limits, refill, permissions, expiration) cannot be set from the browser, and neither can `prefix` or `configId`: a create that sends either answers `400` with code `SERVER_ONLY_PROPERTY`.
 
-Links a deleted key already added stay in your library. Settings > Usage keeps counting them under the key's name, marked as deleted.
+Creating, renaming, revoking, enabling and deleting a key each count as one write against the account's writes budget (120 per minute, see 429 and Retry-After), the same budget the web app and every API key share. When it is spent these routes answer `429` with a `Retry-After` header, in Better Auth's error shape: `{ "message": "Too many requests. Try again later.", "code": "writes" }`. Listing and reading keys are free.
+
+Links a deleted key already added stay in your library. Settings > Usage keeps counting them under the name of the key's most recent submission, marked as deleted. While a key exists, Usage shows its current name, so a rename shows at once.
 
 Send the API key secret in the `Authorization` header, after `Bearer`:
 
@@ -105,7 +107,7 @@ A `429` carries `Retry-After`, the seconds until the quota window resets (at lea
 
 | `code` | Quota | Message |
 | --- | --- | --- |
-| `writes` | 120 write requests per minute for your account, shared by the web app and every API key. Every request with a valid key counts, including ones that end in `400`. | `Too many requests. Try again later.` |
+| `writes` | 120 write requests per minute for your account, shared by the web app, every API key and the key routes in Settings (create, update, delete). Every request with a valid key counts, including ones that end in `400`. | `Too many requests. Try again later.` |
 | `links` | 500 new Links per hour for your account, shared with the web app. This is the only cap on what you can upload: extracting a Link, running a lens or auto-tag on it and retrying are not limited separately. | `Link limit reached. Try again later.` |
 
 Windows are fixed, not sliding: `Retry-After` is the time to the end of the current minute or hour window. Duplicates are not charged against `links`. A `429` saves nothing from that request. The quotas belong to your account, not to a key: revoking or deleting a key never gives any of them back.
@@ -119,10 +121,10 @@ Windows are fixed, not sliding: `Retry-After` is the time to the end of the curr
 | Strings in `urls` | 1000 |
 | Length of one string | 8192 characters |
 | Request body | 2.1 MB |
-| Write requests per account | 120 per minute (web and API together) |
+| Write requests per account | 120 per minute (web, API and key management together) |
 | New Links per account | 500 per hour (web and API together) |
 
-Only new Links are capped. Settings > Usage shows the hour's count and, for the month, what the work cost per feature (extract, content, lenses, auto-tag, OCR, autogroup) as runs, tokens or browser time, and an estimated cost; none of those are limits.
+Only new Links are capped. Settings > Usage shows the hour's count and, for the month, how many new Links the web and each key created (each Link counts once, under what created it: a Link the web saved stays the web's even if a key later sends its URL again), and what the work cost per feature (extract, content, lenses, auto-tag, OCR, autogroup) as runs, tokens or browser time, and an estimated cost; none of those are limits.
 
 ## Examples
 

@@ -71,7 +71,7 @@ const keyRules = (db: D1Database) =>
  */
 export function authOptions(
   config: AppConfig,
-  database: D1Database,
+  database: NonNullable<BetterAuthOptions["database"]>,
   mailer: Mailer,
   waitUntil: (p: Promise<unknown>) => void,
 ) {
@@ -84,7 +84,8 @@ export function authOptions(
     database,
     trustedOrigins: [config.baseURL],
     disabledPaths: DISABLED_PATHS,
-    hooks: { before: keyRules(database) },
+    // The Worker and the tests pass D1; scripts/auth/print-schema.ts only compiles the schema and serves no request.
+    hooks: { before: keyRules(database as D1Database) },
     telemetry: { enabled: false },
     logger: {
       level: "warn",
@@ -153,7 +154,10 @@ export function authOptions(
       // (create, get, list, update, delete under /api/auth/api-key). verify and delete-all-expired
       // are server-only and answer 404 over HTTP. The plugin's rate limit stays off: it lives on the
       // key row, so deleting a key would drop it; the per-user quotas in worker/limits.ts cover
-      // every key. Keys are never turned into sessions: enableSessionForAPIKeys stays false.
+      // every key, and keyRules above charges the key routes to the same writes budget.
+      // deferUpdates stays off: with database storage it defers nothing the request waits on (the
+      // use is recorded by an awaited claim) and only adds an expired-key sweep to each verify.
+      // Keys are never turned into sessions: enableSessionForAPIKeys stays false.
       apiKey({
         defaultPrefix: API_KEY_PREFIX,
         defaultKeyLength: API_KEY_LENGTH,

@@ -2,6 +2,7 @@
 // key plugin's own session routes (/api/auth/api-key/*), as shipped. The secret is shown once; another
 // user's keys answer like missing ones; a client cannot set the plugin's server-only fields.
 import { beforeEach, describe, expect, test } from "bun:test";
+import { findBySecret } from "../worker/api-key-table";
 import { TestD1 } from "./support/d1";
 import { client, makeEnv } from "./support/env";
 import { createTestAuth, testApiKey, testSession } from "./support/auth.test-instance";
@@ -287,5 +288,18 @@ describe("the write budget", () => {
     expect(Number(res.headers.get("retry-after"))).toBeGreaterThanOrEqual(1);
     const viaKey = await call("/api/v1/links", { origin: null, headers: { authorization: `Bearer ${key.key}` }, body: { urls: ["https://example.com/a"] } });
     expect(viaKey.status).toBe(429);
+  });
+});
+
+describe("the plugin's storage, as worker/api-key-table.ts reads it", () => {
+  // findBySecret hashes with the plugin's own defaultKeyHasher and reads its "key" and "enabled"
+  // columns. If an upgrade changes how a secret is stored, this fails by name before the public API
+  // starts answering 503 for every key.
+  test("a key made through createApiKey is found by its secret, with its enabled flag; another secret is not", async () => {
+    const { id, key } = await testApiKey(env, A.userId, "Pinned");
+    expect(await findBySecret(env.DB, key)).toEqual({ enabled: true });
+    expect((await as(A).revoke(id)).status).toBe(200);
+    expect(await findBySecret(env.DB, key)).toEqual({ enabled: false });
+    expect(await findBySecret(env.DB, `${key}x`)).toBeNull();
   });
 });
