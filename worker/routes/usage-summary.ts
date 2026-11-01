@@ -41,9 +41,9 @@ export const usageSummaryRoutes = new Hono<AppEnv>().get("/usage/summary", async
          GROUP BY s.key_id ORDER BY n DESC,s.key_id`,
       )
       .bind(userId, start, end)
-      .all<{ key_id: string | null; name: string; n: number; listed: string | null; enabled: number | null }>(),
+      .all<{ key_id: string | null; name: string | null; n: number; listed: string | null; enabled: number | null }>(),
   ]);
-  const apiKeys = groups.results.filter((r) => r.key_id !== null).map((r) => ({ id: r.key_id!, name: r.name, links: r.n, status: !r.listed ? ("deleted" as const) : r.enabled === 1 ? ("active" as const) : ("revoked" as const) }));
+  const apiKeys = groups.results.filter((r) => r.key_id !== null).map((r) => ({ id: r.key_id!, name: r.name ?? "", links: r.n, status: !r.listed ? ("deleted" as const) : r.enabled === 1 ? ("active" as const) : ("revoked" as const) }));
   const web = groups.results.find((r) => r.key_id === null)?.n ?? 0;
   const body: Usage = {
     quotas: { links },

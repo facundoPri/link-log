@@ -57,7 +57,7 @@ const isRevoke = (body: Record<string, unknown>) => body.enabled === false && Ob
  *  - A key is created with the configured `lk_` prefix and configuration only: the prefix is what
  *    secret scanners recognize and a shorter one would put more of the secret in the stored start.
  */
-const keyRules = (db: D1Database) =>
+const keyRules = (db: D1Database | null) =>
   createAuthMiddleware(async (ctx) => {
     if (!ctx.request && !ctx.headers) return;
     if (ctx.path === "/api-key/create") {
@@ -65,7 +65,7 @@ const keyRules = (db: D1Database) =>
       if (body?.prefix !== undefined || body?.configId !== undefined)
         throw new APIError("BAD_REQUEST", { message: "Keys always start with lk_. Do not send a prefix or configId.", code: "SERVER_ONLY_PROPERTY" });
     }
-    if (!KEY_WRITE_PATHS.includes(ctx.path)) return;
+    if (!db || !KEY_WRITE_PATHS.includes(ctx.path)) return;
     if (ctx.path === "/api-key/update" && isRevoke((ctx.body ?? {}) as Record<string, unknown>)) return;
     const session = await getSessionFromCtx(ctx, { disableCookieCache: true });
     if (!session) return;
@@ -86,9 +86,10 @@ export function authOptions(
   database: NonNullable<BetterAuthOptions["database"]>,
   mailer: Mailer,
   waitUntil: (p: Promise<unknown>) => void,
-  // The D1 binding keyRules charges against. scripts/auth/print-schema.ts only compiles the
-  // schema over bun:sqlite and serves no request, so it leaves this out and gets no hook.
-  d1?: D1Database,
+  // The D1 binding keyRules charges against. Required, so a caller cannot drop the charge by
+  // leaving it out: scripts/auth/print-schema.ts only compiles the schema over bun:sqlite and
+  // serves no request, so it passes null. The lk_ prefix rule applies either way.
+  d1: D1Database | null,
 ) {
   const local = isLocalEnv(config.appEnv);
   return {
@@ -99,7 +100,7 @@ export function authOptions(
     database,
     trustedOrigins: [config.baseURL],
     disabledPaths: DISABLED_PATHS,
-    ...(d1 && { hooks: { before: keyRules(d1) } }),
+    hooks: { before: keyRules(d1) },
     // Its default handler logs through a logger of its own, which ignores the one below. This one
     // sends the same errors through it, so expected refusals can be dropped there.
     onAPIError: { onError: (error, ctx) => (isAPIError(error) ? ctx.logger.error(error.message) : ctx.logger.error(error instanceof Error ? error.name : "", error)) },
