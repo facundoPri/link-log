@@ -1,8 +1,10 @@
 import { apiKey } from "@better-auth/api-key";
 import { betterAuth, type BetterAuthOptions } from "better-auth";
+import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
 import { magicLink } from "better-auth/plugins/magic-link";
 import { isLocalEnv, readConfig, type AppConfig } from "./config";
 import { createMailer } from "./email";
+import { LIMITS, LimitError, chargeOrThrow } from "./limits";
 
 export const AUTH_BASE_PATH = "/api/auth";
 export const SESSION_EXPIRES_IN = 60 * 60 * 24 * 7;
@@ -32,13 +34,44 @@ const DISABLED_PATHS = [
 
 type Mailer = ReturnType<typeof createMailer>;
 
+// The plugin routes that write a key. They never reach app middleware, so this hook charges them.
+const KEY_WRITE_PATHS = ["/api-key/create", "/api-key/update", "/api-key/delete"];
+
+/**
+ * Runs before every Better Auth endpoint, for HTTP clients only (a server call such as a test
+ * helper passes neither a request nor headers, as the plugin itself tells them apart):
+ *  - Writing a key (create, update, delete) with a session takes one from the user's writes budget,
+ *    the one the private and public API share, and is refused with a 429 and Retry-After when it is
+ *    spent. Better Auth's own per-IP limit cannot bound a user across IPs, and there is no key cap.
+ *  - A key is created with the configured `lk_` prefix and configuration only: the prefix is what
+ *    secret scanners recognize and a shorter one would put more of the secret in the stored start.
+ */
+const keyRules = (db: D1Database) =>
+  createAuthMiddleware(async (ctx) => {
+    if (!ctx.request && !ctx.headers) return;
+    if (ctx.path === "/api-key/create") {
+      const body = ctx.body as { prefix?: unknown; configId?: unknown } | undefined;
+      if (body?.prefix !== undefined || body?.configId !== undefined)
+        throw new APIError("BAD_REQUEST", { message: "Keys always start with lk_. Do not send a prefix or configId.", code: "SERVER_ONLY_PROPERTY" });
+    }
+    if (!KEY_WRITE_PATHS.includes(ctx.path)) return;
+    const session = await getSessionFromCtx(ctx, { disableCookieCache: true });
+    if (!session) return;
+    try {
+      await chargeOrThrow(db, [{ key: `writes:${session.user.id}`, limit: LIMITS.writesPerUser, cost: 1, code: "writes" }]);
+    } catch (error) {
+      if (!(error instanceof LimitError)) throw error;
+      throw new APIError("TOO_MANY_REQUESTS", { message: error.message, code: error.code }, { "Retry-After": String(error.retryAfter) });
+    }
+  });
+
 /**
  * Shared Better Auth options. The production factory below and the test-only instance in
  * tests/support use this same function so they cannot drift; only tests add Test Utils.
  */
 export function authOptions(
   config: AppConfig,
-  database: NonNullable<BetterAuthOptions["database"]>,
+  database: D1Database,
   mailer: Mailer,
   waitUntil: (p: Promise<unknown>) => void,
 ) {
@@ -51,6 +84,7 @@ export function authOptions(
     database,
     trustedOrigins: [config.baseURL],
     disabledPaths: DISABLED_PATHS,
+    hooks: { before: keyRules(database) },
     telemetry: { enabled: false },
     logger: {
       level: "warn",
