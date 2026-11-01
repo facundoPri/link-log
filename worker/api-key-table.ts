@@ -8,7 +8,8 @@ import { defaultKeyHasher } from "@better-auth/api-key";
 /**
  * Whether a key with this secret exists and is on, or null when none exists. Throws when the lookup
  * itself fails. verifyApiKey answers an unknown key and a failed read the same way (INVALID_API_KEY),
- * so the public API reads the row first to tell a retryable failure (503) from an invalid key (401).
+ * so after that answer the public API reads the row to tell a retryable failure (503) from an
+ * invalid key (401). tests/api-keys.test.ts pins this coupling against a key the plugin created.
  */
 export async function findBySecret(db: D1Database, secret: string): Promise<{ enabled: boolean } | null> {
   const row = await db.prepare('SELECT enabled FROM apikey WHERE "key"=?').bind(await defaultKeyHasher(secret)).first<{ enabled: number | null }>();

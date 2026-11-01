@@ -56,6 +56,9 @@ const run = async (command: string, key: string) => {
 
 let failed = 0;
 const key = (await newKey("main")).key;
+// Key routes draw on the same writes budget the rate-limited example spends, so the revoked key is made first.
+const { id, key: revokedKey } = await newKey("revoked");
+await send("POST", "/auth/api-key/update", { keyId: id, enabled: false });
 for (const ex of examples) {
   const exKey = key;
   // The budget is the account's, shared by every key and the web app: send Duplicates (never charged
@@ -100,8 +103,6 @@ for (const ex of examples) {
 }
 
 // The doc says a revoked key is a 401 too.
-const { id, key: revokedKey } = await newKey("revoked");
-await send("POST", "/auth/api-key/update", { keyId: id, enabled: false });
 const revoked = await fetch(`${ui}/api/v1/links`, { method: "POST", headers: { Authorization: `Bearer ${revokedKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ urls: [`https://${host}/a`] }) });
 const revokedBody = (await revoked.json()) as { error?: string };
 const revokedOk = revoked.status === 401 && revokedBody.error === "A valid API key is required.";

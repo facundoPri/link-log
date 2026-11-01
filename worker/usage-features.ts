@@ -1,3 +1,5 @@
+import type { FeatureUsage } from "../src/types";
+
 // What Linklog spends per feature. One definition per feature says which batch kinds and metered
 // services belong to it and how its runs are counted; the usage summary reads them, and a later
 // per-plan cap is a limit per feature checked against the same counts. Nothing here is capped.
@@ -40,19 +42,6 @@ const FREE_SERVICES = ["image-fetch"];
 
 const OTHER = { key: "other", label: "Other" } as const;
 
-export type FeatureUsage = {
-  key: UsageFeatureKey | typeof OTHER.key;
-  label: string;
-  runs: number;
-  inputTokens: number;
-  outputTokens: number;
-  browserMs: number;
-  /** Estimated cost of the priced calls. */
-  usd: number;
-  /** Finished calls with no price: `usd` is missing at least their cost. */
-  unknownCostCalls: number;
-};
-
 export type MonthUsage = { features: FeatureUsage[]; total: { usd: number; unknownCostCalls: number } };
 
 const featureOf = (kind: string | null, service: string) =>
@@ -85,7 +74,7 @@ export async function monthUsage(db: D1Database, userId: string, start: string, 
       .bind(userId, start, end)
       .all<RunRow>(),
   ]);
-  const blank = (key: FeatureUsage["key"], label: string): FeatureUsage => ({ key, label, runs: 0, inputTokens: 0, outputTokens: 0, browserMs: 0, usd: 0, unknownCostCalls: 0 });
+  const blank = (key: string, label: string): FeatureUsage => ({ key, label, runs: 0, inputTokens: 0, outputTokens: 0, browserMs: 0, usd: 0, unknownCostCalls: 0 });
   const rows = new Map<string, FeatureUsage>(USAGE_FEATURES.map((f) => [f.key, blank(f.key, f.label)]));
   const other = blank(OTHER.key, OTHER.label);
   for (const f of USAGE_FEATURES) if (f.kinds.length) rows.get(f.key)!.runs = jobs.results.filter((r) => f.kinds.includes(r.kind)).reduce((sum, r) => sum + r.n, 0);

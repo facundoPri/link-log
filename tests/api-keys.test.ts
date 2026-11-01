@@ -2,15 +2,18 @@
 // key plugin's own session routes (/api/auth/api-key/*), as shipped. The secret is shown once; another
 // user's keys answer like missing ones; a client cannot set the plugin's server-only fields.
 import { beforeEach, describe, expect, test } from "bun:test";
+import { findBySecret } from "../worker/api-key-table";
 import { TestD1 } from "./support/d1";
 import { client, makeEnv } from "./support/env";
-import { createTestAuth, testSession } from "./support/auth.test-instance";
+import { createTestAuth, testApiKey, testSession } from "./support/auth.test-instance";
 import { keyRoutes, type PluginKey } from "./support/api-key-routes";
+import { expect429, setUsed, stayInsideWindow } from "./support/quota";
 
 let db: TestD1, env: Env, call: ReturnType<typeof client>;
 let A: { userId: string; cookie: string }, B: { userId: string; cookie: string };
 
 beforeEach(async () => {
+  await stayInsideWindow(60);
   db = await TestD1.migrated();
   ({ env } = makeEnv(db));
   call = client(env);
@@ -187,12 +190,16 @@ describe("what a client cannot set", () => {
     expect({ ...after, name: 0, updatedAt: 0 }).toEqual({ ...before, name: 0, updatedAt: 0 });
   });
 
-  test("a key made with a client-chosen prefix works like any other", async () => {
-    const res = await as(A).create({ name: "Prefixed", prefix: "abc" });
-    expect(res.status).toBe(200);
-    const { key } = (await res.json()) as { key: string };
-    expect(key.startsWith("abc")).toBe(true);
-    expect(await verified(key)).toBe(true);
+  test("a client cannot choose the prefix or the configuration: keys always start with lk_", async () => {
+    for (const extra of [{ prefix: "abc" }, { prefix: "lk_" }, { prefix: "" }, { configId: "default" }, { configId: "other" }]) {
+      const res = await as(A).create({ name: "Prefixed", ...extra });
+      expect([extra, res.status, ((await res.json()) as { code: string }).code]).toEqual([extra, 400, "SERVER_ONLY_PROPERTY"]);
+    }
+    expect(await as(A).keys()).toEqual([]);
+    // Without them, the key is made as usual.
+    const { key, start } = await created(A, "Plain");
+    expect(key.startsWith("lk_")).toBe(true);
+    expect(start!.startsWith("lk_")).toBe(true);
   });
 });
 
@@ -240,5 +247,59 @@ describe("access", () => {
     const { id } = await created(A, "Mine");
     for (const [method, path] of [["GET", "/api/api-keys"], ["POST", "/api/api-keys"], ["POST", `/api/api-keys/${id}/revoke`], ["POST", `/api/api-keys/${id}/regenerate`]] as const)
       expect([path, (await call(path, { method, cookie: A.cookie, body: method === "GET" ? undefined : {} })).status]).toEqual([path, 404]);
+  });
+});
+
+describe("the write budget", () => {
+  // Creating, renaming, revoking and deleting a key are writes: they draw on the same per-user
+  // writes-per-minute budget as the web app and the API keys, so a session cannot mint keys without bound.
+  test("once the budget is spent, a key cannot be created, changed or deleted, and nothing changes", async () => {
+    const { id } = await created(A, "Mine");
+    const before = await snapshot(A, id);
+    setUsed(db, `writes:${A.userId}`, 120, 60);
+    await expect429(() => as(A).create({ name: "More" }), "writes", 60);
+    await expect429(() => as(A).update({ keyId: id, name: "Renamed" }), "writes", 60);
+    await expect429(() => as(A).revoke(id), "writes", 60);
+    await expect429(() => as(A).remove(id), "writes", 60);
+    expect(await as(A).keys()).toHaveLength(1);
+    expect(await snapshot(A, id)).toEqual(before);
+  });
+
+  test("reading keys is free, and another user's budget is untouched", async () => {
+    setUsed(db, `writes:${A.userId}`, 120, 60);
+    expect((await as(A).list()).status).toBe(200);
+    expect((await as(A).get("missing")).status).toBe(404);
+    expect((await as(B).create({ name: "Mine" })).status).toBe(200);
+  });
+
+  test("key writes and web writes spend one budget", async () => {
+    setUsed(db, `writes:${A.userId}`, 118, 60);
+    expect((await as(A).create({ name: "One" })).status).toBe(200);
+    expect((await call("/api/tags", { cookie: A.cookie, body: { name: "t" } })).status).toBe(200);
+    await expect429(() => as(A).create({ name: "Two" }), "writes", 60);
+    await expect429(() => call("/api/tags", { cookie: A.cookie, body: { name: "u" } }), "writes", 60);
+  });
+
+  test("a spent budget refuses a key write in Better Auth's error shape, and API submissions too", async () => {
+    const key = await testApiKey(env, A.userId, "Shortcuts");
+    setUsed(db, `writes:${A.userId}`, 120, 60);
+    const res = await as(A).create({ name: "More" });
+    expect([res.status, await res.json()]).toEqual([429, { message: "Too many requests. Try again later.", code: "writes" }]);
+    expect(Number(res.headers.get("retry-after"))).toBeGreaterThanOrEqual(1);
+    const viaKey = await call("/api/v1/links", { origin: null, headers: { authorization: `Bearer ${key.key}` }, body: { urls: ["https://example.com/a"] } });
+    expect(viaKey.status).toBe(429);
+  });
+});
+
+describe("the plugin's storage, as worker/api-key-table.ts reads it", () => {
+  // findBySecret hashes with the plugin's own defaultKeyHasher and reads its "key" and "enabled"
+  // columns. If an upgrade changes how a secret is stored, this fails by name before the public API
+  // starts answering 503 for every key.
+  test("a key made through createApiKey is found by its secret, with its enabled flag; another secret is not", async () => {
+    const { id, key } = await testApiKey(env, A.userId, "Pinned");
+    expect(await findBySecret(env.DB, key)).toEqual({ enabled: true });
+    expect((await as(A).revoke(id)).status).toBe(200);
+    expect(await findBySecret(env.DB, key)).toEqual({ enabled: false });
+    expect(await findBySecret(env.DB, `${key}x`)).toBeNull();
   });
 });

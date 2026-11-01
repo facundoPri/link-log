@@ -35,5 +35,5 @@ An API key that no longer authenticates but stays listed, and can be enabled aga
 _Avoid_: Disabled key
 
 **Deleted API key**:
-An API key removed for good. Its Links stay, and Usage keeps counting them under the key's stored name, marked as deleted.
+An API key removed for good. Its Links stay, and Usage keeps counting them under the name of the key's newest submission, marked as deleted.
 _Avoid_: Revoked key

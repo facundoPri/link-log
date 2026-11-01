@@ -124,22 +124,18 @@ export const writeQuotaAndBody = createMiddleware<AppEnv>(async (c, next) => {
  * key is 401, logged to Workers Logs only (never the key itself). A failed lookup is 503, so the
  * integration retries instead of treating its key as dead.
  *
- * One hashed read decides first: an unknown key and a Revoked one are 401 without calling the
- * plugin, so garbage costs at most one D1 read. Only an active key is verified by the plugin, which
- * also records its use. The read is also what tells a failed lookup from an invalid key, because
- * verifyApiKey answers both as INVALID_API_KEY.
+ * The plugin verifies first, so a valid key costs only the plugin's own reads and writes (which also
+ * record its use). It answers a failed read or update like an unknown key (INVALID_API_KEY), so only
+ * then does one hashed read tell the two apart: no such key is 401, a key that is still there means
+ * the plugin's read or update failed (503). A key deleted meanwhile is gone for that read too: 401.
  */
 export const requireApiKey = createMiddleware<AppEnv>(async (c, next) => {
   const key = /^Bearer\s+(\S+)$/i.exec(c.req.header("authorization") ?? "")?.[1];
   let verified;
   if (key) {
     try {
-      if ((await findBySecret(c.env.DB, key))?.enabled) {
-        verified = await c.get("auth").api.verifyApiKey({ body: { key } });
-        // The plugin catches every error while validating and answers it like an unknown key. The
-        // key was just found active, so that answer means its own read or update failed.
-        if (!verified.valid && verified.error?.code === "INVALID_API_KEY") throw new Error("API key validation failed");
-      }
+      verified = await c.get("auth").api.verifyApiKey({ body: { key } });
+      if (!verified.valid && verified.error?.code === "INVALID_API_KEY" && (await findBySecret(c.env.DB, key))?.enabled) throw new Error("API key validation failed");
     } catch (error) {
       if (!isAPIError(error)) {
         console.error(JSON.stringify({ event: "api_key_lookup_failed", errorType: errorType(error) }));
