@@ -518,15 +518,14 @@ describe("limits", () => {
       const quotas = await quotaUsed(call, A);
       expect(quotas).toEqual({ links: 1 });
 
-      // Revoking or deleting is itself a write, so it adds one; nothing is given back.
+      // Revoking or deleting is never charged or refused, and nothing is given back.
       const { revoke, remove } = keyRoutes(call, A);
-      expect((await (action === "revoke" ? revoke : remove)(keyA.id)).status).toBe(200); // 118 writes
-      expect(await counters()).toEqual(spent.map((row) => ((row as { key: string }).key.startsWith("writes:") ? { ...(row as object), count: 118 } : row)));
+      expect((await (action === "revoke" ? revoke : remove)(keyA.id)).status).toBe(200);
+      expect(await counters()).toEqual(spent);
       expect(await quotaUsed(call, A)).toEqual(quotas);
 
       const next = await testApiKey(env, A.userId, "Next");
-      expect((await submit(next.key, { urls: ["https://api.example/limited"] })).status).toBe(202); // 119 writes
-      expect((await submit(next.key, { urls: ["https://api.example/limited"] })).status).toBe(202); // 120 writes
+      for (let writes = 118; writes <= 120; writes++) expect((await submit(next.key, { urls: ["https://api.example/limited"] })).status).toBe(202);
       await expect429(() => submit(next.key, { urls: ["https://api.example/limited"] }), "writes", 60);
       await expect429(webWrite, "writes", 60);
     });
