@@ -38,7 +38,7 @@ describe("an exhausted quota names itself and when it resets", () => {
     setUsed(db, `jobs:${A.userId}`, 300, 3600);
     expect((await send("/api/links", { url: "https://quota.example/a" })).status).toBe(201);
     expect((await send("/api/import", { urls: ["https://quota.example/1", "https://quota.example/2"] })).status).toBe(200);
-    const [{ id }] = (await libraryOf(call, A)).links;
+    const id = (await libraryOf(call, A)).links[0]!.id;
     // Setup: the link has content, so Lens, Auto-tag, Retry and Re-extract can run on it.
     db.sqlite.query("UPDATE links SET content_key='k',content_state='ready'").run();
     db.sqlite.query("UPDATE jobs SET status='done'").run();
