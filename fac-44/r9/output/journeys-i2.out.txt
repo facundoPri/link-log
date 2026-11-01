@@ -1,0 +1,163 @@
+=== HEAD 25003d1bf4591fac1fddd8da7e830f26589b4ed4
+=== doctor /Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.cache/verify-linklog/20261101-051537-3620
+✓ session      .cache/verify-linklog/20261101-051537-3620/session.json
+✓ process      serve pid 53895 alive
+✓ ports        UI 3620 and API 9620 are served by this run
+✓ qa worker    fixture edges, jev=fixture, fastRetries=true
+✓ auth         anonymous 401, demo-a@linklog.test 200 (0 links)
+✓ code         no source edits since launch (25003d1)
+  ui           http://127.0.0.1:3620
+=== run /Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.agents/skills/verify-linklog/journeys/api-keys-settings.ts on /Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.cache/verify-linklog/20261101-051537-3620
+▶ Open Settings from the user menu
+▶ Create a named API key
+▶ Dismiss the secret: it is not shown again after a reload
+▶ Revoke the key
+▶ Demo B cannot see or revoke Demo A's keys
+▶ Back to the library
+✓ Settings page is shown at /settings
+✓ Account shows the email
+✓ Account offers sign out
+✓ The full lk_ secret is shown once
+✓ The new key is listed as active
+✓ API: the list has the key with its start and never the secret
+✓ Row shows the visible start, creation date and no last use
+✓ Settings loads directly at /settings
+✓ Key is still listed, secret gone
+✓ Confirmation names the key
+✓ The row left the active list; the Revoked keys section counts it and is closed
+✓ API: the key stays listed as disabled
+✓ Still revoked after reload, with Enable and Delete and no Revoke
+✓ Demo B's list does not include Demo A's key
+✓ Demo B updating or deleting Demo A's key answers 404 like a missing key
+✓ Library is shown again
+PASSED: 16/16 checks
+evidence: .cache/verify-linklog/20261101-051537-3620/evidence/api-keys-settings-20261101-051639
+=== exit 0 /Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.agents/skills/verify-linklog/journeys/api-keys-settings.ts
+=== run /Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.agents/skills/verify-linklog/journeys/api-keys-revoked-section.ts on /Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.cache/verify-linklog/20261101-051537-3620
+▶ Set up: three keys, one of them used for a Link
+▶ Open Settings: all three are active, so there is no Revoked keys section for them yet
+▶ Revoke two keys from the active list
+▶ Open the section: revoked rows have Enable and Delete and no Revoke; the list scrolls
+▶ Enable a revoked key: it moves back to the active list and authenticates again
+▶ Delete asks for confirmation; Cancel keeps the key
+▶ Delete the revoked key, and an active key
+▶ Usage keeps the deleted key's Links under its stored name, marked Deleted
+▶ A body that is not valid JSON gets a clear 400 (what zsh's url-quote-magic produces)
+✓ API: the old key submits a Link
+✓ Keep 3139 is listed as active with Revoke and Delete
+✓ Old 3139 is listed as active with Revoke and Delete
+✓ Again 3139 is listed as active with Revoke and Delete
+✓ Old 3139 left the active list
+✓ Again 3139 left the active list
+✓ The Revoked keys section shows the new count and is closed by default
+✓ The closed section hides its rows
+✓ Both revoked keys are listed with Enable and Delete
+✓ The revoked list is scrollable (bounded height, vertical scroll)
+✓ API: the revoked key no longer authenticates
+✓ Active again with Revoke and Delete
+✓ API: enabled and submitting
+✓ The confirmation names the key
+✓ Nothing was deleted
+✓ API: the revoked key is gone
+✓ The row is gone from the section, whose count dropped
+✓ API: the active key is gone and its secret no longer works
+✓ API: the deleted key is in the usage summary with status deleted
+✓ Settings Usage shows 'API key: <name>' with a Deleted badge and its count
+✓ curl: 400 saying the body is not valid JSON
+PASSED: 21/21 checks
+evidence: .cache/verify-linklog/20261101-051537-3620/evidence/api-keys-revoked-section-20261101-051642
+=== exit 0 /Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.agents/skills/verify-linklog/journeys/api-keys-revoked-section.ts
+=== run /Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.agents/skills/verify-linklog/journeys/usage-settings.ts on /Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.cache/verify-linklog/20261101-051537-3620
+▶ Seed: two API keys, submissions with each secret, a Duplicate, two Web imports
+▶ Demo B adds Links of their own: never in Demo A's usage
+▶ API: the usage summary
+▶ The extractions run; Auto-tag and a lens run on one Link: every run lands in its feature
+▶ Settings shows the Usage section and the per-key counts
+▶ The same Usage section on a phone: the table keeps its columns readable
+▶ A key that added nothing reads 0 links; Demo B's page shows only their own usage
+✓ API: Shortcuts key creates three Links
+✓ API: Zapier key creates two Links
+✓ API: a resubmitted URL is a Duplicate
+✓ API: the Revoked API key no longer authenticates
+✓ Month: +7 total, +2 Web, 3 for Shortcuts, 2 for the Revoked API key Zapier
+✓ Month total excludes Demo B's key
+✓ Links quota: only Links count (+7), there is no jobs quota
+✓ API: the seven extractions finish and bill Browser time
+✓ API: Autotag +1 run, Lenses +1 run, with tokens, and Content bills Browser time
+✓ Tokens for Autotag and Lenses; Browser time and a cost for Content; the fixture Jev has no price
+✓ Usage shows the links hour with a reset time, and no Jobs row
+✓ Usage lists each feature with its runs, and a Total
+✓ Usage lists Web and both keys (the Revoked one marked) with this month's counts
+✓ Shortcuts row: 3 links this month
+✓ Zapier row (Revoked, in the closed Revoked keys section): 2 links this month
+✓ Phone: the table does not scroll sideways
+✓ Idle key: 0 links this month
+✓ API: Demo B counts their own key and none of Demo A's
+PASSED: 18/18 checks
+evidence: .cache/verify-linklog/20261101-051537-3620/evidence/usage-settings-20261101-051647
+=== exit 0 /Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.agents/skills/verify-linklog/journeys/usage-settings.ts
+=== run /Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.agents/skills/verify-linklog/journeys/api-curl-example.ts on /Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.cache/verify-linklog/20261101-051537-3620
+▶ Create a key: the curl example appears with the secret
+▶ Copy curl puts the command on the clipboard, and it works
+▶ Done removes the secret and the example
+▶ Leaving Settings and coming back: neither the secret nor the example is in the page
+✓ The secret is shown
+✓ The example targets the app's origin and carries the secret
+✓ Clipboard holds the example
+✓ Running the copied command answers 202 with a created result
+✓ Both are gone
+✓ Neither secret nor example is in the page
+PASSED: 6/6 checks
+evidence: .cache/verify-linklog/20261101-051537-3620/evidence/api-curl-example-20261101-051713
+=== exit 0 /Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.agents/skills/verify-linklog/journeys/api-curl-example.ts
+=== run /private/tmp/claude-501/-Users-facundopri-orca-workspaces-link-log-fac-44-url-upload/5ffefc72-7986-4e11-830b-b12621ae2bc3/scratchpad/evidence/final-r9/journeys/r9-c-rename-usage.ts on /Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.cache/verify-linklog/20261101-051537-3620
+▶ Create a key and submit with it under its original name
+▶ Rename it through POST /api/auth/api-key/update and keep submitting
+▶ Settings Usage shows the new name
+▶ Delete the key from Settings
+✓ API: first submission creates a Link (202)
+✓ API: the update returns the new name
+✓ API: the renamed key submits two more Links (202)
+✓ API: a Duplicate from it is accepted and not counted
+✓ API: Usage lists the key under the new name, active, 3 links
+✓ UI: 'API key: <new name>' with 3 and no badge
+✓ UI: the old name is nowhere on the page
+✓ UI: the API keys list shows the new name
+✓ The confirmation names the key by its new name
+✓ API: the key is gone and its secret answers 401
+✓ API: Usage keeps it under the last name, status deleted, 3 links
+✓ UI after reload: 'API key: <new name>' with a Deleted badge and 3
+PASSED: 12/12 checks
+evidence: .cache/verify-linklog/20261101-051537-3620/evidence/r9-c-rename-usage-20261101-051714
+=== exit 0 /private/tmp/claude-501/-Users-facundopri-orca-workspaces-link-log-fac-44-url-upload/5ffefc72-7986-4e11-830b-b12621ae2bc3/scratchpad/evidence/final-r9/journeys/r9-c-rename-usage.ts
+=== run /Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.agents/skills/verify-linklog/journeys/api-keys-gate-fixes.ts on /Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.cache/verify-linklog/20261101-051537-3620
+▶ A key always starts with lk_: a client-chosen prefix or configuration is refused
+▶ Usage shows the key under its current name after a rename
+▶ Key writes draw on the shared writes budget: the key's own submissions spend it, and a create is then refused
+▶ Settings tells the user a create is refused
+▶ With the budget still spent, the owner revokes and deletes the leaked key from Settings
+✓ API: create with {"prefix":"abc"} is 400 SERVER_ONLY_PROPERTY
+✓ API: create with {"configId":"default"} is 400 SERVER_ONLY_PROPERTY
+✓ API: nothing was created by the refused requests
+✓ API: a plain create returns an lk_ secret and an lk_ visible start
+✓ API: the key submits a Link
+✓ API: the key is renamed
+✓ API: the key submits another Link
+✓ API: Usage lists the key as the new name with both Links
+✓ Settings > Usage shows the row under the new name
+✓ API: the key's own submissions run the writes budget out within 120 in the minute
+✓ The 429 has Retry-After (1 to 60 seconds) and code writes
+✓ API: a create is refused in Better Auth's error shape
+✓ API: a rename is refused too
+✓ API: nothing was created
+✓ Settings shows the limit message and creates nothing
+✓ Revoke answers 200 with the budget spent
+✓ API: the key is disabled
+✓ The revoked key answers 401 on /api/v1/links
+✓ Delete of an active key answers 200 with the budget spent
+✓ Delete of the revoked key answers 200 with the budget spent
+✓ API: both keys are gone
+✓ The deleted key still answers 401
+PASSED: 22/22 checks
+evidence: .cache/verify-linklog/20261101-051537-3620/evidence/api-keys-gate-fixes-20261101-051716
+=== exit 0 /Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.agents/skills/verify-linklog/journeys/api-keys-gate-fixes.ts

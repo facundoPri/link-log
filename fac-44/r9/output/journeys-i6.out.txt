@@ -1,0 +1,46 @@
+=== HEAD 25003d1bf4591fac1fddd8da7e830f26589b4ed4
+=== doctor /Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.cache/verify-linklog/20261101-051559-3660
+✓ session      .cache/verify-linklog/20261101-051559-3660/session.json
+✓ process      serve pid 55479 alive
+✓ ports        UI 3660 and API 9660 are served by this run
+✓ qa worker    fixture edges, jev=fixture, fastRetries=true
+✓ auth         anonymous 401, demo-a@linklog.test 200 (0 links)
+✓ code         no source edits since launch (25003d1)
+  ui           http://127.0.0.1:3660
+=== run /private/tmp/claude-501/-Users-facundopri-orca-workspaces-link-log-fac-44-url-upload/5ffefc72-7986-4e11-830b-b12621ae2bc3/scratchpad/evidence/final-r9/journeys/r9-b-lockout.ts on /Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.cache/verify-linklog/20261101-051559-3660
+▶ Wait for a fresh minute, then the leaked key spends the writes budget with Bearer submissions
+▶ Settings with the budget spent
+▶ Revoke the leaked key from Settings
+▶ Delete the spare key from Settings
+▶ Create key is still refused
+▶ Enable a revoked key from Settings is refused
+▶ Rename and disable-plus-rename are refused (the plugin update route, as Settings calls it)
+▶ Clean up: delete the leaked, parked and combo keys (free)
+✓ API: the leaked key saves the seed Link
+✓ API: 120 Bearer submissions accepted, then 429 writes; the next five are 429 too
+✓ UI: the leaked key is listed as active
+✓ HTTP: Revoke sent only keyId and enabled:false and got 200
+✓ UI: the leaked key left the active list (no Revoke button for it anywhere)
+✓ UI: a Revoked keys section is present
+✓ API: the key is disabled
+✓ HTTP: the revoked key answers 401 on /api/v1/links
+✓ HTTP: Delete got 200
+✓ UI: the spare key is gone from Settings
+✓ API: the spare key is gone from the list
+✓ HTTP: the deleted key answers 401
+✓ HTTP: Create key got 429 writes with Retry-After
+✓ UI: Settings shows Too many requests. Try again later.
+✓ UI: no secret was shown
+✓ HTTP: Enable got 429 writes
+✓ UI: a toast says Too many requests. Try again later.
+✓ API: the parked key is still disabled
+✓ HTTP: rename 429 writes
+✓ HTTP: disable-plus-rename 429 writes
+✓ API: the combo key is still enabled under its old name
+✓ Every step ran in the minute the budget was spent
+✓ API: delete R9 Leaked 564 -> 200
+✓ API: delete R9 Parked 564 -> 200
+✓ API: delete R9 Combo 564 -> 200
+PASSED: 25/25 checks
+evidence: .cache/verify-linklog/20261101-051559-3660/evidence/r9-b-lockout-20261101-051639
+=== exit 0 /private/tmp/claude-501/-Users-facundopri-orca-workspaces-link-log-fac-44-url-upload/5ffefc72-7986-4e11-830b-b12621ae2bc3/scratchpad/evidence/final-r9/journeys/r9-b-lockout.ts

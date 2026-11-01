@@ -1,0 +1,10 @@
+PASS [usage-i8 demo-a@linklog.test] webPlusKeysEqualsTotal
+PASS [usage-i8 demo-a@linklog.test] totalEqualsD1Count
+PASS [usage-i8 demo-a@linklog.test] webEqualsD1Attribution
+PASS [usage-i8 demo-a@linklog.test] everyKeyEqualsD1Attribution
+      total 26 = web 2 + keys 24 (10 key rows); D1 month links 26; D1 web 2
+PASS [usage-i8 demo-b@linklog.test] webPlusKeysEqualsTotal
+PASS [usage-i8 demo-b@linklog.test] totalEqualsD1Count
+PASS [usage-i8 demo-b@linklog.test] webEqualsD1Attribution
+PASS [usage-i8 demo-b@linklog.test] everyKeyEqualsD1Attribution
+      total 4 = web 0 + keys 4 (1 key rows); D1 month links 4; D1 web 0

@@ -1,0 +1,7 @@
+✓ session      .cache/verify-linklog/20261101-051548-3640/session.json
+✓ process      serve pid 54513 alive
+✓ ports        UI 3640 and API 9640 are served by this run
+✓ qa worker    fixture edges, jev=fixture, fastRetries=true
+✓ auth         anonymous 401, demo-a@linklog.test 200 (0 links)
+✓ code         no source edits since launch (25003d1)
+  ui           http://127.0.0.1:3640

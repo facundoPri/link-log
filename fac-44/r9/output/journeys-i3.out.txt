@@ -1,0 +1,33 @@
+=== HEAD 25003d1bf4591fac1fddd8da7e830f26589b4ed4
+=== doctor /Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.cache/verify-linklog/20261101-051542-3630
+✓ session      .cache/verify-linklog/20261101-051542-3630/session.json
+✓ process      serve pid 54254 alive
+✓ ports        UI 3630 and API 9630 are served by this run
+✓ qa worker    fixture edges, jev=fixture, fastRetries=true
+✓ auth         anonymous 401, demo-a@linklog.test 200 (0 links)
+✓ code         no source edits since launch (25003d1)
+  ui           http://127.0.0.1:3630
+=== run /Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.agents/skills/verify-linklog/journeys/api-submit-activity.ts on /Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.cache/verify-linklog/20261101-051542-3630
+▶ Set up: create an API key (Settings owns this; see api-keys-settings.ts)
+▶ Integration: submit three URLs with the key, no cookie or Origin
+▶ The key cannot reach private routes; a missing key is 401
+▶ Resending the same URL is a Duplicate with no batch
+▶ Activity lists the batch with the key name
+▶ Cancel the API batch from Activity
+▶ Demo B sees none of it
+✓ API: 202 with three created results and a batchId
+✓ API: no CORS headers on the response
+✓ API: GET /api/library with the key is 401
+✓ API: a request without a key is 401
+✓ API: duplicate, no batchId
+✓ API: Demo A's library has the batch with the API source
+✓ Activity shows "Extract context · API · Shortcuts 543"
+✓ Markup: no nested buttons
+✓ Exactly one batch can be cancelled
+✓ API: the batch has no active jobs and some were cancelled
+✓ Activity no longer offers Cancel batch
+✓ Activity still labels the batch "Extract context · API · Shortcuts 543"
+✓ API: Demo B has no links or batches from the key
+PASSED: 13/13 checks
+evidence: .cache/verify-linklog/20261101-051542-3630/evidence/api-submit-activity-20261101-051639
+=== exit 0 /Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.agents/skills/verify-linklog/journeys/api-submit-activity.ts

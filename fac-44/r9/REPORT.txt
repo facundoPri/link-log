@@ -1,0 +1,69 @@
+Published copy. Layout here: output/ (script and journey logs, usage checks, lockout-statuses.json, ui-reports.jsonl),
+scripts/ (api-checks-r9.ts, usage-check.ts, r9-* journeys, runners), screenshots/ (selected UI captures).
+Videos and full per-journey folders stay in the local scratchpad (ui/<journey>/).
+
+FAC-44 verification r9 (spec as revised by the owner, 2026-11-01), after the round-8 and round-9 fixes.
+Target: branch fac-44-url-upload at 25003d1 (25003d1bf4591fac1fddd8da7e830f26589b4ed4), the final head.
+Read-only: no product code changed. Every instance ran in the verifier's own worktree
+(.claude/worktrees/agent-a55cbee428ba69c54, detached at 25003d1, clean); heads.txt records HEAD before each start.
+Surface: verify-linklog instances (UI + /api proxy, QA Worker, local D1/R2/Queue/Workflow, fixture external services),
+launched with: verify.ts up --fast-retries --var BROWSER_CONCURRENCY=1 (up.sh). Every doctor was all green.
+Every UI report.json says "commit": "25003d1".
+
+The first verifier on this commit stopped mid-run (API usage limit). Its UI journeys had all finished and are kept.
+A second run finished the API script and item 4 on fresh instances of the same commit.
+
+All paths are relative to this directory.
+
+API script: api-checks-r9.ts (rerun: bun api-checks-r9.ts <run dir>), adapted from final-r8/api-checks-r8.ts.
+  Final run on a fresh instance (i8, :3680): api-checks-r9.out.txt  TOTAL 187/187 PASS.
+  Earlier attempts, kept for transparency; both were script bugs, not product defects:
+   - api-checks-r9.out.attempt1-script-bug.txt (i1): the scratch keys for R9 were created right after story 6 spent the
+     minute's writes budget, so the create got 429 writes (correct behavior). Fix: wait for a fresh minute first.
+   - api-checks-r9.out.attempt2-name-too-long.txt (i7): the scratch name "R9 SpentRevokedDelete <stamp>" is 33 chars;
+     the key-name limit refused it with 400 INVALID_NAME_LENGTH (correct behavior). Fix: shorter name.
+  Contract change applied: r8's "revoke/delete refused when the budget is spent" is now R9 "revoke/delete always 200,
+  never charged", on scratch keys so k1 is never revoked or deleted.
+
+UI journeys (each folder under ui/ has report.json, screenshots, video.webm):
+  api-keys-settings-20261101-051639           16/16 PASS
+  api-keys-revoked-section-20261101-051642    21/21 PASS
+  usage-settings-20261101-051647              18/18 PASS
+  api-curl-example-20261101-051713             6/6  PASS
+  r9-c-rename-usage-20261101-051714           12/12 PASS  (journeys/r9-c-rename-usage.ts)
+  api-keys-gate-fixes-20261101-051716         22/22 PASS
+  api-submit-activity-20261101-051639         13/13 PASS  (own fresh instance i3, :3630)
+  api-submit-text-20261101-051639              7/7  PASS  (own fresh instance i4, :3640)
+  r9-a-shared-budget-20261101-051639          14/14 PASS  (journeys/r9-a-shared-budget.ts, own fresh instance i5, :3650)
+  r9-b-lockout-20261101-051639                25/25 PASS  (journeys/r9-b-lockout.ts, own fresh instance i6, :3660)
+  Total 154/154. Logs: journeys-i2..i6.out.txt. Runner: all-journeys.sh / run-journeys.sh.
+
+1. FULL REGRESSION  PASS
+  API 187/187 (stories 1-9, R7a-R7e, R9). UI 154/154 across the ten journeys above; each api-submit-* ran on its own instance.
+
+2. THE LOCKOUT IS CLOSED, ON THE UI  PASS
+  ui/r9-b-lockout-20261101-051639/, statuses in 06-statuses.json.
+  126 Bearer submissions from one key: 120 accepted, then 429 writes, Retry-After 59 (01-spent.json, 01-settings-budget-spent.png).
+  Same minute: Revoke from Settings -> 200 (02a-revoke-confirm.png, 02b-revoked.png); the key then gets 401 on /api/v1/links.
+  Delete another key from Settings -> 200 (03a-delete-confirm.png, 03b-deleted.png); that key then gets 401.
+  Create key is still refused: 429 writes, the UI shows "Too many requests. Try again later." (04-create-refused.png).
+  API side: [R9] lines. Revoke, delete of an active key, delete of a revoked key and re-revoke are all 200 with the budget spent,
+  and the writes counter stays at 120 (not charged). 60 spend keys deleted with the budget spent, all 200.
+
+3. CHARGES  PASS
+  Rename, enable and disable-plus-rename are refused 429 writes with Retry-After when the budget is spent, and change nothing
+  ([R9] lines; UI: 05-enable-refused.png and 06-statuses.json in r9-b-lockout). Create and rename spend the shared budget and
+  an API submission is then refused ([R7a]; UI: ui/r9-a-shared-budget-*).
+
+4. USAGE  PASS
+  usage-check.ts compares /api/usage/summary with a direct D1 count and a creator attribution computed in JS from raw rows,
+  for both accounts: usage-i2..i6.out.txt and usage-i8.out.txt (+ .json), 48/48 PASS.
+  Example (i8, demo-a): total 26 = web 2 + keys 24 (10 key rows); D1 month links 26; D1 web 2.
+  API: [R7d] "Web + every key = month total = D1 count".
+
+Also on 25003d1, in the integration worktree: bun run typecheck clean; bun test 599 pass, 0 fail.
+
+Open note for the owner (not a defect, matches docs/upload-api.md): a key renamed after its last submission and then deleted
+shows in Usage under the name of its last submission, not its last name ([R7c] NOTE, r9-c-rename-usage).
+
+No product defect found.

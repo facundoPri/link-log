@@ -1,0 +1,23 @@
+=== HEAD 25003d1bf4591fac1fddd8da7e830f26589b4ed4
+=== doctor /Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.cache/verify-linklog/20261101-051548-3640
+✓ session      .cache/verify-linklog/20261101-051548-3640/session.json
+✓ process      serve pid 54513 alive
+✓ ports        UI 3640 and API 9640 are served by this run
+✓ qa worker    fixture edges, jev=fixture, fastRetries=true
+✓ auth         anonymous 401, demo-a@linklog.test 200 (0 links)
+✓ code         no source edits since launch (25003d1)
+  ui           http://127.0.0.1:3640
+=== run /Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.agents/skills/verify-linklog/journeys/api-submit-text.ts on /Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.cache/verify-linklog/20261101-051548-3640
+▶ Text with several URLs, a repeat, trailing punctuation and a rejected string
+▶ Zero valid URLs is 400
+▶ More than 100 URLs after extraction is 400 and saves nothing; 100 is accepted
+✓ API: 202, each URL once with the text as input
+✓ API: the two non-URL strings are rejected with a reason
+✓ API: the library holds exactly the three URLs and no rejected text
+✓ API: 400 with the message and the rejected list
+✓ API: 400 explaining the limit
+✓ API: nothing was saved
+✓ API: 100 URLs in two strings are accepted
+PASSED: 7/7 checks
+evidence: .cache/verify-linklog/20261101-051548-3640/evidence/api-submit-text-20261101-051639
+=== exit 0 /Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.agents/skills/verify-linklog/journeys/api-submit-text.ts

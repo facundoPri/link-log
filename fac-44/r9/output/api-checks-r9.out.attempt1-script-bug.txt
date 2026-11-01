@@ -1,0 +1,155 @@
+instance http://127.0.0.1:3610  commit 25003d1  run /Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.cache/verify-linklog/20261101-051530-3610  stamp r8-mvxdnlxe  at 2026-11-01T05:16:22.850Z
+PASS [1] plugin create returns an lk_ secret for each key
+PASS [2] bare URLs: 202, two created, batchId  {"results":[{"input":"https://article.qa.example/r8-mvxdnlxe/bare-1","url":"https://article.qa.example/r8-mvxdnlxe/bare-1","id":"27d737af-ec41-40b6-916e-0d59d43dd45a","status":"created"},{"input":"https://article.qa.example/r8-mvxdnlxe/bare-2","url":"https://article.qa.example/r8-mvxdnlxe/bare-2","id":"29e4f838-dadf-46c3-9640-b93038d93f68","status":"created"}],"rejected":[],"batchId":"60c5140e-c19e-4753-a14d-fc5f5c476ead"}
+PASS [2] text with several URLs: 202 with created, duplicate and rejected entries  {"results":[{"input":"Read [one](https://article.qa.example/r8-mvxdnlxe/t-1) and <https://article.qa.example/r8-mvxdnlxe/t-2>, also https://article.qa.example/r8-mvxdnlxe/t-3. Plus https://article.qa.example/r8-mvxdnlxe/bare-1 again","url":"https://article.qa.example/r8-mvxdnlxe/t-1","id":"210cff9f-29e2-4421-8a68-0f87b1e0a1b9","status":"created"},{"input":"Read [one](https://article.qa.example/r8-mvxdnlxe/t-1) and <https://article.qa.example/r8-mvxdnlxe/t-2>, also https://article.qa.example/r8-mvxdnlxe/t-3. Plus https://article.qa.example/r8-mvxdnlxe/bare-1 again","url":"https://article.qa.exa
+PASS [2] every result from the text names the text as input
+PASS [2] rejected entries carry a reason  [{"input":"just words, no link","error":"No valid http or https link found."},{"input":"ftp://files.example/x","error":"No valid http or https link found."}]
+PASS [2] links counter grew by exactly the 5 created (duplicate not charged)  {"before":0,"after":5}
+PASS [2] duplicate-only request: 202, all duplicate, no batchId  {"results":[{"input":"https://article.qa.example/r8-mvxdnlxe/bare-1","url":"https://article.qa.example/r8-mvxdnlxe/bare-1","id":"27d737af-ec41-40b6-916e-0d59d43dd45a","status":"duplicate"},{"input":"https://article.qa.example/r8-mvxdnlxe/bare-2","url":"https://article.qa.example/r8-mvxdnlxe/bare-2","id":"29e4f838-dadf-46c3-9640-b93038d93f68","status":"duplicate"}],"rejected":[]}
+PASS [2] duplicate-only request does not change the links counter  {"afterCreated":5,"afterDup":5}
+PASS [2] all 5 created links are in Demo A's library
+PASS [8] usage month: links +5 and key row = 5 (duplicates excluded)  {"before":0,"after":5,"keyRow":{"id":"TvHokOt9x7zsqZAxatY08f157hs9iObL","name":"R8 Main r8-mvxdnlxe","links":5,"status":"active"}}
+PASS [3] zero valid URLs: 400 with rejected list  {"error":"No valid http or https link found.","rejected":[{"input":"nothing here","error":"No valid http or https link found."},{"input":"ftp://files.example/x","error":"No valid http or https link found."}]}
+PASS [3] 101 URLs: 400 Send at most 100 links per request.  {"error":"Send at most 100 links per request."}
+PASS [3] 101 URLs inside one text string: 400 too  {"error":"Send at most 100 links per request."}
+PASS [3] nothing from the 101-URL requests was saved  {"before":5,"after":5}
+PASS [3] owner's literal \? escape: 400 says the body is not valid JSON  {"sent":"{\"urls\":[\"https://example.com/page\\?q=1\"]}","error":"Body is not valid JSON (at position 35)."}
+PASS [3] doc example {"urls":["\?"]}: 400 Body is not valid JSON (at position 11).  {"error":"Body is not valid JSON (at position 11)."}
+PASS [3] truncated JSON: 400 not valid JSON  {"error":"Body is not valid JSON."}
+PASS [3] JSON array body: 400 Send a JSON object as the body.  {"error":"Send a JSON object as the body."}
+PASS [3] empty urls: 400 Send `urls`: 1 to 1000 strings.  {"error":"Send `urls`: 1 to 1000 strings."}
+PASS [3] real curl with the \? body: HTTP 400 not valid JSON  "{\"error\":\"Body is not valid JSON (at position 35).\"}\nHTTP 400"
+PASS [4] missing key: 401  {"error":"A valid API key is required."}
+PASS [4] invalid key: 401  {"error":"A valid API key is required."}
+PASS [4] key under a non-Bearer scheme: 401  {"error":"A valid API key is required."}
+PASS [4] valid key in x-api-key instead of Bearer: 401 on /api/v1  {"error":"A valid API key is required."}
+PASS [4] key works before revoke  {"results":[{"input":"https://article.qa.example/r8-mvxdnlxe/rev-pre","url":"https://article.qa.example/r8-mvxdnlxe/rev-pre","id":"fa8cfb4d-728f-4dad-b6ef-db945568a310","status":"created"}],"rejected":[],"batchId":"6a766044-f1f2-481f-a84f-e87d73451a61"}
+PASS [4] revoke via plugin update enabled:false -> 200  200
+PASS [4] revoked key: 401  {"error":"A valid API key is required."}
+PASS [4] re-enabled key works again (202)  {"update":200,"submit":{"results":[{"input":"https://article.qa.example/r8-mvxdnlxe/rev-back","url":"https://article.qa.example/r8-mvxdnlxe/rev-back","id":"ca863181-47e6-479e-b1ba-7f31b2d35eb1","status":"created"}],"rejected":[],"batchId":"1ab385ff-18d7-4aa9-9c50-83616758b55a"}}
+PASS [4] deleted key: 401 (it worked before delete)  {"preDel":202,"del":200,"after":{"error":"A valid API key is required."}}
+PASS [4] deleted key row is gone from apikey
+PASS [9] bearer GET /api/library -> 401
+PASS [9] bearer GET /api/usage/summary -> 401
+PASS [9] bearer GET /api/usage -> 401
+PASS [9] bearer GET /api/batches/92637bfd-1e5a-4c9f-89f3-ee42e9bdf096 -> 401
+PASS [9] bearer DELETE /api/batches/92637bfd-1e5a-4c9f-89f3-ee42e9bdf096 -> 401
+PASS [9] bearer GET /api/links/cd2813c4-c215-4d1f-be72-a7c8b27603f0/content -> 401
+PASS [9] bearer POST /api/links -> 401
+PASS [9] bearer POST /api/import -> 401
+PASS [9] bearer DELETE /api/links/cd2813c4-c215-4d1f-be72-a7c8b27603f0 -> 401
+PASS [9] bearer GET /api/browser/catalog -> 401
+PASS [9] bearer POST /api/tags -> 401
+PASS [9] bearer GET /api/auth/api-key/list -> 401
+PASS [9] bearer GET /api/auth/api-key/get?id=TvHokOt9x7zsqZAxatY08f157hs9iObL -> 401
+PASS [9] bearer POST /api/auth/api-key/create -> 401
+PASS [9] bearer POST /api/auth/api-key/update -> 401
+PASS [9] bearer POST /api/auth/api-key/delete -> 401
+PASS [9] bearer GET /api/auth/get-session -> 200
+PASS [9] bearer GET /api/v1/links -> 404
+PASS [9] bearer POST /api/v1/library -> 404
+PASS [9] x-api-key GET /api/library -> 401
+PASS [9] x-api-key GET /api/usage/summary -> 401
+PASS [9] x-api-key GET /api/usage -> 401
+PASS [9] x-api-key GET /api/batches/92637bfd-1e5a-4c9f-89f3-ee42e9bdf096 -> 401
+PASS [9] x-api-key DELETE /api/batches/92637bfd-1e5a-4c9f-89f3-ee42e9bdf096 -> 401
+PASS [9] x-api-key GET /api/links/cd2813c4-c215-4d1f-be72-a7c8b27603f0/content -> 401
+PASS [9] x-api-key POST /api/links -> 401
+PASS [9] x-api-key POST /api/import -> 401
+PASS [9] x-api-key DELETE /api/links/cd2813c4-c215-4d1f-be72-a7c8b27603f0 -> 401
+PASS [9] x-api-key GET /api/browser/catalog -> 401
+PASS [9] x-api-key POST /api/tags -> 401
+PASS [9] x-api-key GET /api/auth/api-key/list -> 401
+PASS [9] x-api-key GET /api/auth/api-key/get?id=TvHokOt9x7zsqZAxatY08f157hs9iObL -> 401
+PASS [9] x-api-key POST /api/auth/api-key/create -> 401
+PASS [9] x-api-key POST /api/auth/api-key/update -> 401
+PASS [9] x-api-key POST /api/auth/api-key/delete -> 401
+PASS [9] x-api-key GET /api/auth/get-session -> 200
+PASS [9] x-api-key GET /api/v1/links -> 401
+PASS [9] x-api-key POST /api/v1/library -> 401
+PASS [9] Bearer/x-api-key calls created, changed or deleted no key  {"before":2,"after":2}
+PASS [9] A's library untouched by Bearer private calls
+PASS [9] B's key submitting A's URL creates B's own link (not A's duplicate)  {"results":[{"input":"https://article.qa.example/r8-mvxdnlxe/bare-1","url":"https://article.qa.example/r8-mvxdnlxe/bare-1","id":"92d9141a-2f4f-4738-923b-8657abd652c7","status":"created"}],"rejected":[],"batchId":"dcd7c02a-9fc4-4dd8-a154-e1f5018703a2"}
+PASS [9] the new link is owned by B  {"user_id":"xn1IqYtqwJq5w7Hx2tUzlAtDoxt5dQIs"}
+PASS [9] A's link row unchanged by B's submit
+PASS [9] B's key list holds only B's keys  ["R8 B r8-mvxdnlxe"]
+PASS [9] B session get A's key: 404  {"message":"API Key not found","code":"KEY_NOT_FOUND"}
+PASS [9] B session update (revoke) A's key: 404  {"message":"API Key not found","code":"KEY_NOT_FOUND"}
+PASS [9] B session rename A's key: 404  {"message":"API Key not found","code":"KEY_NOT_FOUND"}
+PASS [9] B session delete A's key: 404  {"message":"API Key not found","code":"KEY_NOT_FOUND"}
+PASS [9] B session enable A's revoked key: 404  {"message":"API Key not found","code":"KEY_NOT_FOUND"}
+PASS [9] A's keys unchanged after B's attempts  {"k1Row":{"name":"R8 Main r8-mvxdnlxe","enabled":1},"kRevRow":{"enabled":0}}
+PASS [9] A's key still submits
+PASS [9] POST /api/auth/api-key/verify -> 404  {"status":404,"body":""}
+PASS [9] POST /api/auth/api-key/verify (signed in) -> 404  {"status":404,"body":""}
+PASS [9] GET /api/auth/api-key/verify (signed in) -> 404  {"status":404,"body":""}
+PASS [9] POST /api/auth/api-key/delete-all-expired -> 404  {"status":404,"body":""}
+PASS [9] POST /api/auth/api-key/delete-all-expired (signed in) -> 404  {"status":404,"body":""}
+PASS [9] GET /api/auth/api-key/delete-all-expired (signed in) -> 404  {"status":404,"body":""}
+PASS [9] create with rateLimitEnabled: refused (400)  {"message":"The property you're trying to set can only be set from the server auth instance only.","code":"SERVER_ONLY_PROPERTY"}
+PASS [9] create with rateLimitMax: refused (400)  {"message":"The property you're trying to set can only be set from the server auth instance only.","code":"SERVER_ONLY_PROPERTY"}
+PASS [9] create with rateLimitTimeWindow: refused (400)  {"message":"The property you're trying to set can only be set from the server auth instance only.","code":"SERVER_ONLY_PROPERTY"}
+PASS [9] create with remaining: refused (400)  {"message":"The property you're trying to set can only be set from the server auth instance only.","code":"SERVER_ONLY_PROPERTY"}
+PASS [9] create with refillAmount: refused (400)  {"message":"The property you're trying to set can only be set from the server auth instance only.","code":"SERVER_ONLY_PROPERTY"}
+PASS [9] create with refillInterval: refused (400)  {"message":"The property you're trying to set can only be set from the server auth instance only.","code":"SERVER_ONLY_PROPERTY"}
+PASS [9] create with permissions: refused (400)  {"message":"The property you're trying to set can only be set from the server auth instance only.","code":"SERVER_ONLY_PROPERTY"}
+PASS [9] create with expiresIn: refused (400)  {"message":"Custom key expiration values are disabled.","code":"KEY_DISABLED_EXPIRATION"}
+PASS [9] create with userId of B: refused (401)  {"message":"Unauthorized or invalid session","code":"UNAUTHORIZED_SESSION"}
+PASS [9] no key was created by any server-only attempt  {"before":2,"after":2}
+PASS [9] update with rateLimitEnabled: refused (400)  {"message":"The property you're trying to set can only be set from the server auth instance only.","code":"SERVER_ONLY_PROPERTY"}
+PASS [9] update with rateLimitMax: refused (400)  {"message":"The property you're trying to set can only be set from the server auth instance only.","code":"SERVER_ONLY_PROPERTY"}
+PASS [9] update with rateLimitTimeWindow: refused (400)  {"message":"The property you're trying to set can only be set from the server auth instance only.","code":"SERVER_ONLY_PROPERTY"}
+PASS [9] update with remaining: refused (400)  {"message":"The property you're trying to set can only be set from the server auth instance only.","code":"SERVER_ONLY_PROPERTY"}
+PASS [9] update with refillAmount: refused (400)  {"message":"The property you're trying to set can only be set from the server auth instance only.","code":"SERVER_ONLY_PROPERTY"}
+PASS [9] update with refillInterval: refused (400)  {"message":"The property you're trying to set can only be set from the server auth instance only.","code":"SERVER_ONLY_PROPERTY"}
+PASS [9] update with permissions: refused (400)  {"message":"The property you're trying to set can only be set from the server auth instance only.","code":"SERVER_ONLY_PROPERTY"}
+PASS [9] update with expiresIn: refused (400)  {"message":"Custom key expiration values are disabled.","code":"KEY_DISABLED_EXPIRATION"}
+PASS [9] update with userId of B: refused (401)  {"message":"Unauthorized or invalid session","code":"UNAUTHORIZED_SESSION"}
+PASS [9] key row unchanged after server-only update attempts  {"enabled":1,"name":"R8 Main r8-mvxdnlxe","expiresAt":null,"remaining":null,"refillAmount":null,"refillInterval":null,"rateLimitEnabled":0,"rateLimitMax":10,"rateLimitTimeWindow":86400000,"permissions":null,"referenceId":"S0tB7qCvvTnSOMDHlhvkE9mBCE43bZhx"}
+PASS [R7b] create with {"prefix":"zz_"}: 400 SERVER_ONLY_PROPERTY  {"status":400,"body":{"message":"Keys always start with lk_. Do not send a prefix or configId.","code":"SERVER_ONLY_PROPERTY"}}
+PASS [R7b] create with {"prefix":"lk_"}: 400 SERVER_ONLY_PROPERTY  {"status":400,"body":{"message":"Keys always start with lk_. Do not send a prefix or configId.","code":"SERVER_ONLY_PROPERTY"}}
+PASS [R7b] create with {"configId":"default"}: 400 SERVER_ONLY_PROPERTY  {"status":400,"body":{"message":"Keys always start with lk_. Do not send a prefix or configId.","code":"SERVER_ONLY_PROPERTY"}}
+PASS [R7b] create with {"prefix":"zz_","configId":"default"}: 400 SERVER_ONLY_PROPERTY  {"status":400,"body":{"message":"Keys always start with lk_. Do not send a prefix or configId.","code":"SERVER_ONLY_PROPERTY"}}
+PASS [R7b] no key was created by the prefix/configId attempts  {"before":2,"after":2}
+PASS [R7b] a normal create returns 200 with an lk_ secret and lk_ start  {"status":200,"start":"lk_csHAcW","prefix":"lk_"}
+PASS [R7b] the stored row has prefix lk_  {"prefix":"lk_","start":"lk_csHAcW"}
+PASS [R7b] the lk_ key submits (202)
+PASS [R7e] deleted key: worked before (202), delete 200, then 401 three times (no 503)  {"used":202,"del":200,"after":[[401,{"error":"A valid API key is required."}],[401,{"error":"A valid API key is required."}],[401,{"error":"A valid API key is required."}]]}
+PASS [R7e] unknown well-formed lk_ key: 401 (no 503)  {"status":401,"body":{"error":"A valid API key is required."}}
+PASS [R7e] nothing was saved by the refused submissions
+PASS [R7c] rename via plugin update: 200 with the new name  {"status":200,"name":"R8 AfterRename r8-mvxdnlxe"}
+PASS [R7c] the renamed key keeps submitting (202)  [202,202,202]
+PASS [R7c] Usage lists the key under its new name, active, 3 links (duplicate excluded)  {"id":"24XaMWMArOhZ0K6Mpmbg25zmCzZjw6bv","name":"R8 AfterRename r8-mvxdnlxe","links":3,"status":"active"}
+PASS [R7c] after delete Usage keeps it under its last name, status deleted, 3 links  {"id":"24XaMWMArOhZ0K6Mpmbg25zmCzZjw6bv","name":"R8 AfterRename r8-mvxdnlxe","links":3,"status":"deleted"}
+NOTE [R7c] renamed after its last submission: live name "R8 EdgeNew r8-mvxdnlxe", after delete "R8 EdgeOld r8-mvxdnlxe" (deleted); docs say a deleted key shows the name of its most recent submission
+PASS [R7d] web creates the link (POST /api/links with the session): 201  201
+PASS [R7d] the web's creating batch has no source and the link's created_at  {"webBatches":[{"id":"2e0e2e42-cc75-4dda-8d0b-e625dd6468f1","created_at":"2026-11-01T05:17:02.078Z","config":"{}"}],"linkCreated":"2026-11-01T05:17:02.078Z"}
+SEED [R7d] orphaned link 3b9075d5-1b89-42e2-b9d9-b4f6b7dd7d76: DELETE FROM batches WHERE id=2e0e2e42-cc75-4dda-8d0b-e625dd6468f1 (its usage_events deleted first, jobs cascade), content_key=NULL
+PASS [R7d] the link is an orphan by addLinks' own predicate  {"o":1}
+PASS [R7d] the key re-submits the URL: 202 duplicate of the same link, re-queued (batchId)  {"results":[{"input":"https://article.qa.example/r8-mvxdnlxe/orphan-web","url":"https://article.qa.example/r8-mvxdnlxe/orphan-web","id":"3b9075d5-1b89-42e2-b9d9-b4f6b7dd7d76","status":"duplicate"}],"rejected":[],"batchId":"1d9951c6-1e20-4621-a50c-bfdb7d732c42"}
+PASS [R7d] the re-queue batch is labelled with the key and is newer than the link  [{"config":"{\"source\":\"api\",\"apiKeyId\":\"931A5RcKj3j7r9dwf0BCFOZU2BmL8LIR\",\"apiKeyName\":\"R8 Attr r8-mvxdnlxe\"}","created_at":"2026-11-01T05:17:03.114Z"}]
+PASS [R7d] the re-queued extraction finished  {"processing":false,"content_state":"ready","status":"ready"}
+PASS [R7d] the key also creates one Link of its own  {"results":[{"input":"https://article.qa.example/r8-mvxdnlxe/attr-own","url":"https://article.qa.example/r8-mvxdnlxe/attr-own","id":"016892d1-655c-4504-b0bf-22d7a8b84aeb","status":"created"}],"rejected":[],"batchId":"9e6804a2-d5cc-44d9-81a8-c2acbc688e81"}
+PASS [R7d] the key's row counts only its own Link (1), not the re-queued orphan  {"id":"931A5RcKj3j7r9dwf0BCFOZU2BmL8LIR","name":"R8 Attr r8-mvxdnlxe","links":1,"status":"active"}
+PASS [R7d] month total +2, Web +1 (the orphan stays Web's)  {"total":[15,17],"web":[0,1]}
+PASS [R7d] Web + every key = month total = D1 count  {"web":1,"keysSum":16,"links":17,"dbMonth":17}
+PASS [6] writes via API: 120 accepted after 0 already used, then 429  {"startUsed":0,"accepted":120,"status":429}
+PASS [6] API 429 carries code writes and a Retry-After to the minute end  {"body":{"error":"Too many requests. Try again later.","code":"writes"},"retryAfter":59,"secsLeft":59}
+PASS [6] web write (session POST /api/links) refused 429 writes in the same window  {"status":429,"body":{"error":"Too many requests. Try again later.","code":"writes"},"retryAfter":"59"}
+PASS [6] web write saved nothing
+PASS [6] Demo B is unaffected (per-user budget)  202
+PASS [6] app_rate_limits writes row for A reads 120  [{"key":"links:S0tB7qCvvTnSOMDHlhvkE9mBCE43bZhx","window_start":1793509200,"count":17},{"key":"writes:S0tB7qCvvTnSOMDHlhvkE9mBCE43bZhx","window_start":1793510280,"count":120}]
+PASS [6] writes via web: 120 accepted after 0, then 429 writes  {"startWeb":0,"accepted":120,"body":{"error":"Too many requests. Try again later.","code":"writes"}}
+PASS [6] API key refused 429 writes after the web used the budget  {"status":429,"body":{"error":"Too many requests. Try again later.","code":"writes"},"retryAfter":"59"}
+51 | const priv = (cookie: string, method: string, path: string, body?: unknown) => http(method, `/api${path}`, { cookie, origin: method !== "GET", body: method === "GET" ? undefined : (body ?? {}) });
+52 | const v1 = (key: string | null, payload: unknown, extra: Record<string, string> = {}) =>
+53 |   http("POST", "/api/v1/links", { headers: { ...(key ? { authorization: `Bearer ${key}` } : {}), ...extra }, ...(typeof payload === "string" ? { raw: payload } : { body: payload }) });
+54 | const createKey = async (cookie: string, name: string) => {
+55 |   const r = await authApi(cookie, "POST", "create", { name });
+56 |   if (r.status !== 200) throw new Error(`create ${name} -> ${r.status} ${JSON.stringify(r.body)}`);
+                                       ^
+error: create R9 SpentRevoke r8-mvxdnlxe -> 429 {"message":"Too many requests. Try again later.","code":"writes"}
+      at <anonymous> (/private/tmp/claude-501/-Users-facundopri-orca-workspaces-link-log-fac-44-url-upload/5ffefc72-7986-4e11-830b-b12621ae2bc3/scratchpad/evidence/final-r9/api-checks-r9.ts:56:35)
+
+Bun v1.3.14 (macOS arm64)
+exit 1

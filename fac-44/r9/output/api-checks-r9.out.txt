@@ -1,0 +1,199 @@
+instance http://127.0.0.1:3680  commit 25003d1  run /Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.cache/verify-linklog/20261101-062123-3680  stamp r8-mvxfzbzy  at 2026-11-01T06:21:29.086Z
+PASS [1] plugin create returns an lk_ secret for each key
+PASS [2] bare URLs: 202, two created, batchId  {"results":[{"input":"https://article.qa.example/r8-mvxfzbzy/bare-1","url":"https://article.qa.example/r8-mvxfzbzy/bare-1","id":"65543211-7c86-4a15-9abf-081f4bcae620","status":"created"},{"input":"https://article.qa.example/r8-mvxfzbzy/bare-2","url":"https://article.qa.example/r8-mvxfzbzy/bare-2","id":"e13fdf0f-429e-42c1-9055-2f2c94149884","status":"created"}],"rejected":[],"batchId":"5627b89e-53c1-47ba-bba6-ac255d409a7d"}
+PASS [2] text with several URLs: 202 with created, duplicate and rejected entries  {"results":[{"input":"Read [one](https://article.qa.example/r8-mvxfzbzy/t-1) and <https://article.qa.example/r8-mvxfzbzy/t-2>, also https://article.qa.example/r8-mvxfzbzy/t-3. Plus https://article.qa.example/r8-mvxfzbzy/bare-1 again","url":"https://article.qa.example/r8-mvxfzbzy/t-1","id":"bc8f633b-e638-43ff-99ce-4539b86aae75","status":"created"},{"input":"Read [one](https://article.qa.example/r8-mvxfzbzy/t-1) and <https://article.qa.example/r8-mvxfzbzy/t-2>, also https://article.qa.example/r8-mvxfzbzy/t-3. Plus https://article.qa.example/r8-mvxfzbzy/bare-1 again","url":"https://article.qa.exa
+PASS [2] every result from the text names the text as input
+PASS [2] rejected entries carry a reason  [{"input":"just words, no link","error":"No valid http or https link found."},{"input":"ftp://files.example/x","error":"No valid http or https link found."}]
+PASS [2] links counter grew by exactly the 5 created (duplicate not charged)  {"before":0,"after":5}
+PASS [2] duplicate-only request: 202, all duplicate, no batchId  {"results":[{"input":"https://article.qa.example/r8-mvxfzbzy/bare-1","url":"https://article.qa.example/r8-mvxfzbzy/bare-1","id":"65543211-7c86-4a15-9abf-081f4bcae620","status":"duplicate"},{"input":"https://article.qa.example/r8-mvxfzbzy/bare-2","url":"https://article.qa.example/r8-mvxfzbzy/bare-2","id":"e13fdf0f-429e-42c1-9055-2f2c94149884","status":"duplicate"}],"rejected":[]}
+PASS [2] duplicate-only request does not change the links counter  {"afterCreated":5,"afterDup":5}
+PASS [2] all 5 created links are in Demo A's library
+PASS [8] usage month: links +5 and key row = 5 (duplicates excluded)  {"before":0,"after":5,"keyRow":{"id":"BPZbRWWwQ65gqnkjdGIXhKjPXZzFBFhx","name":"R8 Main r8-mvxfzbzy","links":5,"status":"active"}}
+PASS [3] zero valid URLs: 400 with rejected list  {"error":"No valid http or https link found.","rejected":[{"input":"nothing here","error":"No valid http or https link found."},{"input":"ftp://files.example/x","error":"No valid http or https link found."}]}
+PASS [3] 101 URLs: 400 Send at most 100 links per request.  {"error":"Send at most 100 links per request."}
+PASS [3] 101 URLs inside one text string: 400 too  {"error":"Send at most 100 links per request."}
+PASS [3] nothing from the 101-URL requests was saved  {"before":5,"after":5}
+PASS [3] owner's literal \? escape: 400 says the body is not valid JSON  {"sent":"{\"urls\":[\"https://example.com/page\\?q=1\"]}","error":"Body is not valid JSON (at position 35)."}
+PASS [3] doc example {"urls":["\?"]}: 400 Body is not valid JSON (at position 11).  {"error":"Body is not valid JSON (at position 11)."}
+PASS [3] truncated JSON: 400 not valid JSON  {"error":"Body is not valid JSON."}
+PASS [3] JSON array body: 400 Send a JSON object as the body.  {"error":"Send a JSON object as the body."}
+PASS [3] empty urls: 400 Send `urls`: 1 to 1000 strings.  {"error":"Send `urls`: 1 to 1000 strings."}
+PASS [3] real curl with the \? body: HTTP 400 not valid JSON  "{\"error\":\"Body is not valid JSON (at position 35).\"}\nHTTP 400"
+PASS [4] missing key: 401  {"error":"A valid API key is required."}
+PASS [4] invalid key: 401  {"error":"A valid API key is required."}
+PASS [4] key under a non-Bearer scheme: 401  {"error":"A valid API key is required."}
+PASS [4] valid key in x-api-key instead of Bearer: 401 on /api/v1  {"error":"A valid API key is required."}
+PASS [4] key works before revoke  {"results":[{"input":"https://article.qa.example/r8-mvxfzbzy/rev-pre","url":"https://article.qa.example/r8-mvxfzbzy/rev-pre","id":"35cc28df-79e7-460a-ab9b-36daebc56f56","status":"created"}],"rejected":[],"batchId":"185fb9ef-0b6f-449e-b468-7464d3229981"}
+PASS [4] revoke via plugin update enabled:false -> 200  200
+PASS [4] revoked key: 401  {"error":"A valid API key is required."}
+PASS [4] re-enabled key works again (202)  {"update":200,"submit":{"results":[{"input":"https://article.qa.example/r8-mvxfzbzy/rev-back","url":"https://article.qa.example/r8-mvxfzbzy/rev-back","id":"464a411d-5ffe-4886-a873-b8e5d950ff2e","status":"created"}],"rejected":[],"batchId":"b7c061db-a12d-4e78-b824-26a5576b7c19"}}
+PASS [4] deleted key: 401 (it worked before delete)  {"preDel":202,"del":200,"after":{"error":"A valid API key is required."}}
+PASS [4] deleted key row is gone from apikey
+PASS [9] bearer GET /api/library -> 401
+PASS [9] bearer GET /api/usage/summary -> 401
+PASS [9] bearer GET /api/usage -> 401
+PASS [9] bearer GET /api/batches/0ca3678f-28ab-4ccc-b867-b9af7a53b957 -> 401
+PASS [9] bearer DELETE /api/batches/0ca3678f-28ab-4ccc-b867-b9af7a53b957 -> 401
+PASS [9] bearer GET /api/links/fffaeb41-1133-41cc-8169-197076ebee5c/content -> 401
+PASS [9] bearer POST /api/links -> 401
+PASS [9] bearer POST /api/import -> 401
+PASS [9] bearer DELETE /api/links/fffaeb41-1133-41cc-8169-197076ebee5c -> 401
+PASS [9] bearer GET /api/browser/catalog -> 401
+PASS [9] bearer POST /api/tags -> 401
+PASS [9] bearer GET /api/auth/api-key/list -> 401
+PASS [9] bearer GET /api/auth/api-key/get?id=BPZbRWWwQ65gqnkjdGIXhKjPXZzFBFhx -> 401
+PASS [9] bearer POST /api/auth/api-key/create -> 401
+PASS [9] bearer POST /api/auth/api-key/update -> 401
+PASS [9] bearer POST /api/auth/api-key/delete -> 401
+PASS [9] bearer GET /api/auth/get-session -> 200
+PASS [9] bearer GET /api/v1/links -> 404
+PASS [9] bearer POST /api/v1/library -> 404
+PASS [9] x-api-key GET /api/library -> 401
+PASS [9] x-api-key GET /api/usage/summary -> 401
+PASS [9] x-api-key GET /api/usage -> 401
+PASS [9] x-api-key GET /api/batches/0ca3678f-28ab-4ccc-b867-b9af7a53b957 -> 401
+PASS [9] x-api-key DELETE /api/batches/0ca3678f-28ab-4ccc-b867-b9af7a53b957 -> 401
+PASS [9] x-api-key GET /api/links/fffaeb41-1133-41cc-8169-197076ebee5c/content -> 401
+PASS [9] x-api-key POST /api/links -> 401
+PASS [9] x-api-key POST /api/import -> 401
+PASS [9] x-api-key DELETE /api/links/fffaeb41-1133-41cc-8169-197076ebee5c -> 401
+PASS [9] x-api-key GET /api/browser/catalog -> 401
+PASS [9] x-api-key POST /api/tags -> 401
+PASS [9] x-api-key GET /api/auth/api-key/list -> 401
+PASS [9] x-api-key GET /api/auth/api-key/get?id=BPZbRWWwQ65gqnkjdGIXhKjPXZzFBFhx -> 401
+PASS [9] x-api-key POST /api/auth/api-key/create -> 401
+PASS [9] x-api-key POST /api/auth/api-key/update -> 401
+PASS [9] x-api-key POST /api/auth/api-key/delete -> 401
+PASS [9] x-api-key GET /api/auth/get-session -> 200
+PASS [9] x-api-key GET /api/v1/links -> 401
+PASS [9] x-api-key POST /api/v1/library -> 401
+PASS [9] Bearer/x-api-key calls created, changed or deleted no key  {"before":2,"after":2}
+PASS [9] A's library untouched by Bearer private calls
+PASS [9] B's key submitting A's URL creates B's own link (not A's duplicate)  {"results":[{"input":"https://article.qa.example/r8-mvxfzbzy/bare-1","url":"https://article.qa.example/r8-mvxfzbzy/bare-1","id":"9656b860-b388-4c39-868c-8f45f3467aaa","status":"created"}],"rejected":[],"batchId":"a69ca0a1-dbb2-43d7-ba52-426f6c1c4d29"}
+PASS [9] the new link is owned by B  {"user_id":"EjQ7iOXhjfCKwYUitGO22VIPOMzxmKWQ"}
+PASS [9] A's link row unchanged by B's submit
+PASS [9] B's key list holds only B's keys  ["R8 B r8-mvxfzbzy"]
+PASS [9] B session get A's key: 404  {"message":"API Key not found","code":"KEY_NOT_FOUND"}
+PASS [9] B session update (revoke) A's key: 404  {"message":"API Key not found","code":"KEY_NOT_FOUND"}
+PASS [9] B session rename A's key: 404  {"message":"API Key not found","code":"KEY_NOT_FOUND"}
+PASS [9] B session delete A's key: 404  {"message":"API Key not found","code":"KEY_NOT_FOUND"}
+PASS [9] B session enable A's revoked key: 404  {"message":"API Key not found","code":"KEY_NOT_FOUND"}
+PASS [9] A's keys unchanged after B's attempts  {"k1Row":{"name":"R8 Main r8-mvxfzbzy","enabled":1},"kRevRow":{"enabled":0}}
+PASS [9] A's key still submits
+PASS [9] POST /api/auth/api-key/verify -> 404  {"status":404,"body":""}
+PASS [9] POST /api/auth/api-key/verify (signed in) -> 404  {"status":404,"body":""}
+PASS [9] GET /api/auth/api-key/verify (signed in) -> 404  {"status":404,"body":""}
+PASS [9] POST /api/auth/api-key/delete-all-expired -> 404  {"status":404,"body":""}
+PASS [9] POST /api/auth/api-key/delete-all-expired (signed in) -> 404  {"status":404,"body":""}
+PASS [9] GET /api/auth/api-key/delete-all-expired (signed in) -> 404  {"status":404,"body":""}
+PASS [9] create with rateLimitEnabled: refused (400)  {"message":"The property you're trying to set can only be set from the server auth instance only.","code":"SERVER_ONLY_PROPERTY"}
+PASS [9] create with rateLimitMax: refused (400)  {"message":"The property you're trying to set can only be set from the server auth instance only.","code":"SERVER_ONLY_PROPERTY"}
+PASS [9] create with rateLimitTimeWindow: refused (400)  {"message":"The property you're trying to set can only be set from the server auth instance only.","code":"SERVER_ONLY_PROPERTY"}
+PASS [9] create with remaining: refused (400)  {"message":"The property you're trying to set can only be set from the server auth instance only.","code":"SERVER_ONLY_PROPERTY"}
+PASS [9] create with refillAmount: refused (400)  {"message":"The property you're trying to set can only be set from the server auth instance only.","code":"SERVER_ONLY_PROPERTY"}
+PASS [9] create with refillInterval: refused (400)  {"message":"The property you're trying to set can only be set from the server auth instance only.","code":"SERVER_ONLY_PROPERTY"}
+PASS [9] create with permissions: refused (400)  {"message":"The property you're trying to set can only be set from the server auth instance only.","code":"SERVER_ONLY_PROPERTY"}
+PASS [9] create with expiresIn: refused (400)  {"message":"Custom key expiration values are disabled.","code":"KEY_DISABLED_EXPIRATION"}
+PASS [9] create with userId of B: refused (401)  {"message":"Unauthorized or invalid session","code":"UNAUTHORIZED_SESSION"}
+PASS [9] no key was created by any server-only attempt  {"before":2,"after":2}
+PASS [9] update with rateLimitEnabled: refused (400)  {"message":"The property you're trying to set can only be set from the server auth instance only.","code":"SERVER_ONLY_PROPERTY"}
+PASS [9] update with rateLimitMax: refused (400)  {"message":"The property you're trying to set can only be set from the server auth instance only.","code":"SERVER_ONLY_PROPERTY"}
+PASS [9] update with rateLimitTimeWindow: refused (400)  {"message":"The property you're trying to set can only be set from the server auth instance only.","code":"SERVER_ONLY_PROPERTY"}
+PASS [9] update with remaining: refused (400)  {"message":"The property you're trying to set can only be set from the server auth instance only.","code":"SERVER_ONLY_PROPERTY"}
+PASS [9] update with refillAmount: refused (400)  {"message":"The property you're trying to set can only be set from the server auth instance only.","code":"SERVER_ONLY_PROPERTY"}
+PASS [9] update with refillInterval: refused (400)  {"message":"The property you're trying to set can only be set from the server auth instance only.","code":"SERVER_ONLY_PROPERTY"}
+PASS [9] update with permissions: refused (400)  {"message":"The property you're trying to set can only be set from the server auth instance only.","code":"SERVER_ONLY_PROPERTY"}
+PASS [9] update with expiresIn: refused (400)  {"message":"Custom key expiration values are disabled.","code":"KEY_DISABLED_EXPIRATION"}
+PASS [9] update with userId of B: refused (401)  {"message":"Unauthorized or invalid session","code":"UNAUTHORIZED_SESSION"}
+PASS [9] key row unchanged after server-only update attempts  {"enabled":1,"name":"R8 Main r8-mvxfzbzy","expiresAt":null,"remaining":null,"refillAmount":null,"refillInterval":null,"rateLimitEnabled":0,"rateLimitMax":10,"rateLimitTimeWindow":86400000,"permissions":null,"referenceId":"EGxfs9ZGdJzKYU7Ip5gCE6t4JFh6lelC"}
+PASS [R7b] create with {"prefix":"zz_"}: 400 SERVER_ONLY_PROPERTY  {"status":400,"body":{"message":"Keys always start with lk_. Do not send a prefix or configId.","code":"SERVER_ONLY_PROPERTY"}}
+PASS [R7b] create with {"prefix":"lk_"}: 400 SERVER_ONLY_PROPERTY  {"status":400,"body":{"message":"Keys always start with lk_. Do not send a prefix or configId.","code":"SERVER_ONLY_PROPERTY"}}
+PASS [R7b] create with {"configId":"default"}: 400 SERVER_ONLY_PROPERTY  {"status":400,"body":{"message":"Keys always start with lk_. Do not send a prefix or configId.","code":"SERVER_ONLY_PROPERTY"}}
+PASS [R7b] create with {"prefix":"zz_","configId":"default"}: 400 SERVER_ONLY_PROPERTY  {"status":400,"body":{"message":"Keys always start with lk_. Do not send a prefix or configId.","code":"SERVER_ONLY_PROPERTY"}}
+PASS [R7b] no key was created by the prefix/configId attempts  {"before":2,"after":2}
+PASS [R7b] a normal create returns 200 with an lk_ secret and lk_ start  {"status":200,"start":"lk_TqNRql","prefix":"lk_"}
+PASS [R7b] the stored row has prefix lk_  {"prefix":"lk_","start":"lk_TqNRql"}
+PASS [R7b] the lk_ key submits (202)
+PASS [R7e] deleted key: worked before (202), delete 200, then 401 three times (no 503)  {"used":202,"del":200,"after":[[401,{"error":"A valid API key is required."}],[401,{"error":"A valid API key is required."}],[401,{"error":"A valid API key is required."}]]}
+PASS [R7e] unknown well-formed lk_ key: 401 (no 503)  {"status":401,"body":{"error":"A valid API key is required."}}
+PASS [R7e] nothing was saved by the refused submissions
+PASS [R7c] rename via plugin update: 200 with the new name  {"status":200,"name":"R8 AfterRename r8-mvxfzbzy"}
+PASS [R7c] the renamed key keeps submitting (202)  [202,202,202]
+PASS [R7c] Usage lists the key under its new name, active, 3 links (duplicate excluded)  {"id":"93OsXqeTaDEHdz7HVJW3gPMGJiDGmyct","name":"R8 AfterRename r8-mvxfzbzy","links":3,"status":"active"}
+PASS [R7c] after delete Usage keeps it under its last name, status deleted, 3 links  {"id":"93OsXqeTaDEHdz7HVJW3gPMGJiDGmyct","name":"R8 AfterRename r8-mvxfzbzy","links":3,"status":"deleted"}
+NOTE [R7c] renamed after its last submission: live name "R8 EdgeNew r8-mvxfzbzy", after delete "R8 EdgeOld r8-mvxfzbzy" (deleted); docs say a deleted key shows the name of its most recent submission
+PASS [R7d] web creates the link (POST /api/links with the session): 201  201
+PASS [R7d] the web's creating batch has no source and the link's created_at  {"webBatches":[{"id":"3f75bfd6-5079-47ce-80c5-063663dc385b","created_at":"2026-11-01T06:22:01.171Z","config":"{}"}],"linkCreated":"2026-11-01T06:22:01.171Z"}
+SEED [R7d] orphaned link 2ad4e0c7-243a-4d9f-9b9f-d593f4c15280: DELETE FROM batches WHERE id=3f75bfd6-5079-47ce-80c5-063663dc385b (its usage_events deleted first, jobs cascade), content_key=NULL
+PASS [R7d] the link is an orphan by addLinks' own predicate  {"o":1}
+PASS [R7d] the key re-submits the URL: 202 duplicate of the same link, re-queued (batchId)  {"results":[{"input":"https://article.qa.example/r8-mvxfzbzy/orphan-web","url":"https://article.qa.example/r8-mvxfzbzy/orphan-web","id":"2ad4e0c7-243a-4d9f-9b9f-d593f4c15280","status":"duplicate"}],"rejected":[],"batchId":"43576552-9080-4f06-bc01-08956285f0b7"}
+PASS [R7d] the re-queue batch is labelled with the key and is newer than the link  [{"config":"{\"source\":\"api\",\"apiKeyId\":\"xBFaYyHkRJRdacFzkGzmA4C7En7Y4fzm\",\"apiKeyName\":\"R8 Attr r8-mvxfzbzy\"}","created_at":"2026-11-01T06:22:03.257Z"}]
+PASS [R7d] the re-queued extraction finished  {"processing":false,"content_state":"ready","status":"ready"}
+PASS [R7d] the key also creates one Link of its own  {"results":[{"input":"https://article.qa.example/r8-mvxfzbzy/attr-own","url":"https://article.qa.example/r8-mvxfzbzy/attr-own","id":"c6eb18d0-4ee0-4cee-b5f0-35607e089f03","status":"created"}],"rejected":[],"batchId":"108f392e-9677-4398-9d98-b9dece1982bc"}
+PASS [R7d] the key's row counts only its own Link (1), not the re-queued orphan  {"id":"xBFaYyHkRJRdacFzkGzmA4C7En7Y4fzm","name":"R8 Attr r8-mvxfzbzy","links":1,"status":"active"}
+PASS [R7d] month total +2, Web +1 (the orphan stays Web's)  {"total":[15,17],"web":[0,1]}
+PASS [R7d] Web + every key = month total = D1 count  {"web":1,"keysSum":16,"links":17,"dbMonth":17}
+PASS [6] writes via API: 120 accepted after 0 already used, then 429  {"startUsed":0,"accepted":120,"status":429}
+PASS [6] API 429 carries code writes and a Retry-After to the minute end  {"body":{"error":"Too many requests. Try again later.","code":"writes"},"retryAfter":60,"secsLeft":60}
+PASS [6] web write (session POST /api/links) refused 429 writes in the same window  {"status":429,"body":{"error":"Too many requests. Try again later.","code":"writes"},"retryAfter":"60"}
+PASS [6] web write saved nothing
+PASS [6] Demo B is unaffected (per-user budget)  202
+PASS [6] app_rate_limits writes row for A reads 120  [{"key":"links:EGxfs9ZGdJzKYU7Ip5gCE6t4JFh6lelC","window_start":1793512800,"count":17},{"key":"writes:EGxfs9ZGdJzKYU7Ip5gCE6t4JFh6lelC","window_start":1793514180,"count":120}]
+PASS [6] writes via web: 120 accepted after 0, then 429 writes  {"startWeb":0,"accepted":120,"body":{"error":"Too many requests. Try again later.","code":"writes"}}
+PASS [6] API key refused 429 writes after the web used the budget  {"status":429,"body":{"error":"Too many requests. Try again later.","code":"writes"},"retryAfter":"59"}
+PASS [R7a] API submissions spend the budget: 120 accepted after 0, then 429 writes  {"start":0,"accepted":120,"body":{"error":"Too many requests. Try again later.","code":"writes"}}
+PASS [R7a] key create is then 429 with Retry-After to the minute end and code writes  {"status":429,"body":{"message":"Too many requests. Try again later.","code":"writes"},"retryAfter":59,"secsLeft":59}
+PASS [R9] spent budget: rename is refused 429 writes with Retry-After  [429,{"message":"Too many requests. Try again later.","code":"writes"},"59"]
+PASS [R9] spent budget: enable is refused 429 writes with Retry-After  [429,{"message":"Too many requests. Try again later.","code":"writes"},"59"]
+PASS [R9] spent budget: disable-plus-rename is refused 429 writes with Retry-After  [429,{"message":"Too many requests. Try again later.","code":"writes"},"59"]
+PASS [R9] no key was created, renamed or enabled; the combo key is still enabled under its old name  {"combo":{"id":"hhwkFX47BTj0wuQUJs3i9s1W34Ji96nN","name":"R9 SpentCombo r8-mvxfzbzy","enabled":1},"enable":{"id":"fKQmeXqDdw6sx0bxZjcWIUZJ6zrOkYKa","name":"R9 SpentEnable r8-mvxfzbzy","enabled":0},"k1":{"id":"BPZbRWWwQ65gqnkjdGIXhKjPXZzFBFhx","name":"R8 Main r8-mvxfzbzy","enabled":1}}
+PASS [R9] the key whose enable was refused still answers 401  401
+PASS [R9] spent budget: revoke ({keyId, enabled:false}) -> 200, enabled false  [200,false]
+PASS [R9] the key revoked under a spent budget answers 401 on /api/v1/links  [401,{"error":"A valid API key is required."}]
+PASS [R9] spent budget: delete of an active key -> 200 and the row is gone  [200,{"success":true}]
+PASS [R9] spent budget: delete of a revoked key -> 200 and the row is gone  [200,{"success":true}]
+PASS [R9] the key deleted under a spent budget answers 401  401
+PASS [R9] revoking an already revoked key under a spent budget -> 200  200
+PASS [R9] revoke and delete were not charged: writes counter unchanged at 120  {"usedBeforeFree":120,"after":120}
+PASS [R9] after the free revoke and delete, create is still refused 429 writes  [429,{"message":"Too many requests. Try again later.","code":"writes"}]
+PASS [R9] k1 is untouched (still 429 writes, not 401)  429
+PASS [R7a] listing keys is free (200 while the budget is spent)  200
+PASS [R7a] Demo B unaffected: key create 200 (lk_) and API submission 202  [200,202]
+PASS [R7a] key writes (create + rename) spend the budget: 120 accepted after 0, then 429 writes  {"start2":0,"accepted":120,"body":{"message":"Too many requests. Try again later.","code":"writes"},"used":120}
+PASS [R9] the 60 spend keys are deleted with the budget spent (all 200), counter still 120  {"statuses":[200],"used":120}
+PASS [R7a] an API submission is then 429 writes with Retry-After  {"status":429,"body":{"error":"Too many requests. Try again later.","code":"writes"},"retryAfter":"59"}
+PASS [R7a] and saved nothing
+PASS [R7a] Demo B unaffected again: submission 202, key create 200  [202,200]
+SETUP [8] a Link whose preview fails, for the retry check: https://nowhere.qa.example/r8-mvxfzbzy/retry-me -> 202
+SEED [6] links:EGxfs9ZGdJzKYU7Ip5gCE6t4JFh6lelC window 1793512800 count 18 -> 498 (direct UPDATE in local D1)
+PASS [6] Worker reads the seeded counter: Usage quota shows 498 / 500  {"used":498,"max":500,"windowSeconds":3600,"resetsAt":"2026-11-01T07:00:00.000Z"}
+PASS [6] 3 new links at 498/500: 429 code links with Retry-After to the hour end  {"body":{"error":"Link limit reached. Try again later.","code":"links"},"retryAfter":1920,"toHour":1920}
+PASS [6] the refused request saved nothing and charged nothing  {"used":498}
+PASS [6] a Duplicate at 498/500 is still accepted and not charged  {"status":202,"used":498}
+PASS [6] 2 new links fit: 202 created, counter 500  {"body":{"results":[{"input":"https://article.qa.example/r8-mvxfzbzy/cap-1","url":"https://article.qa.example/r8-mvxfzbzy/cap-1","id":"c1650995-f12c-4fb3-b3e6-cdecddbc01be","status":"created"},{"input":"https://article.qa.example/r8-mvxfzbzy/cap-2","url":"https://article.qa.example/r8-mvxfzbzy/cap-2","id":"2e8d3311-4e3f-46db-bbea-5483bd24c66b","status":"created"}],"rejected":[],"batchId":"25ea3ad9-c63a-43f2-bf40-5dd6b54a4bf6"},"used":500}
+PASS [6] web add at 500/500: 429 code links with Retry-After (shared)  {"status":429,"body":{"error":"Link limit reached. Try again later.","code":"links"},"retryAfter":"1920"}
+PASS [6] a Duplicate at 500/500 still 202  {"results":[{"input":"https://article.qa.example/r8-mvxfzbzy/cap-1","url":"https://article.qa.example/r8-mvxfzbzy/cap-1","id":"c1650995-f12c-4fb3-b3e6-cdecddbc01be","status":"duplicate"}],"rejected":[]}
+PASS [8] lens run at 500/500 links: accepted (200, batchId)  {"status":200}
+SETUP [8] autotag needs a tag: POST /api/tags r8-useful -> 200
+PASS [8] autotag run at 500/500 links: accepted (200, batchId)  {"status":200}
+PASS [8] preview retry at 500/500 links: accepted  {"status":200}
+PASS [8] browser (content) run at 500/500 links: accepted  {"status":200}
+PASS [6] runs did not move the links counter  {"used":500}
+PASS [8] usage by feature counts the lens and autotag runs  {"extract":22,"content":20,"lens":1,"autotag":1,"ocr":0,"autogroup":0}
+ROWS before revoke/delete: [{"key":"links:EGxfs9ZGdJzKYU7Ip5gCE6t4JFh6lelC","window_start":1793512800,"count":500},{"key":"writes:EGxfs9ZGdJzKYU7Ip5gCE6t4JFh6lelC","window_start":1793514480,"count":16}]
+ROWS after  revoke/delete: [{"key":"links:EGxfs9ZGdJzKYU7Ip5gCE6t4JFh6lelC","window_start":1793512800,"count":500},{"key":"writes:EGxfs9ZGdJzKYU7Ip5gCE6t4JFh6lelC","window_start":1793514480,"count":16}]
+PASS [6] both keys were used (charged writes) before revoke/delete
+PASS [6] revoke + delete + delete-revoked succeeded  [200,200,200]
+PASS [6] links counter row identical before and after revoke/delete  {"beforeRows":[{"key":"links:EGxfs9ZGdJzKYU7Ip5gCE6t4JFh6lelC","window_start":1793512800,"count":500},{"key":"writes:EGxfs9ZGdJzKYU7Ip5gCE6t4JFh6lelC","window_start":1793514480,"count":16}],"afterRows":[{"key":"links:EGxfs9ZGdJzKYU7Ip5gCE6t4JFh6lelC","window_start":1793512800,"count":500},{"key":"writes:EGxfs9ZGdJzKYU7Ip5gCE6t4JFh6lelC","window_start":1793514480,"count":16}]}
+PASS [6] writes row identical before and after revoke, delete, delete-revoked (not charged, never lowered)  {"wb":{"key":"writes:EGxfs9ZGdJzKYU7Ip5gCE6t4JFh6lelC","window_start":1793514480,"count":16},"wa":{"key":"writes:EGxfs9ZGdJzKYU7Ip5gCE6t4JFh6lelC","window_start":1793514480,"count":16}}
+PASS [6] Usage links quota identical before and after  {"sumBefore":{"used":500,"max":500,"windowSeconds":3600,"resetsAt":"2026-11-01T07:00:00.000Z"},"sumAfter":{"used":500,"max":500,"windowSeconds":3600,"resetsAt":"2026-11-01T07:00:00.000Z"}}
+SEED [8] links:EGxfs9ZGdJzKYU7Ip5gCE6t4JFh6lelC restored to the hour's real created links: 20
+PASS [8] setup submits accepted  [202,202,201]
+PASS [8] revoked key listed with stored name, status revoked, 2 links  {"id":"6tvMO3YkZ52BGkjNCSVgVtqUt86ePNKw","name":"R8 UsageRevoked r8-mvxfzbzy","links":2,"status":"revoked"}
+PASS [8] deleted key listed with stored name, status deleted, 3 links (its duplicate excluded)  {"id":"Y04FwLFAneXafKmLaOvVdG2j5POFztYb","name":"R8 UsageDeleted r8-mvxfzbzy","links":3,"status":"deleted"}
+PASS [8] month links = D1 count; web = total - API keys  {"links":26,"dbMonth":26,"web":2,"apiSum":24}
+PASS [8] quota reads links used / 500 with a reset time  {"used":26,"max":500,"windowSeconds":3600,"resetsAt":"2026-11-01T07:00:00.000Z"}
+PASS [8] features list Extract, Content, Lenses, Autotag, OCR, Autogroup and a total  ["extract:22","content:20","lens:1","autotag:1","ocr:0","autogroup:0"]
+
+TOTAL 187/187 passed; by story {"1":{"pass":1,"fail":0},"2":{"pass":8,"fail":0},"3":{"pass":10,"fail":0},"4":{"pass":10,"fail":0},"6":{"pass":21,"fail":0},"8":{"pass":12,"fail":0},"9":{"pass":77,"fail":0},"R7b":{"pass":8,"fail":0},"R7e":{"pass":3,"fail":0},"R7c":{"pass":4,"fail":0},"R7d":{"pass":10,"fail":0},"R7a":{"pass":8,"fail":0},"R9":{"pass":15,"fail":0}}
+exit 0

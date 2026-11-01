@@ -1,0 +1,31 @@
+=== HEAD 25003d1bf4591fac1fddd8da7e830f26589b4ed4
+=== doctor /Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.cache/verify-linklog/20261101-051553-3650
+✓ session      .cache/verify-linklog/20261101-051553-3650/session.json
+✓ process      serve pid 54747 alive
+✓ ports        UI 3650 and API 9650 are served by this run
+✓ qa worker    fixture edges, jev=fixture, fastRetries=true
+✓ auth         anonymous 401, demo-a@linklog.test 200 (0 links)
+✓ code         no source edits since launch (25003d1)
+  ui           http://127.0.0.1:3650
+=== run /private/tmp/claude-501/-Users-facundopri-orca-workspaces-link-log-fac-44-url-upload/5ffefc72-7986-4e11-830b-b12621ae2bc3/scratchpad/evidence/final-r9/journeys/r9-a-shared-budget.ts on /Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.cache/verify-linklog/20261101-051553-3650
+▶ Wait for a fresh minute, then spend the writes budget with API submissions
+▶ Create a key from Settings: refused with the limit message
+▶ Demo B in the same minute: their Settings create works and their key submits
+▶ Next minute: spend the budget with key writes, then an API submission is refused
+✓ API: the key saves the seed Link
+✓ API: 120 submissions accepted, then 429 writes
+✓ HTTP: the Settings create got 429 with Retry-After (1-60 s) and code writes
+✓ UI: Settings shows Too many requests. Try again later.
+✓ UI: no secret was shown
+✓ API: no key named R9 Refused exists
+✓ UI (Demo B): the new lk_ secret is shown
+✓ API (Demo B): their key submits (202)
+✓ API: the spend keys are deleted with the budget spent (all 200)
+✓ API: 120 key writes accepted, then 429 writes
+✓ API: the submission is 429 writes with Retry-After
+✓ API: and nothing was saved
+✓ UI: Settings refuses a create again with the message
+✓ API (Demo B): unaffected, submission 202
+PASSED: 14/14 checks
+evidence: .cache/verify-linklog/20261101-051553-3650/evidence/r9-a-shared-budget-20261101-051639
+=== exit 0 /private/tmp/claude-501/-Users-facundopri-orca-workspaces-link-log-fac-44-url-upload/5ffefc72-7986-4e11-830b-b12621ae2bc3/scratchpad/evidence/final-r9/journeys/r9-a-shared-budget.ts
