@@ -13,7 +13,6 @@ import {
   type TargetStatus,
 } from "@linklog/browser-protocol";
 import type { Lens } from "../src/types";
-import { charge, LIMITS } from "./limits";
 import { addLinks } from "./links";
 import { capabilities, json, parseLensDefinition, text } from "./store";
 import { jevUnavailable } from "../src/attention";
@@ -238,10 +237,6 @@ export async function createEvaluation(env: Env, userId: string, body: Obj): Pro
     config = { lens, destinations: built.map, catalogVersion: req.catalogVersion, browser: true };
     kind = "browser-autogroup";
   }
-  // Browser evaluations share the owner's job quota with the library; it is taken before any
-  // receipt, snapshot or queue message exists, and only a new request is charged.
-  const charged = await charge(env.DB, [{ key: `jobs:${userId}`, limit: LIMITS.jobsPerUser, cost: req.targets.length }]);
-  if (!charged) return json({ error: "Processing limit reached. Try again later.", code: "rate-limited" }, 429);
   const now = new Date().toISOString();
   const batchId = crypto.randomUUID();
   const targets = req.targets.map((t) => ({
@@ -270,7 +265,6 @@ export async function createEvaluation(env: Env, userId: string, body: Obj): Pro
     ]);
   } catch (error) {
     // Nothing was created: a concurrent duplicate won (or the write failed).
-    await charged.release();
     const again = await receipt();
     if (!again) throw error;
     return replay(again);
@@ -288,7 +282,6 @@ export async function createEvaluation(env: Env, userId: string, body: Obj): Pro
     // Never leave a receipt whose jobs can't run: those targets fail visibly (no provider
     // call was made) and the user can evaluate them again explicitly.
     console.error(`Could not store ${lost.length} browser snapshot(s)`);
-    await charged.release(lost.length); // those jobs never reach a provider
     await env.DB.batch(
       lost.map((t) =>
         env.DB.prepare(

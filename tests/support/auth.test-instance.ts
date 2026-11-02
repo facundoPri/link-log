@@ -7,7 +7,7 @@ import { authOptions } from "../../worker/auth";
 import { readConfig } from "../../worker/config";
 
 export function createTestAuth(env: Env) {
-  const base = authOptions(readConfig(env), env.DB, { send() {} }, () => {});
+  const base = authOptions(readConfig(env), env.DB, { send() {} }, () => {}, env.DB);
   return betterAuth({ ...base, plugins: [...base.plugins, testUtils()] });
 }
 
@@ -17,4 +17,10 @@ export async function testSession(env: Env, email: string) {
   const user = await ctx.test.saveUser(ctx.test.createUser({ email, name: email.split("@")[0], emailVerified: true }));
   const { cookies } = await ctx.test.login({ userId: user.id });
   return { userId: user.id, cookie: cookies.map((c) => `${c.name}=${c.value}`).join("; ") };
+}
+
+/** Creates an active API key owned by `userId`; returns its id and the full `lk_` secret. */
+export async function testApiKey(env: Env, userId: string, name = "Test key") {
+  const created = await createTestAuth(env).api.createApiKey({ body: { name, userId } });
+  return { id: created.id, key: created.key };
 }

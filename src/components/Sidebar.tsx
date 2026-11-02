@@ -11,6 +11,7 @@ import {
   ListChecks,
   LogOut,
   Plus,
+  Settings,
   Tag,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -68,6 +69,7 @@ export function Sidebar({
   onActivity,
   account,
   onSignOut,
+  onSettings,
   browserCount,
   browserPanel,
 }: {
@@ -91,6 +93,7 @@ export function Sidebar({
   onActivity: () => void;
   account: { email: string };
   onSignOut: () => void;
+  onSettings: () => void;
 }) {
   const untaggedCount = library.links.filter((l) => !l.tags.length).length;
   const attentionCount = library.links.filter(needsAttention).length;
@@ -318,6 +321,10 @@ export function Sidebar({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent side="top" align="start" className="w-56">
+            <DropdownMenuItem onClick={onSettings}>
+              <Settings className="size-4" />
+              Settings
+            </DropdownMenuItem>
             <DropdownMenuItem onClick={onSignOut}>
               <LogOut className="size-4" />
               Sign out

@@ -42,6 +42,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 !/docs/browser-implementation-handoff.md
 !/docs/browser-validation.md
 !/docs/browser-validation/
+!/docs/upload-api.md
 !/docs/agents/
 !/docs/agents/issue-tracker.md
 !/docs/agents/triage-labels.md

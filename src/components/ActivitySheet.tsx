@@ -76,16 +76,22 @@ function kindIcon(kind: Batch["kind"] | "query") {
   );
 }
 
-function configLens(b: Batch): Lens | undefined {
+type BatchConfig = { lens?: Lens; source?: "api"; apiKeyName?: string };
+function config(b: Batch): BatchConfig {
   try {
-    return (JSON.parse(b.config) as { lens?: Lens }).lens;
+    return JSON.parse(b.config) as BatchConfig;
   } catch {
-    return undefined;
+    return {};
   }
 }
+const configLens = (b: Batch) => config(b).lens;
 
 function label(b: Batch) {
-  if (b.kind === "extract") return "Extract context";
+  // Links sent with an API key name the key; batches without a source are Web.
+  if (b.kind === "extract") {
+    const { source, apiKeyName } = config(b);
+    return source === "api" ? `Extract context · API · ${apiKeyName ?? ""}` : "Extract context";
+  }
   if (b.kind === "preview") return "Fetch preview";
   if (b.kind === "autotag") return "Auto-tag";
   if ((b.kind as string) === "query") return "Ask (legacy)";

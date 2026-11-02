@@ -1,3 +1,4 @@
+import { apiKeyClient } from "@better-auth/api-key/client";
 import { createAuthClient } from "better-auth/react";
 import { magicLinkClient } from "better-auth/client/plugins";
 import { signOutFlow } from "./session";
@@ -5,7 +6,7 @@ import { signOutFlow } from "./session";
 // Same origin as the UI: the Worker serves /api/auth in production, the Bun proxy forwards it locally.
 export const authClient = createAuthClient({
   basePath: "/api/auth",
-  plugins: [magicLinkClient()],
+  plugins: [magicLinkClient(), apiKeyClient()],
 });
 
 const UNAUTHORIZED = "linklog:unauthorized";

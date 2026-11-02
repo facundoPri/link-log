@@ -1,7 +1,7 @@
 -- Rollback of 0012_auth.sql. OPTIONAL: leaving the auth tables in place is harmless for code from
 -- before FAC-40, and batches/browser_requests/browser_groups keep a nullable user_id that references
 -- "user" after 0013_ownership.down.sql. Prefer restoring the pre-migration backup. If you run it
--- anyway, do it only after 0013_ownership.down.sql. Deletes every account, session and verification
+-- anyway, do it only after 0026_api_keys.down.sql and 0013_ownership.down.sql. Deletes every account, session and verification
 -- token; the library is untouched.
 --   bunx wrangler d1 execute linklog --local [--persist-to DIR] --file scripts/migrations/rollback/0012_auth.down.sql
 DROP TABLE IF EXISTS user_settings;

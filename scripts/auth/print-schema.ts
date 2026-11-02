@@ -14,6 +14,6 @@ const config = {
   emailDailyLimit: 1,
 };
 const { compileMigrations } = await getMigrations(
-  authOptions(config, new Database(":memory:"), { send() {} }, () => {}),
+  authOptions(config, new Database(":memory:"), { send() {} }, () => {}, null),
 );
 console.log(await compileMigrations());
