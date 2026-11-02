@@ -49,9 +49,8 @@ Short copy, motion carries the explanation.
 4. **Live demo.** Tabs for the three interactive demos: auto tags with a threshold slider, lenses
    with answer filters, and a Chrome window where Autogroup files tabs and saved tabs close.
 5. **Tagline reveal.** "Describe it once. Linklog keeps it in order." lights up word by word.
-6. **How it works.** Save, describe, find, with a connecting line drawn on scroll.
-7. **FAQ.** Six short answers, also published as FAQPage structured data.
-8. **Final CTA.** "Log it once. Find it whenever you need it."
+6. **FAQ.** Six short answers, also published as FAQPage structured data.
+7. **Final CTA.** "Log it once. Find it whenever you need it."
 
 The marquee is the one animation on a linear curve, because a ticker must move at constant speed.
 

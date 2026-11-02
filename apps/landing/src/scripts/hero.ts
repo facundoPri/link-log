@@ -107,22 +107,22 @@ export function initHeroDemo() {
     const status = $("[data-status]", row);
     const statusText = $("[data-status-text]", row);
     await step(delay);
-    await step(900);
+    await step(500);
     $("[data-skel]", row).style.opacity = "0";
     $("[data-title]", row).style.opacity = "1";
     statusText.textContent = "Reading page";
-    await step(1100);
+    await step(650);
     statusText.textContent = "Auto tagging";
-    await step(1100);
+    await step(650);
     status.style.opacity = "0";
     for (const chip of $$("[data-chip]", row)) {
       chip.classList.remove("pop-enter");
       const tag = chip.dataset.chip!;
       added.set(tag, (added.get(tag) ?? 0) + 1);
       setCount(tag, added.get(tag)!, true);
-      await wait(180);
+      await wait(120);
     }
-    await wait(400);
+    await wait(250);
     row.classList.remove("is-fresh");
   };
 
@@ -138,8 +138,8 @@ export function initHeroDemo() {
       }
     });
     setCount("all", 3, true);
-    await Promise.all(incoming.map((row, i) => processRow(row, i * 450)));
-    await step(5000);
+    await Promise.all(incoming.map((row, i) => processRow(row, i * 220)));
+    await step(4000);
     for (const row of incoming) row.style.opacity = "0";
     await wait(400);
     flip(allRows, () => incoming.forEach((r) => (r.hidden = true)));

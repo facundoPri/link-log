@@ -75,8 +75,10 @@ export function initAutoTags() {
     for (const track of $$("[data-threshold-track]")) track.style.transform = `translateX(${t}%)`;
   };
 
-  const countUp = (el: HTMLElement, to: number, ms: number) => {
-    if (reducedMotion()) {
+  /** Animates a percentage label from its current value to `to`. */
+  const countTo = (el: HTMLElement, to: number, ms: number) => {
+    const from = Number.parseInt(el.textContent ?? "0", 10) || 0;
+    if (reducedMotion() || from === to) {
       el.textContent = `${to}%`;
       return;
     }
@@ -84,16 +86,21 @@ export function initAutoTags() {
     const tick = (now: number) => {
       const p = Math.min(1, (now - start) / ms);
       const eased = 1 - Math.pow(1 - p, 3);
-      el.textContent = `${Math.round(to * eased)}%`;
+      el.textContent = `${Math.round(from + (to - from) * eased)}%`;
       if (p < 1) requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
   };
 
+  /**
+   * The first run shows a short "scoring" moment and fills the bars from zero.
+   * Switching links afterwards morphs each bar straight to its new score.
+   */
   const evaluate = async (index: number) => {
     const my = ++token;
+    const firstRun = !root.dataset.ran;
+    root.dataset.ran = "1";
     current = index;
-    evaluated = false;
     const s = samples[index]!;
     tabs.forEach((t, i) => t.setAttribute("aria-selected", String(i === index)));
     const fav = $("[data-s-favicon]");
@@ -103,33 +110,27 @@ export function initAutoTags() {
     $("[data-s-domain]").textContent = s.domain;
     $("[data-s-words]").textContent = s.words;
 
-    rows.forEach((r) => {
-      r.classList.remove("is-pass");
-      (r.querySelector("[data-fill]") as HTMLElement).style.transform = "scaleX(0)";
-      (r.querySelector("[data-pct]") as HTMLElement).textContent = "0%";
-    });
-    rules.forEach((r) => r.classList.remove("is-pass"));
-    applied.replaceChildren();
-    discarded.replaceChildren();
-    status.style.opacity = "1";
-
-    await wait(reducedMotion() ? 0 : 700);
-    if (my !== token) return;
+    const ms = reducedMotion() ? 0 : firstRun ? 700 : 450;
+    if (firstRun) {
+      status.style.opacity = "1";
+      await wait(reducedMotion() ? 0 : 400);
+      if (my !== token) return;
+    }
     rows.forEach((r, i) => {
       const pct = s.scores[r.dataset.scoreRow!] ?? 0;
       const fill = r.querySelector("[data-fill]") as HTMLElement;
-      const delay = reducedMotion() ? 0 : i * 90;
       setTimeout(() => {
         if (my !== token) return;
+        fill.style.transitionDuration = `${ms}ms`;
         fill.style.transform = `scaleX(${Math.max(pct, 1) / 100})`;
-        countUp(r.querySelector("[data-pct]") as HTMLElement, pct, 900);
-      }, delay);
+        countTo(r.querySelector("[data-pct]") as HTMLElement, pct, ms);
+      }, firstRun && !reducedMotion() ? i * 60 : 0);
     });
-    await wait(reducedMotion() ? 0 : 1000 + rows.length * 90);
+    await wait(ms + (firstRun ? rows.length * 60 : 0));
     if (my !== token) return;
     status.style.opacity = "0";
     evaluated = true;
-    classify(true);
+    classify(firstRun);
   };
 
   tabs.forEach((tab, i) => tab.addEventListener("click", () => evaluate(i)));

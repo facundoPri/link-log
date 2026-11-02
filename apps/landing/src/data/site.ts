@@ -5,6 +5,5 @@ export const RELEASES_URL = `${REPO_URL}/releases`;
 export const NAV = [
   { href: "#features", label: "Features" },
   { href: "#demo", label: "Demo" },
-  { href: "#how", label: "How it works" },
   { href: "#faq", label: "FAQ" },
 ] as const;
