@@ -43,6 +43,9 @@ export const failureMessage = (reason: string | null | undefined) =>
 // What Activity shows under a job: the current attempt with its elapsed time against the attempt's
 // time budget, and the reason of the previous failed attempt while retrying.
 const WAITING_FOR: Record<string, string> = { extract: "extraction", preview: "the preview", autotag: "auto-tag", lens: "a lens" };
+// The worker stores these steps verbatim and the cancel predicate matches them, so only the display changes.
+const STEP_LABELS: Record<string, string> = { "Waiting for Browser slot": "Waiting to extract content" };
+export const stepLabel = (step: string) => STEP_LABELS[step] ?? step;
 export function jobProgress(
   j: Pick<Job, "status" | "waiting_for" | "step" | "attempt" | "max_attempts" | "reason" | "preview_reason" | "attempt_started_at" | "attempt_budget_ms">,
   now = Date.now(),
@@ -53,8 +56,8 @@ export function jobProgress(
   if (j.status === "queued") return { step: "Queued", note: null };
   if (j.status === "done")
     return { step: null, note: j.preview_reason ? `No preview: ${failureMessage(j.preview_reason)}` : null };
-  if (j.status === "failed" || !j.attempt) return { step: j.status === "failed" ? null : j.step, note: null };
-  const parts = [j.step];
+  if (j.status === "failed" || !j.attempt) return { step: j.status === "failed" ? null : stepLabel(j.step), note: null };
+  const parts = [stepLabel(j.step)];
   if (j.max_attempts && j.max_attempts > 1) parts.push(`Attempt ${j.attempt} of ${j.max_attempts}`);
   if (j.attempt_started_at && j.attempt_budget_ms)
     parts.push(`${duration(Math.min(Math.max(now - j.attempt_started_at, 0), j.attempt_budget_ms))} of ${duration(j.attempt_budget_ms)}`);
