@@ -1,0 +1,64 @@
+{
+  "journey": "/Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.agents/skills/verify-linklog/journeys/api-curl-example.ts",
+  "ui": "http://127.0.0.1:3620",
+  "commit": "25003d1",
+  "startedAt": "2026-11-01T05:17:13.002Z",
+  "status": "passed",
+  "steps": [
+    {
+      "ms": 228,
+      "text": "Create a key: the curl example appears with the secret"
+    },
+    {
+      "ms": 864,
+      "text": "Copy curl puts the command on the clipboard, and it works"
+    },
+    {
+      "ms": 926,
+      "text": "Done removes the secret and the example"
+    },
+    {
+      "ms": 998,
+      "text": "Leaving Settings and coming back: neither the secret nor the example is in the page"
+    }
+  ],
+  "checks": [
+    {
+      "name": "The secret is shown",
+      "ok": true,
+      "ms": 23
+    },
+    {
+      "name": "The example targets the app's origin and carries the secret",
+      "ok": true,
+      "ms": 1
+    },
+    {
+      "name": "Clipboard holds the example",
+      "ok": true,
+      "ms": 15
+    },
+    {
+      "name": "Running the copied command answers 202 with a created result",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "Both are gone",
+      "ok": true,
+      "ms": 2
+    },
+    {
+      "name": "Neither secret nor example is in the page",
+      "ok": true,
+      "ms": 3
+    }
+  ],
+  "artifacts": [
+    "01-after-create.png",
+    "02-copied-command-response.json",
+    "03-after-done.png",
+    "04-after-leaving.png",
+    "video.webm"
+  ]
+}

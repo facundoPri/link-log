@@ -1,0 +1,114 @@
+{
+  "journey": "/Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.agents/skills/verify-linklog/journeys/api-submit-activity.ts",
+  "ui": "http://127.0.0.1:3630",
+  "commit": "25003d1",
+  "startedAt": "2026-11-01T05:16:39.043Z",
+  "status": "passed",
+  "steps": [
+    {
+      "ms": 1500,
+      "text": "Set up: create an API key (Settings owns this; see api-keys-settings.ts)"
+    },
+    {
+      "ms": 1593,
+      "text": "Integration: submit three URLs with the key, no cookie or Origin"
+    },
+    {
+      "ms": 1793,
+      "text": "The key cannot reach private routes; a missing key is 401"
+    },
+    {
+      "ms": 1844,
+      "text": "Resending the same URL is a Duplicate with no batch"
+    },
+    {
+      "ms": 1874,
+      "text": "Activity lists the batch with the key name"
+    },
+    {
+      "ms": 2942,
+      "text": "Cancel the API batch from Activity"
+    },
+    {
+      "ms": 16798,
+      "text": "Demo B sees none of it"
+    }
+  ],
+  "checks": [
+    {
+      "name": "API: 202 with three created results and a batchId",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "API: no CORS headers on the response",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "API: GET /api/library with the key is 401",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "API: a request without a key is 401",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "API: duplicate, no batchId",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "API: Demo A's library has the batch with the API source",
+      "ok": true,
+      "ms": 33
+    },
+    {
+      "name": "Activity shows \"Extract context · API · Shortcuts 543\"",
+      "ok": true,
+      "ms": 4
+    },
+    {
+      "name": "Markup: no nested buttons",
+      "ok": true,
+      "ms": 3
+    },
+    {
+      "name": "Exactly one batch can be cancelled",
+      "ok": true,
+      "ms": 1
+    },
+    {
+      "name": "API: the batch has no active jobs and some were cancelled",
+      "ok": true,
+      "ms": 11974
+    },
+    {
+      "name": "Activity no longer offers Cancel batch",
+      "ok": true,
+      "ms": 1820
+    },
+    {
+      "name": "Activity still labels the batch \"Extract context · API · Shortcuts 543\"",
+      "ok": true,
+      "ms": 1
+    },
+    {
+      "name": "API: Demo B has no links or batches from the key",
+      "ok": true,
+      "ms": 0
+    }
+  ],
+  "artifacts": [
+    "01-submit-response.json",
+    "02-rejections.json",
+    "03-duplicate-response.json",
+    "04-activity-api-batch.png",
+    "04-activity-api-batch.aria.yml",
+    "05-activity-cancelled.png",
+    "05-batch-after-cancel.json",
+    "video.webm"
+  ]
+}

@@ -1,0 +1,138 @@
+{
+  "journey": "/Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.agents/skills/verify-linklog/journeys/usage-settings.ts",
+  "ui": "http://127.0.0.1:3620",
+  "commit": "25003d1",
+  "startedAt": "2026-11-01T05:16:47.967Z",
+  "status": "passed",
+  "steps": [
+    {
+      "ms": 287,
+      "text": "Seed: two API keys, submissions with each secret, a Duplicate, two Web imports"
+    },
+    {
+      "ms": 441,
+      "text": "Demo B adds Links of their own: never in Demo A's usage"
+    },
+    {
+      "ms": 456,
+      "text": "API: the usage summary"
+    },
+    {
+      "ms": 466,
+      "text": "The extractions run; Auto-tag and a lens run on one Link: every run lands in its feature"
+    },
+    {
+      "ms": 23807,
+      "text": "Settings shows the Usage section and the per-key counts"
+    },
+    {
+      "ms": 24408,
+      "text": "The same Usage section on a phone: the table keeps its columns readable"
+    },
+    {
+      "ms": 24481,
+      "text": "A key that added nothing reads 0 links; Demo B's page shows only their own usage"
+    }
+  ],
+  "checks": [
+    {
+      "name": "API: Shortcuts key creates three Links",
+      "ok": true,
+      "ms": 25
+    },
+    {
+      "name": "API: Zapier key creates two Links",
+      "ok": true,
+      "ms": 20
+    },
+    {
+      "name": "API: a resubmitted URL is a Duplicate",
+      "ok": true,
+      "ms": 1
+    },
+    {
+      "name": "API: the Revoked API key no longer authenticates",
+      "ok": true,
+      "ms": 5
+    },
+    {
+      "name": "Month: +7 total, +2 Web, 3 for Shortcuts, 2 for the Revoked API key Zapier",
+      "ok": true,
+      "ms": 10
+    },
+    {
+      "name": "Month total excludes Demo B's key",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "Links quota: only Links count (+7), there is no jobs quota",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "API: the seven extractions finish and bill Browser time",
+      "ok": true,
+      "ms": 21138
+    },
+    {
+      "name": "API: Autotag +1 run, Lenses +1 run, with tokens, and Content bills Browser time",
+      "ok": true,
+      "ms": 2156
+    },
+    {
+      "name": "Tokens for Autotag and Lenses; Browser time and a cost for Content; the fixture Jev has no price",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "Usage shows the links hour with a reset time, and no Jobs row",
+      "ok": true,
+      "ms": 40
+    },
+    {
+      "name": "Usage lists each feature with its runs, and a Total",
+      "ok": true,
+      "ms": 9
+    },
+    {
+      "name": "Usage lists Web and both keys (the Revoked one marked) with this month's counts",
+      "ok": true,
+      "ms": 4
+    },
+    {
+      "name": "Shortcuts row: 3 links this month",
+      "ok": true,
+      "ms": 2
+    },
+    {
+      "name": "Zapier row (Revoked, in the closed Revoked keys section): 2 links this month",
+      "ok": true,
+      "ms": 37
+    },
+    {
+      "name": "Phone: the table does not scroll sideways",
+      "ok": true,
+      "ms": 1
+    },
+    {
+      "name": "Idle key: 0 links this month",
+      "ok": true,
+      "ms": 316
+    },
+    {
+      "name": "API: Demo B counts their own key and none of Demo A's",
+      "ok": true,
+      "ms": 0
+    }
+  ],
+  "artifacts": [
+    "01-usage-summary.json",
+    "01b-usage-by-feature.json",
+    "02-settings-usage.png",
+    "02-settings-usage.aria.yml",
+    "02b-settings-usage-phone.png",
+    "03-demo-b-summary.json",
+    "video.webm"
+  ]
+}

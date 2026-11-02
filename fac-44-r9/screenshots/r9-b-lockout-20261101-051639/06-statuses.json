@@ -1,0 +1,102 @@
+{
+  "spend": {
+    "accepted": 120,
+    "firstRefused": {
+      "status": 429,
+      "retryAfter": "59",
+      "body": {
+        "error": "Too many requests. Try again later.",
+        "code": "writes"
+      }
+    },
+    "nextFive": [
+      429,
+      429,
+      429,
+      429,
+      429
+    ],
+    "totalBearerSubmissions": 126
+  },
+  "revoke": {
+    "status": 200,
+    "sent": {
+      "keyId": "4wBANs3GQS7B0ch0ujhr5wrsciJvRTQH",
+      "enabled": false
+    },
+    "body": {
+      "configId": "default",
+      "name": "R9 Leaked 564",
+      "start": "lk_BzLqiw",
+      "referenceId": "KyKOs3i5YhMzxbfiuOA5BCHrSXXMt5jI",
+      "prefix": "lk_",
+      "refillInterval": null,
+      "refillAmount": null,
+      "lastRefillAt": null,
+      "enabled": false,
+      "rateLimitEnabled": false,
+      "rateLimitTimeWindow": 86400000,
+      "rateLimitMax": 10,
+      "requestCount": 0,
+      "remaining": null,
+      "lastRequest": "2026-11-01T05:17:01.462Z",
+      "expiresAt": null,
+      "createdAt": "2026-11-01T05:16:40.654Z",
+      "updatedAt": "2026-11-01T05:17:01.462Z",
+      "permissions": null,
+      "metadata": null,
+      "id": "4wBANs3GQS7B0ch0ujhr5wrsciJvRTQH"
+    }
+  },
+  "leakedAfterRevoke": {
+    "status": 401,
+    "body": {
+      "error": "A valid API key is required."
+    }
+  },
+  "delete": {
+    "status": 200,
+    "body": {
+      "success": true
+    }
+  },
+  "spareAfterDelete": 401,
+  "create": {
+    "status": 429,
+    "retryAfter": "57",
+    "body": {
+      "message": "Too many requests. Try again later.",
+      "code": "writes"
+    }
+  },
+  "enable": {
+    "status": 429,
+    "sent": {
+      "keyId": "RHR1be3byaGdXob9Ky5gicXJIv1MFC2J",
+      "enabled": true
+    },
+    "retryAfter": "57",
+    "body": {
+      "message": "Too many requests. Try again later.",
+      "code": "writes"
+    }
+  },
+  "rename": {
+    "status": 429,
+    "body": {
+      "message": "Too many requests. Try again later.",
+      "code": "writes"
+    }
+  },
+  "disablePlusRename": {
+    "status": 429,
+    "body": {
+      "message": "Too many requests. Try again later.",
+      "code": "writes"
+    }
+  },
+  "sameMinute": {
+    "spentIn": 29891837,
+    "endedIn": 29891837
+  }
+}

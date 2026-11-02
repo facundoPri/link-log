@@ -1,0 +1,157 @@
+{
+  "journey": "/Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.agents/skills/verify-linklog/journeys/api-keys-gate-fixes.ts",
+  "ui": "http://127.0.0.1:3620",
+  "commit": "25003d1",
+  "startedAt": "2026-11-01T05:17:16.451Z",
+  "status": "passed",
+  "steps": [
+    {
+      "ms": 211,
+      "text": "A key always starts with lk_: a client-chosen prefix or configuration is refused"
+    },
+    {
+      "ms": 294,
+      "text": "Usage shows the key under its current name after a rename"
+    },
+    {
+      "ms": 679,
+      "text": "Key writes draw on the shared writes budget: the key's own submissions spend it, and a create is then refused"
+    },
+    {
+      "ms": 1141,
+      "text": "Settings tells the user a create is refused"
+    },
+    {
+      "ms": 1577,
+      "text": "With the budget still spent, the owner revokes and deletes the leaked key from Settings"
+    }
+  ],
+  "checks": [
+    {
+      "name": "API: create with {\"prefix\":\"abc\"} is 400 SERVER_ONLY_PROPERTY",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "API: create with {\"configId\":\"default\"} is 400 SERVER_ONLY_PROPERTY",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "API: nothing was created by the refused requests",
+      "ok": true,
+      "ms": 11
+    },
+    {
+      "name": "API: a plain create returns an lk_ secret and an lk_ visible start",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "API: the key submits a Link",
+      "ok": true,
+      "ms": 7
+    },
+    {
+      "name": "API: the key is renamed",
+      "ok": true,
+      "ms": 8
+    },
+    {
+      "name": "API: the key submits another Link",
+      "ok": true,
+      "ms": 7
+    },
+    {
+      "name": "API: Usage lists the key as the new name with both Links",
+      "ok": true,
+      "ms": 4
+    },
+    {
+      "name": "Settings > Usage shows the row under the new name",
+      "ok": true,
+      "ms": 319
+    },
+    {
+      "name": "API: the key's own submissions run the writes budget out within 120 in the minute",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "The 429 has Retry-After (1 to 60 seconds) and code writes",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "API: a create is refused in Better Auth's error shape",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "API: a rename is refused too",
+      "ok": true,
+      "ms": 6
+    },
+    {
+      "name": "API: nothing was created",
+      "ok": true,
+      "ms": 5
+    },
+    {
+      "name": "Settings shows the limit message and creates nothing",
+      "ok": true,
+      "ms": 304
+    },
+    {
+      "name": "Revoke answers 200 with the budget spent",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "API: the key is disabled",
+      "ok": true,
+      "ms": 7
+    },
+    {
+      "name": "The revoked key answers 401 on /api/v1/links",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "Delete of an active key answers 200 with the budget spent",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "Delete of the revoked key answers 200 with the budget spent",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "API: both keys are gone",
+      "ok": true,
+      "ms": 8
+    },
+    {
+      "name": "The deleted key still answers 401",
+      "ok": true,
+      "ms": 3
+    }
+  ],
+  "artifacts": [
+    "01-refused-prefix.json",
+    "01-refused-configId.json",
+    "02-created.json",
+    "03-usage-summary.json",
+    "03-usage-renamed.png",
+    "04-spent-raw.json",
+    "04-refused.json",
+    "05-settings-refused.png",
+    "06-revoke-status.json",
+    "06-key-after-revoke.json",
+    "06-revoked-with-spent-budget.png",
+    "07-delete-status.json",
+    "07-deleted-with-spent-budget.png",
+    "video.webm"
+  ]
+}

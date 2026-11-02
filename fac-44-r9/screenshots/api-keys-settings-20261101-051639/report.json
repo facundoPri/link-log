@@ -1,0 +1,125 @@
+{
+  "journey": "/Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.agents/skills/verify-linklog/journeys/api-keys-settings.ts",
+  "ui": "http://127.0.0.1:3620",
+  "commit": "25003d1",
+  "startedAt": "2026-11-01T05:16:39.059Z",
+  "status": "passed",
+  "steps": [
+    {
+      "ms": 1483,
+      "text": "Open Settings from the user menu"
+    },
+    {
+      "ms": 2208,
+      "text": "Create a named API key"
+    },
+    {
+      "ms": 2361,
+      "text": "Dismiss the secret: it is not shown again after a reload"
+    },
+    {
+      "ms": 2718,
+      "text": "Revoke the key"
+    },
+    {
+      "ms": 3529,
+      "text": "Demo B cannot see or revoke Demo A's keys"
+    },
+    {
+      "ms": 3558,
+      "text": "Back to the library"
+    }
+  ],
+  "checks": [
+    {
+      "name": "Settings page is shown at /settings",
+      "ok": true,
+      "ms": 2
+    },
+    {
+      "name": "Account shows the email",
+      "ok": true,
+      "ms": 1
+    },
+    {
+      "name": "Account offers sign out",
+      "ok": true,
+      "ms": 2
+    },
+    {
+      "name": "The full lk_ secret is shown once",
+      "ok": true,
+      "ms": 34
+    },
+    {
+      "name": "The new key is listed as active",
+      "ok": true,
+      "ms": 1
+    },
+    {
+      "name": "API: the list has the key with its start and never the secret",
+      "ok": true,
+      "ms": 24
+    },
+    {
+      "name": "Row shows the visible start, creation date and no last use",
+      "ok": true,
+      "ms": 5
+    },
+    {
+      "name": "Settings loads directly at /settings",
+      "ok": true,
+      "ms": 316
+    },
+    {
+      "name": "Key is still listed, secret gone",
+      "ok": true,
+      "ms": 4
+    },
+    {
+      "name": "Confirmation names the key",
+      "ok": true,
+      "ms": 2
+    },
+    {
+      "name": "The row left the active list; the Revoked keys section counts it and is closed",
+      "ok": true,
+      "ms": 328
+    },
+    {
+      "name": "API: the key stays listed as disabled",
+      "ok": true,
+      "ms": 12
+    },
+    {
+      "name": "Still revoked after reload, with Enable and Delete and no Revoke",
+      "ok": true,
+      "ms": 4
+    },
+    {
+      "name": "Demo B's list does not include Demo A's key",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "Demo B updating or deleting Demo A's key answers 404 like a missing key",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "Library is shown again",
+      "ok": true,
+      "ms": 2
+    }
+  ],
+  "artifacts": [
+    "01-user-menu.png",
+    "02-settings.png",
+    "03-key-created.png",
+    "04-revoke-confirm.png",
+    "05-after-revoke.aria.yml",
+    "05-after-revoke.png",
+    "keys.json",
+    "video.webm"
+  ]
+}

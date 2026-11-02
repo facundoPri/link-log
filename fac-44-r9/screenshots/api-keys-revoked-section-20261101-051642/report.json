@@ -1,0 +1,164 @@
+{
+  "journey": "/Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.agents/skills/verify-linklog/journeys/api-keys-revoked-section.ts",
+  "ui": "http://127.0.0.1:3620",
+  "commit": "25003d1",
+  "startedAt": "2026-11-01T05:16:42.895Z",
+  "status": "passed",
+  "steps": [
+    {
+      "ms": 244,
+      "text": "Set up: three keys, one of them used for a Link"
+    },
+    {
+      "ms": 323,
+      "text": "Open Settings: all three are active, so there is no Revoked keys section for them yet"
+    },
+    {
+      "ms": 1166,
+      "text": "Revoke two keys from the active list"
+    },
+    {
+      "ms": 2310,
+      "text": "Open the section: revoked rows have Enable and Delete and no Revoke; the list scrolls"
+    },
+    {
+      "ms": 2402,
+      "text": "Enable a revoked key: it moves back to the active list and authenticates again"
+    },
+    {
+      "ms": 2951,
+      "text": "Delete asks for confirmation; Cancel keeps the key"
+    },
+    {
+      "ms": 3278,
+      "text": "Delete the revoked key, and an active key"
+    },
+    {
+      "ms": 4451,
+      "text": "Usage keeps the deleted key's Links under its stored name, marked Deleted"
+    },
+    {
+      "ms": 4811,
+      "text": "A body that is not valid JSON gets a clear 400 (what zsh's url-quote-magic produces)"
+    }
+  ],
+  "checks": [
+    {
+      "name": "API: the old key submits a Link",
+      "ok": true,
+      "ms": 17
+    },
+    {
+      "name": "Keep 3139 is listed as active with Revoke and Delete",
+      "ok": true,
+      "ms": 305
+    },
+    {
+      "name": "Old 3139 is listed as active with Revoke and Delete",
+      "ok": true,
+      "ms": 2
+    },
+    {
+      "name": "Again 3139 is listed as active with Revoke and Delete",
+      "ok": true,
+      "ms": 1
+    },
+    {
+      "name": "Old 3139 left the active list",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "Again 3139 left the active list",
+      "ok": true,
+      "ms": 1
+    },
+    {
+      "name": "The Revoked keys section shows the new count and is closed by default",
+      "ok": true,
+      "ms": 287
+    },
+    {
+      "name": "The closed section hides its rows",
+      "ok": true,
+      "ms": 1
+    },
+    {
+      "name": "Both revoked keys are listed with Enable and Delete",
+      "ok": true,
+      "ms": 5
+    },
+    {
+      "name": "The revoked list is scrollable (bounded height, vertical scroll)",
+      "ok": true,
+      "ms": 2
+    },
+    {
+      "name": "API: the revoked key no longer authenticates",
+      "ok": true,
+      "ms": 13
+    },
+    {
+      "name": "Active again with Revoke and Delete",
+      "ok": true,
+      "ms": 344
+    },
+    {
+      "name": "API: enabled and submitting",
+      "ok": true,
+      "ms": 96
+    },
+    {
+      "name": "The confirmation names the key",
+      "ok": true,
+      "ms": 2
+    },
+    {
+      "name": "Nothing was deleted",
+      "ok": true,
+      "ms": 7
+    },
+    {
+      "name": "API: the revoked key is gone",
+      "ok": true,
+      "ms": 17
+    },
+    {
+      "name": "The row is gone from the section, whose count dropped",
+      "ok": true,
+      "ms": 1
+    },
+    {
+      "name": "API: the active key is gone and its secret no longer works",
+      "ok": true,
+      "ms": 25
+    },
+    {
+      "name": "API: the deleted key is in the usage summary with status deleted",
+      "ok": true,
+      "ms": 9
+    },
+    {
+      "name": "Settings Usage shows 'API key: <name>' with a Deleted badge and its count",
+      "ok": true,
+      "ms": 318
+    },
+    {
+      "name": "curl: 400 saying the body is not valid JSON",
+      "ok": true,
+      "ms": 0
+    }
+  ],
+  "artifacts": [
+    "01-revoked-section-closed.png",
+    "02-revoked-section-open.png",
+    "02-revoked-section-open.aria.yml",
+    "03-after-enable.png",
+    "04-delete-confirm.png",
+    "05-after-delete.png",
+    "06-usage-deleted.png",
+    "usage.json",
+    "07-invalid-json-response.json",
+    "video.webm"
+  ]
+}

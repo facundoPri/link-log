@@ -1,0 +1,181 @@
+{
+  "journey": "/private/tmp/claude-501/-Users-facundopri-orca-workspaces-link-log-fac-44-url-upload/5ffefc72-7986-4e11-830b-b12621ae2bc3/scratchpad/evidence/final-r9/journeys/r9-b-lockout.ts",
+  "ui": "http://127.0.0.1:3660",
+  "commit": "25003d1",
+  "startedAt": "2026-11-01T05:16:39.026Z",
+  "status": "passed",
+  "steps": [
+    {
+      "ms": 1919,
+      "text": "Wait for a fresh minute, then the leaked key spends the writes budget with Bearer submissions"
+    },
+    {
+      "ms": 22438,
+      "text": "Settings with the budget spent"
+    },
+    {
+      "ms": 22835,
+      "text": "Revoke the leaked key from Settings"
+    },
+    {
+      "ms": 23583,
+      "text": "Delete the spare key from Settings"
+    },
+    {
+      "ms": 23991,
+      "text": "Create key is still refused"
+    },
+    {
+      "ms": 24316,
+      "text": "Enable a revoked key from Settings is refused"
+    },
+    {
+      "ms": 24483,
+      "text": "Rename and disable-plus-rename are refused (the plugin update route, as Settings calls it)"
+    },
+    {
+      "ms": 24548,
+      "text": "Clean up: delete the leaked, parked and combo keys (free)"
+    }
+  ],
+  "checks": [
+    {
+      "name": "API: the leaked key saves the seed Link",
+      "ok": true,
+      "ms": 29
+    },
+    {
+      "name": "API: 120 Bearer submissions accepted, then 429 writes; the next five are 429 too",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "UI: the leaked key is listed as active",
+      "ok": true,
+      "ms": 344
+    },
+    {
+      "name": "HTTP: Revoke sent only keyId and enabled:false and got 200",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "UI: the leaked key left the active list (no Revoke button for it anywhere)",
+      "ok": true,
+      "ms": 3
+    },
+    {
+      "name": "UI: a Revoked keys section is present",
+      "ok": true,
+      "ms": 307
+    },
+    {
+      "name": "API: the key is disabled",
+      "ok": true,
+      "ms": 10
+    },
+    {
+      "name": "HTTP: the revoked key answers 401 on /api/v1/links",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "HTTP: Delete got 200",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "UI: the spare key is gone from Settings",
+      "ok": true,
+      "ms": 1
+    },
+    {
+      "name": "API: the spare key is gone from the list",
+      "ok": true,
+      "ms": 21
+    },
+    {
+      "name": "HTTP: the deleted key answers 401",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "HTTP: Create key got 429 writes with Retry-After",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "UI: Settings shows Too many requests. Try again later.",
+      "ok": true,
+      "ms": 3
+    },
+    {
+      "name": "UI: no secret was shown",
+      "ok": true,
+      "ms": 1
+    },
+    {
+      "name": "HTTP: Enable got 429 writes",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "UI: a toast says Too many requests. Try again later.",
+      "ok": true,
+      "ms": 1
+    },
+    {
+      "name": "API: the parked key is still disabled",
+      "ok": true,
+      "ms": 18
+    },
+    {
+      "name": "HTTP: rename 429 writes",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "HTTP: disable-plus-rename 429 writes",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "API: the combo key is still enabled under its old name",
+      "ok": true,
+      "ms": 8
+    },
+    {
+      "name": "Every step ran in the minute the budget was spent",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "API: delete R9 Leaked 564 -> 200",
+      "ok": true,
+      "ms": 12
+    },
+    {
+      "name": "API: delete R9 Parked 564 -> 200",
+      "ok": true,
+      "ms": 11
+    },
+    {
+      "name": "API: delete R9 Combo 564 -> 200",
+      "ok": true,
+      "ms": 13
+    }
+  ],
+  "artifacts": [
+    "01-spent.json",
+    "01-settings-budget-spent.png",
+    "02a-revoke-confirm.png",
+    "02b-revoked.png",
+    "03a-delete-confirm.png",
+    "03b-deleted.png",
+    "04-create-refused.png",
+    "04-create-refused.aria.yml",
+    "05-enable-refused.png",
+    "06-statuses.json",
+    "video.webm"
+  ]
+}

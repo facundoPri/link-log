@@ -1,0 +1,65 @@
+{
+  "journey": "/Users/facundopri/Documents/ChatGPT/link-log/.claude/worktrees/agent-a55cbee428ba69c54/.agents/skills/verify-linklog/journeys/api-submit-text.ts",
+  "ui": "http://127.0.0.1:3640",
+  "commit": "25003d1",
+  "startedAt": "2026-11-01T05:16:39.030Z",
+  "status": "passed",
+  "steps": [
+    {
+      "ms": 1616,
+      "text": "Text with several URLs, a repeat, trailing punctuation and a rejected string"
+    },
+    {
+      "ms": 1858,
+      "text": "Zero valid URLs is 400"
+    },
+    {
+      "ms": 1887,
+      "text": "More than 100 URLs after extraction is 400 and saves nothing; 100 is accepted"
+    }
+  ],
+  "checks": [
+    {
+      "name": "API: 202, each URL once with the text as input",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "API: the two non-URL strings are rejected with a reason",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "API: the library holds exactly the three URLs and no rejected text",
+      "ok": true,
+      "ms": 50
+    },
+    {
+      "name": "API: 400 with the message and the rejected list",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "API: 400 explaining the limit",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "API: nothing was saved",
+      "ok": true,
+      "ms": 86
+    },
+    {
+      "name": "API: 100 URLs in two strings are accepted",
+      "ok": true,
+      "ms": 0
+    }
+  ],
+  "artifacts": [
+    "01-mixed-response.json",
+    "02-zero-valid-response.json",
+    "03-over-limit-response.json",
+    "04-at-limit-summary.json",
+    "video.webm"
+  ]
+}

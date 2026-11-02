@@ -1,0 +1,109 @@
+{
+  "journey": "/private/tmp/claude-501/-Users-facundopri-orca-workspaces-link-log-fac-44-url-upload/5ffefc72-7986-4e11-830b-b12621ae2bc3/scratchpad/evidence/final-r9/journeys/r9-a-shared-budget.ts",
+  "ui": "http://127.0.0.1:3650",
+  "commit": "25003d1",
+  "startedAt": "2026-11-01T05:16:39.021Z",
+  "status": "passed",
+  "steps": [
+    {
+      "ms": 1892,
+      "text": "Wait for a fresh minute, then spend the writes budget with API submissions"
+    },
+    {
+      "ms": 22319,
+      "text": "Create a key from Settings: refused with the limit message"
+    },
+    {
+      "ms": 22573,
+      "text": "Demo B in the same minute: their Settings create works and their key submits"
+    },
+    {
+      "ms": 22956,
+      "text": "Next minute: spend the budget with key writes, then an API submission is refused"
+    }
+  ],
+  "checks": [
+    {
+      "name": "API: the key saves the seed Link",
+      "ok": true,
+      "ms": 30
+    },
+    {
+      "name": "API: 120 submissions accepted, then 429 writes",
+      "ok": true,
+      "ms": 1
+    },
+    {
+      "name": "HTTP: the Settings create got 429 with Retry-After (1-60 s) and code writes",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "UI: Settings shows Too many requests. Try again later.",
+      "ok": true,
+      "ms": 5
+    },
+    {
+      "name": "UI: no secret was shown",
+      "ok": true,
+      "ms": 9
+    },
+    {
+      "name": "API: no key named R9 Refused exists",
+      "ok": true,
+      "ms": 14
+    },
+    {
+      "name": "UI (Demo B): the new lk_ secret is shown",
+      "ok": true,
+      "ms": 85
+    },
+    {
+      "name": "API (Demo B): their key submits (202)",
+      "ok": true,
+      "ms": 20
+    },
+    {
+      "name": "API: the spend keys are deleted with the budget spent (all 200)",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "API: 120 key writes accepted, then 429 writes",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "API: the submission is 429 writes with Retry-After",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "API: and nothing was saved",
+      "ok": true,
+      "ms": 6
+    },
+    {
+      "name": "UI: Settings refuses a create again with the message",
+      "ok": true,
+      "ms": 304
+    },
+    {
+      "name": "API (Demo B): unaffected, submission 202",
+      "ok": true,
+      "ms": 8
+    }
+  ],
+  "artifacts": [
+    "01-api-spent.json",
+    "02-settings-create-response.json",
+    "02-settings-create-refused.png",
+    "03-demo-b-create-ok.png",
+    "04-spend-keys-deleted.json",
+    "04-key-writes-spent.json",
+    "04-api-after-key-writes.json",
+    "04-settings-refused-after-key-writes.png",
+    "video.webm",
+    "video-1.webm"
+  ]
+}
