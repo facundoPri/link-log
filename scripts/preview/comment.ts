@@ -17,11 +17,13 @@ export function dashboard(worker: string) {
   return { deployments: `${base}/deployments`, observability: `${base}/observability/logs` };
 }
 
-export function body(repositoryId: string, pr: string, run: string, s: Stage) {
+export function body(repositoryId: string, pr: string, run: string, s: Stage, now = new Date()) {
   const { worker } = names(repositoryId, pr);
   const cf = dashboard(worker);
   const links = `[Worker deployments](${cf.deployments}) · [Observability logs](${cf.observability}) · [Workflow run](${run})`;
-  const commit = "sha" in s ? `\n\nCommit: \`${s.sha.slice(0, 7)}\`` : "";
+  // Each stage rewrites the comment, so this is when the preview last changed state.
+  const updated = `${now.toISOString().slice(0, 16).replace("T", " ")} UTC`;
+  const commit = "sha" in s ? `\n\nCommit: \`${s.sha.slice(0, 7)}\` · Updated: ${updated}` : "";
   switch (s.stage) {
     case "building":
       return `${MARKER}\n### ⏳ PR preview deploying\n\nBuilding and deploying \`${worker}\`. This comment updates when it is ready.\n\n${links}${commit}\n\n<sub>On the first deploy the Cloudflare pages appear once the Worker is uploaded.</sub>`;
