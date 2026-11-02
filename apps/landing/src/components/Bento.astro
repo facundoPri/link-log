@@ -77,19 +77,28 @@ const groupName: Record<number, string> = { 5: "Research", 3: "Dev", 1: "Recipes
       <!-- Autogroup -->
       <article class="card lg:col-span-2" data-reveal>
         <div class="visual" aria-hidden="true">
-          <div class="relative h-16 w-full max-w-72">
-            <div class="strip-a absolute inset-0 flex items-end gap-1 rounded-t-lg bg-line px-2 pt-2">
-              {strip.map((s) => <span class="flex h-8 min-w-0 flex-1 items-center justify-center rounded-t-md bg-white/60"><span class={`favicon t${s.t} size-4`}>{s.l}</span></span>)}
+          <div class="flex w-full max-w-64 flex-col items-center gap-3">
+            <div class="relative h-28 w-full">
+              <!-- Before: loose tabs -->
+              <div class="ag-loose absolute inset-0 flex flex-col justify-center rounded-xl bg-white p-3 shadow-[0_0_0_1px_var(--color-line)]">
+                <p class="caption-4 text-muted">8 open tabs</p>
+                <div class="mt-2 flex flex-wrap gap-1">
+                  {strip.map((s) => <span class={`favicon t${s.t} size-6`}>{s.l}</span>)}
+                </div>
+              </div>
+              <!-- After: one row per group -->
+              <div class="absolute inset-0 flex flex-col justify-center gap-1">
+                {grouped.map(({ g, tabs }, i) => (
+                  <div class={`ag-row ag-row-${i + 1} flex items-center gap-2 rounded-lg bg-white px-2 py-1 shadow-[0_0_0_1px_var(--color-line)]`}>
+                    <span class={`chip t${g} w-24 shrink-0`}><span class="dot" />{groupName[g]}</span>
+                    <span class="flex gap-1">
+                      {tabs.map((s) => <span class={`favicon t${s.t} size-5`}>{s.l}</span>)}
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
-            <div class="strip-b absolute inset-0 flex items-end gap-1 rounded-t-lg bg-line px-2 pt-2">
-              {grouped.map(({ g, tabs }) => (
-                <>
-                  <span class={`chip t${g} mb-1 shrink-0 px-2`}>{groupName[g]}</span>
-                  {tabs.map((s) => <span class={`t${g} flex h-8 min-w-0 flex-1 items-center justify-center rounded-t-md bg-white/60 shadow-[inset_0_-2px_0_var(--tag-dot)]`}><span class={`favicon t${s.t} size-4`}>{s.l}</span></span>)}
-                </>
-              ))}
-            </div>
-            <span class="press-btn button-xsm absolute -bottom-8 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-md bg-ink px-2 py-1 text-white">
+            <span class="press-btn button-xsm flex items-center gap-1 rounded-md bg-ink px-2 py-1 text-white">
               <Icon name="sparkle" weight="fill" class="size-3" /> Autogroup
             </span>
           </div>
@@ -220,12 +229,16 @@ const groupName: Record<number, string> = { 5: "Research", 3: "Dev", 1: "Recipes
 
   .scan-fill { transform: scaleX(0.8); }
 
-  .strip-a { animation: strip-a 6s var(--ease-base) infinite; }
-  .strip-b { animation: strip-b 6s var(--ease-base) infinite; }
-  @keyframes strip-a { 0%, 40% { opacity: 1; transform: none; } 50%, 92% { opacity: 0; transform: translateY(-4px); } 100% { opacity: 1; transform: none; } }
-  @keyframes strip-b { 0%, 42% { opacity: 0; transform: translateY(4px); } 52%, 90% { opacity: 1; transform: none; } 98%, 100% { opacity: 0; } }
+  /* Autogroup: loose tabs fade out on the button press, group rows arrive one by one. */
+  .ag-loose { animation: ag-loose 6s var(--ease-base) infinite; }
+  @keyframes ag-loose { 0%, 36% { opacity: 1; transform: none; } 44%, 92% { opacity: 0; transform: scale(0.96); } 100% { opacity: 1; transform: none; } }
+  .ag-row { opacity: 0; animation: 6s var(--ease-base) infinite; }
+  .ag-row-1 { animation-name: ag-1; } .ag-row-2 { animation-name: ag-2; } .ag-row-3 { animation-name: ag-3; }
+  @keyframes ag-1 { 0%, 42% { opacity: 0; transform: translateY(8px); } 50%, 88% { opacity: 1; transform: none; } 94%, 100% { opacity: 0; } }
+  @keyframes ag-2 { 0%, 46% { opacity: 0; transform: translateY(8px); } 54%, 88% { opacity: 1; transform: none; } 94%, 100% { opacity: 0; } }
+  @keyframes ag-3 { 0%, 50% { opacity: 0; transform: translateY(8px); } 58%, 88% { opacity: 1; transform: none; } 94%, 100% { opacity: 0; } }
   .press-btn { animation: press-btn 6s var(--ease-base) infinite; }
-  @keyframes press-btn { 0%, 34%, 44%, 100% { transform: translateX(-50%); } 38% { transform: translateX(-50%) scale(0.9); } }
+  @keyframes press-btn { 0%, 32%, 42%, 100% { transform: none; } 36% { transform: scale(0.92); } }
 
   .scan-bar { animation: scan 3s var(--ease-base) infinite alternate; }
   @keyframes scan { to { transform: translateY(88px); } }
@@ -251,7 +264,8 @@ const groupName: Record<number, string> = { 5: "Research", 3: "Dev", 1: "Recipes
 
   @media (prefers-reduced-motion: reduce) {
     .bento * { animation: none !important; }
-    .strip-a, .klabel-2, .klabel-3, .klabel-4 { opacity: 0; }
+    .ag-loose, .klabel-2, .klabel-3, .klabel-4 { opacity: 0; }
+    .ag-row { opacity: 1; }
     .klabel-1 { opacity: 1; }
   }
 </style>
