@@ -1,4 +1,4 @@
-import { onceInView, reducedMotion, wait } from "./motion";
+import { onceInView, reducedMotion, reportStep, wait } from "./motion";
 
 type Sample = {
   title: string;
@@ -110,6 +110,7 @@ export function initAutoTags() {
     $("[data-s-domain]").textContent = s.domain;
     $("[data-s-words]").textContent = s.words;
 
+    reportStep(root, "autotags", 2);
     const ms = reducedMotion() ? 0 : firstRun ? 700 : 450;
     if (firstRun) {
       status.style.opacity = "1";
@@ -131,6 +132,7 @@ export function initAutoTags() {
     status.style.opacity = "0";
     evaluated = true;
     classify(firstRun);
+    reportStep(root, "autotags", 3);
   };
 
   tabs.forEach((tab, i) => tab.addEventListener("click", () => evaluate(i)));
@@ -147,5 +149,6 @@ export function initAutoTags() {
   });
 
   setThresholdUi();
+  reportStep(root, "autotags", 1);
   onceInView(root, () => evaluate(0), 0.3);
 }

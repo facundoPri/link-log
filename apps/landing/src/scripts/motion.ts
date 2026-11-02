@@ -64,3 +64,8 @@ export function flip(nodes: HTMLElement[], mutate: () => void, duration = 600) {
     );
   }
 }
+
+/** Tells the demo story strip how many of a demo's three steps are complete. */
+export function reportStep(from: Element, demo: string, done: number) {
+  from.dispatchEvent(new CustomEvent("demo:step", { bubbles: true, detail: { demo, done } }));
+}

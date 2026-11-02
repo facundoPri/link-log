@@ -1,4 +1,4 @@
-import { flip, onceInView, reducedMotion, wait } from "./motion";
+import { flip, onceInView, reducedMotion, reportStep, wait } from "./motion";
 
 type Lens = { id: string; question: string; kind: "yesno" | "choice"; options: string[] };
 type Link = { title: string; answers: Record<string, [string, number]> };
@@ -88,6 +88,7 @@ export function initLenses() {
 
   const applyFilter = async (next: string) => {
     filter = next;
+    if (next !== "all") reportStep(root, "lenses", 3);
     renderFilters();
     const keep = (i: number) => next === "all" || links[i]!.answers[lens.id]![0] === next;
     const leaving = rows.filter((r, i) => !r.hidden && !keep(i));
@@ -103,6 +104,7 @@ export function initLenses() {
 
   const run = async (next: Lens) => {
     const my = ++token;
+    reportStep(root, "lenses", 1);
     lens = next;
     pills.forEach((p) => p.setAttribute("aria-checked", String(p.dataset.lens === next.id)));
     const cached = evaluated.has(next.id);
@@ -129,6 +131,7 @@ export function initLenses() {
     }
     if (my !== token) return;
     evaluated.add(next.id);
+    reportStep(root, "lenses", 2);
     ready = true;
     setStatus(cached ? "Saved results, no new calls" : `${links.length} answers`, false);
     renderFilters();

@@ -1,4 +1,4 @@
-import { flip, onceInView, reducedMotion, wait } from "./motion";
+import { flip, onceInView, reducedMotion, reportStep, wait } from "./motion";
 
 type Group = { id: string; name: string; tone: number };
 type Tab = { id: number; title: string; group: string; saved: boolean };
@@ -88,6 +88,7 @@ export function initBrowserDemo() {
       if (!reducedMotion()) await wait(110);
     }
     stage = "suggested";
+    reportStep(root, "browser", 1);
     busy = false;
     status.textContent = "Twelve suggestions to review. Change any of them, then apply.";
     setButtons();
@@ -115,6 +116,7 @@ export function initBrowserDemo() {
       for (const { t } of order()) list.append(rowEls.get(t.id)!);
     }, 700);
     stage = "grouped";
+    reportStep(root, "browser", 2);
     setCounts();
     await wait(reducedMotion() ? 0 : 700);
     busy = false;
@@ -138,6 +140,7 @@ export function initBrowserDemo() {
       }
     });
     stage = "closed";
+    reportStep(root, "browser", 3);
     setCounts();
     busy = false;
     status.textContent = `Closed the ${saved.length} tabs marked Saved. They are still in your library.`;
@@ -164,6 +167,7 @@ export function initBrowserDemo() {
       }
     });
     stage = "start";
+    reportStep(root, "browser", 0);
     setCounts();
     status.textContent = "Twelve tabs, no groups. Press Autogroup to sort them.";
     setButtons();

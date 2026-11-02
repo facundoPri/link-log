@@ -4,10 +4,38 @@ import AutoTags from "./AutoTags.astro";
 import Lenses from "./Lenses.astro";
 import BrowserDemo from "./BrowserDemo.astro";
 
+// Each tab is a job the visitor already has, told as problem, three steps and result.
 const tabs = [
-  { id: "autotags", label: "Auto tags", icon: "sparkle", hint: "Drag the threshold, switch links." },
-  { id: "lenses", label: "Lenses", icon: "aperture", hint: "Pick a question, filter by answer." },
-  { id: "browser", label: "Browser", icon: "browsers", hint: "Autogroup, apply, close what you saved." },
+  {
+    id: "autotags",
+    job: "Organize saved links",
+    feature: "Auto tags",
+    icon: "tag",
+    problem: "Hundreds of saved links and no way to find them again.",
+    steps: ["Write one sentence per tag", "Save a link", "Tags land on their own"],
+    outcome: "Filed by your rules. You never tag by hand.",
+    hint: "Switch links or drag the threshold.",
+  },
+  {
+    id: "lenses",
+    job: "Pick what to read",
+    feature: "Lenses",
+    icon: "aperture",
+    problem: "Too many links and no idea which to open first.",
+    steps: ["Ask a question", "Every link gets an answer", "Filter to the yeses"],
+    outcome: "Only the links worth your time, ready to open.",
+    hint: "Pick a question, then filter by answer.",
+  },
+  {
+    id: "browser",
+    job: "Tame open tabs",
+    feature: "Browser",
+    icon: "browsers",
+    problem: "Twelve tabs open and nothing where you left it.",
+    steps: ["Press Autogroup", "Check and apply", "Close what you saved"],
+    outcome: "Four groups and four fewer tabs, in three clicks. Nothing lost.",
+    hint: "Use the bar at the bottom of the window.",
+  },
 ];
 ---
 
@@ -15,13 +43,14 @@ const tabs = [
   <div class="mx-auto max-w-6xl">
     <div class="mx-auto flex max-w-[680px] flex-col items-center gap-4 text-center" data-reveal>
       <p class="caption-3 rounded-full bg-white px-3 py-1 text-brand-strong shadow-[0_0_0_1px_var(--color-line)]">Live demo</p>
-      <h2 class="heading-4 md:heading-3 text-ink">Try it right here</h2>
+      <h2 class="heading-4 md:heading-3 text-ink">Pick a mess, watch it clean up</h2>
+      <p class="body-3 text-muted">Each demo takes a few clicks. That is the whole app.</p>
     </div>
 
     <div class="mt-12" data-showcase data-reveal style="--reveal-delay:80ms">
-      <div class="mx-auto max-w-md">
-        <div class="relative grid grid-cols-3 rounded-xl bg-white p-1 shadow-[0_0_0_1px_var(--color-line)]" role="tablist" aria-label="Demos">
-          <span class="tab-indicator absolute inset-y-1 left-1 w-[calc((100%-8px)/3)] rounded-lg bg-ink" aria-hidden="true"></span>
+      <div class="mx-auto max-w-2xl">
+        <div class="relative grid grid-cols-3 rounded-2xl bg-white p-1 shadow-[0_0_0_1px_var(--color-line)]" role="tablist" aria-label="Demos">
+          <span class="tab-indicator absolute inset-y-1 left-1 w-[calc((100%-8px)/3)] rounded-xl bg-ink" aria-hidden="true"></span>
           {
             tabs.map((t, i) => (
               <button
@@ -32,28 +61,61 @@ const tabs = [
                 aria-selected={i === 0 ? "true" : "false"}
                 tabindex={i === 0 ? 0 : -1}
                 data-tab-btn={i}
-                class="showcase-tab button-sm relative z-10 flex items-center justify-center gap-2 rounded-lg px-3 py-2"
+                class="showcase-tab relative z-10 flex flex-col items-center gap-0.5 rounded-xl px-2 py-2 sm:flex-row sm:justify-center sm:gap-3 sm:px-3"
               >
-                <Icon name={t.icon} weight={t.id === "autotags" ? "fill" : "regular"} class="size-4" />
-                {t.label}
+                <Icon name={t.icon} class="size-5 shrink-0" />
+                <span class="flex flex-col items-center sm:items-start">
+                  <span class="button-sm text-center sm:text-left">{t.job}</span>
+                  <span class="caption-5 tab-feature">{t.feature}</span>
+                </span>
               </button>
             ))
           }
         </div>
-        <p class="caption-5 mt-3 text-center text-muted" data-tab-hint aria-live="polite">{tabs[0]!.hint}</p>
       </div>
 
       <div class="mt-8">
         {
           tabs.map((t, i) => (
-            <div
-              role="tabpanel"
-              id={`panel-${t.id}`}
-              aria-labelledby={`tab-${t.id}`}
-              data-panel={i}
-              class="panel"
-              hidden={i !== 0}
-            >
+            <div role="tabpanel" id={`panel-${t.id}`} aria-labelledby={`tab-${t.id}`} data-panel={i} class="panel" hidden={i !== 0}>
+              <!-- Story: problem, three steps that light up as you use the demo, result -->
+              <div class="story mb-6 grid gap-4 rounded-2xl bg-white p-4 shadow-[0_0_0_1px_var(--color-line)] lg:grid-cols-[1fr_auto_1fr] lg:items-center" data-story={t.id}>
+                <p class="flex items-start gap-3">
+                  <span class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-warning-soft text-warning">
+                    <Icon name="warning-circle" weight="bold" class="size-4" />
+                  </span>
+                  <span class="flex flex-col">
+                    <span class="caption-3 text-faint">The problem</span>
+                    <span class="body-5 text-ink">{t.problem}</span>
+                  </span>
+                </p>
+                <ol class="flex flex-wrap items-center gap-2">
+                  {t.steps.map((s, j) => (
+                    <>
+                      <li class="story-step caption-4 flex items-center gap-2 rounded-full py-1 pl-1 pr-3" data-step={j + 1}>
+                        <span class="step-num caption-3 tabular relative flex size-6 items-center justify-center rounded-full">
+                          <span class="num">{j + 1}</span>
+                          <Icon name="check" weight="bold" class="tick absolute size-3" />
+                        </span>
+                        {s}
+                      </li>
+                      {j < t.steps.length - 1 && <Icon name="caret-right" class="hidden size-3 text-faint sm:block" />}
+                    </>
+                  ))}
+                </ol>
+                <p class="story-outcome flex items-start gap-3 lg:justify-self-end">
+                  <span class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-brand-soft text-brand-strong">
+                    <Icon name="check" weight="bold" class="size-4" />
+                  </span>
+                  <span class="flex flex-col">
+                    <span class="caption-3 text-faint">Result</span>
+                    <span class="body-5 text-ink">{t.outcome}</span>
+                  </span>
+                </p>
+              </div>
+              <p class="caption-4 mb-4 flex items-center justify-center gap-2 text-muted">
+                <Icon name="hand-pointing" class="size-4 text-brand" /> {t.hint}
+              </p>
               {t.id === "autotags" && <AutoTags />}
               {t.id === "lenses" && <Lenses />}
               {t.id === "browser" && <BrowserDemo />}
@@ -71,8 +133,38 @@ const tabs = [
   .showcase-tab:hover { color: var(--color-ink); }
   .showcase-tab[aria-selected="true"] { color: white; }
   .showcase-tab:active { transform: scale(0.98); }
+  .tab-feature { opacity: 0.7; }
   .panel { animation: panel-in 600ms var(--ease-base); }
   @keyframes panel-in { from { opacity: 0; transform: translateY(16px); } }
+
+  .story-step {
+    color: var(--color-muted);
+    background: var(--color-subtle);
+    transition: color 300ms var(--ease-base), background-color 300ms var(--ease-base);
+  }
+  .step-num { background: white; color: var(--color-muted); box-shadow: 0 0 0 1px var(--color-line); transition: background-color 300ms var(--ease-base), color 300ms var(--ease-base); }
+  .step-num .tick { opacity: 0; transform: scale(0.5); transition: opacity 300ms var(--ease-base), transform 500ms var(--ease-base); }
+  .step-num .num { transition: opacity 300ms var(--ease-base); }
+  .story-step.is-next { color: var(--color-ink); background: white; box-shadow: 0 0 0 1.5px var(--color-ink); }
+  .story-step.is-next .step-num { background: var(--color-ink); color: white; box-shadow: none; }
+  .story-step.is-next .step-num::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 9999px;
+    box-shadow: 0 0 0 2px var(--color-ink);
+    animation: step-ping 1.6s var(--ease-base) infinite;
+  }
+  @keyframes step-ping { from { opacity: 0.5; transform: scale(1); } to { opacity: 0; transform: scale(1.7); } }
+  .story-step.is-done { color: var(--color-brand-strong); background: var(--color-brand-soft); }
+  .story-step.is-done .step-num { background: var(--color-brand); color: white; box-shadow: none; }
+  .story-step.is-done .num { opacity: 0; }
+  .story-step.is-done .tick { opacity: 1; transform: none; }
+  .story-outcome { opacity: 0.35; transition: opacity 500ms var(--ease-base), transform 500ms var(--ease-base); transform: translateY(4px); }
+  .story.is-complete .story-outcome { opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce) {
+    .story-step.is-next .step-num::after { animation: none; }
+  }
 </style>
 
 <script>
@@ -81,12 +173,7 @@ const tabs = [
     const btns = [...root.querySelectorAll<HTMLButtonElement>("[data-tab-btn]")];
     const panels = [...root.querySelectorAll<HTMLElement>("[data-panel]")];
     const indicator = root.querySelector<HTMLElement>(".tab-indicator")!;
-    const hint = root.querySelector<HTMLElement>("[data-tab-hint]")!;
-    const hints = [
-      "Drag the threshold, switch links.",
-      "Pick a question, filter by answer.",
-      "Autogroup, apply, close what you saved.",
-    ];
+
     const select = (i: number, focus = false) => {
       btns.forEach((b, j) => {
         b.setAttribute("aria-selected", String(i === j));
@@ -94,7 +181,6 @@ const tabs = [
       });
       panels.forEach((p, j) => (p.hidden = i !== j));
       indicator.style.transform = `translateX(${i * 100}%)`;
-      hint.textContent = hints[i]!;
       if (focus) btns[i]!.focus();
     };
     btns.forEach((b, i) => b.addEventListener("click", () => select(i)));
@@ -104,5 +190,26 @@ const tabs = [
       if (k === "ArrowRight") select((cur + 1) % btns.length, true);
       if (k === "ArrowLeft") select((cur + btns.length - 1) % btns.length, true);
     });
+
+    // Steps only move forward, except when a demo starts over (done = 0).
+    // Auto tags starts with its rules already written.
+    const progress = new Map<string, number>([["autotags", 1]]);
+    const render = (demo: string, done: number) => {
+      const story = root.querySelector<HTMLElement>(`[data-story="${demo}"]`);
+      if (!story) return;
+      story.querySelectorAll<HTMLElement>("[data-step]").forEach((el) => {
+        const n = Number(el.dataset.step);
+        el.classList.toggle("is-done", n <= done);
+        el.classList.toggle("is-next", n === done + 1);
+      });
+      story.classList.toggle("is-complete", done >= 3);
+    };
+    root.addEventListener("demo:step", (e) => {
+      const { demo, done } = (e as CustomEvent<{ demo: string; done: number }>).detail;
+      const next = done === 0 ? 0 : Math.max(progress.get(demo) ?? 0, done);
+      progress.set(demo, next);
+      render(demo, next);
+    });
+    ["autotags", "lenses", "browser"].forEach((d) => render(d, progress.get(d) ?? 0));
   }
 </script>
