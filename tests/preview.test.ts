@@ -66,6 +66,7 @@ describe("preview trust and identity", () => {
     expect(cfg.queues.consumers[0]?.queue).toBe(cfg.queues.producers[0]?.queue);
     expect(cfg.workflows[0]?.name).not.toBe("linklog-process-link");
     expect(cfg.ai.binding).toBe("AI");
+    expect(cfg.vars.JEV_PROVIDER).toBe("typesafe");
     expect(cfg.browser.binding).toBe("BROWSER");
     expect(cfg.send_email[0]?.name).toBe("EMAIL");
     expect(() => config(repo, pr, dbId, "evil.workers.dev/path", "auth@example.com")).toThrow();
@@ -236,6 +237,7 @@ test("workflow keeps PR execution out of the secret-bearing job and serializes m
   const reconcile = workflow.jobs.reconcile;
   expect(reconcile.steps.filter((s: any) => s.uses?.startsWith("actions/checkout@")).map((s: any) => s.with.ref)).toEqual(["${{ github.sha }}"]);
   expect(JSON.stringify(reconcile)).not.toContain("bun run build");
+  expect(reconcile.steps.at(-1).env.PREVIEW_TYPESAFE_API_KEY).toBe("${{ secrets.PREVIEW_TYPESAFE_API_KEY }}");
   for (const job of Object.values(workflow.jobs) as any[]) for (const step of job.steps) {
     if (step.uses) expect(step.uses).toMatch(/@[a-f0-9]{40}$/);
     if (step.run) expect(step.run).not.toContain("${{");
