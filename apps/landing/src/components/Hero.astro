@@ -8,22 +8,22 @@ import { TAGS, LIBRARY, INCOMING } from "../data/demo";
 <section class="relative overflow-hidden px-4 pb-24 pt-32 md:pt-40">
   <div class="mx-auto flex max-w-6xl flex-col items-center text-center">
     <a
-      href="#how"
+      href="#demo"
       class="caption-4 mb-6 inline-flex items-center gap-2 rounded-full bg-brand-soft py-1 pl-1 pr-3 text-brand-strong transition-transform duration-300 ease-base hover:-translate-y-px"
       data-reveal
     >
       <span class="flex size-6 items-center justify-center rounded-full bg-white">
-        <Icon name="sparkle" weight="fill" class="size-3" />
+        <Icon name="google-chrome-logo" weight="bold" class="size-3" />
       </span>
-      Auto tags, lenses and tab groups<span class="hidden sm:inline"> in one library</span>
+      Sorts your open Chrome tabs too
+      <Icon name="arrow-right" weight="bold" class="size-3" />
     </a>
 
     <h1 class="heading-4 sm:heading-2 lg:heading-1 hero-ink max-w-[680px] pb-2" data-reveal style="--reveal-delay:60ms">
       Your links and tabs,<br /> sorted the way<br class="sm:hidden" /> you think
     </h1>
     <p class="body-3 mt-6 max-w-[680px] text-muted sm:title-1 sm:font-normal" data-reveal style="--reveal-delay:120ms">
-      Save any page in one keystroke. Linklog reads it, tags it with rules you write in plain words and
-      answers your questions about it, so your library and your browser stay in order.
+      Save any page. Linklog reads it, tags it by your rules<br class="hidden sm:block" /> and answers your questions about it.
     </p>
 
     <div class="mt-8 flex flex-col items-center gap-4" data-reveal style="--reveal-delay:180ms">
@@ -51,7 +51,41 @@ import { TAGS, LIBRARY, INCOMING } from "../data/demo";
   </div>
 
   <!-- Product window: links arrive, get a preview, then get tagged. -->
-  <div class="mx-auto mt-16 max-w-5xl" data-reveal style="--reveal-delay:260ms">
+  <div class="relative mx-auto mt-16 max-w-5xl" data-reveal style="--reveal-delay:260ms">
+    <!-- Floating cards: what happens to a link after it lands. Wide screens only. -->
+    <div class="float-card float-a absolute -left-48 top-40 z-10 hidden w-56 rounded-xl bg-white p-3 text-left min-[1440px]:block" aria-hidden="true">
+      <p class="caption-4 flex items-center gap-2 text-muted">
+        <span class="flex size-6 items-center justify-center rounded-md bg-brand-soft text-brand-strong"><Icon name="sparkle" weight="fill" class="size-3" /></span>
+        Auto tagged
+      </p>
+      <p class="title-4 mt-2 truncate text-ink">Local first software</p>
+      <div class="mt-2 flex gap-1">
+        <TagChip name="research" score={93} />
+        <TagChip name="to read" score={86} />
+      </div>
+    </div>
+    <div class="float-card float-b absolute -right-48 top-56 z-10 hidden w-56 rounded-xl bg-white p-3 text-left min-[1440px]:block" aria-hidden="true">
+      <p class="caption-4 flex items-center gap-2 text-muted">
+        <span class="flex size-6 items-center justify-center rounded-md bg-subtle text-ink-2"><Icon name="aperture" class="size-4" /></span>
+        Lens
+      </p>
+      <p class="title-4 mt-2 text-ink">Worth reading this week?</p>
+      <p class="mt-2 flex items-center justify-between">
+        <span class="caption-5 text-muted">7 links</span>
+        <span class="caption-4 tabular rounded-md bg-brand-soft px-2 py-0.5 text-brand-strong">3 yes</span>
+      </p>
+    </div>
+    <div class="float-card float-c absolute -right-40 -bottom-8 z-10 hidden w-48 rounded-xl bg-white p-3 text-left min-[1440px]:block" aria-hidden="true">
+      <p class="caption-4 flex items-center gap-2 text-muted">
+        <span class="flex size-6 items-center justify-center rounded-md bg-subtle text-ink-2"><Icon name="browsers" class="size-4" /></span>
+        Autogroup
+      </p>
+      <div class="mt-2 flex flex-wrap gap-1">
+        <span class="chip t5"><span class="dot"></span>Research</span>
+        <span class="chip t3"><span class="dot"></span>Linklog dev</span>
+        <span class="chip t1"><span class="dot"></span>Recipes</span>
+      </div>
+    </div>
     <div class="window relative" data-hero-demo>
       <div class="window-bar">
         <div class="traffic"><span></span><span></span><span></span></div>
@@ -182,9 +216,6 @@ import { TAGS, LIBRARY, INCOMING } from "../data/demo";
         </div>
       </div>
     </div>
-    <p class="caption-5 mt-4 text-center text-faint">
-      Paste a list and each link gets a preview, its page text and the tags whose rules it matches.
-    </p>
   </div>
 </section>
 
@@ -200,6 +231,14 @@ import { TAGS, LIBRARY, INCOMING } from "../data/demo";
   .add-dialog.is-open .add-card { transform: none; }
   .caret { animation: blink 1s steps(1) infinite; color: var(--color-brand); }
   @keyframes blink { 50% { opacity: 0; } }
+  .float-card {
+    box-shadow: 0 0 0 1px oklch(0.2 0.01 260 / 0.08), 0 16px 40px oklch(0.2 0.01 260 / 0.12);
+    animation: bob 7s var(--ease-base) infinite alternate;
+  }
+  .float-b { animation-delay: -2.3s; }
+  .float-c { animation-delay: -4.1s; }
+  @keyframes bob { from { transform: translateY(-6px); } to { transform: translateY(6px); } }
+  @media (prefers-reduced-motion: reduce) { .float-card { animation: none; } }
   .count-bump { display: inline-block; }
   .count-bump.bumped { animation: bump 600ms var(--ease-base); color: var(--color-brand); }
   @keyframes bump { 30% { transform: translateY(-3px); } }

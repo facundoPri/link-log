@@ -3,8 +3,8 @@ export const REPO_URL = "https://github.com/facundoPri/link-log";
 export const RELEASES_URL = `${REPO_URL}/releases`;
 
 export const NAV = [
-  { href: "#autotags", label: "Auto tags" },
-  { href: "#lenses", label: "Lenses" },
-  { href: "#browser", label: "Browser" },
+  { href: "#features", label: "Features" },
+  { href: "#demo", label: "Demo" },
+  { href: "#how", label: "How it works" },
   { href: "#faq", label: "FAQ" },
 ] as const;

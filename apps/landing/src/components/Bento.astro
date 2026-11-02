@@ -1,0 +1,265 @@
+---
+import Icon from "./Icon.astro";
+import TagChip from "./TagChip.astro";
+
+const strip = [
+  { l: "G", t: 4, g: 3 }, { l: "A", t: 0, g: 5 }, { l: "S", t: 2, g: 1 }, { l: "D", t: 4, g: 3 },
+  { l: "Y", t: 0, g: 5 }, { l: "B", t: 0, g: 1 }, { l: "I", t: 5, g: 5 }, { l: "C", t: 1, g: 3 },
+];
+const grouped = [5, 3, 1].map((g) => ({ g, tabs: strip.filter((s) => s.g === g) }));
+const groupName: Record<number, string> = { 5: "Research", 3: "Dev", 1: "Recipes" };
+---
+
+<section id="features" class="px-4 py-24">
+  <div class="mx-auto max-w-6xl">
+    <div class="mx-auto flex max-w-[680px] flex-col items-center gap-4 text-center" data-reveal>
+      <p class="caption-3 rounded-full bg-brand-soft px-3 py-1 text-brand-strong">Features</p>
+      <h2 class="heading-4 md:heading-3 text-ink">One library for links and tabs</h2>
+      <p class="body-3 text-muted">Everything files itself, by rules you can read.</p>
+    </div>
+
+    <div class="bento mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-6" data-play>
+      <!-- Auto tags -->
+      <article class="card sm:col-span-2 lg:col-span-4" data-reveal>
+        <div class="visual" aria-hidden="true">
+          <div class="w-full max-w-sm rounded-xl bg-white p-3 shadow-[0_0_0_1px_var(--color-line),0_8px_24px_oklch(0.2_0.01_260/0.06)]">
+            <div class="flex items-center gap-3">
+              <span class="favicon t2">S</span>
+              <div class="min-w-0">
+                <p class="body-5 truncate text-ink">One pan lemon orzo with spinach</p>
+                <p class="caption-5 text-muted">seriouseats.com</p>
+              </div>
+            </div>
+            <div class="mt-3 flex flex-wrap gap-1">
+              <span class="in1"><TagChip name="recipes" score={97} auto /></span>
+              <span class="in2"><TagChip name="quick dinner" score={88} auto /></span>
+              <span class="in3 opacity-40"><TagChip name="to read" score={12} /></span>
+            </div>
+            <div class="mt-3 flex items-center gap-2">
+              <span class="caption-5 text-faint">Threshold</span>
+              <span class="relative h-1 flex-1 rounded-full bg-subtle">
+                <span class="scan-fill absolute inset-0 origin-left rounded-full bg-brand"></span>
+              </span>
+              <span class="caption-4 tabular text-ink-2">80%</span>
+            </div>
+          </div>
+        </div>
+        <div class="copy">
+          <h3 class="title-2 text-ink">Auto tags by your rules</h3>
+          <p class="body-6 text-muted">A sentence per tag. Only confident matches stick.</p>
+        </div>
+      </article>
+
+      <!-- Lenses -->
+      <article class="card lg:col-span-2" data-reveal style="--reveal-delay:80ms">
+        <div class="visual" aria-hidden="true">
+          <div class="flex w-full max-w-60 flex-col gap-2">
+            <span class="caption-4 flex items-center gap-2 self-start rounded-lg bg-white px-3 py-1 text-ink shadow-[0_0_0_1.5px_var(--color-ink)]">
+              <Icon name="aperture" class="size-4" /> Read this week?
+            </span>
+            {[["I", 5, "Yes", "91"], ["P", 7, "No", "11"], ["Y", 0, "Yes", "87"]].map(([l, t, v, p], i) => (
+              <div class="flex items-center gap-2 rounded-lg bg-white px-2 py-1 shadow-[0_0_0_1px_var(--color-line)]">
+                <span class={`favicon t${t} size-4`}>{l}</span>
+                <span class="skeleton h-2 flex-1" />
+                <span class={`in${i + 1} caption-4 tabular gap-1 rounded-md px-2 ${v === "Yes" ? "bg-brand-soft text-brand-strong" : "text-muted"}`}>
+                  {v} <span class="opacity-60">{p}%</span>
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div class="copy">
+          <h3 class="title-2 text-ink">Lenses</h3>
+          <p class="body-6 text-muted">Ask one question across links or tabs.</p>
+        </div>
+      </article>
+
+      <!-- Autogroup -->
+      <article class="card lg:col-span-2" data-reveal>
+        <div class="visual" aria-hidden="true">
+          <div class="relative h-16 w-full max-w-72">
+            <div class="strip-a absolute inset-0 flex items-end gap-1 rounded-t-lg bg-line px-2 pt-2">
+              {strip.map((s) => <span class="flex h-8 min-w-0 flex-1 items-center justify-center rounded-t-md bg-white/60"><span class={`favicon t${s.t} size-4`}>{s.l}</span></span>)}
+            </div>
+            <div class="strip-b absolute inset-0 flex items-end gap-1 rounded-t-lg bg-line px-2 pt-2">
+              {grouped.map(({ g, tabs }) => (
+                <>
+                  <span class={`chip t${g} mb-1 shrink-0 px-2`}>{groupName[g]}</span>
+                  {tabs.map((s) => <span class={`t${g} flex h-8 min-w-0 flex-1 items-center justify-center rounded-t-md bg-white/60 shadow-[inset_0_-2px_0_var(--tag-dot)]`}><span class={`favicon t${s.t} size-4`}>{s.l}</span></span>)}
+                </>
+              ))}
+            </div>
+            <span class="press-btn button-xsm absolute -bottom-8 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-md bg-ink px-2 py-1 text-white">
+              <Icon name="sparkle" weight="fill" class="size-3" /> Autogroup
+            </span>
+          </div>
+        </div>
+        <div class="copy">
+          <h3 class="title-2 text-ink">Autogroup tabs</h3>
+          <p class="body-6 text-muted">Open tabs land in the groups you described.</p>
+        </div>
+      </article>
+
+      <!-- Reads the page -->
+      <article class="card lg:col-span-2" data-reveal style="--reveal-delay:80ms">
+        <div class="visual" aria-hidden="true">
+          <div class="relative w-full max-w-52 overflow-hidden rounded-xl bg-white p-3 shadow-[0_0_0_1px_var(--color-line)]">
+            <div class="flex flex-col gap-2">
+              <span class="h-2 w-3/4 rounded-full bg-line-strong"></span>
+              <span class="h-2 w-full rounded-full bg-subtle"></span>
+              <span class="h-2 w-5/6 rounded-full bg-subtle"></span>
+              <span class="h-2 w-full rounded-full bg-subtle"></span>
+              <span class="h-2 w-2/3 rounded-full bg-subtle"></span>
+            </div>
+            <span class="scan-bar absolute inset-x-0 top-0 h-6 bg-brand/15"></span>
+          </div>
+          <div class="mt-3 flex gap-2 text-muted">
+            <Icon name="youtube-logo" class="size-4" /><Icon name="x-logo" class="size-4" /><Icon name="instagram-logo" class="size-4" /><Icon name="image-square" class="size-4" />
+          </div>
+        </div>
+        <div class="copy">
+          <h3 class="title-2 text-ink">Reads the whole page</h3>
+          <p class="body-6 text-muted">Markdown, captions and text in images.</p>
+        </div>
+      </article>
+
+      <!-- Keyboard -->
+      <article class="card lg:col-span-2" data-reveal style="--reveal-delay:160ms">
+        <div class="visual" aria-hidden="true">
+          <div class="flex gap-2">
+            {["T", "L", "O", "/"].map((k, i) => <span class={`key key-${i + 1} title-3 flex size-10 items-center justify-center rounded-lg bg-white text-ink`}>{k}</span>)}
+          </div>
+          <div class="relative mt-4 h-5 w-32 text-center">
+            {["Auto tag", "Run a lens", "Open links", "Search"].map((l, i) => <span class={`klabel klabel-${i + 1} caption-4 absolute inset-0 text-brand-strong`}>{l}</span>)}
+          </div>
+        </div>
+        <div class="copy">
+          <h3 class="title-2 text-ink">Keyboard first</h3>
+          <p class="body-6 text-muted">Select, press a key, done.</p>
+        </div>
+      </article>
+
+      <!-- Private -->
+      <article class="card sm:col-span-1 lg:col-span-3" data-reveal>
+        <div class="visual" aria-hidden="true">
+          <div class="relative flex size-16 items-center justify-center rounded-2xl bg-brand text-white">
+            <span class="lock-ring absolute inset-0 rounded-2xl"></span>
+            <Icon name="lock-simple" weight="bold" class="size-6" />
+          </div>
+          <div class="mt-4 flex flex-wrap justify-center gap-2">
+            <span class="caption-4 rounded-full bg-white px-3 py-1 text-ink-2 shadow-[0_0_0_1px_var(--color-line)]">Only your account</span>
+            <span class="caption-4 rounded-full bg-white px-3 py-1 text-ink-2 shadow-[0_0_0_1px_var(--color-line)]">Tabs read on your machine</span>
+          </div>
+        </div>
+        <div class="copy">
+          <h3 class="title-2 text-ink">Private by default</h3>
+          <p class="body-6 text-muted">Nobody else sees your library.</p>
+        </div>
+      </article>
+
+      <!-- Usage -->
+      <article class="card sm:col-span-1 lg:col-span-3" data-reveal style="--reveal-delay:80ms">
+        <div class="visual" aria-hidden="true">
+          <ul class="flex w-full max-w-72 flex-col gap-1">
+            {[["Auto tag", "2,417 tokens", "1.8s"], ["Lens", "1,093 tokens", "0.9s"], ["Extract", "browser time", "6.2s"]].map(([a, b, c], i) => (
+              <li class={`in${i + 1} caption-5 tabular flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-ink-2 shadow-[0_0_0_1px_var(--color-line)]`}>
+                <span class="size-1.5 rounded-full bg-brand" />
+                <span class="caption-4 text-ink">{a}</span>
+                <span class="ml-auto text-muted">{b}</span>
+                <span class="w-8 text-right text-muted">{c}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div class="copy">
+          <h3 class="title-2 text-ink">Costs you can see</h3>
+          <p class="body-6 text-muted">Every model call logged. Nothing retried behind your back.</p>
+        </div>
+      </article>
+    </div>
+  </div>
+</section>
+
+<style>
+  .card {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border-radius: 24px;
+    background: var(--color-page);
+    box-shadow: 0 0 0 1px var(--color-line);
+    transition: box-shadow 500ms var(--ease-base), transform 500ms var(--ease-base);
+  }
+  .card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 0 0 1px var(--color-line-strong), 0 16px 40px oklch(0.2 0.01 260 / 0.08);
+  }
+  .visual {
+    display: flex;
+    min-height: 208px;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    margin: 8px 8px 0;
+    border-radius: 16px;
+    background: var(--color-surface);
+  }
+  .copy { display: flex; flex-direction: column; gap: 4px; padding: 16px 24px 24px; }
+
+  /* Loops: 6s cycles. Items enter at staggered points and leave together. */
+  .in1, .in2, .in3 { display: inline-flex; animation: 6s var(--ease-base) infinite; }
+  .in1 { animation-name: in1; }
+  .in2 { animation-name: in2; }
+  .in3 { animation-name: in3; }
+  @keyframes in1 { 0%, 10% { opacity: 0; transform: translateY(4px) scale(0.92); } 16%, 88% { opacity: 1; transform: none; } 96%, 100% { opacity: 0; } }
+  @keyframes in2 { 0%, 20% { opacity: 0; transform: translateY(4px) scale(0.92); } 26%, 88% { opacity: 1; transform: none; } 96%, 100% { opacity: 0; } }
+  @keyframes in3 { 0%, 30% { opacity: 0; transform: translateY(4px) scale(0.92); } 36%, 88% { opacity: 1; transform: none; } 96%, 100% { opacity: 0; } }
+  .in3.opacity-40 { animation-name: in3-muted; }
+  @keyframes in3-muted { 0%, 30% { opacity: 0; transform: translateY(4px) scale(0.92); } 36%, 88% { opacity: 0.4; transform: none; } 96%, 100% { opacity: 0; } }
+
+  .scan-fill { transform: scaleX(0.8); }
+
+  .strip-a { animation: strip-a 6s var(--ease-base) infinite; }
+  .strip-b { animation: strip-b 6s var(--ease-base) infinite; }
+  @keyframes strip-a { 0%, 40% { opacity: 1; transform: none; } 50%, 92% { opacity: 0; transform: translateY(-4px); } 100% { opacity: 1; transform: none; } }
+  @keyframes strip-b { 0%, 42% { opacity: 0; transform: translateY(4px); } 52%, 90% { opacity: 1; transform: none; } 98%, 100% { opacity: 0; } }
+  .press-btn { animation: press-btn 6s var(--ease-base) infinite; }
+  @keyframes press-btn { 0%, 34%, 44%, 100% { transform: translateX(-50%); } 38% { transform: translateX(-50%) scale(0.9); } }
+
+  .scan-bar { animation: scan 3s var(--ease-base) infinite alternate; }
+  @keyframes scan { to { transform: translateY(88px); } }
+
+  .key { box-shadow: 0 0 0 1px var(--color-line), 0 2px 0 var(--color-line); animation: 8s var(--ease-base) infinite; }
+  .key-1 { animation-name: k1; } .key-2 { animation-name: k2; } .key-3 { animation-name: k3; } .key-4 { animation-name: k4; }
+  @keyframes k1 { 0%, 2%, 10%, 100% { transform: none; } 5% { transform: translateY(2px) scale(0.94); } }
+  @keyframes k2 { 0%, 27%, 35%, 100% { transform: none; } 30% { transform: translateY(2px) scale(0.94); } }
+  @keyframes k3 { 0%, 52%, 60%, 100% { transform: none; } 55% { transform: translateY(2px) scale(0.94); } }
+  @keyframes k4 { 0%, 77%, 85%, 100% { transform: none; } 80% { transform: translateY(2px) scale(0.94); } }
+  .klabel { opacity: 0; animation: 8s var(--ease-base) infinite; }
+  .klabel-1 { animation-name: l1; } .klabel-2 { animation-name: l2; } .klabel-3 { animation-name: l3; } .klabel-4 { animation-name: l4; }
+  @keyframes l1 { 0%, 3% { opacity: 0; transform: translateY(4px); } 7%, 22% { opacity: 1; transform: none; } 25%, 100% { opacity: 0; } }
+  @keyframes l2 { 0%, 28% { opacity: 0; transform: translateY(4px); } 32%, 47% { opacity: 1; transform: none; } 50%, 100% { opacity: 0; } }
+  @keyframes l3 { 0%, 53% { opacity: 0; transform: translateY(4px); } 57%, 72% { opacity: 1; transform: none; } 75%, 100% { opacity: 0; } }
+  @keyframes l4 { 0%, 78% { opacity: 0; transform: translateY(4px); } 82%, 97% { opacity: 1; transform: none; } 100% { opacity: 0; } }
+
+  .lock-ring { box-shadow: 0 0 0 2px var(--color-brand); animation: ring 2.4s var(--ease-base) infinite; }
+  @keyframes ring { from { opacity: 0.6; transform: scale(1); } to { opacity: 0; transform: scale(1.6); } }
+
+  /* Loops only run while the grid is on screen. */
+  .bento:not(.is-playing) * { animation-play-state: paused !important; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .bento * { animation: none !important; }
+    .strip-a, .klabel-2, .klabel-3, .klabel-4 { opacity: 0; }
+    .klabel-1 { opacity: 1; }
+  }
+</style>
+
+<script>
+  document.querySelectorAll<HTMLElement>("[data-play]").forEach((el) => {
+    new IntersectionObserver((entries) => {
+      for (const e of entries) el.classList.toggle("is-playing", e.isIntersecting);
+    }).observe(el);
+  });
+</script>

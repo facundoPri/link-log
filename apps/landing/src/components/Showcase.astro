@@ -1,0 +1,108 @@
+---
+import Icon from "./Icon.astro";
+import AutoTags from "./AutoTags.astro";
+import Lenses from "./Lenses.astro";
+import BrowserDemo from "./BrowserDemo.astro";
+
+const tabs = [
+  { id: "autotags", label: "Auto tags", icon: "sparkle", hint: "Drag the threshold, switch links." },
+  { id: "lenses", label: "Lenses", icon: "aperture", hint: "Pick a question, filter by answer." },
+  { id: "browser", label: "Browser", icon: "browsers", hint: "Autogroup, apply, close what you saved." },
+];
+---
+
+<section id="demo" class="bg-surface px-4 py-24">
+  <div class="mx-auto max-w-6xl">
+    <div class="mx-auto flex max-w-[680px] flex-col items-center gap-4 text-center" data-reveal>
+      <p class="caption-3 rounded-full bg-white px-3 py-1 text-brand-strong shadow-[0_0_0_1px_var(--color-line)]">Live demo</p>
+      <h2 class="heading-4 md:heading-3 text-ink">Try it right here</h2>
+    </div>
+
+    <div class="mt-12" data-showcase data-reveal style="--reveal-delay:80ms">
+      <div class="mx-auto max-w-md">
+        <div class="relative grid grid-cols-3 rounded-xl bg-white p-1 shadow-[0_0_0_1px_var(--color-line)]" role="tablist" aria-label="Demos">
+          <span class="tab-indicator absolute inset-y-1 left-1 w-[calc((100%-8px)/3)] rounded-lg bg-ink" aria-hidden="true"></span>
+          {
+            tabs.map((t, i) => (
+              <button
+                type="button"
+                role="tab"
+                id={`tab-${t.id}`}
+                aria-controls={`panel-${t.id}`}
+                aria-selected={i === 0 ? "true" : "false"}
+                tabindex={i === 0 ? 0 : -1}
+                data-tab-btn={i}
+                class="showcase-tab button-sm relative z-10 flex items-center justify-center gap-2 rounded-lg px-3 py-2"
+              >
+                <Icon name={t.icon} weight={t.id === "autotags" ? "fill" : "regular"} class="size-4" />
+                {t.label}
+              </button>
+            ))
+          }
+        </div>
+        <p class="caption-5 mt-3 text-center text-muted" data-tab-hint aria-live="polite">{tabs[0]!.hint}</p>
+      </div>
+
+      <div class="mt-8">
+        {
+          tabs.map((t, i) => (
+            <div
+              role="tabpanel"
+              id={`panel-${t.id}`}
+              aria-labelledby={`tab-${t.id}`}
+              data-panel={i}
+              class="panel"
+              hidden={i !== 0}
+            >
+              {t.id === "autotags" && <AutoTags />}
+              {t.id === "lenses" && <Lenses />}
+              {t.id === "browser" && <BrowserDemo />}
+            </div>
+          ))
+        }
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .tab-indicator { transition: transform 500ms var(--ease-base); }
+  .showcase-tab { color: var(--color-muted); transition: color 300ms var(--ease-base); }
+  .showcase-tab:hover { color: var(--color-ink); }
+  .showcase-tab[aria-selected="true"] { color: white; }
+  .showcase-tab:active { transform: scale(0.98); }
+  .panel { animation: panel-in 600ms var(--ease-base); }
+  @keyframes panel-in { from { opacity: 0; transform: translateY(16px); } }
+</style>
+
+<script>
+  const root = document.querySelector<HTMLElement>("[data-showcase]");
+  if (root) {
+    const btns = [...root.querySelectorAll<HTMLButtonElement>("[data-tab-btn]")];
+    const panels = [...root.querySelectorAll<HTMLElement>("[data-panel]")];
+    const indicator = root.querySelector<HTMLElement>(".tab-indicator")!;
+    const hint = root.querySelector<HTMLElement>("[data-tab-hint]")!;
+    const hints = [
+      "Drag the threshold, switch links.",
+      "Pick a question, filter by answer.",
+      "Autogroup, apply, close what you saved.",
+    ];
+    const select = (i: number, focus = false) => {
+      btns.forEach((b, j) => {
+        b.setAttribute("aria-selected", String(i === j));
+        b.tabIndex = i === j ? 0 : -1;
+      });
+      panels.forEach((p, j) => (p.hidden = i !== j));
+      indicator.style.transform = `translateX(${i * 100}%)`;
+      hint.textContent = hints[i]!;
+      if (focus) btns[i]!.focus();
+    };
+    btns.forEach((b, i) => b.addEventListener("click", () => select(i)));
+    root.querySelector('[role="tablist"]')!.addEventListener("keydown", (e) => {
+      const k = (e as KeyboardEvent).key;
+      const cur = btns.findIndex((b) => b.getAttribute("aria-selected") === "true");
+      if (k === "ArrowRight") select((cur + 1) % btns.length, true);
+      if (k === "ArrowLeft") select((cur + btns.length - 1) % btns.length, true);
+    });
+  }
+</script>

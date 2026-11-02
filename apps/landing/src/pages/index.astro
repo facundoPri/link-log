@@ -1,12 +1,11 @@
 ---
 import Base from "../layouts/Base.astro";
 import Hero from "../components/Hero.astro";
-import HowItWorks from "../components/HowItWorks.astro";
-import AutoTags from "../components/AutoTags.astro";
-import Lenses from "../components/Lenses.astro";
+import Sources from "../components/Sources.astro";
+import Bento from "../components/Bento.astro";
+import Showcase from "../components/Showcase.astro";
 import Tagline from "../components/Tagline.astro";
-import BrowserDemo from "../components/BrowserDemo.astro";
-import Details from "../components/Details.astro";
+import Steps from "../components/Steps.astro";
 import Faq from "../components/Faq.astro";
 import FinalCta from "../components/FinalCta.astro";
 import { FAQ } from "../data/faq";
@@ -38,16 +37,15 @@ const jsonLd = [
 
 <Base
   title="Linklog: links and tabs, sorted the way you think"
-  description="Save links and open tabs in one private library. Linklog reads each page, auto tags it with rules you write in plain words and answers your questions with lenses."
+  description="Save links and open tabs in one private library. Linklog reads each page, auto tags it with rules you write and answers your questions with lenses."
 >
   <script type="application/ld+json" slot="head" set:html={JSON.stringify(jsonLd)} />
   <Hero />
-  <HowItWorks />
-  <AutoTags />
-  <Lenses />
+  <Sources />
+  <Bento />
+  <Showcase />
   <Tagline />
-  <BrowserDemo />
-  <Details />
+  <Steps />
   <Faq />
   <FinalCta />
 </Base>

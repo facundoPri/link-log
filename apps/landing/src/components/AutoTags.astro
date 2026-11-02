@@ -1,14 +1,13 @@
 ---
 import Icon from "./Icon.astro";
-import SectionHeader from "./SectionHeader.astro";
 
 // Each tag is a name plus a sentence the model reads. That sentence is the user's criterion.
 const tags = [
-  { name: "recipes", tone: 1, rule: "Any page with a recipe: ingredients and steps." },
-  { name: "quick dinner", tone: 7, rule: "Recipes I can cook on a weeknight: under 30 minutes of active work, one pan or pot." },
-  { name: "research", tone: 5, rule: "Papers, essays and long technical explainers I want to cite later." },
-  { name: "to read", tone: 2, rule: "Long reads worth a quiet hour. Not news, not product pages." },
-  { name: "side project", tone: 3, rule: "Docs and tools that help me build Linklog: Cloudflare, Chrome extensions, React." },
+  { name: "recipes", tone: 1, rule: "Pages with a recipe." },
+  { name: "quick dinner", tone: 7, rule: "Weeknight recipes: under 30 minutes, one pan." },
+  { name: "research", tone: 5, rule: "Papers and long explainers to cite later." },
+  { name: "to read", tone: 2, rule: "Long reads worth a quiet hour." },
+  { name: "side project", tone: 3, rule: "Docs for building Linklog." },
 ];
 
 const samples = [
@@ -39,18 +38,10 @@ const samples = [
 ];
 ---
 
-<section id="autotags" class="bg-surface px-4 py-24 md:py-24">
-  <div class="mx-auto max-w-6xl">
-    <SectionHeader
-      eyebrow="Auto tags"
-      icon="sparkle"
-      title="Tags that follow your rules"
-      lede="Give each tag a sentence describing what belongs in it. Linklog reads the whole page, scores every tag in one call and applies only the ones that clear your threshold."
-    />
-
-    <div class="mt-12 grid gap-6 lg:grid-cols-[1fr_1.15fr]" data-autotags data-samples={JSON.stringify(samples)}>
+<div>
+    <div class="grid gap-6 lg:grid-cols-[1fr_1.15fr]" data-autotags data-samples={JSON.stringify(samples)}>
       <!-- Tag rules -->
-      <div class="flex flex-col gap-4" data-reveal>
+      <div class="flex flex-col gap-4">
         <div class="flex items-center justify-between">
           <p class="title-4 text-ink">Your tags</p>
           <p class="caption-5 text-muted">Written once, used on every link</p>
@@ -67,7 +58,7 @@ const samples = [
                       <Icon name="check" weight="bold" class="size-3" /> Applied
                     </span>
                   </div>
-                  <p class="body-6 mt-1 text-muted">{t.rule}</p>
+                  <p class="caption-5 mt-0.5 text-muted">{t.rule}</p>
                 </div>
               </li>
             ))
@@ -76,7 +67,7 @@ const samples = [
       </div>
 
       <!-- Evaluation -->
-      <div class="window flex flex-col self-start" data-reveal style="--reveal-delay:120ms">
+      <div class="window flex flex-col self-start">
         <div class="flex gap-1 bg-surface p-2 shadow-[inset_0_-1px_0_var(--color-line)]" role="tablist" aria-label="Sample links">
           {
             samples.map((s, i) => (
@@ -138,7 +129,7 @@ const samples = [
               <span class="caption-3 tabular text-ink" data-threshold-label>80%</span>
             </div>
             <input id="threshold" type="range" min="40" max="95" step="1" value="80" class="threshold-range mt-2 w-full" data-threshold />
-            <p class="caption-5 mt-2 text-muted">Each tag keeps its own threshold. 80% is where it starts.</p>
+            <p class="caption-5 mt-2 text-muted">Each tag keeps its own threshold.</p>
           </div>
 
           <div class="grid gap-4 sm:grid-cols-2">
@@ -154,8 +145,7 @@ const samples = [
         </div>
       </div>
     </div>
-  </div>
-</section>
+</div>
 
 <template id="chip-template">
   <span class="chip pop pop-enter"><span class="dot"></span><span data-name></span><span class="tabular opacity-60" data-chip-pct></span></span>

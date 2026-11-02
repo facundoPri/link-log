@@ -1,22 +1,15 @@
 ---
-import Icon from "./Icon.astro";
 interface Props {
   eyebrow: string;
-  icon: string;
   title: string;
-  lede: string;
+  lede?: string;
   align?: "left" | "center";
 }
-const { eyebrow, icon, title, lede, align = "left" } = Astro.props;
+const { eyebrow, title, lede, align = "left" } = Astro.props;
 ---
 
-<div class:list={["flex max-w-[680px] flex-col gap-4", align === "center" && "mx-auto items-center text-center"]} data-reveal>
-  <p class="caption-3 flex items-center gap-2 text-brand-strong">
-    <span class="flex size-6 items-center justify-center rounded-md bg-brand-soft">
-      <Icon name={icon} weight="bold" class="size-4" />
-    </span>
-    {eyebrow}
-  </p>
+<div class:list={["flex max-w-[680px] flex-col items-start gap-4", align === "center" && "mx-auto items-center text-center"]} data-reveal>
+  <p class="caption-3 rounded-full bg-white px-3 py-1 text-brand-strong shadow-[0_0_0_1px_var(--color-line)]">{eyebrow}</p>
   <h2 class="heading-4 md:heading-3 text-ink">{title}</h2>
-  <p class="body-3 text-muted md:title-2 md:font-normal">{lede}</p>
+  {lede && <p class="body-3 text-muted">{lede}</p>}
 </div>

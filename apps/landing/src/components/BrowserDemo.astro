@@ -1,6 +1,5 @@
 ---
 import Icon from "./Icon.astro";
-import SectionHeader from "./SectionHeader.astro";
 
 // Group definitions the user pinned, each with a sentence that tells Autogroup what belongs there.
 const groups = [
@@ -27,16 +26,8 @@ const tabs = [
 const toneOf = (g: string) => groups.find((x) => x.id === g)!.tone;
 ---
 
-<section id="browser" class="bg-surface px-4 py-24">
-  <div class="mx-auto max-w-6xl">
-    <SectionHeader
-      eyebrow="Browser"
-      icon="browsers"
-      title="Forty open tabs, back in order"
-      lede="The Chrome extension brings the tabs and groups of your current window into Linklog. Autogroup files each tab into the groups you described, and the ones you already saved can close without losing anything."
-    />
-
-    <div class="mt-12" data-browser data-browser-data={JSON.stringify({ groups, tabs })} data-reveal style="--reveal-delay:120ms">
+<div>
+    <div data-browser data-browser-data={JSON.stringify({ groups, tabs })}>
       <div class="window">
         <!-- Chrome tab strip -->
         <div class="flex items-center gap-3 bg-subtle px-3 pt-2">
@@ -155,8 +146,7 @@ const toneOf = (g: string) => groups.find((x) => x.id === g)!.tone;
         Twelve tabs, no groups. Press Autogroup, or wait a moment.
       </p>
     </div>
-  </div>
-</section>
+</div>
 
 <style>
   .ctab { transition: background-color 300ms var(--ease-base), opacity 300ms var(--ease-base); }

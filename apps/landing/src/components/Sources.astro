@@ -1,0 +1,48 @@
+---
+import Icon from "./Icon.astro";
+
+// Everything Linklog can read, as listed in the repository README.
+const sources = [
+  { icon: "globe-simple", label: "Any web page" },
+  { icon: "youtube-logo", label: "YouTube captions" },
+  { icon: "x-logo", label: "Posts on X" },
+  { icon: "instagram-logo", label: "Instagram posts" },
+  { icon: "image-square", label: "Text in images" },
+  { icon: "google-chrome-logo", label: "Open Chrome tabs" },
+  { icon: "markdown-logo", label: "Pasted transcripts" },
+];
+---
+
+<section class="px-4" aria-label="What Linklog reads">
+  <p class="caption-4 text-center text-muted" data-reveal>Reads the page, not just the link</p>
+  <div class="marquee relative mx-auto mt-6 max-w-5xl overflow-hidden" data-reveal style="--reveal-delay:80ms">
+    <ul class="marquee-track flex w-max gap-3">
+      {
+        [...sources, ...sources].map((s, i) => (
+          <li
+            class="title-4 flex shrink-0 items-center gap-2 rounded-full bg-surface px-4 py-2 text-ink-2 shadow-[inset_0_0_0_1px_var(--color-line)]"
+            aria-hidden={i >= sources.length ? "true" : undefined}
+          >
+            <Icon name={s.icon} class="size-4 text-muted" />
+            {s.label}
+          </li>
+        ))
+      }
+    </ul>
+  </div>
+</section>
+
+<style>
+  .marquee {
+    mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+  }
+  .marquee-track { animation: marquee 32s linear infinite; }
+  .marquee:hover .marquee-track { animation-play-state: paused; }
+  /* The track holds the list twice, so moving it by half loops seamlessly. */
+  @keyframes marquee { to { transform: translateX(calc(-50% - 6px)); } }
+  @media (prefers-reduced-motion: reduce) {
+    .marquee { mask-image: none; }
+    .marquee-track { animation: none; flex-wrap: wrap; justify-content: center; width: auto; }
+    .marquee-track li[aria-hidden="true"] { display: none; }
+  }
+</style>

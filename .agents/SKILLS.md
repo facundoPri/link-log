@@ -5,6 +5,7 @@ Installed locally in `.agents/skills/`; `.claude/skills/` contains relative link
 - [Matt Pocock](https://github.com/mattpocock/skills): 38 skills.
 - [Pstack standalone mirror](https://github.com/backnotprop/pstack): 54 skills.
 - The existing `typesafe-ai` skill is preserved.
+- [elayadesign/ai-design-skills](https://github.com/elayadesign/ai-design-skills): `landing-page-design` and `figma-designer`, installed with `npx skills add` and recorded in the root `skills-lock.json`.
 
 Pstack's `tdd` and `teach` are installed as `pstack-tdd` and `pstack-teach` to keep both collections. Pstack references use those aliases.
 

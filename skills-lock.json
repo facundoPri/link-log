@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "figma-designer": {
+      "source": "elayadesign/ai-design-skills",
+      "sourceType": "github",
+      "skillPath": "skills/figma-designer/SKILL.md",
+      "computedHash": "4eda7b7a79f89cf3f811fdca20cda12caf4b5ff79125a604ad9cc2b14bc7de6d"
+    },
+    "landing-page-design": {
+      "source": "elayadesign/ai-design-skills",
+      "sourceType": "github",
+      "skillPath": "skills/landing-page-design/SKILL.md",
+      "computedHash": "e0cf363a00650a18797c3cfc086b7e32cdff56b4cb34d72978d7b60aa8ca0172"
+    }
+  }
+}

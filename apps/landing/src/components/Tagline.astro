@@ -1,11 +1,11 @@
 ---
 // Large statement whose words light up one by one as it scrolls into view.
-const lines = ["Write down what matters to you once.", "Linklog keeps every link and tab in order after that."];
+const lines = ["Describe it once.", "Linklog keeps it in order."];
 let index = 0;
 ---
 
 <section class="px-4 py-24 md:py-24" aria-label="What Linklog does">
-  <p class="heading-4 sm:heading-3 lg:heading-2 text-balance mx-auto max-w-[680px] text-center lg:max-w-4xl" data-tagline>
+  <p class="heading-3 sm:heading-2 lg:heading-1 text-balance mx-auto max-w-[680px] text-center lg:max-w-4xl" data-tagline>
     {
       lines.map((line, li) => (
         <>
@@ -14,7 +14,7 @@ let index = 0;
               <span class="tag-word" style={`--w:${index++}`}>{w}</span>{" "}
             </>
           ))}
-          {li < lines.length - 1 && <br class="hidden md:block" />}
+          {li < lines.length - 1 && <br />}
         </>
       ))
     }
