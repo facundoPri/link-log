@@ -23,9 +23,9 @@ wired into the app's `wrangler.jsonc`, so deploying the app never touches it.
 src/pages/index.astro        sections in order, JSON-LD (SoftwareApplication + FAQPage)
 src/pages/404.astro          branded not found page
 src/layouts/Base.astro       head, meta and social tags, skip link, nav, footer
-src/components/              one file per section; AutoTags, Lenses and BrowserDemo are panels
-                             inside Showcase; Icon.astro inlines Phosphor SVGs at build time
-src/scripts/                 demo logic: hero.ts, autotags.ts, lenses.ts, browser.ts
+src/components/              one file per section; Showcase wraps BrowserDemo; Icon.astro inlines
+                             Phosphor SVGs at build time
+src/scripts/                 animation logic: hero.ts, browser.ts
 src/scripts/motion.ts        shared helpers: reduced motion, in view, FLIP transitions
 src/data/                    sample library, FAQ copy, URLs
 src/styles/global.css        tokens copied from src/index.css, named text styles, motion
@@ -46,8 +46,8 @@ Short copy, motion carries the explanation.
    posts, text in images, open tabs).
 3. **Features.** A bento grid; each card has a looping animation and one line of copy. Loops pause
    off screen.
-4. **Live demo.** Tabs for the three interactive demos: auto tags with a threshold slider, lenses
-   with answer filters, and a Chrome window where Autogroup files tabs and saved tabs close.
+4. **Browser.** A Chrome window that loops on its own: Autogroup files the tabs into groups and
+   the saved ones close. Nothing to click; it pauses off screen.
 5. **Tagline reveal.** "Describe it once. Linklog keeps it in order." lights up word by word.
 6. **FAQ.** Six short answers, also published as FAQPage structured data.
 7. **Final CTA.** "Log it once. Find it whenever you need it."

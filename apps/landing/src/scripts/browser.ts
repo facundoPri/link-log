@@ -1,13 +1,13 @@
-import { flip, onceInView, reducedMotion, reportStep, wait } from "./motion";
+import { flip, reducedMotion, wait, watchVisibility } from "./motion";
 
 type Group = { id: string; name: string; tone: number };
 type Tab = { id: number; title: string; group: string; saved: boolean };
 type Stage = "start" | "suggested" | "grouped" | "closed";
 
 /**
- * Browser demo: Autogroup suggests a group per tab, Apply moves the tabs into
- * Chrome tab groups, Close saved removes tabs that already live in the library.
- * Plays once on its own when first seen; any click takes over.
+ * Browser animation: Autogroup suggests a group per tab, Apply moves the tabs
+ * into Chrome tab groups, Close saved removes tabs that already live in the
+ * library. Loops while on screen; nothing to click.
  */
 export function initBrowserDemo() {
   const root = document.querySelector<HTMLElement>("[data-browser]");
@@ -25,24 +25,17 @@ export function initBrowserDemo() {
   const labels = new Map(qa("[data-glabel]").map((el) => [el.dataset.glabel!, el]));
   const activeTab = strip.querySelector<HTMLElement>(".ctab-active")!;
   const buttons = {
-    suggest: q<HTMLButtonElement>('[data-step="suggest"]'),
-    apply: q<HTMLButtonElement>('[data-step="apply"]'),
-    close: q<HTMLButtonElement>('[data-step="close"]'),
-    reset: q<HTMLButtonElement>('[data-step="reset"]'),
+    suggest: q('[data-step="suggest"]'),
+    apply: q('[data-step="apply"]'),
+    close: q('[data-step="close"]'),
   };
 
   let stage: Stage = "start";
-  let busy = false;
-  let autoplay = true;
   const groupOf = (id: string) => groups.find((g) => g.id === id)!;
 
-  const setButtons = () => {
-    buttons.suggest.disabled = busy || stage !== "start";
-    buttons.apply.disabled = busy || stage !== "suggested";
-    buttons.close.disabled = busy || stage !== "grouped";
-    buttons.reset.disabled = busy || stage === "start";
-    const next = { start: "suggest", suggested: "apply", grouped: "close", closed: "reset" }[stage];
-    for (const [k, b] of Object.entries(buttons)) b.classList.toggle("is-next", k === next && !busy);
+  /** Shows which bar action is running, like a pressed button. */
+  const press = (key: keyof typeof buttons | null) => {
+    for (const [k, b] of Object.entries(buttons)) b.classList.toggle("is-active", k === key);
   };
 
   const setCounts = () => {
@@ -69,9 +62,7 @@ export function initBrowserDemo() {
   };
 
   const suggest = async () => {
-    busy = true;
-    setButtons();
-    status.textContent = "Autogroup reads each tab and picks one of your groups, or none.";
+    status.textContent = "Autogroup picks one of your groups for each tab.";
     for (const t of tabs) {
       const cell = rowEls.get(t.id)!.querySelector<HTMLElement>("[data-dest]")!;
       const sk = document.createElement("span");
@@ -88,18 +79,13 @@ export function initBrowserDemo() {
       if (!reducedMotion()) await wait(110);
     }
     stage = "suggested";
-    reportStep(root, "browser", 1);
-    busy = false;
-    status.textContent = "Twelve suggestions to review. Change any of them, then apply.";
-    setButtons();
+    status.textContent = "You check the suggestions, then apply.";
   };
 
   const order = () =>
     groups.flatMap((g) => tabs.filter((t) => t.group === g.id).map((t) => ({ g, t })));
 
   const apply = async () => {
-    busy = true;
-    setButtons();
     const movers = [...tabEls.values(), ...rowEls.values()];
     flip(movers, () => {
       for (const g of groups) {
@@ -116,17 +102,12 @@ export function initBrowserDemo() {
       for (const { t } of order()) list.append(rowEls.get(t.id)!);
     }, 700);
     stage = "grouped";
-    reportStep(root, "browser", 2);
     setCounts();
     await wait(reducedMotion() ? 0 : 700);
-    busy = false;
-    status.textContent = "Four Chrome tab groups, built from the groups you described.";
-    setButtons();
+    status.textContent = "Four tab groups, built from your descriptions.";
   };
 
   const close = async () => {
-    busy = true;
-    setButtons();
     const saved = tabs.filter((t) => t.saved);
     for (const t of saved) {
       tabEls.get(t.id)!.classList.add("is-closing");
@@ -140,11 +121,8 @@ export function initBrowserDemo() {
       }
     });
     stage = "closed";
-    reportStep(root, "browser", 3);
     setCounts();
-    busy = false;
-    status.textContent = `Closed the ${saved.length} tabs marked Saved. They are still in your library.`;
-    setButtons();
+    status.textContent = `Closed ${saved.length} saved tabs. They stay in your library.`;
   };
 
   const reset = () => {
@@ -167,39 +145,49 @@ export function initBrowserDemo() {
       }
     });
     stage = "start";
-    reportStep(root, "browser", 0);
     setCounts();
-    status.textContent = "Twelve tabs, no groups. Press Autogroup to sort them.";
-    setButtons();
+    status.textContent = "Twelve tabs, no groups.";
   };
 
-  const take = (fn: () => unknown) => () => {
-    autoplay = false;
-    if (!busy) fn();
-  };
-  // Any interaction with the demo hands the remaining steps to the visitor.
-  root.addEventListener("pointerdown", () => (autoplay = false));
-  buttons.suggest.addEventListener("click", take(suggest));
-  buttons.apply.addEventListener("click", take(apply));
-  buttons.close.addEventListener("click", take(close));
-  buttons.reset.addEventListener("click", take(reset));
-
-  setButtons();
   setCounts();
 
-  onceInView(
-    root,
-    async () => {
-      await wait(1200);
-      if (!autoplay) return;
+  if (reducedMotion()) {
+    // Show the sorted end state without movement.
+    void (async () => {
       await suggest();
-      await wait(1800);
-      if (!autoplay) return;
       await apply();
-      await wait(2200);
-      if (!autoplay) return;
-      await close();
-    },
-    0.4,
-  );
+    })();
+    status.textContent = "Twelve tabs in four groups.";
+    return;
+  }
+
+  let visible = false;
+  let started = false;
+  const step = async (ms: number) => {
+    await wait(ms);
+    while (!visible) await wait(250);
+  };
+  const run = async (key: keyof typeof buttons, fn: () => Promise<void>) => {
+    press(key);
+    await fn();
+    await wait(300);
+    press(null);
+  };
+  watchVisibility(root, (v) => {
+    visible = v;
+    if (!v || started) return;
+    started = true;
+    (async () => {
+      for (;;) {
+        await step(1000);
+        await run("suggest", suggest);
+        await step(1400);
+        await run("apply", apply);
+        await step(1800);
+        await run("close", close);
+        await step(3200);
+        reset();
+      }
+    })();
+  });
 }

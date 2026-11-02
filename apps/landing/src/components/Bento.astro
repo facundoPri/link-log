@@ -1,13 +1,6 @@
 ---
 import Icon from "./Icon.astro";
 import TagChip from "./TagChip.astro";
-
-const strip = [
-  { l: "G", t: 4, g: 3 }, { l: "A", t: 0, g: 5 }, { l: "S", t: 2, g: 1 }, { l: "D", t: 4, g: 3 },
-  { l: "Y", t: 0, g: 5 }, { l: "B", t: 0, g: 1 }, { l: "I", t: 5, g: 5 }, { l: "C", t: 1, g: 3 },
-];
-const grouped = [5, 3, 1].map((g) => ({ g, tabs: strip.filter((s) => s.g === g) }));
-const groupName: Record<number, string> = { 5: "Research", 3: "Dev", 1: "Recipes" };
 ---
 
 <section id="features" class="px-4 py-24">
@@ -100,43 +93,8 @@ const groupName: Record<number, string> = { 5: "Research", 3: "Dev", 1: "Recipes
         </div>
       </article>
 
-      <!-- Autogroup -->
-      <article class="card lg:col-span-2" data-reveal>
-        <div class="visual" aria-hidden="true">
-          <div class="flex w-full max-w-64 flex-col items-center gap-3">
-            <div class="relative h-28 w-full">
-              <!-- Before: loose tabs -->
-              <div class="ag-loose absolute inset-0 flex flex-col justify-center rounded-xl bg-white p-3 shadow-[0_0_0_1px_var(--color-line)]">
-                <p class="caption-4 text-muted">8 open tabs</p>
-                <div class="mt-2 flex flex-wrap gap-1">
-                  {strip.map((s) => <span class={`favicon t${s.t} size-6`}>{s.l}</span>)}
-                </div>
-              </div>
-              <!-- After: one row per group -->
-              <div class="absolute inset-0 flex flex-col justify-center gap-1">
-                {grouped.map(({ g, tabs }, i) => (
-                  <div class={`ag-row ag-row-${i + 1} flex items-center gap-2 rounded-lg bg-white px-2 py-1 shadow-[0_0_0_1px_var(--color-line)]`}>
-                    <span class={`chip t${g} w-24 shrink-0`}><span class="dot" />{groupName[g]}</span>
-                    <span class="flex gap-1">
-                      {tabs.map((s) => <span class={`favicon t${s.t} size-5`}>{s.l}</span>)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <span class="press-btn button-xsm flex items-center gap-1 rounded-md bg-ink px-2 py-1 text-white">
-              <Icon name="sparkle" weight="fill" class="size-3" /> Autogroup
-            </span>
-          </div>
-        </div>
-        <div class="copy">
-          <h3 class="title-2 text-ink">Autogroup tabs</h3>
-          <p class="body-6 text-muted">Open tabs land in the groups you described.</p>
-        </div>
-      </article>
-
       <!-- Reads the page -->
-      <article class="card lg:col-span-2" data-reveal style="--reveal-delay:80ms">
+      <article class="card lg:col-span-3" data-reveal style="--reveal-delay:80ms">
         <div class="visual" aria-hidden="true">
           <div class="relative w-full max-w-52 overflow-hidden rounded-xl bg-white p-3 shadow-[0_0_0_1px_var(--color-line)]">
             <div class="flex flex-col gap-2">
@@ -159,7 +117,7 @@ const groupName: Record<number, string> = { 5: "Research", 3: "Dev", 1: "Recipes
       </article>
 
       <!-- Keyboard -->
-      <article class="card lg:col-span-2" data-reveal style="--reveal-delay:160ms">
+      <article class="card lg:col-span-3" data-reveal style="--reveal-delay:160ms">
         <div class="visual" aria-hidden="true">
           <div class="flex gap-2">
             {["T", "L", "O", "/"].map((k, i) => <span class={`key key-${i + 1} title-3 flex size-10 items-center justify-center rounded-lg bg-white text-ink`}>{k}</span>)}
@@ -193,7 +151,7 @@ const groupName: Record<number, string> = { 5: "Research", 3: "Dev", 1: "Recipes
       </article>
 
       <!-- Usage -->
-      <article class="card sm:col-span-1 lg:col-span-3" data-reveal style="--reveal-delay:80ms">
+      <article class="card sm:col-span-2 lg:col-span-3" data-reveal style="--reveal-delay:80ms">
         <div class="visual" aria-hidden="true">
           <ul class="flex w-full max-w-72 flex-col gap-1">
             {[["Auto tag", "2,417 tokens", "1.8s"], ["Lens", "1,093 tokens", "0.9s"], ["Extract", "browser time", "6.2s"]].map(([a, b, c], i) => (
@@ -274,17 +232,6 @@ const groupName: Record<number, string> = { 5: "Research", 3: "Dev", 1: "Recipes
   .at-link { animation: at-link 6s var(--ease-base) infinite; }
   @keyframes at-link { 0%, 4%, 36%, 100% { transform: none; } 12%, 28% { transform: scale(1.15) rotate(12deg); } }
 
-  /* Autogroup: loose tabs fade out on the button press, group rows arrive one by one. */
-  .ag-loose { animation: ag-loose 6s var(--ease-base) infinite; }
-  @keyframes ag-loose { 0%, 36% { opacity: 1; transform: none; } 44%, 92% { opacity: 0; transform: scale(0.96); } 100% { opacity: 1; transform: none; } }
-  .ag-row { opacity: 0; animation: 6s var(--ease-base) infinite; }
-  .ag-row-1 { animation-name: ag-1; } .ag-row-2 { animation-name: ag-2; } .ag-row-3 { animation-name: ag-3; }
-  @keyframes ag-1 { 0%, 42% { opacity: 0; transform: translateY(8px); } 50%, 88% { opacity: 1; transform: none; } 94%, 100% { opacity: 0; } }
-  @keyframes ag-2 { 0%, 46% { opacity: 0; transform: translateY(8px); } 54%, 88% { opacity: 1; transform: none; } 94%, 100% { opacity: 0; } }
-  @keyframes ag-3 { 0%, 50% { opacity: 0; transform: translateY(8px); } 58%, 88% { opacity: 1; transform: none; } 94%, 100% { opacity: 0; } }
-  .press-btn { animation: press-btn 6s var(--ease-base) infinite; }
-  @keyframes press-btn { 0%, 32%, 42%, 100% { transform: none; } 36% { transform: scale(0.92); } }
-
   .scan-bar { animation: scan 3s var(--ease-base) infinite alternate; }
   @keyframes scan { to { transform: translateY(88px); } }
 
@@ -309,8 +256,8 @@ const groupName: Record<number, string> = { 5: "Research", 3: "Dev", 1: "Recipes
 
   @media (prefers-reduced-motion: reduce) {
     .bento * { animation: none !important; }
-    .ag-loose, .klabel-2, .klabel-3, .klabel-4 { opacity: 0; }
-    .ag-row, .at-pct, .in1-late, .in2-late { opacity: 1; }
+    .klabel-2, .klabel-3, .klabel-4 { opacity: 0; }
+    .at-pct, .in1-late, .in2-late { opacity: 1; }
     .at-bar { transform: scaleX(var(--v)); }
     .at-hit-1 .at-ring, .at-hit-2 .at-ring { opacity: 1; }
     .klabel-1 { opacity: 1; }
