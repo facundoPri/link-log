@@ -4,14 +4,13 @@ import AutoTags from "./AutoTags.astro";
 import Lenses from "./Lenses.astro";
 import BrowserDemo from "./BrowserDemo.astro";
 
-// Each tab is a job the visitor already has, told as problem, three steps and result.
+// Each tab is a job the visitor already has, told as three steps and a result.
 const tabs = [
   {
     id: "autotags",
     job: "Organize saved links",
     feature: "Auto tags",
     icon: "tag",
-    problem: "Hundreds of saved links and no way to find them again.",
     steps: ["Write one sentence per tag", "Save a link", "Tags land on their own"],
     outcome: "Filed by your rules. You never tag by hand.",
     hint: "Switch links or drag the threshold.",
@@ -21,7 +20,6 @@ const tabs = [
     job: "Pick what to read",
     feature: "Lenses",
     icon: "aperture",
-    problem: "Too many links and no idea which to open first.",
     steps: ["Ask a question", "Every link gets an answer", "Filter to the yeses"],
     outcome: "Only the links worth your time, ready to open.",
     hint: "Pick a question, then filter by answer.",
@@ -31,7 +29,6 @@ const tabs = [
     job: "Tame open tabs",
     feature: "Browser",
     icon: "browsers",
-    problem: "Twelve tabs open and nothing where you left it.",
     steps: ["Press Autogroup", "Check and apply", "Close what you saved"],
     outcome: "Four groups and four fewer tabs, in three clicks. Nothing lost.",
     hint: "Use the bar at the bottom of the window.",
@@ -78,17 +75,8 @@ const tabs = [
         {
           tabs.map((t, i) => (
             <div role="tabpanel" id={`panel-${t.id}`} aria-labelledby={`tab-${t.id}`} data-panel={i} class="panel" hidden={i !== 0}>
-              <!-- Story: problem, three steps that light up as you use the demo, result -->
-              <div class="story mb-6 grid gap-4 rounded-2xl bg-white p-4 shadow-[0_0_0_1px_var(--color-line)] lg:grid-cols-[1fr_auto_1fr] lg:items-center" data-story={t.id}>
-                <p class="flex items-start gap-3">
-                  <span class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-warning-soft text-warning">
-                    <Icon name="warning-circle" weight="bold" class="size-4" />
-                  </span>
-                  <span class="flex flex-col">
-                    <span class="caption-3 text-faint">The problem</span>
-                    <span class="body-5 text-ink">{t.problem}</span>
-                  </span>
-                </p>
+              <!-- Story: three steps that light up as you use the demo, then the result -->
+              <div class="story mb-6 grid gap-4 rounded-2xl bg-white p-4 shadow-[0_0_0_1px_var(--color-line)] lg:grid-cols-[auto_1fr] lg:items-center lg:gap-6" data-story={t.id}>
                 <ol class="flex flex-wrap items-center gap-2">
                   {t.steps.map((s, j) => (
                     <>
