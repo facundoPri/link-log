@@ -157,7 +157,7 @@ async function up() {
   process.exit(1);
 }
 
-/** Child side of `up`: owns the stack until SIGTERM. */
+/** Child side of `up`: owns the stack until SIGTERM, or until the stack or the run dir disappears. */
 async function serve() {
   const runDir = resolve(opt("--run")!);
   process.env.QA_OUT = runDir;
@@ -171,6 +171,11 @@ async function serve() {
   const env = await startEnv(options);
   const stop = async () => {
     await env.stop();
+    // Wrangler and workerd children can outlive env.stop. As group leader, take down everything the run started,
+    // this process included, so serve leaves nothing behind even when no `down` follows.
+    try {
+      process.kill(-process.pid, "SIGKILL");
+    } catch {}
     process.exit(0);
   };
   process.on("SIGTERM", stop);
@@ -207,7 +212,20 @@ async function serve() {
     await env.stop();
     process.exit(1);
   }
-  await new Promise(() => {});
+  // Nobody may ever run `down` (the agent dies, the worktree is deleted), so serve also stops once its stack is
+  // gone. The interval is what keeps serve alive: Bun spins at 100% CPU on a never-resolving await once no
+  // handle is left. Two misses in a row, so one slow connect is not a death.
+  const ports = [Number(opt("--ui-port")), Number(opt("--api-port"))];
+  let misses = 0;
+  const watchdog = setInterval(async () => {
+    const gone = !existsSync(join(runDir, "session.json")) || !existsSync(ROOT);
+    const dead = (await Promise.all(ports.map(async (p) => ((await portBusy(p)) ? [] : [p])))).flat();
+    misses = gone || dead.length ? misses + 1 : 0;
+    if (misses < 2) return;
+    clearInterval(watchdog);
+    console.log(`serve: ${gone ? "run dir or worktree removed" : `port ${dead.join(", ")} stopped listening`}; stopping`);
+    await stop();
+  }, 5000);
 }
 
 async function doctor() {
