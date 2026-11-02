@@ -11,7 +11,10 @@ export const TAGS: TagDef[] = [
   { name: "video", tone: 0, count: 14 },
 ];
 
-export const tone = (name: string) => TAGS.find((t) => t.name === name)?.tone ?? 4;
+// Tags that appear in the demos but not in the hero sidebar.
+const EXTRA_TONES: Record<string, number> = { "quick dinner": 7 };
+
+export const tone = (name: string) => TAGS.find((t) => t.name === name)?.tone ?? EXTRA_TONES[name] ?? 4;
 
 export type Row = {
   title: string;

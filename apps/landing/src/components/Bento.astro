@@ -22,25 +22,51 @@ const groupName: Record<number, string> = { 5: "Research", 3: "Dev", 1: "Recipes
       <!-- Auto tags -->
       <article class="card sm:col-span-2 lg:col-span-4" data-reveal>
         <div class="visual" aria-hidden="true">
-          <div class="w-full max-w-sm rounded-xl bg-white p-3 shadow-[0_0_0_1px_var(--color-line),0_8px_24px_oklch(0.2_0.01_260/0.06)]">
-            <div class="flex items-center gap-3">
-              <span class="favicon t2">S</span>
-              <div class="min-w-0">
-                <p class="body-5 truncate text-ink">One pan lemon orzo with spinach</p>
-                <p class="caption-5 text-muted">seriouseats.com</p>
+          <div class="flex w-full max-w-2xl items-center justify-center gap-4">
+            <!-- Rules: what the user wrote -->
+            <ul class="hidden w-52 shrink-0 flex-col gap-2 md:flex">
+              {[
+                { name: "recipes", rule: "Pages with a recipe.", hit: 1 },
+                { name: "quick dinner", rule: "Weeknight, under 30 min.", hit: 2 },
+                { name: "to read", rule: "Long reads for a quiet hour.", hit: 0 },
+              ].map((r) => (
+                <li class={`at-rule ${r.hit ? `at-hit-${r.hit}` : ""} relative rounded-xl bg-white p-2 shadow-[0_0_0_1px_var(--color-line)]`}>
+                  <span class={`at-ring t${r.name === "recipes" ? 1 : r.name === "quick dinner" ? 7 : 2} absolute inset-0 rounded-xl`} />
+                  <TagChip name={r.name} />
+                  <p class="caption-5 mt-1 px-1 text-muted">{r.rule}</p>
+                </li>
+              ))}
+            </ul>
+
+            <span class="at-link hidden size-8 shrink-0 items-center justify-center rounded-full bg-white text-brand shadow-[0_0_0_1px_var(--color-line)] md:flex">
+              <Icon name="sparkle" weight="fill" class="size-4" />
+            </span>
+
+            <!-- The link being scored -->
+            <div class="w-full max-w-xs rounded-xl bg-white p-3 shadow-[0_0_0_1px_var(--color-line),0_8px_24px_oklch(0.2_0.01_260/0.06)]">
+              <div class="flex items-center gap-3">
+                <span class="favicon t2">S</span>
+                <div class="min-w-0">
+                  <p class="body-5 truncate text-ink">One pan lemon orzo</p>
+                  <p class="caption-5 text-muted">seriouseats.com</p>
+                </div>
               </div>
-            </div>
-            <div class="mt-3 flex flex-wrap gap-1">
-              <span class="in1"><TagChip name="recipes" score={97} auto /></span>
-              <span class="in2"><TagChip name="quick dinner" score={88} auto /></span>
-              <span class="in3 opacity-40"><TagChip name="to read" score={12} /></span>
-            </div>
-            <div class="mt-3 flex items-center gap-2">
-              <span class="caption-5 text-faint">Threshold</span>
-              <span class="relative h-1 flex-1 rounded-full bg-subtle">
-                <span class="scan-fill absolute inset-0 origin-left rounded-full bg-brand"></span>
-              </span>
-              <span class="caption-4 tabular text-ink-2">80%</span>
+              <ul class="mt-3 flex flex-col gap-2">
+                {[["recipes", 97, 1], ["quick dinner", 88, 7], ["to read", 12, 2]].map(([name, v, t], i) => (
+                  <li class={`t${t} grid grid-cols-[80px_1fr_32px] items-center gap-2`}>
+                    <span class="caption-5 truncate text-ink-2">{name}</span>
+                    <span class="relative h-1.5 rounded-full bg-subtle">
+                      <span class={`at-bar at-bar-${i + 1} absolute inset-0 origin-left rounded-full ${Number(v) >= 80 ? "bg-(--tag-dot)" : "bg-line-strong"}`} style={`--v:${Number(v) / 100}`} />
+                      <span class="absolute -top-1 -bottom-1 left-[80%] w-px bg-ink/40" />
+                    </span>
+                    <span class={`at-pct at-pct-${i + 1} caption-4 tabular text-right ${Number(v) >= 80 ? "text-ink" : "text-faint"}`}>{v}%</span>
+                  </li>
+                ))}
+              </ul>
+              <div class="mt-3 flex min-h-5 gap-1">
+                <span class="in1-late"><TagChip name="recipes" auto /></span>
+                <span class="in2-late"><TagChip name="quick dinner" auto /></span>
+              </div>
             </div>
           </div>
         </div>
@@ -227,7 +253,26 @@ const groupName: Record<number, string> = { 5: "Research", 3: "Dev", 1: "Recipes
   .in3.opacity-40 { animation-name: in3-muted; }
   @keyframes in3-muted { 0%, 30% { opacity: 0; transform: translateY(4px) scale(0.92); } 36%, 88% { opacity: 0.4; transform: none; } 96%, 100% { opacity: 0; } }
 
-  .scan-fill { transform: scaleX(0.8); }
+  /* Auto tags card: bars fill, scores show, chips land, matching rules light up. */
+  .at-bar { transform: scaleX(0); animation: 6s var(--ease-base) infinite; }
+  .at-bar-1 { animation-name: at-bar-1; } .at-bar-2 { animation-name: at-bar-2; } .at-bar-3 { animation-name: at-bar-3; }
+  @keyframes at-bar-1 { 0%, 8% { transform: scaleX(0); } 24%, 90% { transform: scaleX(var(--v)); } 98%, 100% { transform: scaleX(0); } }
+  @keyframes at-bar-2 { 0%, 12% { transform: scaleX(0); } 28%, 90% { transform: scaleX(var(--v)); } 98%, 100% { transform: scaleX(0); } }
+  @keyframes at-bar-3 { 0%, 16% { transform: scaleX(0); } 32%, 90% { transform: scaleX(var(--v)); } 98%, 100% { transform: scaleX(0); } }
+  .at-pct { opacity: 0; animation: 6s var(--ease-base) infinite; }
+  .at-pct-1 { animation-name: at-pct-1; } .at-pct-2 { animation-name: at-pct-2; } .at-pct-3 { animation-name: at-pct-3; }
+  @keyframes at-pct-1 { 0%, 18% { opacity: 0; } 24%, 90% { opacity: 1; } 96%, 100% { opacity: 0; } }
+  @keyframes at-pct-2 { 0%, 22% { opacity: 0; } 28%, 90% { opacity: 1; } 96%, 100% { opacity: 0; } }
+  @keyframes at-pct-3 { 0%, 26% { opacity: 0; } 32%, 90% { opacity: 1; } 96%, 100% { opacity: 0; } }
+  .in1-late, .in2-late { display: inline-flex; opacity: 0; animation: 6s var(--ease-base) infinite; }
+  .in1-late { animation-name: chip-1; } .in2-late { animation-name: chip-2; }
+  @keyframes chip-1 { 0%, 40% { opacity: 0; transform: translateY(6px) scale(0.9); } 46%, 90% { opacity: 1; transform: none; } 96%, 100% { opacity: 0; } }
+  @keyframes chip-2 { 0%, 46% { opacity: 0; transform: translateY(6px) scale(0.9); } 52%, 90% { opacity: 1; transform: none; } 96%, 100% { opacity: 0; } }
+  .at-ring { box-shadow: 0 0 0 1.5px var(--tag-dot); opacity: 0; animation: 6s var(--ease-base) infinite; }
+  .at-hit-1 .at-ring { animation-name: chip-1; }
+  .at-hit-2 .at-ring { animation-name: chip-2; }
+  .at-link { animation: at-link 6s var(--ease-base) infinite; }
+  @keyframes at-link { 0%, 4%, 36%, 100% { transform: none; } 12%, 28% { transform: scale(1.15) rotate(12deg); } }
 
   /* Autogroup: loose tabs fade out on the button press, group rows arrive one by one. */
   .ag-loose { animation: ag-loose 6s var(--ease-base) infinite; }
@@ -265,7 +310,9 @@ const groupName: Record<number, string> = { 5: "Research", 3: "Dev", 1: "Recipes
   @media (prefers-reduced-motion: reduce) {
     .bento * { animation: none !important; }
     .ag-loose, .klabel-2, .klabel-3, .klabel-4 { opacity: 0; }
-    .ag-row { opacity: 1; }
+    .ag-row, .at-pct, .in1-late, .in2-late { opacity: 1; }
+    .at-bar { transform: scaleX(var(--v)); }
+    .at-hit-1 .at-ring, .at-hit-2 .at-ring { opacity: 1; }
     .klabel-1 { opacity: 1; }
   }
 </style>
