@@ -39,6 +39,7 @@ Create GitHub environment **`pr-preview`**, with these secrets/variables (reposi
 | --- | --- | --- |
 | Secret | `CLOUDFLARE_PREVIEW_API_TOKEN` | Account-scoped API token permitting Workers Scripts, D1, R2 bucket+object management, Queues, Workflows, Workers AI, Browser Rendering/Run, and Email Sending operations used here |
 | Secret | `PREVIEW_AUTH_SEED` | New random preview-only secret, at least 32 characters; do not use production auth secret |
+| Secret | `PREVIEW_TYPESAFE_API_KEY` | TypeSafe key for Jev (deployed as the preview Worker's `TYPESAFE_API_KEY`). Preview code from any labeled PR can read it, so prefer a separate key with a low spend limit |
 | Variable | `CLOUDFLARE_PREVIEW_ACCOUNT_ID` | Exact 32-hex account ID for the preview resources |
 | Variable | `PREVIEW_WORKERS_SUBDOMAIN` | Registered workers.dev account subdomain, just the label; controller verifies it through the account API |
 | Variable | `PREVIEW_EMAIL_FROM` | Bare verified sender address, e.g. `auth@your-verified-domain`; no display name |
