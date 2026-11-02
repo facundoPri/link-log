@@ -41,7 +41,7 @@ export default chapter({
       await api.send("POST","/batches",{kind:"autotag",ids:lib.links.map(l=>l.id)});
       await expect("A workflow waits for a Browser slot",async()=>(await Promise.all(urls.map(u=>api.jobs(u)))).flat().some(j=>j.step==="Waiting for Browser slot"),{timeout:10000});
       await page.reload();
-      await expect.visible(page.getByText("Waiting for Browser slot",{exact:true}).first());
+      await expect.visible(page.getByText("Waiting to extract content",{exact:true}).first());
       await click(page.getByRole("button",{name:/Activity|Extracting|Auto-tagging/,exact:false}).first());
       await expect("Activity markup remains valid with cancel controls",async()=>await page.locator("button button").count()===0);
       const batch=(await api.library()).batches.find((b:any)=>b.kind==="extract");
