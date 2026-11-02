@@ -98,6 +98,7 @@ describe("preview test account and PR comment", () => {
     const sha = "a".repeat(40);
     const building = body(repo, pr, run, { stage: "building", sha });
     expect(building.startsWith(MARKER)).toBe(true);
+    expect(body(repo, pr, run, { stage: "building", sha }, new Date("2026-11-02T14:03:59Z"))).toContain("Updated: 2026-11-02 14:03 UTC");
     expect(building).toContain(`https://dash.cloudflare.com/?to=/:account/workers/services/view/${n.worker}/production/deployments`);
     expect(building).toContain(run);
     const ready = body(repo, pr, run, { stage: "ready", sha, url: "https://p.example", email: "t@example.com", password: "secret-pass" });
