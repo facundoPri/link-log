@@ -49,6 +49,8 @@ async function deploy() {
   const subdomain = required("PREVIEW_WORKERS_SUBDOMAIN");
   const sender = required("PREVIEW_EMAIL_FROM");
   const seed = required("PREVIEW_AUTH_SEED");
+  // Jev runs on TypeSafe with its own key, as in production; Workers AI refuses it for this account.
+  const typesafeKey = required("PREVIEW_TYPESAFE_API_KEY");
   const secret = authSecret(seed, repositoryId, pr);
   const tester = testAccount(seed, repositoryId, pr);
   // Validate all setup values before provisioning anything.
@@ -66,7 +68,7 @@ async function deploy() {
   // Replace any identically named artifact file; never load PR wrangler config or .env files.
   await Bun.write(configPath, JSON.stringify(cfg, null, 2));
   const secretsPath = resolve(required("RUNNER_TEMP"), `preview-secrets-${n.worker}.json`);
-  await Bun.write(secretsPath, JSON.stringify({ BETTER_AUTH_SECRET: secret }));
+  await Bun.write(secretsPath, JSON.stringify({ BETTER_AUTH_SECRET: secret, TYPESAFE_API_KEY: typesafeKey }));
   await chmod(secretsPath, 0o600);
   // Holds only the password hash, never the password.
   const seedPath = resolve(required("RUNNER_TEMP"), `preview-seed-${n.worker}.sql`);

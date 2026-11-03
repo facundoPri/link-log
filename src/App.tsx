@@ -83,9 +83,11 @@ const overlayOpen = () =>
 export function App({
   account,
   onSignOut,
+  onSettings,
 }: {
   account: { email: string };
   onSignOut: () => void;
+  onSettings: () => void;
 }) {
   const [library, setLibrary] = useState<Library>({
     links: [],
@@ -900,6 +902,7 @@ export function App({
       }}
       account={account}
       onSignOut={onSignOut}
+      onSettings={onSettings}
       browserCount={ws.browser.snapshot ? ws.tabs.length : null}
       browserPanel={
         <BrowserSidebar

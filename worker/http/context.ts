@@ -3,10 +3,12 @@ import type { Auth } from "../auth";
 import type { AppConfig } from "../config";
 
 /**
- * Who is calling. Resolved on the server from the session cookie, never from the request body.
- * FAC-44 will add `{ kind: "apiKey", userId, capabilities, credentialId }` behind its own group.
+ * Who is calling. Resolved on the server, never from the request body: the session cookie on the
+ * private API, a verified API key (its owner, id and name) on the public API.
  */
-export type Principal = { kind: "session"; userId: string; sessionId: string };
+export type Principal =
+  | { kind: "session"; userId: string; sessionId: string }
+  | { kind: "apiKey"; userId: string; keyId: string; keyName: string };
 
 /** Hono typing shared by every module: Worker bindings plus per-request variables. */
 export type AppEnv = {
@@ -36,5 +38,22 @@ export const badRequest = (message: string) => new HttpError(400, message);
 // Foreign, legacy (unassigned) and deleted IDs all answer the same way: existence is not revealed.
 export const notFound = (what = "link") => new HttpError(404, `The ${what} no longer exists.`);
 
-/** Owner of the request; only available behind requireSession. */
+/** Owner of the request; only available behind requireSession or requireApiKey. */
 export const ownerOf = (c: AppContext) => c.get("principal").userId;
+
+/** The verified API key behind a public API request; anything else is not authenticated for it. */
+export function apiKeyOf(c: AppContext) {
+  const principal = c.get("principal");
+  if (principal.kind !== "apiKey") throw new HttpError(401, "A valid API key is required.");
+  return principal;
+}
+
+/**
+ * What kind of failure, for a log line: the error name plus a D1 code (`D1_ERROR`) if its message
+ * starts with one. Never the message, which can quote stored data or key material (see onError).
+ */
+export function errorType(error: unknown) {
+  if (!(error instanceof Error)) return typeof error;
+  const code = /^D1_[A-Z_]+/.exec(error.message)?.[0];
+  return code ? `${error.name} ${code}` : error.name;
+}

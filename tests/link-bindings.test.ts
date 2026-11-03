@@ -36,7 +36,7 @@ describe("up to 100 new URLs in one transaction", () => {
     test(`import ${size}: all saved with one job each; the retry is a pure duplicate`, async () => {
       const res = await post("/api/import", { urls: urls(size) });
       expect([res.status, res.data.imported, res.data.duplicates]).toEqual([200, size, 0]);
-      const expected = { links: size, jobs: size, batches: 1, withoutJob: 0, queuedState: size, quota: { links: size, jobs: size }, messages: size };
+      const expected = { links: size, jobs: size, batches: 1, withoutJob: 0, queuedState: size, quota: { links: size }, messages: size };
       expect(state()).toEqual(expected);
       const again = await post("/api/import", { urls: urls(size) });
       expect([again.status, again.data.imported, again.data.duplicates]).toEqual([200, 0, size]);
@@ -48,7 +48,7 @@ describe("up to 100 new URLs in one transaction", () => {
       const res = await post("/api/browser/save", { urls: urls(size) });
       expect(res.status).toBe(200);
       expect(res.data.results.filter((r: { status: string }) => r.status === "created").length).toBe(size);
-      expect(state()).toEqual({ links: size, jobs: size, batches: 1, withoutJob: 0, queuedState: size, quota: { links: size, jobs: size }, messages: size });
+      expect(state()).toEqual({ links: size, jobs: size, batches: 1, withoutJob: 0, queuedState: size, quota: { links: size }, messages: size });
       const again = await post("/api/browser/save", { urls: urls(size) });
       expect(again.data.results.every((r: { status: string }) => r.status === "duplicate")).toBe(true);
       expect(state()).toMatchObject({ links: size, jobs: size, batches: 1, messages: size });
@@ -62,17 +62,17 @@ describe("up to 100 new URLs in one transaction", () => {
         .run(crypto.randomUUID(), user.userId, url, url);
     const res = await post("/api/import", { urls: all });
     expect([res.status, res.data.imported, res.data.duplicates]).toEqual([200, 40, 60]);
-    expect(state()).toEqual({ links: 100, jobs: 100, batches: 1, withoutJob: 0, queuedState: 100, quota: { links: 40, jobs: 100 }, messages: 100 });
+    expect(state()).toEqual({ links: 100, jobs: 100, batches: 1, withoutJob: 0, queuedState: 100, quota: { links: 40 }, messages: 100 });
   });
 
   test("a failure in the last of 100 inserts rolls back the whole batch and refunds everything", async () => {
     const all = urls(100);
     db.sqlite.exec(`CREATE TRIGGER inject_fault BEFORE INSERT ON links WHEN NEW.original_url='${all[99]}' BEGIN SELECT RAISE(ABORT, 'injected D1 failure'); END`);
     expect((await post("/api/import", { urls: all })).status).toBeGreaterThanOrEqual(400);
-    expect(state()).toEqual({ links: 0, jobs: 0, batches: 0, withoutJob: 0, queuedState: 0, quota: { links: 0, jobs: 0 }, messages: 0 });
+    expect(state()).toEqual({ links: 0, jobs: 0, batches: 0, withoutJob: 0, queuedState: 0, quota: { links: 0 }, messages: 0 });
     db.sqlite.exec("DROP TRIGGER inject_fault");
     expect((await post("/api/import", { urls: all })).data.imported).toBe(100);
-    expect(state()).toMatchObject({ links: 100, jobs: 100, batches: 1, quota: { links: 100, jobs: 100 }, messages: 100 });
+    expect(state()).toMatchObject({ links: 100, jobs: 100, batches: 1, quota: { links: 100 }, messages: 100 });
   });
 });
 

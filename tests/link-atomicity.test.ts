@@ -33,14 +33,14 @@ describe("a failure while saving rolls everything back", () => {
   test("second INSERT fails: no link, job, batch or queue message, nothing charged; the retry saves both once", async () => {
     failOn(urls[1]!);
     await expect(addLinks(env, user.userId, urls)).rejects.toThrow("injected D1 failure");
-    expect(state()).toEqual({ links: 0, jobs: 0, batches: 0, withoutJob: 0, quota: { links: 0, jobs: 0 }, queued: 0 });
+    expect(state()).toEqual({ links: 0, jobs: 0, batches: 0, withoutJob: 0, quota: { links: 0 }, queued: 0 });
     heal();
     const retry = await addLinks(env, user.userId, urls);
     expect(retry.map((r) => "created" in r && r.created)).toEqual([true, true]);
-    expect(state()).toEqual({ links: 2, jobs: 2, batches: 1, withoutJob: 0, quota: { links: 2, jobs: 2 }, queued: 2 });
+    expect(state()).toEqual({ links: 2, jobs: 2, batches: 1, withoutJob: 0, quota: { links: 2 }, queued: 2 });
     // Saving again changes nothing.
     await addLinks(env, user.userId, urls);
-    expect(state()).toEqual({ links: 2, jobs: 2, batches: 1, withoutJob: 0, quota: { links: 2, jobs: 2 }, queued: 2 });
+    expect(state()).toEqual({ links: 2, jobs: 2, batches: 1, withoutJob: 0, quota: { links: 2 }, queued: 2 });
   });
 
   test("the HTTP import and Browser save routes answer with an error and save nothing", async () => {
@@ -72,18 +72,20 @@ describe("links left without a job by an earlier interrupted save", () => {
       .query("INSERT INTO links(id,user_id,original_url,url,domain,title,created_at) VALUES('orphan',?,?,?,'fault.example','x','t')")
       .run(user.userId, urls[0]!, urls[0]!);
 
-  test("saving the URL again queues its extraction once, charging one job and no link", async () => {
+  test("saving the URL again queues its extraction once, charging no link", async () => {
     orphan();
     const [result] = await addLinks(env, user.userId, [urls[0]!]);
     expect(result).toMatchObject({ id: "orphan", created: false });
-    expect(state()).toMatchObject({ links: 1, jobs: 1, batches: 1, withoutJob: 0, quota: { jobs: 1 }, queued: 1 });
+    expect(state()).toMatchObject({ links: 1, jobs: 1, batches: 1, withoutJob: 0, queued: 1 });
+    expect(state().quota).toEqual({});
     await addLinks(env, user.userId, [urls[0]!]);
-    expect(state()).toMatchObject({ jobs: 1, quota: { jobs: 1 }, queued: 1 });
+    expect(state()).toMatchObject({ jobs: 1, queued: 1 });
+    expect(state().quota).toEqual({});
   });
 
   test("concurrent saves of an orphan and a new URL: one job each, refunds for the losers", async () => {
     orphan();
     await Promise.all([1, 2, 3].map(() => addLinks(env, user.userId, urls)));
-    expect(state()).toMatchObject({ links: 2, jobs: 2, withoutJob: 0, quota: { links: 1, jobs: 2 }, queued: 2 });
+    expect(state()).toMatchObject({ links: 2, jobs: 2, withoutJob: 0, quota: { links: 1 }, queued: 2 });
   });
 });

@@ -46,17 +46,18 @@ export function makeEnv(db: TestD1, overrides: Record<string, unknown> = {}) {
 export function client(env: Env, base = TEST_ORIGIN) {
   return async function call(
     path: string,
-    init: { method?: string; body?: unknown; cookie?: string; origin?: string | null; ip?: string; headers?: Record<string, string> } = {},
+    init: { method?: string; body?: unknown; rawBody?: string; cookie?: string; origin?: string | null; ip?: string; headers?: Record<string, string> } = {},
   ) {
     const pending: Promise<unknown>[] = [];
     const ctx = { waitUntil: (p: Promise<unknown>) => void pending.push(p), passThroughOnException() {} } as unknown as ExecutionContext;
-    const method = init.method ?? (init.body === undefined ? "GET" : "POST");
+    const method = init.method ?? (init.body === undefined && init.rawBody === undefined ? "GET" : "POST");
     const headers: Record<string, string> = { "cf-connecting-ip": init.ip ?? "203.0.113.10", ...init.headers };
-    if (init.body !== undefined) headers["content-type"] = "application/json";
+    // `rawBody` is sent as is (a body that is not valid JSON); `body` is JSON-encoded.
+    if (init.body !== undefined || init.rawBody !== undefined) headers["content-type"] = "application/json";
     if (method !== "GET" && init.origin !== null) headers.origin = init.origin ?? TEST_ORIGIN;
     if (init.cookie) headers.cookie = init.cookie;
     const response = await worker.fetch(
-      new Request(base + path, { method, headers, body: init.body === undefined ? undefined : JSON.stringify(init.body), redirect: "manual" }) as never,
+      new Request(base + path, { method, headers, body: init.rawBody ?? (init.body === undefined ? undefined : JSON.stringify(init.body)), redirect: "manual" }) as never,
       env,
       ctx,
     );

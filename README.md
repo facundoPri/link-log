@@ -94,9 +94,11 @@ FAC-48 migrations start at `0018`, after main's shipped `0012`–`0017`. Fresh d
 
 Production runs at **https://linklog.facundopri.com**: `wrangler.jsonc` → `env.production` (Worker `linklog`, custom domain, D1 `linklog-production`, R2 `linklog-content-production`, Queue `linklog-jobs-production`, Workflow `linklog-process-link-production`, Jev via TypeSafe). The top level of `wrangler.jsonc` stays local-only; dev and tests never touch production. Auth emails come from `auth@linklog.facundopri.com` (Cloudflare Email Sending; DNS records in the `facundopri.com` zone).
 
+Every push to `main` deploys automatically (`.github/workflows/deploy-production.yml`): typecheck and tests, then build, D1 migrations and `wrangler deploy`. It logs a D1 Time Travel bookmark before migrating, to restore with `wrangler d1 time-travel restore linklog-production --bookmark <bookmark> --env production`. It runs in the `production` GitHub environment with the secret `CLOUDFLARE_API_TOKEN` (Workers Scripts, Workers Routes, D1, Queues, R2, Email Sending: edit) and the variable `CLOUDFLARE_ACCOUNT_ID`. To redeploy by hand, run the workflow from Actions, or locally:
+
 ```sh
 bun run build
-bunx wrangler d1 migrations apply DB --remote --env production   # back up first once there is real data
+bunx wrangler d1 migrations apply DB --remote --env production
 # Tag the commit so triage can tie the live version to code (wrangler deployments list --env production).
 bunx wrangler deploy --env production --tag "$(git rev-parse --short HEAD)" --message "$(git log -1 --format=%s)"
 ```

@@ -210,7 +210,7 @@ describe("an exhausted quota leaves nothing half-saved (R8)", () => {
     db.sqlite.query("SELECT (SELECT count(*) FROM links) links,(SELECT count(*) FROM tags) tags,(SELECT count(*) FROM jobs) jobs,(SELECT count(*) FROM batches) batches").get();
 
   test("add link: 429 saves no link or tag; the retry after the quota resets extracts exactly once", async () => {
-    setUsed(`jobs:${A.userId}`, 300);
+    setUsed(`links:${A.userId}`, 500);
     const rejected = await as(A).send("/api/links", { url: "https://quota.example/a", tags: ["later"] });
     expect(rejected.status).toBe(429);
     expect(rows()).toEqual({ links: 0, tags: 0, jobs: 0, batches: 0 });
@@ -225,7 +225,7 @@ describe("an exhausted quota leaves nothing half-saved (R8)", () => {
     const again = await as(A).send("/api/links", { url: "https://quota.example/a", tags: ["later"] });
     expect(again.status).toBe(200);
     expect(rows()).toEqual({ links: 1, tags: 1, jobs: 1, batches: 1 });
-    expect([used(`jobs:${A.userId}`), used(`links:${A.userId}`)]).toEqual([1, 1]);
+    expect(used(`links:${A.userId}`)).toBe(1);
   });
 
   test("import and Browser save are all-or-nothing under the quota and only charge new links", async () => {
@@ -233,27 +233,27 @@ describe("an exhausted quota leaves nothing half-saved (R8)", () => {
     expect((await as(A).send("/api/import", { urls: ["https://quota.example/1", "https://quota.example/2"] })).status).toBe(429);
     expect((await as(A).send("/api/browser/save", { urls: ["https://quota.example/3"] })).status).toBe(429);
     expect(rows()).toEqual({ links: 0, tags: 0, jobs: 0, batches: 0 });
-    // Links quota fine, jobs exhausted: nothing either, and the links quota is given back.
+    // A batch that does not fit in what is left saves nothing and takes nothing.
     db.sqlite.exec("DELETE FROM app_rate_limits");
-    setUsed(`jobs:${A.userId}`, 299);
+    setUsed(`links:${A.userId}`, 499);
     expect((await as(A).send("/api/import", { urls: ["https://quota.example/1", "https://quota.example/2"] })).status).toBe(429);
     expect(rows()).toEqual({ links: 0, tags: 0, jobs: 0, batches: 0 });
-    expect(used(`links:${A.userId}`)).toBe(0);
+    expect(used(`links:${A.userId}`)).toBe(499);
     // One new + one known URL: only the new one is charged.
     db.sqlite.exec("DELETE FROM app_rate_limits");
     await as(A).send("/api/links", { url: "https://quota.example/1" });
     const imported = (await (await as(A).send("/api/import", { urls: ["https://quota.example/1", "https://quota.example/2"] })).json()) as { imported: number; duplicates: number };
     expect([imported.imported, imported.duplicates]).toEqual([1, 1]);
-    expect([used(`jobs:${A.userId}`), used(`links:${A.userId}`)]).toEqual([2, 2]);
+    expect(used(`links:${A.userId}`)).toBe(2);
     // B's quota is untouched.
-    expect(used(`jobs:${B.userId}`)).toBe(0);
+    expect(used(`links:${B.userId}`)).toBe(0);
   });
 
   test("concurrent saves of the same new URL create one link and one job, and refund the loser", async () => {
     const results = await Promise.all([1, 2, 3].map(() => as(A).send("/api/links", { url: "https://quota.example/race" })));
     expect(results.map((r) => r.status).sort()).toEqual([200, 200, 201]);
     expect(rows()).toMatchObject({ links: 1, jobs: 1 });
-    expect([used(`jobs:${A.userId}`), used(`links:${A.userId}`)]).toEqual([1, 1]);
+    expect(used(`links:${A.userId}`)).toBe(1);
   });
 });
 

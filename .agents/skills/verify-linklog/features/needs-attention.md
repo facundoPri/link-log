@@ -32,7 +32,7 @@ Preconditions:
 - **Retry.** On a flagged row, click `Retry`. Only the failed step reruns, and the row stays listed until that step succeeds. A `down` link stays flagged after the retry.
 - **Use preview.** On a content-flagged row with usable metadata, click `Use preview`. `content_source === "preview"` and the flag clears.
 - **Dismiss.** Click `Dismiss`. `attention_kind === null`, while `content_state` or `status` keep their failed values. The `Needs attention` count drops.
-- **Activity.** Click `Activity`. The sheet titled `Activity` lists the batch with each job's step, such as `Waiting for Browser slot`. Use `page.locator("button button").count() === 0` to confirm the markup is valid.
+- **Activity.** Click `Activity`. The sheet titled `Activity` lists the batch with each job's step, such as `Waiting to extract content` (stored as `Waiting for Browser slot`). Use `page.locator("button button").count() === 0` to confirm the markup is valid.
 - **Cancel.** With `fixture("pool", …)` links queued behind the Browser pool (launch with `--var BROWSER_CONCURRENCY=1`), click `Cancel batch`. The cancelled jobs show `Cancelled`, and no cancelled link gains content or a flag. Use `check` repeatedly over a window of about 15 s.
 - **Proof.** Save a `shot` of the Needs attention view and a `note` of the flagged links' `attention_kind`, `attention_reason` and `content_state`. The video shows each Retry and Dismiss with its result.
 

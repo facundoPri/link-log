@@ -1,10 +1,11 @@
 import { isAPIError } from "better-auth/api";
 import { createMiddleware } from "hono/factory";
+import { findBySecret } from "../api-key-table";
 import { createAuth } from "../auth";
 import { ConfigError, hostAllowed, readConfig } from "../config";
-import { consume, LIMITS, LimitError } from "../limits";
+import { LIMITS, chargeOrThrow } from "../limits";
 import { json } from "../store";
-import { HttpError, type AppEnv } from "./context";
+import { HttpError, errorType, type AppContext, type AppEnv } from "./context";
 
 let configErrorLogged = false;
 
@@ -91,20 +92,62 @@ export async function readBounded(request: Request, max: number) {
   return new TextDecoder().decode(bytes);
 }
 
-/** Per-user write quota, then a bounded JSON object body. */
-export const writeQuotaAndBody = createMiddleware<AppEnv>(async (c, next) => {
-  let body: Record<string, unknown> = {};
-  if (c.req.method !== "GET" && c.req.method !== "HEAD") {
-    if (!(await consume(c.env.DB, `writes:${c.get("principal").userId}`, LIMITS.writesPerUser))) throw new LimitError();
-    if (Number(c.req.header("content-length") || 0) > MAX_BODY_BYTES) throw new HttpError(413, "Request too large.");
-    const raw = await readBounded(c.req.raw, MAX_BODY_BYTES);
-    try {
-      body = raw ? JSON.parse(raw) : {};
-    } catch {
-      throw new HttpError(400, "Invalid request.");
-    }
-    if (!body || Array.isArray(body) || typeof body !== "object") throw new HttpError(400, "Invalid request.");
+/** A bounded JSON object body ({} for GET and HEAD). */
+async function readJsonObject(c: AppContext): Promise<Record<string, unknown>> {
+  if (c.req.method === "GET" || c.req.method === "HEAD") return {};
+  if (Number(c.req.header("content-length") || 0) > MAX_BODY_BYTES) throw new HttpError(413, "Request too large.");
+  const raw = await readBounded(c.req.raw, MAX_BODY_BYTES);
+  let body: unknown;
+  try {
+    body = raw ? JSON.parse(raw) : {};
+  } catch (error) {
+    // The parser's position, when its message has one, points at the broken character.
+    const position = /position (\d+)/.exec(error instanceof Error ? error.message : "")?.[1];
+    throw new HttpError(400, `Body is not valid JSON${position ? ` (at position ${position})` : ""}.`);
   }
-  c.set("body", body);
+  if (!body || Array.isArray(body) || typeof body !== "object") throw new HttpError(400, "Send a JSON object as the body.");
+  return body as Record<string, unknown>;
+}
+
+/** Per-user write quota (shared by the private and the public API), then a bounded JSON object body. */
+export const writeQuotaAndBody = createMiddleware<AppEnv>(async (c, next) => {
+  if (c.req.method !== "GET" && c.req.method !== "HEAD") {
+    await chargeOrThrow(c.env.DB, [{ key: `writes:${c.get("principal").userId}`, limit: LIMITS.writesPerUser, cost: 1, code: "writes" }]);
+  }
+  c.set("body", await readJsonObject(c));
+  await next();
+});
+
+/**
+ * Public API: `Authorization: Bearer lk_…`, verified by the API key plugin, becomes an API key
+ * Principal whose owner is the key's owner. Cookies are ignored. A missing, invalid or Revoked API
+ * key is 401, logged to Workers Logs only (never the key itself). A failed lookup is 503, so the
+ * integration retries instead of treating its key as dead.
+ *
+ * The plugin verifies first, so a valid key costs only the plugin's own read (and the write that
+ * records its use) and an unknown key costs two reads. The plugin answers a failed read or update
+ * like an unknown key (INVALID_API_KEY), so only then does one hashed read tell the two apart: no
+ * such key is 401, a key that is still there means the plugin's read or update failed (503). A key
+ * deleted meanwhile is gone for that read too: 401.
+ */
+export const requireApiKey = createMiddleware<AppEnv>(async (c, next) => {
+  const key = /^Bearer\s+(\S+)$/i.exec(c.req.header("authorization") ?? "")?.[1];
+  let verified;
+  if (key) {
+    try {
+      verified = await c.get("auth").api.verifyApiKey({ body: { key } });
+      if (!verified.valid && verified.error?.code === "INVALID_API_KEY" && (await findBySecret(c.env.DB, key))?.enabled) throw new Error("API key validation failed");
+    } catch (error) {
+      if (!isAPIError(error)) {
+        console.error(JSON.stringify({ event: "api_key_lookup_failed", errorType: errorType(error) }));
+        return json({ error: "Could not check the API key. Try again." }, 503);
+      }
+    }
+  }
+  if (!verified?.valid || !verified.key) {
+    console.warn(JSON.stringify({ event: "api_key_rejected", reason: key ? "invalid" : "missing", method: c.req.method, path: c.req.path }));
+    return json({ error: "A valid API key is required." }, 401);
+  }
+  c.set("principal", { kind: "apiKey", userId: verified.key.referenceId, keyId: verified.key.id, keyName: verified.key.name ?? "" });
   await next();
 });
