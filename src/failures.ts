@@ -46,6 +46,9 @@ const WAITING_FOR: Record<string, string> = { extract: "extraction", preview: "t
 // The worker stores these steps verbatim and the cancel predicate matches them, so only the display changes.
 const STEP_LABELS: Record<string, string> = { "Waiting for Browser slot": "Waiting to extract content" };
 export const stepLabel = (step: string) => STEP_LABELS[step] ?? step;
+/** The one label a link row shows while a job is in flight; the stored step stays for Activity. */
+export const rowJobLabel = (job: { status: string } | null | undefined) =>
+  job && (job.status === "queued" || job.status === "waiting" || job.status === "running") ? "In progress…" : null;
 export function jobProgress(
   j: Pick<Job, "status" | "waiting_for" | "step" | "attempt" | "max_attempts" | "reason" | "preview_reason" | "attempt_started_at" | "attempt_budget_ms">,
   now = Date.now(),

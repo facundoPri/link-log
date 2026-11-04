@@ -30,7 +30,7 @@ import { BrowserDialogs } from "./components/browser/BrowserDialogs";
 import { useBrowserActions } from "./browser/useBrowserActions";
 import { usd, tokens } from "./lib/format";
 import { submitInChunks, type BatchReply } from "./batches";
-import { actionForKey, actionStates, BULK_ACTIONS, bulkProgress, lacksContent, type BulkAction, type BulkRunners } from "./bulkActions";
+import { actionForKey, actionStates, BULK_ACTIONS, batchProgressNote, lacksContent, type BulkAction, type BulkRunners } from "./bulkActions";
 import { copyLinks } from "./lib/copy-links";
 import { failureMessage } from "./failures";
 import { Toaster } from "@/components/ui/sonner";
@@ -266,7 +266,7 @@ export function App({
       if (b.active > 0) {
         toast.loading(`${verb} ${n} ${n === 1 ? "link" : "links"}…`, {
           id: b.id,
-          description: `${b.done + b.failed + b.cancelled} of ${n} done`,
+          description: batchProgressNote(b),
           action: { label: "Cancel", onClick: () => void cancelBatch(b.id) },
         });
       } else if (b.cancelled === n) {
@@ -844,9 +844,8 @@ export function App({
   const paletteAction = BULK_ACTIONS.find((a) => a.id === palette?.page) ?? null;
   const pickedSet = new Set(picked);
   const allVisibleSelected = filtered.length > 0 && filtered.every((l) => pickedSet.has(l.id));
-  const progress = bulkProgress(library.batches, selectionBatches.current);
   // The bar, chip or mobile bar covers the list's end while links are selected and while it reports a run.
-  const bulkSurfaceShown = view !== "browser" && (picked.length > 0 || !!progress || results.length > 0);
+  const bulkSurfaceShown = view !== "browser" && (picked.length > 0 || results.length > 0);
   const selectFailed = (r: BulkResult) => {
     const ids = new Set(library.links.map((l) => l.id));
     setPicked(r.failed.map((f) => f.linkId).filter((id) => ids.has(id)));
@@ -1277,7 +1276,6 @@ export function App({
           selected={picked.length}
           visibleCount={filtered.length}
           states={bulkStates}
-          progress={progress}
           results={results}
           onInvoke={invokeBulk}
           onSelectAll={() => setPicked(filtered.map((l) => l.id))}
@@ -1290,7 +1288,6 @@ export function App({
       {view !== "browser" && narrow && !mobile && (
         <BulkChip
           selected={picked.length}
-          progress={progress}
           results={results}
           onOpenPalette={() => setPalette({ page: null })}
           onClear={() => setPicked([])}
@@ -1303,7 +1300,6 @@ export function App({
           selected={picked.length}
           visibleCount={filtered.length}
           allVisibleSelected={allVisibleSelected}
-          progress={progress}
           results={results}
           onSelectAll={() => setPicked(filtered.map((l) => l.id))}
           onClear={() => setPicked([])}
