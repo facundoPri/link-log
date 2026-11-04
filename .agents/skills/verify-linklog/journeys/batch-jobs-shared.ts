@@ -13,7 +13,8 @@ export default (async ({ page, api, fixture, step, check, shot, note }) => {
   const urls = [fixture("pool", "1"), fixture("pool", "2"), fixture("pool", "3")];
 
   await step("Set up: an API key submits three slow links, so one extract batch stays active");
-  const { key } = await api.send("POST", "/auth/api-key/create", { name: `Batch jobs ${Date.now() % 100000}` });
+  const name = `Batch jobs ${Date.now() % 100000}`;
+  const { key } = await api.send("POST", "/auth/api-key/create", { name });
   const res = await fetch(`${origin}/api/v1/links`, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
@@ -35,7 +36,7 @@ export default (async ({ page, api, fixture, step, check, shot, note }) => {
   });
   await page.getByRole("button", { name: /^(Activity|Extracting)/ }).click();
   const sheet = page.getByRole("dialog", { name: "Activity" });
-  await sheet.getByText(/^Extract context · API/).click();
+  await sheet.getByText(`Extract context · API · ${name}`, { exact: true }).click();
   await check("The sheet lists the batch's jobs", async () => (await sheet.getByRole("button", { name: "Cancel", exact: true }).count()) > 0);
   const opened = requests.length;
   await page.waitForTimeout(WINDOW_MS);
