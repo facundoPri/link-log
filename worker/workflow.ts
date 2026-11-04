@@ -15,6 +15,7 @@ import { adapterMessage, classify, logResidualFailure, LinkFailure } from "./fai
 import { JevFailure } from "./ai/jev";
 import { JEV_FAILURE_MESSAGES } from "../src/failures";
 import { INTERRUPTED_USAGE } from "./usage";
+import { logJevBatchProgress, logJevJobStarted } from "./jev-metrics";
 
 export type LoadedJob = JobRow & { kind: string; config: string; user_id: string };
 /**
@@ -63,6 +64,7 @@ export class LinkWorkflow extends WorkflowEntrypoint<Env, { id: string }> {
         .run();
       // Cancelled between the read and the start.
       if (!started.meta.changes) throw new Error("The job was cancelled before it started.");
+      logJevJobStarted(row, row.kind);
       return { job: row, link, target };
     });
     const { job, link, target } = data;
@@ -125,6 +127,7 @@ export class LinkWorkflow extends WorkflowEntrypoint<Env, { id: string }> {
           ).bind(new Date().toISOString(), job.id),
           ...(job.link_id ? [promoteWaiting(env.DB, job.link_id)] : []),
         ]);
+        await logJevBatchProgress(env, job.id, job.kind);
       });
     } catch (error) {
       stoppedLinks = await step.do("record-failure", { retries: { limit: 5, delay: "2 seconds", backoff: "exponential" } }, async () => {
@@ -190,6 +193,7 @@ export class LinkWorkflow extends WorkflowEntrypoint<Env, { id: string }> {
         } finally {
           if (usedPreview) await dropUnusedPreview(env, link!.id, fallbackKey);
         }
+        await logJevBatchProgress(env, job.id, job.kind);
         return stopped;
       });
     } finally {

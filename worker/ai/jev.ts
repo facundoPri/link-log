@@ -5,6 +5,7 @@ import { jevUnavailable } from "../../src/attention";
 import { fixtureJev } from "./fixture";
 import { JEV_FAILURE_MESSAGES, type JevReason } from "../../src/failures";
 import { fixtureJevAllowed } from "../config";
+import { logJevCall, logJevRateLimited } from "../jev-metrics";
 export type { Answer, Question } from "../../src/types";
 export function probability(n: unknown): n is number {
   return typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= 1;
@@ -224,7 +225,7 @@ function afterSend(e: unknown): JevFailure {
     return new JevFailure("sent", "network", undefined, detail);
   return new JevFailure("sent", "provider_error", undefined, detail);
 }
-type JevJob = { id: string; batch_id: string; link_id: string | null };
+type JevJob = { id: string; batch_id: string; link_id: string | null; created_at?: string };
 // A job of the batch settled with an account error, or recorded one and has not settled yet.
 const accountStopped = "EXISTS (SELECT 1 FROM jobs s WHERE s.batch_id=? AND s.id<>? AND (s.reason='account' OR json_extract(s.jev_outcome,'$.reason')='account'))";
 export type JevResult = { answers: Record<string, Answer>; model: string };
@@ -283,6 +284,7 @@ export async function judge(
   await claimCall(env, job, usageId, provider);
   let failure: JevFailure | null = null;
   let result: JevResult | undefined;
+  const sentAt = Date.now();
   try {
     let raw: Record<string, unknown>;
     // Fixture: deterministic, unpaid answers for automated tests, only with ALLOW_FIXTURE_JEV.
@@ -301,6 +303,7 @@ export async function judge(
         signal: AbortSignal.timeout(60000),
       });
       if (!response.ok) {
+        if (response.status === 429) logJevRateLimited(job, response.headers.get("retry-after"));
         // The status decides an account error, before any body is awaited.
         if ([401, 402, 403].includes(response.status)) {
           void response.body?.cancel().catch(() => {});
@@ -345,6 +348,7 @@ export async function judge(
   } catch (e) {
     failure = afterSend(e);
   }
+  logJevCall(job, { provider, latency_ms: Date.now() - sentAt, ok: !failure, http_status: failure?.detail.http_status ?? null, reason: failure?.reason ?? null });
   // The outcome is recorded under the claim before metering is awaited: if the attempt ends during the
   // metering, the next one recovers it (an account error must still stop the batch). Metering never replaces it.
   const outcome: JevOutcome = failure
