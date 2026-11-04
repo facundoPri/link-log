@@ -55,8 +55,9 @@ export function jobProgress(
 ) {
   if (j.status === "waiting")
     return { step: `Waiting for ${(j.waiting_for && WAITING_FOR[j.waiting_for]) || "another job on this link"}`, note: null };
-  // The database's default step for a new job is the legacy "En cola".
-  if (j.status === "queued") return { step: "Queued", note: null };
+  // The database's default step for a new job is the legacy "En cola". A queued Jev job waiting for its
+  // retry (a message retry) shows that attempt instead.
+  if (j.status === "queued" && !(j.attempt && j.attempt > 1)) return { step: "Queued", note: null };
   if (j.status === "done")
     return { step: null, note: j.preview_reason ? `No preview: ${failureMessage(j.preview_reason)}` : null };
   if (j.status === "failed" || !j.attempt) return { step: j.status === "failed" ? null : stepLabel(j.step), note: null };
