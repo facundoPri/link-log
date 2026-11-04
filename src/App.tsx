@@ -33,6 +33,7 @@ import { submitInChunks, type BatchReply } from "./batches";
 import { actionForKey, actionStates, BULK_ACTIONS, bulkProgress, lacksContent, type BulkAction, type BulkRunners } from "./bulkActions";
 import { copyLinks } from "./lib/copy-links";
 import { failureMessage } from "./failures";
+import { busy, emptyLibrary, useInvalidateLibrary, useLibrary, useWriteLibrary } from "./library";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
@@ -89,15 +90,12 @@ export function App({
   onSignOut: () => void;
   onSettings: () => void;
 }) {
-  const [library, setLibrary] = useState<Library>({
-    links: [],
-    tags: [],
-    lenses: [],
-    batches: [],
-    capabilities: { markdown: false, jev: false, provider: "typesafe" },
-  });
-  const [loaded, setLoaded] = useState(false);
-  const [loadError, setLoadError] = useState("");
+  const libraryQuery = useLibrary();
+  const library = libraryQuery.data ?? emptyLibrary;
+  const loaded = !libraryQuery.isPending;
+  const loadError = libraryQuery.isLoadingError ? libraryQuery.error.message : "";
+  const setLibrary = useWriteLibrary();
+  const refresh = useInvalidateLibrary();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [picked, setPicked] = useState<string[]>([]);
   const [view, setView] = useState<View>("all");
@@ -148,7 +146,6 @@ export function App({
       for (const id of new Set(pendingSaves.current.values())) toast.dismiss(id);
     };
   }, []);
-  const libraryEpoch = useRef(0);
   const listScroll = useRef<HTMLDivElement>(null);
   const pendingNewUrls = useMemo(() => {
     const saved = new Set(library.links.flatMap((link) => [link.original_url, link.url]));
@@ -196,61 +193,35 @@ export function App({
     );
   }, [sidebarOpen]);
 
-  const refresh = useCallback(async () => {
-    const epoch = libraryEpoch.current;
-    const data = await api();
-    if (epoch === libraryEpoch.current) setLibrary(data);
-    setLoaded(true);
-    setLoadError("");
-    return data;
-  }, []);
+  const busyPolling = busy(libraryQuery.data);
 
-  useEffect(() => {
-    refresh().catch((e) => {
-      setLoaded(true);
-      setLoadError((e as Error).message);
-    });
-  }, [refresh]);
-
-  const busyPolling = library.links.some((l) => l.processing) ||
-    library.batches.some((b) => b.active > 0);
-
-  // Poll library + per-batch jobs while work is in flight.
+  // Per-batch jobs of the active batches, read again each time the library updates while work is in flight.
   useEffect(() => {
     if (!busyPolling) {
       setJobsByLink(new Map());
       return;
     }
     let alive = true;
-    const tick = async () => {
-      try {
-        const lib = await refresh();
-        const active = lib.batches.filter((b) => b.active > 0);
-        if (!alive) return;
-        const map = new Map<string, { kind: "extract" | "preview" | "autotag" | "lens" | "query"; status: string; step: string | null }>();
-        for (const b of active) {
-          try {
-            const { jobs } = await api<{ jobs: Job[] }>(`/batches/${b.id}`);
-            for (const j of jobs)
-              // A waiting job never hides the job it waits for.
-              if (j.link_id && ["queued", "running", "waiting"].includes(j.status) && !(j.status === "waiting" && map.has(j.link_id)) && (b.kind === "extract" || b.kind === "preview" || b.kind === "autotag" || b.kind === "lens" || b.kind === "query"))
-                map.set(j.link_id, { kind: b.kind, status: j.status, step: j.step });
-          } catch {
-            /* batch may be gone */
-          }
+    const active = library.batches.filter((b) => b.active > 0);
+    void (async () => {
+      const map = new Map<string, { kind: "extract" | "preview" | "autotag" | "lens" | "query"; status: string; step: string | null }>();
+      for (const b of active) {
+        try {
+          const { jobs } = await api<{ jobs: Job[] }>(`/batches/${b.id}`);
+          for (const j of jobs)
+            // A waiting job never hides the job it waits for.
+            if (j.link_id && ["queued", "running", "waiting"].includes(j.status) && !(j.status === "waiting" && map.has(j.link_id)) && (b.kind === "extract" || b.kind === "preview" || b.kind === "autotag" || b.kind === "lens" || b.kind === "query"))
+              map.set(j.link_id, { kind: b.kind, status: j.status, step: j.step });
+        } catch {
+          /* batch may be gone */
         }
-        if (alive) setJobsByLink(map);
-      } catch {
-        /* keep polling */
       }
-    };
-    void tick();
-    const id = setInterval(() => void tick(), 1800);
+      if (alive) setJobsByLink(map);
+    })();
     return () => {
       alive = false;
-      clearInterval(id);
     };
-  }, [busyPolling, refresh]);
+  }, [busyPolling, libraryQuery.dataUpdatedAt]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Batch progress toasts for batches this session created.
   useEffect(() => {
@@ -350,15 +321,12 @@ export function App({
   }, []);
 
   const save = useCallback(async (url: string, tags: string[] = []) => {
-    libraryEpoch.current++;
     const data = await api("/links", "POST", { url, tags });
-    libraryEpoch.current++;
     setLibrary(data);
-    setLoaded(true);
     showRecentLinks();
     if (data.duplicate) toast.success("Link moved to the top", { description: "Already in your library." });
     else toast.success("Link saved");
-  }, [showRecentLinks]);
+  }, [showRecentLinks, setLibrary]);
 
   const capture = useCallback((text: string) => {
     const parsed = pastedUrls(text);
@@ -383,7 +351,6 @@ export function App({
     ].filter(Boolean).join(" · ");
     for (const url of urls) pendingSaves.current.set(url, id);
     setPendingUrls([...pendingSaves.current.keys()]);
-    libraryEpoch.current++;
     showRecentLinks();
     toast.loading(`Saving ${count(urls.length)}…`, { id });
     // Serialize separate pastes so an older response cannot replace a newer library snapshot.
@@ -395,10 +362,7 @@ export function App({
           const chunk = urls.slice(offset, offset + 100);
           const data = await api<Library & { imported: number; duplicates: number }>("/import", "POST", { urls: chunk });
           if (!captureActive.current) return;
-          libraryEpoch.current++;
           setLibrary(data);
-          setLoaded(true);
-          setLoadError("");
           added += data.imported;
           existing += data.duplicates;
           confirmed += chunk.length;
@@ -421,11 +385,11 @@ export function App({
         setPendingUrls([...pendingSaves.current.keys()]);
       }
     });
-  }, [showRecentLinks]);
+  }, [showRecentLinks, setLibrary]);
 
   const mutate = useCallback(async (path: string, method: string, body: unknown = {}) => {
     setLibrary(await api(path, method, body));
-  }, []);
+  }, [setLibrary]);
 
   const runBatch = useCallback(
     async (
@@ -460,7 +424,7 @@ export function App({
         setRunning(false);
       }
     },
-    [refresh],
+    [refresh, setLibrary],
   );
 
   // Keyboard: ⌘K add (or the bulk palette while links are selected), T/L/E/C bulk actions, / search, Esc close
@@ -1154,11 +1118,7 @@ export function App({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() =>
-                  void refresh()
-                    .then(() => setLoadError(""))
-                    .catch((e) => setLoadError(e.message))
-                }
+                onClick={() => void libraryQuery.refetch()}
               >
                 Retry
               </Button>
