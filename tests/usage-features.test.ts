@@ -65,3 +65,54 @@ test("lens and autotag runs on a Link are counted with their tokens; an unpriced
   expect(rows.autotag!.inputTokens).toBeGreaterThan(0);
   expect(total.unknownCostCalls).toBe(2); // the fixture provider has no price
 });
+
+const activityUsage = async (s: S) => (await s.api("/usage")).data.totals as { usd: number | null; unknown_cost_calls: number };
+
+test("a Jev call refused for its token window costs nothing, in Settings and in Activity", async () => {
+  const s = await setup();
+  Object.assign(s.env as any, { JEV_PROVIDER: "typesafe", TYPESAFE_API_KEY: "test-only" });
+  const jev = spyOn(globalThis, "fetch").mockImplementation((async () =>
+    Response.json({ detail: "state exceeds maximum context length of 32000 tokens" }, { status: 422 })) as unknown as typeof fetch);
+  try {
+    fakes.browser = renders(0);
+    const id = await save(s, URL_1);
+    await runAll(s);
+    await s.api("/tags", "POST", { name: "news", description: "News articles" });
+    expect((await s.api("/batches", "POST", { kind: "autotag", ids: [id] })).status).toBe(200);
+    await runAll(s);
+  } finally {
+    jev.mockRestore();
+  }
+  const { rows, total } = await features(s);
+  expect(rows.autotag).toMatchObject({ runs: 1, usd: 0, unknownCostCalls: 0 });
+  expect(total.unknownCostCalls).toBe(0);
+  expect(await activityUsage(s)).toMatchObject({ unknown_cost_calls: 0 });
+});
+
+test("a browser call stored before its rate existed is priced by the backfill, in Settings and in Activity", async () => {
+  const s = await setup();
+  fakes.browser = renders(36_000);
+  await save(s, URL_1);
+  await runAll(s);
+  s.db.exec("UPDATE usage_events SET estimated_usd=NULL");
+  s.db.exec(await Bun.file("migrations/0027_usage_backfill.sql").text());
+  const { rows, total } = await features(s);
+  expect(rows.content).toMatchObject({ runs: 1, unknownCostCalls: 0 });
+  expect(rows.content!.usd).toBeCloseTo(0.0009, 10);
+  expect(total.unknownCostCalls).toBe(0);
+  const activity = await activityUsage(s);
+  expect(activity.unknown_cost_calls).toBe(0);
+  expect(activity.usd).toBeCloseTo(0.0009, 10);
+});
+
+test("an interrupted browser call has no recorded browser time and stays unpriced", async () => {
+  const s = await setup();
+  fakes.browser = renders(36_000);
+  await save(s, URL_1);
+  await runAll(s);
+  s.db.exec("UPDATE usage_events SET status='failed',error='Provider call interrupted before completion',browser_ms=NULL,estimated_usd=NULL");
+  s.db.exec(await Bun.file("migrations/0027_usage_backfill.sql").text());
+  const { rows } = await features(s);
+  expect(rows.content).toMatchObject({ usd: 0, unknownCostCalls: 1 });
+  expect((await activityUsage(s)).unknown_cost_calls).toBe(1);
+});
