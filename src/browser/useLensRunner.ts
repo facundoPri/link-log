@@ -130,20 +130,28 @@ export function useLensRunner(browser: BrowserState, active: Lens[], allLenses: 
     [request, submit],
   );
 
-  // Auto-complete: every active lens covers every eligible tab of the window. The fill right after
-  // the user activates a lens is that user's run, with its toast; any other fill runs quietly.
+  // Auto-complete: every active lens covers every eligible tab of the window. The fill round right
+  // after the user activates a lens is that user's run, with its toast; any other round runs quietly.
+  // A mark lasts until the next round or until the runner turns out to be off, so a later automatic
+  // fill never inherits it.
   const activated = useRef(new Set<string>());
-  /** The next fill of these lenses is the user's activation, not an automatic one. */
+  /** The next fill round of these lenses is the user's activation, not an automatic one. */
   const markActivated = useCallback((lensIds: string[], on: boolean) => {
     for (const id of lensIds) {
       if (on) activated.current.add(id);
       else activated.current.delete(id);
     }
   }, []);
+  // A round that repeats because the lenses changed while it ran covers the lenses active now.
+  const latestRefs = useRef(refs);
+  latestRefs.current = refs;
   const running = useRef(false);
   const again = useRef(false);
   const fill = useCallback(async () => {
-    if (!enabled || !connected || !refs.length) return;
+    if (!enabled || !connected || !refs.length) {
+      activated.current.clear();
+      return;
+    }
     if (running.current) {
       again.current = true;
       return;
@@ -152,10 +160,9 @@ export function useLensRunner(browser: BrowserState, active: Lens[], allLenses: 
     try {
       do {
         again.current = false;
-        for (const ref of refs) {
-          const explicit = activated.current.delete(ref.id);
-          await claimAndSubmit(ref, {}, explicit ? startRun() : undefined);
-        }
+        const explicit = activated.current;
+        activated.current = new Set();
+        for (const ref of latestRefs.current) await claimAndSubmit(ref, {}, explicit.has(ref.id) ? startRun() : undefined);
       } while (again.current);
     } catch {
       /* surfaced through record states */
