@@ -1,0 +1,28 @@
+---
+import Base from "../layouts/Base.astro";
+import Icon from "../components/Icon.astro";
+import TagChip from "../components/TagChip.astro";
+---
+
+<Base title="Page not found · Linklog" description="This page does not exist." noindex>
+  <section class="flex min-h-[80vh] flex-col items-center justify-center px-4 pb-24 pt-32 text-center">
+    <div class="window w-full max-w-md text-left" data-reveal>
+      <div class="flex items-center gap-3 p-4">
+        <span class="favicon t0">?</span>
+        <div class="min-w-0 flex-1">
+          <p class="body-5 truncate text-ink">This page could not be found</p>
+          <p class="caption-5 text-muted">404 · nothing at this address</p>
+        </div>
+        <TagChip name="to read" class="opacity-40" />
+      </div>
+      <div class="caption-4 flex items-center gap-2 bg-warning-soft px-4 py-2 text-warning">
+        <Icon name="warning-circle" class="size-4" /> Needs attention: the link points nowhere.
+      </div>
+    </div>
+    <h1 class="heading-4 md:heading-3 hero-ink mt-12 max-w-[680px]">Not every link leads somewhere</h1>
+    <p class="body-3 mt-4 max-w-[480px] text-muted">The address may have a typo, or the page moved. The home page is one click away.</p>
+    <a href="/" class="btn btn-primary button-md mt-8">
+      <Icon name="arrow-right" weight="bold" class="size-4 rotate-180" /> Back to the home page
+    </a>
+  </section>
+</Base>

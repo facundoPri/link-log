@@ -1,0 +1,15 @@
+---
+interface Props {
+  eyebrow: string;
+  title: string;
+  lede?: string;
+  align?: "left" | "center";
+}
+const { eyebrow, title, lede, align = "left" } = Astro.props;
+---
+
+<div class:list={["flex max-w-[680px] flex-col items-start gap-4", align === "center" && "mx-auto items-center text-center"]} data-reveal>
+  <p class="caption-3 rounded-full bg-white px-3 py-1 text-brand-strong shadow-[0_0_0_1px_var(--color-line)]">{eyebrow}</p>
+  <h2 class="heading-4 md:heading-3 text-ink">{title}</h2>
+  {lede && <p class="body-3 text-muted">{lede}</p>}
+</div>

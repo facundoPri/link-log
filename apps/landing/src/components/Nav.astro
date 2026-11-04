@@ -1,0 +1,139 @@
+---
+import Logo from "./Logo.astro";
+import { APP_URL, NAV } from "../data/site";
+const isHome = Astro.url.pathname === "/";
+const href = (h: string) => (isHome ? h : `/${h}`);
+---
+
+<header class="pointer-events-none fixed inset-x-0 top-4 z-50 flex justify-center px-4">
+  <nav
+    aria-label="Main"
+    class="pointer-events-auto flex w-full max-w-3xl items-center justify-between gap-4 rounded-2xl bg-white/75 py-2 pl-4 pr-2 shadow-[0_0_0_1px_oklch(0.2_0.01_260/0.08),0_8px_24px_oklch(0.2_0.01_260/0.06)] backdrop-blur-xl md:w-auto md:justify-start md:gap-6"
+  >
+    <a href="/" class="rounded-md" aria-label="Linklog home" aria-current={isHome ? "page" : undefined}>
+      <Logo />
+    </a>
+    <ul class="hidden items-center gap-1 md:flex">
+      {
+        NAV.map((item) => (
+          <li>
+            <a
+              href={href(item.href)}
+              data-nav-link={item.href.slice(1)}
+              class="title-4 block rounded-lg px-3 py-2 text-muted transition-colors duration-300 ease-base hover:bg-subtle hover:text-ink aria-[current=true]:text-ink aria-[current=true]:bg-subtle"
+            >
+              {item.label}
+            </a>
+          </li>
+        ))
+      }
+    </ul>
+    <div class="flex items-center gap-2">
+      <a href={APP_URL} class="btn btn-primary button-sm hidden sm:inline-flex">Start your library</a>
+      <button
+        type="button"
+        class="relative flex size-10 items-center justify-center rounded-xl text-ink transition-colors duration-300 ease-base hover:bg-subtle md:hidden"
+        aria-label="Open menu"
+        aria-expanded="false"
+        aria-controls="mobile-menu"
+        data-menu-toggle
+      >
+        <span class="menu-line absolute h-0.5 w-4 rounded-full bg-current" data-line="top"></span>
+        <span class="menu-line absolute h-0.5 w-4 rounded-full bg-current" data-line="bottom"></span>
+      </button>
+    </div>
+  </nav>
+</header>
+
+<div
+  id="mobile-menu"
+  class="mobile-menu fixed inset-0 z-40 flex flex-col bg-white/95 px-6 pb-12 pt-24 backdrop-blur-2xl md:hidden"
+  hidden
+>
+  <ul class="flex flex-col gap-2">
+    {
+      NAV.map((item, i) => (
+        <li class="menu-item" style={`--i:${i}`}>
+          <a href={href(item.href)} class="heading-4 block rounded-lg py-2 text-ink" data-menu-link>
+            {item.label}
+          </a>
+        </li>
+      ))
+    }
+  </ul>
+  <div class="menu-item mt-auto" style={`--i:${NAV.length}`}>
+    <a href={APP_URL} class="btn btn-primary button-md w-full">Start your library</a>
+  </div>
+</div>
+
+<style>
+  .menu-line {
+    transition: transform 500ms var(--ease-base);
+  }
+  .menu-line[data-line="top"] { transform: translateY(-3px); }
+  .menu-line[data-line="bottom"] { transform: translateY(3px); }
+  [aria-expanded="true"] .menu-line[data-line="top"] { transform: rotate(45deg); }
+  [aria-expanded="true"] .menu-line[data-line="bottom"] { transform: rotate(-45deg); }
+
+  .mobile-menu {
+    opacity: 0;
+    transition: opacity 300ms var(--ease-base);
+  }
+  .mobile-menu.is-open { opacity: 1; }
+  .menu-item {
+    opacity: 0;
+    transform: translateY(24px);
+    transition: opacity 500ms var(--ease-base), transform 500ms var(--ease-base);
+    /* 60ms per item, capped so the whole sequence stays under 400ms. */
+    transition-delay: min(calc(var(--i) * 60ms), 340ms);
+  }
+  .mobile-menu.is-open .menu-item { opacity: 1; transform: none; }
+</style>
+
+<script>
+  const toggle = document.querySelector<HTMLButtonElement>("[data-menu-toggle]");
+  const menu = document.getElementById("mobile-menu");
+  if (toggle && menu) {
+    const setOpen = (open: boolean) => {
+      toggle.setAttribute("aria-expanded", String(open));
+      toggle.setAttribute("aria-label", open ? "Close menu" : "Open menu");
+      document.body.style.overflow = open ? "hidden" : "";
+      if (open) {
+        menu.hidden = false;
+        requestAnimationFrame(() => requestAnimationFrame(() => menu.classList.add("is-open")));
+      } else {
+        menu.classList.remove("is-open");
+        setTimeout(() => {
+          if (!menu.classList.contains("is-open")) menu.hidden = true;
+        }, 300);
+      }
+    };
+    toggle.addEventListener("click", () => setOpen(toggle.getAttribute("aria-expanded") !== "true"));
+    menu.querySelectorAll("a").forEach((a) => a.addEventListener("click", () => setOpen(false)));
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && toggle.getAttribute("aria-expanded") === "true") {
+        setOpen(false);
+        toggle.focus();
+      }
+    });
+    window.matchMedia("(min-width: 768px)").addEventListener("change", (e) => e.matches && setOpen(false));
+  }
+
+  // Mark the nav item of the section in view.
+  const links = document.querySelectorAll<HTMLAnchorElement>("[data-nav-link]");
+  const sections = [...links]
+    .map((l) => document.getElementById(l.dataset.navLink!))
+    .filter((s): s is HTMLElement => !!s);
+  if (sections.length) {
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (!e.isIntersecting) continue;
+          links.forEach((l) => l.setAttribute("aria-current", String(l.dataset.navLink === e.target.id)));
+        }
+      },
+      { rootMargin: "-45% 0px -50% 0px" },
+    );
+    sections.forEach((s) => io.observe(s));
+  }
+</script>

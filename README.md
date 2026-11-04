@@ -70,6 +70,12 @@ Details: [plan](docs/browser-feature-plan.md) · [implementation](docs/browser-i
 [validation](docs/browser-validation.md). Other commands: `extension:dev`, `extension:package`,
 `build:all`, `test:browser` (real Chromium, isolated ports/DB, fixture Jev provider).
 
+## Landing page
+
+`apps/landing` is the static marketing site (Astro + Tailwind, same palette as the app), with
+animated demos of auto tags, lenses and Browser. `bun run landing:dev` serves it on port 4321;
+`bun run landing:build` writes `apps/landing/dist`. Details in [its README](apps/landing/README.md).
+
 ## Metadata and URLs
 
 Saves immediately to D1; the extraction workflow enriches title, description, Open Graph and favicon. It follows up to six HTTP requests with manual redirects, a 10s timeout and a 1MiB read cap. It validates protocol, credentials, ports, host and public DNS addresses per hop. The preview does not execute remote JavaScript or access authenticated pages; the later Markdown extraction uses a Cloudflare browser. It decodes HTML entities; everything renders as React text.
