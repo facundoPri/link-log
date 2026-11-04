@@ -11,7 +11,7 @@ Production is **read-only** here. Reading is free: `SELECT` queries, `list`/`des
 
 Production rows are the user's private data. Quote ids, counts, statuses and timings. Describe URLs, titles, lens questions and page content by their shape ("a Jira ticket URL"), so they stay out of reports, tickets and chat. `tail` output carries full request URLs, and auth links carry tokens in them: keep it in the scratchpad and delete it when done.
 
-`P` below stands for `bun .agents/skills/triage-production/scripts/prod.ts`. All commands run from the repo root with `export WRANGLER_SEND_METRICS=false`.
+`P` below stands for `.agents/skills/triage-production/scripts/prod.ts`, run as `bun $P sql …` (or the command written out). Keep `bun` out of the variable: zsh does not split `$P`, so `P="bun …"; $P` fails. All commands run from the repo root with `export WRANGLER_SEND_METRICS=false`.
 
 ## 1. Workspace
 
@@ -73,6 +73,12 @@ Done when the report has all five sections and every gap is in the ledger.
 Summarise the cause and the suggested fix to the user, then put the route to them with your recommendation (one structured question). Every route ends with a Linear ticket: read `docs/agents/issue-tracker.md` and `docs/agents/triage-labels.md`, look for an existing ticket first, and write the ticket from the report (redacted as above, with its path on the branch).
 
 - **In place.** The cause is certain, the fix is small, and it needs no product or design call: one code path, a measurement that proves it. Create the ticket (`ready-for-agent`), fix it in this worktree, and verify with the same measurement the report names. Under `poteto-mode`, continue its Bug fix playbook (or Perf issue, for a slowdown) from step 3, plan the fix: this triage already did steps 1–2, and the timeline is the baseline. Otherwise follow `diagnosing-bugs` from its fix phase. The PR links the ticket.
+
+  A fix that changes stored production rows (a backfill or data-fix migration) is proven before merge, because merging applies it to production:
+  1. Run each `WHERE` and subquery shape of the migration as a read-only `P sql` `SELECT` on remote D1. Remote D1 rejects SQL that the test SQLite and local miniflare accept (a long `LIKE` pattern fails with code 7500; `instr(col,'text')=1` matches a prefix).
+  2. Export only the columns the migration reads, numbers and flags derived from text, never URLs or titles: `P sql "<SELECT>" --json` into the scratchpad.
+  3. Replay it in memory: load `migrations/` below the new number into `bun:sqlite`, insert the rows with `PRAGMA foreign_keys=OFF`, apply the new migration, and diff.
+  4. Report the rows it changes and confirm that rows outside its target changed by 0. Delete the export.
 - **Grill now.** The fix hangs on a decision only the user can make (behaviour, scope, cost, a tradeoff the evidence can't settle). Run `grilling` in this session over the decisions the triage surfaced, seeded with the report. Then create the ticket, or `to-tickets` when the work splits into several slices, with the decisions recorded and the state the grill reached (`ready-for-agent` or `ready-for-human`).
 - **Ticket for later.** The decision can wait. Create the ticket (`needs-triage`) with the report and the open decisions listed as questions, so a later grill starts from them.
 
