@@ -23,7 +23,9 @@ Done when the worktree is checked out at the live commit, or at `origin/main` wi
 
 ## 2. Symptom
 
-Restate the symptom as something measurable: what the user did, what they expected, what happened, roughly when (the user's clock is UTC-3; D1 stores UTC), and which surface (web app, Browser view, extension, email). Ask only for what the evidence can't supply; a time window and the affected ids are usually findable in D1.
+Restate the symptom as something measurable: what the user did, what they expected, what happened, roughly when (the user's clock is UTC-3; D1 stores UTC), which surface (web app, Browser view, extension, email), and which environment (production, or the preview of PR N). Ask only for what the evidence can't supply; a time window and the affected ids are usually findable in D1.
+
+Query the environment where the reporter saw the symptom. For a PR preview, add `--preview <PR number>` to `P sql` and `P timeline`; the same read-only guard applies. The other commands name production resources: for PR N's preview, the Worker is `llpr-1384205267-N`, its Workflow `llpr-1384205267-N-process` (`names()` in `scripts/preview/model.ts`), and the live code is the commit in the PR's preview comment. A PR preview exists only while the PR is open and labeled `pr-preview`. If that environment can't be reached, say in the report that the evidence doesn't cover it. Cases you couldn't query are unchecked, not absent.
 
 ## 3. Evidence
 
