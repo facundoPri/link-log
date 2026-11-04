@@ -297,7 +297,7 @@ const gate = () => {
 };
 const claimSql = /^UPDATE jobs SET jev_call=/;
 
-test("a run whose invocation died before its claim never sends, even when it resumes after being settled", async () => {
+test("a run whose invocation died before its claim is retried once abandoned; the dead run resuming never sends", async () => {
   const { s, ids } = await start();
   const calls = provider(answer);
   const hold = gate();
@@ -309,12 +309,13 @@ test("a run whose invocation died before its claim never sends, even when it res
   const batch = await autotag(s, ids);
   await s.runQueued();
   await abandon(s);
-  expect(jobs(s, batch)[0]).toMatchObject({ status: "failed", reason: "before_call", error: JEV_FAILURE_MESSAGES.before_call });
+  expect(jobs(s, batch)[0]).toMatchObject({ status: "done", attempt: 2, max_attempts: 2 });
+  expect(calls.n).toBe(1);
   hold.open();
   await Bun.sleep(10);
-  expect(calls.n).toBe(0);
-  expect(usage(s)).toEqual([]);
-  expect(jobs(s, batch)[0]!.status).toBe("failed");
+  expect(calls.n).toBe(1);
+  expect(usage(s)).toEqual([{ job_id: jobs(s, batch)[0]!.id, status: "done" }]);
+  expect(jobs(s, batch)[0]!.status).toBe("done");
 });
 
 test("a running job paused right before its claim does not send once another job stopped the batch", async () => {
@@ -378,13 +379,18 @@ test("a redelivery that can't read its job fails closed: it never sends, and is 
   expect(jobs(s, batch)[0]).toMatchObject({ status: "failed", reason: "interrupted", error: JEV_FAILURE_MESSAGES.interrupted });
 });
 
-test("a run whose invocation died before the call settles at no cost once abandoned, without sending", async () => {
+test("a run whose invocation died before the call is retried once abandoned; abandoned again, it fails at no cost", async () => {
   const { s, ids } = await start();
   const calls = provider(answer);
   (s.env.CONTENT as any).get = () => new Promise(() => {}); // the read before the call hangs
   s.queue.timeoutMs = 20;
   const batch = await autotag(s, ids);
   await s.runQueued();
+  // Abandoned with nothing claimed: back in the queue for its second attempt, which dies the same way.
+  tick(ABANDONED_MS + 1);
+  await recover(s.env);
+  await s.runQueued();
+  expect(jobs(s, batch)[0]).toMatchObject({ status: "running", attempt: 2, max_attempts: 2 });
   await abandon(s);
   expect(calls.n + usage(s).length).toBe(0);
   expect(jobs(s, batch)[0]).toMatchObject({ status: "failed", reason: "before_call", error: JEV_FAILURE_MESSAGES.before_call });

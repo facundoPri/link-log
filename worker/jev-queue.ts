@@ -35,6 +35,15 @@ type Run = {
   config: string;
   user_id: string;
 };
+/** The dead runner claimed no call, so nothing was sent: the job is retried like a transient failure before the call. */
+class AbandonedBeforeCall extends JevFailure {
+  constructor() {
+    super("before_call", "before_call", undefined, { technical: "The run was abandoned before its call" });
+  }
+  override get retryable() {
+    return true;
+  }
+}
 /** What a job evaluates: a saved link, or a Browser tab's temporary snapshot. */
 type Subject = { link: Link; target: null } | { link: null; target: BrowserTargetRow };
 type Settlement = { done: D1PreparedStatement[]; snapshot: BrowserTargetRow | null } | { failed: Error };
@@ -111,7 +120,7 @@ async function evaluate(env: Env, run: Run, attempt: number, abandoned: boolean)
     subject = await load(env, run);
     const recorded = recordedCall(run);
     if (recorded) return { subject, config, result: recorded };
-    if (abandoned) throw new JevFailure("before_call", "before_call", undefined, { technical: "The run was abandoned before its call" });
+    if (abandoned) throw new AbandonedBeforeCall();
     // Jev that waited for an extraction which ended without content fails here, free.
     if (subject.link && !subject.link.content_key) throw new JevFailure("before_call", "before_call", contentMissing);
     await env.DB.prepare(`UPDATE jobs SET step='Evaluating with Jev',attempt=?,max_attempts=?,attempt_started_at=?,attempt_budget_ms=?${attempt === 1 ? ",reason=NULL" : ""} WHERE id=? AND status='running'`)
