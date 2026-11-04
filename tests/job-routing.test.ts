@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import { Glob } from "bun";
-import { sendJobs } from "../worker/job-routing";
+import { sendJobs, type BatchKind } from "../worker/job-routing";
 
-const kinds = ["extract", "preview", "lens", "autotag", "query", "browser-lens", "browser-autogroup"];
+const kinds: BatchKind[] = ["extract", "preview", "lens", "autotag", "query", "browser-lens", "browser-autogroup"];
 
 test("jobs of every batch kind are sent to the jobs queue", async () => {
   const sent: { body: { id: string } }[][] = [];
