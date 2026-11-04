@@ -171,10 +171,16 @@ export function Inspector({
   const scrollArea = useRef<HTMLDivElement>(null);
   const contentBody = useRef<HTMLDivElement>(null);
 
-  const markdown = useLinkContent(link.id, link.content_version).data ?? "";
+  const content = useLinkContent(link.id, link.content_version);
+  const markdown = content.data ?? "";
+  // Shown text may be a placeholder (the previous version) or still loading; editing starts from the current text only.
+  const contentCurrent = content.isSuccess && !content.isPlaceholderData;
+  const startEditing = () => {
+    setDraft(markdown);
+    setEditing(true);
+  };
 
   useEffect(() => {
-    setDraft("");
     setEditing(false);
     setSelectedMedia(0);
     setExpanded(false);
@@ -616,7 +622,7 @@ export function Inspector({
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => setEditing(true)}
+                    onClick={startEditing}
                   >
                     Paste text
                   </Button>
@@ -645,7 +651,7 @@ export function Inspector({
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => setEditing(true)}
+                    onClick={startEditing}
                   >
                     Paste text
                   </Button>
@@ -696,10 +702,8 @@ export function Inspector({
                           variant="ghost"
                           size="icon-sm"
                           aria-label="Edit content"
-                          onClick={() => {
-                            setDraft(markdown);
-                            setEditing(true);
-                          }}
+                          disabled={!contentCurrent}
+                          onClick={startEditing}
                         >
                           <Pencil className="size-3.5" />
                         </Button>
