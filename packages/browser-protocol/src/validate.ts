@@ -132,6 +132,9 @@ const validators: { [K in CommandName]: (a: Obj) => boolean } = {
     a.urls.every((u) => str(u, BROWSER_LIMITS.maxUrlChars)),
   openPermissions: () => true,
   forget: () => true,
+  loadContent: (a) => tabRefs(a.tabs),
+  loadControl: (a) => ["pause", "resume", "cancel", "retry"].includes(String(a.action)),
+  sleepTabs: (a) => tabRefs(a.tabs),
 };
 
 export function parsePageRequest(raw: unknown): PageRequest | null {

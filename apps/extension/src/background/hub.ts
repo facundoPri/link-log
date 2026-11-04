@@ -1,5 +1,6 @@
 import {
   diffSnapshots,
+  LOADING_BOUND_MS,
   originOf,
   patternCovers,
   urlAccess,
@@ -9,11 +10,14 @@ import {
   type ExtensionEvent,
   type ExtensionResponse,
   type GroupColor,
+  type SleepReason,
   type WindowSnapshot,
 } from "@linklog/browser-protocol";
 import { LINKLOG_ORIGINS } from "../config";
+import type { ResultCache } from "./cache";
 import type { GroupMetaStore } from "./groups";
 import type { KV } from "./kv";
+import type { LoadQueue } from "./loader";
 import type { Instance, TabRegistry } from "./registry";
 
 /** SPA navigations keep status "complete"; give the new view time to render. */
@@ -28,14 +32,30 @@ export type Connection = {
   last: WindowSnapshot | null;
 };
 
-export function contentAccess(tab: chrome.tabs.Tab, instance: Instance | undefined, grants: readonly string[], now: number): ContentAccess {
+/** Why Chrome has no loaded page for this tab, or null when it does. */
+export function sleepReason(tab: chrome.tabs.Tab): SleepReason | null {
+  if (tab.discarded) return "unloaded";
+  if ((tab as { frozen?: boolean }).frozen) return "frozen";
+  // Restored at startup and never loaded: not discarded, but nothing to read either.
+  if (tab.status === "unloaded") return "not-loaded";
+  return null;
+}
+
+/** `loadingSince`: when this tab was first seen loading, to bound the spinner. */
+export function contentAccess(
+  tab: chrome.tabs.Tab,
+  instance: Instance | undefined,
+  grants: readonly string[],
+  now: number,
+  loadingSince = now,
+): ContentAccess {
   const base = urlAccess(tab.url || tab.pendingUrl || "");
   if (base !== "available") return base;
-  if (tab.discarded) return "discarded";
-  if ((tab as { frozen?: boolean }).frozen) return "frozen";
   const url = tab.url || tab.pendingUrl || "";
   if (!grants.some((p) => patternCovers(p, url))) return "no-permission";
-  if (tab.status !== "complete" || (instance && now - instance.changedAt < SETTLE_MS)) return "loading";
+  if (sleepReason(tab)) return "sleeping";
+  if (tab.status === "loading") return now - loadingSince > LOADING_BOUND_MS ? "stalled" : "loading";
+  if (instance && now - instance.changedAt < SETTLE_MS) return "loading";
   return "available";
 }
 
@@ -52,6 +72,11 @@ export class Hub {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private due = 0;
   private settleTimer: ReturnType<typeof setTimeout> | null = null;
+  /** First time each tab was seen loading; in memory, so a worker restart restarts the bound. */
+  private loadingSince = new Map<number, number>();
+  now: () => number = Date.now;
+  cache: ResultCache | null = null;
+  loader: LoadQueue | null = null;
 
   constructor(
     private kv: KV,
@@ -90,13 +115,22 @@ export class Hub {
     await this.kv.set({ linklogOrigins: [...this.linklogOrigins] });
   }
 
-  async tabDto(tab: chrome.tabs.Tab, now: number): Promise<BrowserTab | null> {
+  async tabDto(
+    tab: chrome.tabs.Tab,
+    now: number,
+    captured: ReadonlyMap<string, { documentRevision: number; capturedAt: string }> = new Map(),
+  ): Promise<BrowserTab | null> {
     if (tab.id === undefined || tab.id < 0) return null;
     let instance = this.registry.get(tab.id);
     if (!instance) {
       await this.registry.observe(tab.id, tab.url);
       instance = this.registry.get(tab.id)!;
     }
+    if (tab.status === "loading") {
+      if (!this.loadingSince.has(tab.id)) this.loadingSince.set(tab.id, now);
+    } else this.loadingSince.delete(tab.id);
+    const content = contentAccess(tab, instance, this.grants, now, this.loadingSince.get(tab.id));
+    const capture = captured.get(instance.tabInstanceId);
     return {
       tabId: tab.id,
       tabInstanceId: instance.tabInstanceId,
@@ -107,13 +141,16 @@ export class Hub {
       title: tab.title || tab.url || "",
       url: tab.url || tab.pendingUrl || "",
       favIconUrl: tab.favIconUrl && /^(https?:|data:image\/)/.test(tab.favIconUrl) ? tab.favIconUrl : null,
-      status: tab.discarded ? "unloaded" : tab.status === "loading" ? "loading" : "complete",
+      status: tab.discarded || tab.status === "unloaded" ? "unloaded" : tab.status === "loading" ? "loading" : "complete",
       active: tab.active,
       pinned: tab.pinned,
       audible: !!tab.audible,
       discarded: !!tab.discarded,
       frozen: !!(tab as { frozen?: boolean }).frozen,
-      content: contentAccess(tab, instance, this.grants, now),
+      content,
+      sleep: content === "sleeping" ? sleepReason(tab) : null,
+      capturedAt: capture?.documentRevision === instance.documentRevision ? capture.capturedAt : null,
+      load: this.loader?.itemView(instance.tabInstanceId) ?? null,
       firstSeenAt: instance.openedAt,
     };
   }
@@ -124,7 +161,8 @@ export class Hub {
       chrome.tabs.query({ windowId }),
       chrome.tabGroups.query({ windowId }).catch(() => [] as chrome.tabGroups.TabGroup[]),
     ]);
-    const now = Date.now();
+    const now = this.now();
+    const captured = (await this.cache?.captured()) ?? new Map();
     const listed: BrowserTab[] = [];
     let linklogTabs = 0;
     for (const tab of tabs.sort((a, b) => a.index - b.index)) {
@@ -132,7 +170,7 @@ export class Hub {
         linklogTabs++;
         continue;
       }
-      const dto = await this.tabDto(tab, now);
+      const dto = await this.tabDto(tab, now, captured);
       if (dto) listed.push(dto);
     }
     const groupDtos: BrowserGroup[] = groups.map((g) => {
@@ -147,7 +185,7 @@ export class Hub {
         pinnedId: meta.pinnedId,
       };
     });
-    return { windowId, tabs: listed, groups: groupDtos, linklogTabs };
+    return { windowId, tabs: listed, groups: groupDtos, linklogTabs, loadRun: this.loader?.runView(windowId) ?? null };
   }
 
   send(c: Connection, message: ExtensionResponse | { event: ExtensionEvent }) {
