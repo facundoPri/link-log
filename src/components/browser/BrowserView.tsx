@@ -29,7 +29,7 @@ import { SelectionSurface, type Picker } from "../SelectionSurface";
 import { actionStates, runAction } from "../../bulkActions";
 import { TAB_ACTIONS, type TabRunners } from "../../browser/tabActions";
 import { openUnavailable } from "../../browser/openLinks";
-import { isInput, overlayOpen } from "../../lib/overlay";
+import { isInput } from "../../lib/overlay";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -176,7 +176,8 @@ export function BrowserView({
     } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "a" && !typing) {
       e.preventDefault();
       selectAllVisible();
-    } else if (e.key === "Escape" && !typing && !overlayOpen()) {
+    } else if (e.key === "Escape" && !typing && !document.querySelector("[role=dialog],[role=menu],[role=alertdialog]")) {
+      // Not overlayOpen(): the Escape that closes the palette has already marked it closed by now, and must keep the selection.
       if (ws.activeTabId) ws.setActiveTabId(null);
       else setPicked(() => []);
     } else if ((e.key === "ArrowDown" || e.key === "ArrowUp") && ws.activeTabId && !typing) {
