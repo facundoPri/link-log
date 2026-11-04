@@ -269,7 +269,7 @@ export async function setup(options: { placeholder?: boolean } = {}) {
   // Runs one job the way its queue would: a Workflow for the jobs queue, a single delivery for the Jev queue.
   const runJob = async (jobId: string) => {
     const { kind } = db.query("SELECT b.kind FROM jobs j JOIN batches b ON b.id=j.batch_id WHERE j.id=?").get(jobId) as { kind: BatchKind };
-    if (queueFor(env, kind) === env.JEV_JOBS) await deliver([{ id: crypto.randomUUID(), body: { id: jobId }, attempts: 1 }]);
+    if (queueFor(env, { kind }) === env.JEV_JOBS) await deliver([{ id: crypto.randomUUID(), body: { id: jobId }, attempts: 1 }]);
     else await runWorkflow(jobId);
   };
   const runQueued = async () => {

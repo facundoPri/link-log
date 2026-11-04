@@ -2,7 +2,7 @@
 // queue's max_batch_size × max_concurrency caps simultaneous Jev calls, delivery is at-least-once, and the
 // `jev_call` claim keeps every job to one call and one usage row.
 import { afterEach, expect, test } from "bun:test";
-import { jevConsumer, resetClock, setup } from "./worker-harness";
+import { dispatch, jevConsumer, resetClock, setup } from "./worker-harness";
 import { recover } from "../worker/jobs";
 
 afterEach(resetClock);
@@ -142,4 +142,26 @@ test("a Jev job already inside a Workflow at deploy finishes there; its resent m
   await s.deliver([message!]);
   expect(calls.n).toBe(1);
   expect(usage(s, batch)).toBe(1);
+});
+
+test("a Jev job running inside a Workflow that died before the deploy is settled by recovery, and its link is freed", async () => {
+  const { s, ids } = await ready(1);
+  const calls = provider();
+  const tag = (await s.api("/batches", "POST", { kind: "autotag", ids })).data.batchId as string;
+  const lens = await lensOf(s);
+  const ask = (await s.api("/batches", "POST", { kind: "lens", ids, lensId: lens.id })).data.batchId as string;
+  s.jevSent.splice(0);
+  // The auto-tag was started by a Workflow before the Jev queue existed; that Workflow has since errored.
+  s.db.query("UPDATE jobs SET status='running',step='Evaluating with Jev' WHERE batch_id=?").run(tag);
+  (s.env as any).PROCESS_LINK = {
+    create: async () => { throw new Error("instance already exists"); },
+    get: async () => ({ status: async () => ({ status: "errored" }) }),
+  };
+  await recover(s.env);
+  await s.drainJev();
+  await dispatch({ messages: s.sent.splice(0).map(({ body }) => ({ body, ack() {}, retry() {} })) } as never, s.env);
+  await s.drainJev();
+  expect(s.db.query("SELECT status,step FROM jobs WHERE batch_id=?").get(tag)).toEqual({ status: "failed", step: "Interrupted" });
+  expect(statuses(s, ask)).toEqual(["done"]);
+  expect(calls.n).toBe(1);
 });

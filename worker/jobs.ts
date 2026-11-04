@@ -262,9 +262,10 @@ export async function recover(env: Env) {
   await promoteWaiting(env.DB).run();
   const rows = await env.DB.prepare(
     // Unassigned legacy batches stay untouched until adjudicated; they have no owner to run as.
-    "SELECT j.id,b.kind FROM jobs j JOIN batches b ON b.id=j.batch_id WHERE b.user_id IS NOT NULL AND j.status IN ('queued','running') ORDER BY j.created_at LIMIT 100",
-  ).all<{ id: string; kind: BatchKind }>();
-  if (rows.results.length) await sendJobs(env, rows.results);
+    // A running job the consumer never started (no started_at) belongs to a Workflow.
+    "SELECT j.id,b.kind,j.status='running' AND j.started_at IS NULL AS in_workflow FROM jobs j JOIN batches b ON b.id=j.batch_id WHERE b.user_id IS NOT NULL AND j.status IN ('queued','running') ORDER BY j.created_at LIMIT 100",
+  ).all<{ id: string; kind: BatchKind; in_workflow: number }>();
+  if (rows.results.length) await sendJobs(env, rows.results.map((r) => ({ id: r.id, kind: r.kind, inWorkflow: !!r.in_workflow })));
 }
 export async function dispatch(batch: MessageBatch<{ id: string }>, env: Env) {
   for (const m of batch.messages) {
