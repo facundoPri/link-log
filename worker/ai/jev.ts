@@ -317,8 +317,10 @@ export async function judge(
           /(?:context|tokens?).{0,100}(?:length|limit|exceed|maximum|too)|(?:exceed|maximum|too many|too long).{0,100}(?:tokens?|context)/is.test(
             detail,
           )
-        )
+        ) {
+          meter.refused = true;
           throw new JevFailure("sent", "too_long", undefined, http);
+        }
         throw new JevFailure("sent", ACCOUNT.test(detail) ? "account" : "provider_error", undefined, http);
       }
       raw = await response.json<Record<string, unknown>>().catch((e: unknown) => {

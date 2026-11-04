@@ -8,6 +8,7 @@ export const GEMMA_USD_PER_M_OUTPUT = 0.30;
  */
 export const BROWSER_USD_PER_HOUR = 0.09;
 export const OCR_USAGE_COLUMNS = "sum(service='image-ocr') ocr_images,sum(CASE WHEN service='image-ocr' THEN input_tokens ELSE 0 END) ocr_input_tokens,sum(CASE WHEN service='image-ocr' THEN output_tokens ELSE 0 END) ocr_output_tokens,max(CASE WHEN service='image-ocr' THEN model END) ocr_model,sum(CASE WHEN service='image-ocr' THEN estimated_usd END) ocr_usd,sum(service='image-ocr' AND estimated_usd IS NULL) ocr_unknown_cost_calls";
+/** A stored row keeps the price known when it finished: adding a rate needs a backfill migration (0027). */
 export function priceUsage(u: {
   provider: string;
   input_tokens: number | null;
@@ -30,6 +31,8 @@ export type Meter = {
   output_tokens?: number;
   browser_ms?: number;
   model?: string;
+  /** The provider refused the call without running it, so nothing was billed. */
+  refused?: boolean;
 };
 type UsageJob = { id: string; batch_id: string; link_id: string | null };
 const USAGE_COLUMNS = "id,user_id,batch_id,job_id,link_id,provider,service,operation,status,rate_snapshot,created_at";
@@ -47,7 +50,7 @@ export const guardedUsageInsert = (env: Env, id: string, job: UsageJob, provider
  * write is logged (recovery marks a row left 'started' as interrupted).
  */
 export async function finishUsage(env: Env, id: string, started: number, provider: string, meter: Meter, error: string | null) {
-  const cost = priceUsage({
+  const cost = meter.refused ? 0 : priceUsage({
     provider,
     input_tokens: meter.input_tokens ?? null,
     output_tokens: meter.output_tokens ?? null,
