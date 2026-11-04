@@ -3,6 +3,13 @@ import { QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
 import type { Library } from "./types";
 
+// How library data stays current:
+// - A view reads the cache, shows it right away and revalidates when it opens and when the window
+//   regains focus or the network comes back.
+// - The library polls only while work is in flight (`busy`).
+// - A response that carries the library is written with `writeLibrary`. An action that starts work
+//   without returning the library invalidates it once the server accepts the work, so its batch
+//   shows in Activity and polling starts.
 export const libraryKey = ["library"] as const;
 const POLL_MS = 1800;
 

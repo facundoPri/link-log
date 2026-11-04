@@ -5,6 +5,7 @@ import type { Library, Lens } from "../types";
 import { useBrowser } from "./useBrowser";
 import { useLensRunner } from "./useLensRunner";
 import { jevUnavailable } from "../attention";
+import type { StartRun } from "../sessionRuns";
 
 export type GroupFilter = number | "none";
 /** A place tabs can be moved to: a native group here, or a pinned definition not yet materialized here. */
@@ -37,7 +38,7 @@ export function tabDomain(tab: BrowserTab): string {
 
 export type BrowserWorkspace = ReturnType<typeof useBrowserWorkspace>;
 
-export function useBrowserWorkspace(library: Library, inBrowser: boolean, loaded: boolean) {
+export function useBrowserWorkspace(library: Library, inBrowser: boolean, loaded: boolean, startRun: StartRun) {
   const browser = useBrowser();
   const browserLenses = useMemo(() => library.lenses.filter((l) => l.scope === "browser"), [library.lenses]);
   const [activeIds, setActiveIds] = useState<string[]>(readActive);
@@ -65,7 +66,8 @@ export function useBrowserWorkspace(library: Library, inBrowser: boolean, loaded
 
   // Without Jev nothing new is evaluated; results already stored stay readable.
   const jevReason = jevUnavailable(library.capabilities);
-  const runner = useLensRunner(browser, activeLenses, browserLenses, inBrowser && !jevReason);
+  const runner = useLensRunner(browser, activeLenses, browserLenses, inBrowser && !jevReason, startRun);
+  const { markActivated } = runner;
   const tabs: BrowserTab[] = browser.snapshot?.tabs ?? [];
   const groups: BrowserGroup[] = browser.snapshot?.groups ?? [];
 
@@ -92,11 +94,27 @@ export function useBrowserWorkspace(library: Library, inBrowser: boolean, loaded
     ];
   }, [groups, browser.catalog]);
 
-  const toggleLens = useCallback((id: string) => {
-    setActiveIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
-  }, []);
-  const deactivate = useCallback((ids: string[]) => setActiveIds((cur) => cur.filter((id) => !ids.includes(id))), []);
-  const activate = useCallback((id: string) => setActiveIds((cur) => (cur.includes(id) ? cur : [...cur, id])), []);
+  const toggleLens = useCallback(
+    (id: string) => {
+      markActivated([id], !activeIds.includes(id));
+      setActiveIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
+    },
+    [activeIds, markActivated],
+  );
+  const deactivate = useCallback(
+    (ids: string[]) => {
+      markActivated(ids, false);
+      setActiveIds((cur) => cur.filter((id) => !ids.includes(id)));
+    },
+    [markActivated],
+  );
+  const activate = useCallback(
+    (id: string) => {
+      markActivated([id], !activeIds.includes(id));
+      setActiveIds((cur) => (cur.includes(id) ? cur : [...cur, id]));
+    },
+    [activeIds, markActivated],
+  );
   // The tab shown in the inspector (by instance: reopening a URL is another tab).
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   useEffect(() => {

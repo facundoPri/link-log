@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Link2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "./api";
@@ -34,6 +34,7 @@ import { actionForKey, actionStates, BULK_ACTIONS, bulkProgress, lacksContent, t
 import { copyLinks } from "./lib/copy-links";
 import { failureMessage } from "./failures";
 import { busy, emptyLibrary, useInvalidateLibrary, useLibrary, useWriteLibrary } from "./library";
+import type { StartRun } from "./sessionRuns";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
@@ -69,6 +70,14 @@ function useMedia(query: string) {
   }, [query]);
   return matches;
 }
+
+/** Toast wording per batch kind: "Auto-tagging 3 links…", then "Auto-tagged 3 links". */
+const RUN_WORDS: Record<string, { verb: string; done: string }> = {
+  autotag: { verb: "Auto-tagging", done: "Auto-tagged" },
+  extract: { verb: "Extracting context for", done: "Extracted" },
+  lens: { verb: "Applying lens to", done: "Lens applied to" },
+  "browser-autogroup": { verb: "Autogrouping", done: "Suggested groups for" },
+};
 
 function isInput(target: EventTarget | null) {
   return (
@@ -158,7 +167,28 @@ export function App({
     return inspectorW.current;
   });
   const search = useRef<HTMLInputElement>(null);
-  const sessionBatches = useRef(new Set<string>());
+  // Actions this page started, by toast id. A library action reports each of its batches on its own toast;
+  // a browser run reports all of its batches (one per 20 tabs) on one toast.
+  const sessionRuns = useRef(new Map<string, { batchIds: string[]; open: boolean }>());
+  const [runsVersion, runsChanged] = useReducer((n: number) => n + 1, 0);
+  const trackBatch = (batchId: string) => {
+    sessionRuns.current.set(batchId, { batchIds: [batchId], open: false });
+    runsChanged();
+  };
+  const startRun = useCallback<StartRun>(() => {
+    const run = { batchIds: [] as string[], open: true };
+    sessionRuns.current.set(crypto.randomUUID(), run);
+    return {
+      add: (batchId) => {
+        run.batchIds.push(batchId);
+        runsChanged();
+      },
+      end: () => {
+        run.open = false;
+        runsChanged();
+      },
+    };
+  }, []);
   // Batches started from the selection surface; the ones that settle with failures get a results card.
   const selectionBatches = useRef(new Set<string>());
   // "Extract, then auto-tag" is one flow with one results card, on the auto-tag batch: the extract batches are
@@ -167,11 +197,11 @@ export function App({
   const flowExtracts = useRef(new Set<string>());
   const narrow = useMedia("(max-width: 1099px)");
   const mobile = useMedia("(max-width: 767px)");
-  const ws = useBrowserWorkspace(library, view === "browser", loaded && !loadError);
+  const ws = useBrowserWorkspace(library, view === "browser", loaded && !loadError, startRun);
   const openLinks = useOpenLinks(ws.browser, setPicked);
   const browserController = useBrowserActions(
     ws,
-    setLibrary,
+    startRun,
     (tabIds) =>
       setBrowserPicked((cur) =>
         tabIds
@@ -223,61 +253,55 @@ export function App({
     };
   }, [busyPolling, libraryQuery.dataUpdatedAt]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Batch progress toasts for batches this session created.
+  // Progress toasts for the actions this session started, with their batches' counts added up.
   useEffect(() => {
-    for (const b of library.batches) {
-      if (!sessionBatches.current.has(b.id)) continue;
-      const n = b.total;
-      const verb =
-        b.kind === "autotag"
-          ? "Auto-tagging"
-          : b.kind === "extract"
-            ? "Extracting context for"
-            : "Applying lens to";
-      if (b.active > 0) {
-        toast.loading(`${verb} ${n} ${n === 1 ? "link" : "links"}…`, {
-          id: b.id,
-          description: `${b.done + b.failed + b.cancelled} of ${n} done`,
-          action: { label: "Cancel", onClick: () => void cancelBatch(b.id) },
-        });
-      } else if (b.cancelled === n) {
-        toast("Cancelled", { id: b.id });
-        sessionBatches.current.delete(b.id);
-        if (extractFlows.current.has(b.id)) void showFailures(b);
-      } else if (b.failed === 0) {
-        const ran = n - b.cancelled;
-        toast.success(
-          b.kind === "autotag"
-            ? `Auto-tagged ${ran} ${ran === 1 ? "link" : "links"}`
-            : b.kind === "extract"
-              ? `Extracted ${ran} ${ran === 1 ? "link" : "links"}`
-              : `Lens applied to ${ran} ${ran === 1 ? "link" : "links"}`,
-          {
-            id: b.id,
-            description:
-              b.usage?.usd != null
-                ? `${usd(b.usage.usd)} · ${tokens(b.usage.input_tokens + b.usage.output_tokens)} tokens`
-                : undefined,
-            action: { label: "Activity", onClick: () => setActivityOpen(true) },
-          },
-        );
-        sessionBatches.current.delete(b.id);
-        if (extractFlows.current.has(b.id)) void showFailures(b);
-      } else {
-        toast[b.failed === n ? "error" : "success"](
-          `${verb.replace("ing", "ed")} ${n} ${n === 1 ? "link" : "links"}`,
-          {
-            id: b.id,
-            description: `${b.failed} failed — see Activity`,
-            action: { label: "Activity", onClick: () => setActivityOpen(true) },
-          },
-        );
-        sessionBatches.current.delete(b.id);
-        if (selectionBatches.current.has(b.id)) void showFailures(b);
+    for (const [id, run] of sessionRuns.current) {
+      const batches = library.batches.filter((b) => run.batchIds.includes(b.id));
+      const b = batches[0];
+      if (!b) {
+        if (!run.open && !run.batchIds.length) sessionRuns.current.delete(id);
+        continue;
       }
-      if (b.active === 0) selectionBatches.current.delete(b.id);
+      const sum = (count: (b: Batch) => number) => batches.reduce((n, x) => n + count(x), 0);
+      const n = sum((x) => x.total);
+      const failed = sum((x) => x.failed);
+      const cancelled = sum((x) => x.cancelled);
+      const finished = sum((x) => x.done) + failed + cancelled;
+      const usage = batches.every((x) => x.usage?.usd != null)
+        ? { usd: sum((x) => x.usage!.usd!), tokens: sum((x) => x.usage!.input_tokens + x.usage!.output_tokens) }
+        : null;
+      const noun = (count: number) => `${count} ${b.kind.startsWith("browser-") ? "tab" : "link"}${count === 1 ? "" : "s"}`;
+      const words = RUN_WORDS[b.kind] ?? RUN_WORDS.lens!;
+      if (run.open || batches.length < run.batchIds.length || sum((x) => x.active) > 0) {
+        toast.loading(`${words.verb} ${noun(n)}…`, {
+          id,
+          description: `${finished} of ${n} done`,
+          action: { label: "Cancel", onClick: () => void cancelBatches(run.batchIds) },
+        });
+        continue;
+      }
+      sessionRuns.current.delete(id);
+      if (cancelled === n) {
+        toast("Cancelled", { id });
+        if (extractFlows.current.has(id)) void showFailures(b);
+      } else if (failed === 0) {
+        toast.success(`${words.done} ${noun(n - cancelled)}`, {
+          id,
+          description: usage ? `${usd(usage.usd)} · ${tokens(usage.tokens)} tokens` : undefined,
+          action: { label: "Activity", onClick: () => setActivityOpen(true) },
+        });
+        if (extractFlows.current.has(id)) void showFailures(b);
+      } else {
+        toast[failed === n ? "error" : "success"](`${words.done} ${noun(n)}`, {
+          id,
+          description: `${failed} failed — see Activity`,
+          action: { label: "Activity", onClick: () => setActivityOpen(true) },
+        });
+        if (selectionBatches.current.has(id)) void showFailures(b);
+      }
+      selectionBatches.current.delete(id);
     }
-  }, [library.batches]);
+  }, [library.batches, runsVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The same jobs Activity lists, narrowed to the failed ones, so the selection surface can say why and re-select them.
   const showFailures = async (b: Batch) => {
@@ -409,8 +433,8 @@ export function App({
         );
         onBatches?.(batchIds);
         for (const id of batchIds) {
-          sessionBatches.current.add(id);
           if (fromSelection) selectionBatches.current.add(id);
+          trackBatch(id);
         }
         if (skipped.length)
           toast(`Skipped ${skipped.length} ${skipped.length === 1 ? "link" : "links"} without content`, {
@@ -741,16 +765,18 @@ export function App({
     setConfirmExtract(ids);
   };
 
-  const cancelBatch = async (id: string) => {
+  const cancelBatches = async (ids: string[]) => {
     try {
-      const data = await api<Library & { cancelled?: number; dependents?: number }>(
-        `/batches/${id}`,
-        "DELETE",
-      );
-      setLibrary(data);
+      let cancelled = 0, dependents = 0;
+      for (const id of ids) {
+        const data = await api<Library & { cancelled?: number; dependents?: number }>(`/batches/${id}`, "DELETE");
+        setLibrary(data);
+        cancelled += data.cancelled ?? 0;
+        dependents += data.dependents ?? 0;
+      }
       toast(
-        data.cancelled
-          ? `Cancelled ${data.cancelled} queued ${data.cancelled === 1 ? "job" : "jobs"}${data.dependents ? `, and ${data.dependents} waiting for that extraction` : ""}`
+        cancelled
+          ? `Cancelled ${cancelled} queued ${cancelled === 1 ? "job" : "jobs"}${dependents ? `, and ${dependents} waiting for that extraction` : ""}`
           : "Nothing left to cancel",
       );
     } catch (e) {
@@ -834,7 +860,9 @@ export function App({
                     ? "Extracting"
                     : activeBatch.kind === "preview"
                       ? "Fetching preview"
-                      : "Applying lens",
+                      : activeBatch.kind === "browser-autogroup"
+                        ? "Autogrouping"
+                        : "Applying lens",
               done: activeBatch.done + activeBatch.failed + activeBatch.cancelled,
               total: activeBatch.total,
             }
@@ -964,7 +992,7 @@ export function App({
         try {
           const data = await api<Library & { batchId?: string }>(`/links/${activeLink.id}/transcript`, "POST", { language });
           setLibrary(data);
-          if (data.batchId) sessionBatches.current.add(data.batchId);
+          if (data.batchId) trackBatch(data.batchId);
         } catch (e) { toast.error((e as Error).message); }
       }}
       onRetry={() => {
