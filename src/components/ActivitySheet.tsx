@@ -41,10 +41,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-function ocrCost(ocr: OcrUsage) {
-  if (ocr.usd === null) return "cost unknown";
-  return `${usd(ocr.usd)}${ocr.unknown_cost_calls ? " known subtotal" : ""}`;
-}
+const ocrCost = (ocr: OcrUsage) => (ocr.usd === null ? "—" : usd(ocr.usd));
 
 function batchUsageTip(b: Batch) {
   if (!b.usage) return null;
@@ -60,7 +57,6 @@ function batchUsageTip(b: Batch) {
     const ocr = b.usage.ocr;
     parts.push(`OCR: ${ocr.images} ${ocr.images === 1 ? "image/preview" : "images/previews"} · ${tokens(ocr.input_tokens)} input · ${tokens(ocr.output_tokens)} output tokens · ${ocrCost(ocr)} · ${ocr.model ?? "model unknown"}`);
   }
-  if (b.usage.unknown_cost_calls) parts.push(`${b.usage.unknown_cost_calls} costs unknown; displayed USD is a known subtotal`);
   return parts.join(" · ") || null;
 }
 
@@ -245,7 +241,7 @@ function BatchJobs({ batch, onLibrary }: { batch: Batch; onLibrary: (l: Library)
                     <p className="truncate">Model: {j.usage.ocr.model ?? "unknown"}</p>
                   </TooltipTrigger>
                   <TooltipContent>
-                    {`${j.usage.ocr.model ?? "Model unknown"} · ${tokens(j.usage.ocr.input_tokens)} input · ${tokens(j.usage.ocr.output_tokens)} output tokens${j.usage.ocr.unknown_cost_calls ? ` · ${j.usage.ocr.unknown_cost_calls} OCR costs unknown` : ""}`}
+                    {`${j.usage.ocr.model ?? "Model unknown"} · ${tokens(j.usage.ocr.input_tokens)} input · ${tokens(j.usage.ocr.output_tokens)} output tokens`}
                   </TooltipContent>
                 </Tooltip>
               </div>
@@ -349,7 +345,7 @@ export function ActivitySheet({
           <div className="flex items-center gap-2 border-b px-4 pb-3">
             <div className="min-w-0 flex-1">
               <div className="text-lg font-semibold tabular">
-                {totals.usd !== null ? usd(totals.usd) : "—"}{totals.unknown_cost_calls > 0 && <span className="ml-1 text-2xs font-normal text-muted-foreground">known subtotal</span>}
+                {totals.usd !== null ? usd(totals.usd) : "—"}
               </div>
               <p className="truncate text-2xs text-muted-foreground">
                 {tokens(totals.input_tokens + totals.output_tokens)} tokens
@@ -357,7 +353,6 @@ export function ActivitySheet({
                   ? ` · ${duration(totals.browser_ms)} browser`
                   : ""}{" "}
                 · {totals.calls} calls
-                {totals.unknown_cost_calls > 0 ? ` · ${totals.unknown_cost_calls} costs unknown` : ""}
               </p>
             </div>
           </div>

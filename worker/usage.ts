@@ -4,10 +4,20 @@ export const GEMMA_USD_PER_M_OUTPUT = 0.30;
 /**
  * Browser Rendering, Quick Actions (the Markdown and content calls): $0.09 per browser hour, billed on browser
  * time only. Cloudflare's pricing page (developers.cloudflare.com/browser-run/pricing, updated 2026-04-21, read
- * 2026-11-01). This is the list price above the plan's 10 free hours a month, so it overstates a small account.
+ * 2026-11-01). Always the list price, never net of the plan's 10 free hours a month: a customer is charged
+ * for every call whatever our own allowance or discount (FAC-168).
  */
 export const BROWSER_USD_PER_HOUR = 0.09;
 export const OCR_USAGE_COLUMNS = "sum(service='image-ocr') ocr_images,sum(CASE WHEN service='image-ocr' THEN input_tokens ELSE 0 END) ocr_input_tokens,sum(CASE WHEN service='image-ocr' THEN output_tokens ELSE 0 END) ocr_output_tokens,max(CASE WHEN service='image-ocr' THEN model END) ocr_model,sum(CASE WHEN service='image-ocr' THEN estimated_usd END) ocr_usd,sum(service='image-ocr' AND estimated_usd IS NULL) ocr_unknown_cost_calls";
+/**
+ * The estimate for a call cut short before it reported its units (a crash, a cancel, an abandoned attempt):
+ * it may still be billed, so it costs the average of the owner's last 50 finished calls to that service, or
+ * everyone's when the owner has none (FAC-168). Migration 0027 applies the same estimate to older rows.
+ */
+const recentAverage = (owner: string) =>
+  `(SELECT avg(e) FROM (SELECT p.estimated_usd e FROM usage_events p WHERE ${owner}p.service=usage_events.service AND p.status='done' AND p.estimated_usd IS NOT NULL ORDER BY p.created_at DESC LIMIT 50))`;
+export const INTERRUPTED_USAGE = `status='failed',error='Provider call interrupted before completion',estimated_usd=coalesce(${recentAverage("p.user_id=usage_events.user_id AND ")},${recentAverage("")})`;
+/** A stored row keeps the price known when it finished: adding a rate needs a backfill migration (0027). */
 export function priceUsage(u: {
   provider: string;
   input_tokens: number | null;
@@ -30,6 +40,8 @@ export type Meter = {
   output_tokens?: number;
   browser_ms?: number;
   model?: string;
+  /** The provider refused the call without running it, so nothing was billed. */
+  refused?: boolean;
 };
 type UsageJob = { id: string; batch_id: string; link_id: string | null };
 const USAGE_COLUMNS = "id,user_id,batch_id,job_id,link_id,provider,service,operation,status,rate_snapshot,created_at";
@@ -47,13 +59,15 @@ export const guardedUsageInsert = (env: Env, id: string, job: UsageJob, provider
  * write is logged (recovery marks a row left 'started' as interrupted).
  */
 export async function finishUsage(env: Env, id: string, started: number, provider: string, meter: Meter, error: string | null) {
-  const cost = priceUsage({
+  const cost = meter.refused ? 0 : priceUsage({
     provider,
     input_tokens: meter.input_tokens ?? null,
     output_tokens: meter.output_tokens ?? null,
     model: meter.model ?? null,
     browser_ms: meter.browser_ms ?? null,
   });
+  // Users never see an unpriced call: it is a pricing gap (a missing rate, a failure without units) to fix.
+  if (cost === null) console.error(JSON.stringify({ event: "usage_unpriced", usage_id: id, provider, model: meter.model ?? null, status: error ? "failed" : "done" }));
   try {
     await env.DB.prepare(
       "UPDATE usage_events SET status=?,model=?,input_tokens=?,output_tokens=?,browser_ms=?,estimated_usd=?,duration_ms=?,error=? WHERE id=?",

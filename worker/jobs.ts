@@ -5,6 +5,7 @@ import { jevUnavailable } from "../src/attention";
 import { restoredContentStateSql } from "./content-state";
 import type { Lens, Tag } from "../src/types";
 import { JEV_FAILURE_MESSAGES } from "../src/failures";
+import { INTERRUPTED_USAGE } from "./usage";
 const POOL_LIMITS = { browser: 2, jev: 16 } as const;
 export function poolLimit(env: Env, pool: Pool) {
   const override = Number(
@@ -101,7 +102,7 @@ export async function cancelJob(env: Env, userId: string, id: string) {
       ).bind(JEV_FAILURE_MESSAGES.cancelled_sent, now, id),
       ...(extract ? [cancelDependents(env.DB, "e.id=? AND e.completed_at=?", [id, now], now)] : []),
       // A provider call cut short may still be billed; Usage records it like recover() does.
-      env.DB.prepare(`UPDATE usage_events SET status='failed',error='Provider call interrupted before completion' WHERE job_id=? AND status='started' AND ${won}`).bind(id, id, now),
+      env.DB.prepare(`UPDATE usage_events SET ${INTERRUPTED_USAGE} WHERE job_id=? AND status='started' AND ${won}`).bind(id, id, now),
       env.DB.prepare(`DELETE FROM provider_leases WHERE job_id=? AND ${won}`).bind(id, id, now),
       ...(extract
         ? [env.DB.prepare(
@@ -232,7 +233,7 @@ export async function recover(env: Env) {
     env.DB.prepare('DELETE FROM "verification" WHERE "expiresAt"<?').bind(new Date(now).toISOString()),
     env.DB.prepare('DELETE FROM "session" WHERE "expiresAt"<?').bind(new Date(now).toISOString()),
   ]);
-  await env.DB.prepare("UPDATE usage_events SET status='failed',error='Provider call interrupted before completion' WHERE status='started' AND job_id IN (SELECT id FROM jobs WHERE status IN ('done','failed'))").run();
+  await env.DB.prepare(`UPDATE usage_events SET ${INTERRUPTED_USAGE} WHERE status='started' AND job_id IN (SELECT id FROM jobs WHERE status IN ('done','failed'))`).run();
   // A waiting job whose predecessor settled without promoting it (a crash in between) starts here.
   await promoteWaiting(env.DB).run();
   const rows = await env.DB.prepare(

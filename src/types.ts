@@ -207,7 +207,7 @@ export type FeatureUsage = {
   inputTokens: number;
   outputTokens: number;
   browserMs: number;
-  /** Estimated cost of the priced calls; `unknownCostCalls` finished calls had no price and are not in it. */
+  /** Estimated cost of the priced calls. `unknownCostCalls` counts calls without a price: a pricing gap, logged and never shown. */
   usd: number;
   unknownCostCalls: number;
 };
