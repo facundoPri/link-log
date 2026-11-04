@@ -26,7 +26,7 @@ One JSON line each, ids and numbers only (`worker/jev-metrics.ts`). Group by `ba
 | `jev_batch_first_result` | `batch_id`, `kind`, `job_id`, `ms` | Time from the batch's creation to its first successful job. |
 | `jev_batch_done` | `batch_id`, `kind`, `jobs`, `done`, `failed`, `first_result_ms`, `duration_ms` | Batch duration, once no job is left. Jobs settling together can log it twice: use the latest line per batch. A batch retry logs it again with the longer duration. |
 
-Only Jev kinds log them (`autotag`, `lens`, `query`, `browser-lens`, `browser-autogroup`). In the Workers Logs query builder, filter `$workers.event.request` logs by message and use the fields above. p95 Jev latency: filter `event = jev_call` and `ok = true`, then calculate `p95` of `latency_ms`. 429 count: filter `event = jev_rate_limited` and count. These lines do not exist before the deploy that ships them.
+Only Jev kinds log them (`autotag`, `lens`, `query`, `browser-lens`, `browser-autogroup`). In the Workers Logs query builder the JSON fields are queryable. p95 Jev latency: filter `event = jev_call` and `ok = true`, then calculate `p95` of `latency_ms`. 429 count: filter `event = jev_rate_limited` and count. These lines do not exist before the deploy that ships them.
 
 `invocation_logs` stay off on purpose: auth links carry tokens in the URL.
 
