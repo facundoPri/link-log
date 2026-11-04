@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useState, type ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { routeKey, type ActionMeta, type ActionState, type BulkProgress } from "../bulkActions";
@@ -36,6 +36,8 @@ export type PaletteCommand = {
 
 export type SelectionNoun = "link" | "tab";
 
+const NO_RESULTS: BulkResult[] = [];
+
 function isInput(target: EventTarget | null) {
   return target instanceof HTMLElement && !!target.closest('input,textarea,select,[contenteditable="true"]');
 }
@@ -56,7 +58,7 @@ export function SelectionSurface({
   commands,
   picker,
   progress = null,
-  results = [],
+  results = NO_RESULTS,
   onRun,
   onSelectAll,
   onClear,
@@ -109,9 +111,8 @@ export function SelectionSurface({
     c.onSelect();
   };
 
-  // One listener for the surface's lifetime; it reads the latest state through a ref.
-  const onKey = useRef<(e: KeyboardEvent) => void>(() => {});
-  onKey.current = (e) => {
+  // One listener for the surface's lifetime; the event reads the latest state.
+  const onKey = useEffectEvent((e: KeyboardEvent) => {
     const route = routeKey(e, states.map((s) => s.action), {
       selected,
       paletteOpen: !!palette,
@@ -122,9 +123,9 @@ export function SelectionSurface({
     e.preventDefault();
     if (route.kind === "palette") setPalette((p) => (p ? null : { page: null }));
     else if (route.kind === "action") invoke(route.action);
-  };
+  });
   useEffect(() => {
-    const key = (e: KeyboardEvent) => onKey.current(e);
+    const key = (e: KeyboardEvent) => onKey(e);
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, []);
