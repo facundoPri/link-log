@@ -119,7 +119,7 @@ function LinksWindow({ quota }: { quota: QuotaUsage }) {
   );
 }
 
-/** What each feature used this month. Nothing here is capped; "unpriced" calls have no known price, so the cost is at least what is shown. */
+/** What each feature used this month. Nothing here is capped. */
 function FeatureTable({ month }: { month: Usage["month"] }) {
   const total = featureCost(month.total);
   return (
@@ -144,8 +144,7 @@ function FeatureTable({ month }: { month: Usage["month"] }) {
               <td className="py-1.5 text-right tabular-nums">{f.runs}</td>
               <td className="hidden py-1.5 pl-3 text-right tabular-nums text-muted-foreground sm:table-cell">{units || "—"}</td>
               <td className="py-1.5 pl-3 text-right tabular-nums">
-                {cost.amount}
-                {cost.unpriced && <span className="block text-xs text-muted-foreground">{cost.unpriced}</span>}
+                {cost}
               </td>
             </tr>
           );
@@ -157,8 +156,7 @@ function FeatureTable({ month }: { month: Usage["month"] }) {
           <td />
           <td className="hidden sm:table-cell" />
           <td className="pt-2 pl-3 text-right tabular-nums">
-            {total.amount}
-            {total.unpriced && <span className="block text-xs font-normal text-muted-foreground">{total.unpriced}</span>}
+            {total}
           </td>
         </tr>
       </tfoot>

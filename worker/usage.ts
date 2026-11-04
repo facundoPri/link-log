@@ -9,6 +9,11 @@ export const GEMMA_USD_PER_M_OUTPUT = 0.30;
  */
 export const BROWSER_USD_PER_HOUR = 0.09;
 export const OCR_USAGE_COLUMNS = "sum(service='image-ocr') ocr_images,sum(CASE WHEN service='image-ocr' THEN input_tokens ELSE 0 END) ocr_input_tokens,sum(CASE WHEN service='image-ocr' THEN output_tokens ELSE 0 END) ocr_output_tokens,max(CASE WHEN service='image-ocr' THEN model END) ocr_model,sum(CASE WHEN service='image-ocr' THEN estimated_usd END) ocr_usd,sum(service='image-ocr' AND estimated_usd IS NULL) ocr_unknown_cost_calls";
+/**
+ * Settles a call cut short before it reported its units (a crash, a cancel, an abandoned attempt). It may
+ * still be billed, so it is priced at the average of the service's finished calls (FAC-168).
+ */
+export const INTERRUPTED_USAGE = "status='failed',error='Provider call interrupted before completion',estimated_usd=(SELECT avg(p.estimated_usd) FROM usage_events p WHERE p.service=usage_events.service AND p.status='done' AND p.estimated_usd IS NOT NULL)";
 /** A stored row keeps the price known when it finished: adding a rate needs a backfill migration (0027). */
 export function priceUsage(u: {
   provider: string;
@@ -58,6 +63,8 @@ export async function finishUsage(env: Env, id: string, started: number, provide
     model: meter.model ?? null,
     browser_ms: meter.browser_ms ?? null,
   });
+  // Users never see an unpriced call: it is a pricing gap (a missing rate, a failure without units) to fix.
+  if (cost === null) console.error(JSON.stringify({ event: "usage_unpriced", usage_id: id, provider, model: meter.model ?? null, status: error ? "failed" : "done" }));
   try {
     await env.DB.prepare(
       "UPDATE usage_events SET status=?,model=?,input_tokens=?,output_tokens=?,browser_ms=?,estimated_usd=?,duration_ms=?,error=? WHERE id=?",

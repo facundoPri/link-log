@@ -105,14 +105,52 @@ test("a browser call stored before its rate existed is priced by the backfill, i
   expect(activity.usd).toBeCloseTo(0.0009, 10);
 });
 
-test("an interrupted browser call has no recorded browser time and stays unpriced", async () => {
+test("an interrupted browser call stored without browser time is priced by the backfill at the service's average", async () => {
   const s = await setup();
   fakes.browser = renders(36_000);
-  await save(s, URL_1);
+  const id = await save(s, URL_1);
   await runAll(s);
-  s.db.exec("UPDATE usage_events SET status='failed',error='Provider call interrupted before completion',browser_ms=NULL,estimated_usd=NULL");
+  expect((await s.api("/batches", "POST", { kind: "extract", ids: [id] })).status).toBe(200);
+  await runAll(s);
+  s.db.exec("UPDATE usage_events SET status='failed',error='Provider call interrupted before completion',browser_ms=NULL,estimated_usd=NULL WHERE rowid=(SELECT max(rowid) FROM usage_events WHERE service='browser-markdown')");
   s.db.exec(await Bun.file("migrations/0027_usage_backfill.sql").text());
   const { rows } = await features(s);
-  expect(rows.content).toMatchObject({ usd: 0, unknownCostCalls: 1 });
-  expect((await activityUsage(s)).unknown_cost_calls).toBe(1);
+  expect(rows.content).toMatchObject({ runs: 2, unknownCostCalls: 0 });
+  expect(rows.content!.usd).toBeCloseTo(0.0018, 10);
+  expect((await activityUsage(s)).unknown_cost_calls).toBe(0);
+});
+
+test("a browser call cut short by a cancel is priced at the service's average, not left unpriced", async () => {
+  const s = await setup();
+  fakes.browser = renders(36_000);
+  const id = await save(s, URL_1);
+  await runAll(s);
+  let reached = false;
+  fakes.browser = () => ((reached = true), new Promise<Response>(() => {}));
+  expect((await s.api("/batches", "POST", { kind: "extract", ids: [id] })).status).toBe(200);
+  const job = s.sent.splice(0)[0]!.body.id;
+  void s.runJob(job);
+  while (!reached) await Bun.sleep(1);
+  expect((await s.api(`/jobs/${job}`, "DELETE")).status).toBe(200);
+  const { rows } = await features(s);
+  expect(rows.content).toMatchObject({ unknownCostCalls: 0 });
+  expect(rows.content!.usd).toBeCloseTo(0.0018, 10);
+});
+
+test("a call that finishes without a price is logged as an error", async () => {
+  const s = await setup();
+  Object.assign(s.env as any, { JEV_PROVIDER: "fixture", ALLOW_FIXTURE_JEV: "1" });
+  const errors = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    fakes.browser = renders(1000);
+    const id = await save(s, URL_1);
+    await runAll(s);
+    await s.api("/tags", "POST", { name: "news", description: "News articles" });
+    expect((await s.api("/batches", "POST", { kind: "autotag", ids: [id] })).status).toBe(200);
+    await runAll(s);
+    const logged = errors.mock.calls.map(([line]) => JSON.parse(String(line))).filter((e) => e.event === "usage_unpriced");
+    expect(logged).toEqual([expect.objectContaining({ provider: "fixture", status: "done" })]);
+  } finally {
+    errors.mockRestore();
+  }
 });

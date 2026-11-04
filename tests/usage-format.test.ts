@@ -9,12 +9,10 @@ test("units read in the unit a feature is billed in", () => {
   expect([formatBrowserTime(850), formatBrowserTime(4_500_000)]).toEqual(["850 ms", "1.3 h"]);
 });
 
-test("a small estimate keeps its digits; an unpriced call is never shown as free", () => {
+test("a small estimate keeps its digits; nothing billed reads as a dash", () => {
   expect([formatUsd(0.0009), formatUsd(0.042), formatUsd(12.5)]).toEqual(["$0.0009", "$0.042", "$12.50"]);
-  expect(featureCost({ usd: 0.042, unknownCostCalls: 0 })).toEqual({ amount: "$0.042", unpriced: "" });
-  expect(featureCost({ usd: 0, unknownCostCalls: 3 })).toEqual({ amount: "", unpriced: "3 unpriced" });
-  expect(featureCost({ usd: 0.5, unknownCostCalls: 1 })).toEqual({ amount: "$0.50", unpriced: "1 unpriced" });
-  expect(featureCost({ usd: 0, unknownCostCalls: 0 })).toEqual({ amount: "—", unpriced: "" });
+  expect(featureCost({ usd: 0.042 })).toBe("$0.042");
+  expect(featureCost({ usd: 0 })).toBe("—");
 });
 
 test("the window reset reads in whole minutes, at least one", () => {
