@@ -35,6 +35,8 @@ export function useLibrary() {
     queryKey: libraryKey,
     queryFn: () => api<Library>(),
     refetchInterval: (query) => (busy(query.state.data) ? POLL_MS : false),
+    // Kept while no view reads it (Settings), for as long as the account's client lives.
+    gcTime: Infinity,
   });
 }
 
