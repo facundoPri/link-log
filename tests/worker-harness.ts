@@ -11,11 +11,12 @@ import { responseFailure } from "../worker/failures";
 import { webAdapter } from "../worker/adapters/web";
 import type { Link } from "../src/types";
 import wrangler from "../wrangler.jsonc";
-import { isJevQueue, queueFor, type BatchKind } from "../worker/job-routing";
+import { isJevQueue, parseBatchKind, queueFor, type JobMessage } from "../worker/job-routing";
 
+type Consumer = { queue: string; max_batch_size: number; max_concurrency: number; max_retries: number };
+const { queues }: { queues: { consumers: Consumer[] } } = wrangler;
 /** The local Jev queue consumer's settings, as deployed: its batch size times its concurrency caps Jev calls. */
-export const jevConsumer = (wrangler.queues.consumers as { queue: string; max_batch_size: number; max_concurrency: number; max_retries: number }[])
-  .find((c) => isJevQueue(c.queue))!;
+export const jevConsumer = queues.consumers.find((c) => isJevQueue(c.queue))!;
 /** A message waiting in the Jev queue. `attempts` counts its deliveries, like Message.attempts. */
 export type QueuedMessage = { id: string; body: { id: string }; attempts: number };
 
@@ -243,17 +244,19 @@ export async function setup(options: { placeholder?: boolean } = {}) {
   // A message neither acknowledged nor retried is acknowledged when the handler returns, and retried when it
   // throws or is killed. A retried message comes back with one more attempt, up to the queue's max_retries.
   const deliver = async (batch: QueuedMessage[]) => {
-    const settled = new Map<QueuedMessage, { outcome: "ack" | "retry"; delaySeconds?: number }>();
+    type Settled = { outcome: "ack" | "retry"; delaySeconds?: number };
+    const settled = new Map<QueuedMessage, Settled>();
     const mark = (m: QueuedMessage, outcome: "ack" | "retry", delaySeconds?: number) => void (settled.has(m) || settled.set(m, { outcome, delaySeconds }));
-    const messages = batch.map((m) => ({
+    const messages: Message<JobMessage>[] = batch.map((m) => ({
       id: m.id, timestamp: new Date(), body: m.body, attempts: m.attempts,
       ack: () => mark(m, "ack"),
       retry: (o?: { delaySeconds?: number }) => mark(m, "retry", o?.delaySeconds),
     }));
-    const handled = (worker as any).queue({ queue: jevConsumer.queue, messages, ackAll: () => batch.forEach((m) => mark(m, "ack")), retryAll: () => batch.forEach((m) => mark(m, "retry")) }, env, { waitUntil: () => {} });
+    const messageBatch: MessageBatch<JobMessage> = { queue: jevConsumer.queue, messages, metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } }, ackAll: () => batch.forEach((m) => mark(m, "ack")), retryAll: () => batch.forEach((m) => mark(m, "retry")) };
+    const handled = worker.queue(messageBatch, env);
     const ended = await (queue.timeoutMs ? Promise.race([handled.then(() => "returned", () => "threw"), Bun.sleep(queue.timeoutMs).then(() => "killed")]) : handled.then(() => "returned", () => "threw"));
     for (const m of batch) {
-      const result = ended === "killed" && !settled.has(m) ? { outcome: "killed" as const } : settled.get(m) ?? { outcome: ended === "returned" ? "ack" as const : "retry" as const };
+      const result: Settled | { outcome: "killed" } = ended === "killed" && !settled.has(m) ? { outcome: "killed" } : settled.get(m) ?? { outcome: ended === "returned" ? "ack" : "retry" };
       deliveries.push({ job: m.body.id, message: m.id, attempts: m.attempts, ...result });
       if (result.outcome === "ack") continue;
       if (m.attempts > jevConsumer.max_retries) dropped.push(m);
@@ -268,8 +271,8 @@ export async function setup(options: { placeholder?: boolean } = {}) {
   };
   // Runs one job the way its queue would: a Workflow for the jobs queue, a single delivery for the Jev queue.
   const runJob = async (jobId: string) => {
-    const { kind } = db.query("SELECT b.kind FROM jobs j JOIN batches b ON b.id=j.batch_id WHERE j.id=?").get(jobId) as { kind: BatchKind };
-    if (queueFor(env, kind) === env.JEV_JOBS) await deliver([{ id: crypto.randomUUID(), body: { id: jobId }, attempts: 1 }]);
+    const row = db.query<{ kind: string }, [string]>("SELECT b.kind FROM jobs j JOIN batches b ON b.id=j.batch_id WHERE j.id=?").get(jobId);
+    if (queueFor(env, { kind: parseBatchKind(row?.kind) }) === env.JEV_JOBS) await deliver([{ id: crypto.randomUUID(), body: { id: jobId }, attempts: 1 }]);
     else await runWorkflow(jobId);
   };
   const runQueued = async () => {

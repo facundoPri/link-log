@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { batchProgressNote } from "../src/bulkActions";
+import { batchProgressNote, runningBatchToast } from "../src/bulkActions";
 import { rowJobLabel } from "../src/failures";
 import type { Batch, Job } from "../src/types";
 
@@ -32,5 +32,17 @@ describe("batch toast", () => {
   test("counts every settled job against the total", () => {
     expect(batchProgressNote(batch({}))).toBe("0 of 10");
     expect(batchProgressNote(batch({ done: 3, failed: 1, cancelled: 1, active: 5 }))).toBe("5 of 10");
+  });
+
+  test("a running batch's toast offers Cancel and Activity; opening Activity keeps the toast", () => {
+    const calls: string[] = [];
+    const t = runningBatchToast({ batch: batch({ done: 2 }), onCancel: () => calls.push("cancel"), onActivity: () => calls.push("activity") });
+    expect(t.description).toBe("2 of 10");
+    expect([t.cancel.label, t.action.label]).toEqual(["Cancel", "Activity"]);
+    let kept = false;
+    t.action.onClick({ preventDefault: () => void (kept = true) });
+    t.cancel.onClick();
+    expect(calls).toEqual(["activity", "cancel"]);
+    expect(kept).toBe(true);
   });
 });

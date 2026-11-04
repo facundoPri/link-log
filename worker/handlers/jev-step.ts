@@ -21,7 +21,7 @@ export async function readSaved(env: Env, key: string | null, missing: string) {
 }
 
 /** One structured line per failed Jev attempt, for Workers Logs. */
-export function logJevFailure(env: Env, failure: JevFailure, job: Job, attempt: number, maxAttempts: number, final: boolean) {
+export function logJevFailure({ env, failure, job, attempt, maxAttempts, final }: { env: Env; failure: JevFailure; job: Job; attempt: number; maxAttempts: number; final: boolean }) {
   console.log(JSON.stringify({
     event: "jev_step_failed",
     job_id: job.id,
@@ -87,7 +87,7 @@ export async function evaluateWithJev(
       if (claimed) failure = new JevFailure("sent", "interrupted", undefined, failure.detail);
     }
     const final = !failure.retryable || ctx.attempt >= max;
-    logJevFailure(env, failure, job, ctx.attempt, max, final);
+    logJevFailure({ env, failure, job, attempt: ctx.attempt, maxAttempts: max, final });
     if (!final) {
       await env.DB.prepare("UPDATE jobs SET reason=?,attempt=?,max_attempts=?,attempt_started_at=NULL WHERE id=? AND status='running'")
         .bind(failure.reason, ctx.attempt + 1, max, job.id).run().catch(() => {});
@@ -98,7 +98,7 @@ export async function evaluateWithJev(
     // An error the engine raised (step timeout, eviction) says nothing about whether the call was sent.
     if (e instanceof JevFailure) throw e;
     const failure = uncertain(e);
-    logJevFailure(env, failure, job, max, max, true);
+    logJevFailure({ env, failure, job, attempt: max, maxAttempts: max, final: true });
     throw failure;
   });
   if ("failed" in result) {

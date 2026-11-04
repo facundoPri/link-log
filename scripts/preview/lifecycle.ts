@@ -18,10 +18,13 @@ function resourceId(value: unknown): string {
   if (typeof value !== "string" || !/^[a-f0-9-]{32,36}$/.test(value)) throw new Error("Invalid resource ID");
   return value;
 }
+type QueueConsumer = { consumer_id: string; script?: string; script_name?: string; type?: string };
+type QueueInfo = { queue_name: string; queue_id: string; consumers?: QueueConsumer[] };
+
 export async function resources(cf: Cloudflare, repositoryId: string, pr: string, create: boolean) {
   const n = names(repositoryId, pr);
   let db = await cf.named("/d1/database", "name", n.db);
-  const queues: Record<string, any> = {};
+  const queues: Record<string, QueueInfo | undefined> = {};
   for (const [key, name] of Object.entries(n.queues)) queues[key] = await cf.named("/queues", "queue_name", name);
   let bucket = (await cf.api(`/r2/buckets/${n.bucket}`, "GET", undefined, true))?.result;
   if (bucket && bucket.name !== n.bucket) throw new Error("R2 identity mismatch");
@@ -56,7 +59,7 @@ export async function resources(cf: Cloudflare, repositoryId: string, pr: string
 export async function cleanup(cf: Cloudflare, repositoryId: string, pr: string) {
   const n = names(repositoryId, pr);
   const { db, queues, bucket } = await resources(cf, repositoryId, pr, false);
-  const found = Object.values(queues).filter(Boolean);
+  const found = Object.values(queues).filter((queue): queue is QueueInfo => !!queue);
   // Stop asynchronous writers before destroying storage. Missing resources alone are benign;
   // permissions/network errors abort and are retried by rerunning the same workflow.
   for (const queue of found) for (const consumer of queue.consumers ?? []) {
