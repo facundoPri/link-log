@@ -1329,10 +1329,6 @@ export function App({
         <TagDialog
           tag={dialog.tag}
           onClose={() => setDialog(null)}
-          onChange={setLibrary}
-          linkCount={(id) =>
-            library.links.filter((l) => l.tags.some((t) => t.id === id)).length
-          }
         />
       )}
       <AlertDialog open={!!deleteLink} onOpenChange={(o) => !o && setDeleteLink(null)}>
