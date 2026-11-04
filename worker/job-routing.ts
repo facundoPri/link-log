@@ -4,8 +4,7 @@ export type BatchKind = "extract" | "preview" | "autotag" | "lens" | "query" | "
 export type JobMessage = { id: string };
 
 // Jobs of these kinds run directly in the Jev queue's consumer, with no Workflow (ADR 0001).
-// Browser evaluations still run in Workflows (FAC-194).
-const JEV_QUEUE_KINDS = new Set<string>(["autotag", "lens", "query"] satisfies BatchKind[]);
+const JEV_QUEUE_KINDS = new Set<string>(["autotag", "lens", "query", "browser-lens", "browser-autogroup"] satisfies BatchKind[]);
 export const runsInJevQueue = (kind: string) => JEV_QUEUE_KINDS.has(kind);
 
 /** Whether a consumer batch comes from the Jev queue (`linklog-jev`, `linklog-jev-production`). */

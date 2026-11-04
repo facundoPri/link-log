@@ -1,11 +1,12 @@
-// The Jev queue's consumer (ADR 0001): lens, auto-tag and query jobs run here directly, one message per job,
+// The Jev queue's consumer (ADR 0001): lens, auto-tag, query and Browser evaluation jobs run here directly, one message per job,
 // with no Workflow and no lease. The queue's max_batch_size × max_concurrency caps simultaneous Jev calls.
 // Delivery is at-least-once and nothing here is durable, so every step is derived from the job's row:
 // the guarded start, the `jev_call` claim inside judge() and the running-status fence on every write.
 import { beforeCall, judge, JevFailure, outcomeFailure, uncertain, type JevOutcome, type JevResult } from "./ai/jev";
 import { classifyInput, classifySave } from "./handlers/classify";
+import { browserInput, browserSave, dropSnapshot, loadTarget } from "./handlers/browser";
 import { logJevFailure } from "./handlers/jev-step";
-import type { JobConfig } from "./handlers";
+import type { BrowserTargetRow, JobConfig } from "./handlers";
 import { accountStop, contentMissing, promoteWaiting, startNext } from "./jobs";
 import { runsInJevQueue, type JobMessage } from "./job-routing";
 import { logJevBatchProgress, logJevJobStarted } from "./jev-metrics";
@@ -22,7 +23,8 @@ export const ABANDONED_MS = 15 * 60_000;
 type Run = {
   id: string;
   batch_id: string;
-  link_id: string;
+  link_id: string | null;
+  target_id: string | null;
   status: string;
   created_at: string;
   attempt: number | null;
@@ -33,7 +35,9 @@ type Run = {
   config: string;
   user_id: string;
 };
-type Settlement = { done: D1PreparedStatement[] } | { failed: Error };
+/** What a job evaluates: a saved link, or a Browser tab's temporary snapshot. */
+type Subject = { link: Link; target: null } | { link: null; target: BrowserTargetRow };
+type Settlement = { done: D1PreparedStatement[]; snapshot: BrowserTargetRow | null } | { failed: Error };
 
 export async function consumeJevJobs(batch: MessageBatch<JobMessage>, env: Env) {
   await Promise.all(batch.messages.map((message) => consume(env, message)));
@@ -42,10 +46,10 @@ export async function consumeJevJobs(batch: MessageBatch<JobMessage>, env: Env) 
 async function consume(env: Env, message: Message<JobMessage>) {
   try {
     const run = await env.DB.prepare(
-      "SELECT j.id,j.batch_id,j.link_id,j.status,j.created_at,j.attempt,j.jev_call,j.jev_outcome,j.started_at,b.kind,b.config,b.user_id FROM jobs j JOIN batches b ON b.id=j.batch_id WHERE j.id=?",
+      "SELECT j.id,j.batch_id,j.link_id,j.target_id,j.status,j.created_at,j.attempt,j.jev_call,j.jev_outcome,j.started_at,b.kind,b.config,b.user_id FROM jobs j JOIN batches b ON b.id=j.batch_id WHERE j.id=?",
     ).bind(message.body.id).first<Run>();
     // Another kind's job is left alone: recovery resends it to the queue its kind belongs to.
-    if (!run || !run.user_id || !run.link_id || !runsInJevQueue(run.kind)) return message.ack();
+    if (!run || !run.user_id || !(run.link_id || run.target_id) || !runsInJevQueue(run.kind)) return message.ack();
     const now = Date.now();
     const abandoned = run.status === "running" && run.started_at !== null && now - run.started_at > ABANDONED_MS;
     // Only a queued job starts. A running one belongs to another delivery, unless its runner is long gone.
@@ -69,8 +73,10 @@ async function execute(env: Env, run: Run, abandoned: boolean): Promise<"retry" 
   const attempt = run.attempt ?? 1;
   let settlement: Settlement;
   try {
-    const { link, config, result } = await evaluate(env, run, attempt, abandoned);
-    settlement = { done: classifySave({ env, job: run, link, config }, result) };
+    const { subject, config, result } = await evaluate(env, run, attempt, abandoned);
+    settlement = subject.target
+      ? { done: browserSave({ env, job: run, target: subject.target, config }, result), snapshot: subject.target }
+      : { done: classifySave({ env, job: run, link: subject.link, config }, result), snapshot: null };
   } catch (error) {
     const failure = error instanceof JevFailure ? error : null;
     if (failure) {
@@ -85,7 +91,12 @@ async function execute(env: Env, run: Run, abandoned: boolean): Promise<"retry" 
   } catch (error) {
     // The job stays running; once abandoned, a later delivery settles it from its recorded call.
     console.error(JSON.stringify({ event: "jev_settle_failed", job_id: run.id, detail: String(error).slice(0, 300) }));
+    return "settled";
   }
+  // The snapshot is only needed until its answer is saved. If this fails, the retention sweep drops it.
+  if ("done" in settlement && settlement.snapshot)
+    await dropSnapshot(env, settlement.snapshot).catch((error: unknown) =>
+      console.error(JSON.stringify({ event: "jev_snapshot_drop_failed", job_id: run.id, detail: String(error).slice(0, 300) })));
   return "settled";
 }
 
@@ -94,30 +105,42 @@ async function execute(env: Env, run: Run, abandoned: boolean): Promise<"retry" 
  * without one it may have been billed. A run taken over from an abandoned runner never sends a new call.
  */
 async function evaluate(env: Env, run: Run, attempt: number, abandoned: boolean) {
-  let link: Link | null = null;
+  let subject: Subject | null = null;
   const config = JSON.parse(run.config) as JobConfig;
   try {
-    link = await env.DB.prepare("SELECT * FROM links WHERE id=? AND user_id=?").bind(run.link_id, run.user_id).first<Link>();
-    if (!link) throw new JevFailure("before_call", "before_call", "The link no longer exists.");
+    subject = await load(env, run);
     const recorded = recordedCall(run);
-    if (recorded) return { link, config, result: recorded };
+    if (recorded) return { subject, config, result: recorded };
     if (abandoned) throw new JevFailure("before_call", "before_call", undefined, { technical: "The run was abandoned before its call" });
     // Jev that waited for an extraction which ended without content fails here, free.
-    if (!link.content_key) throw new JevFailure("before_call", "before_call", contentMissing);
+    if (subject.link && !subject.link.content_key) throw new JevFailure("before_call", "before_call", contentMissing);
     await env.DB.prepare(`UPDATE jobs SET step='Evaluating with Jev',attempt=?,max_attempts=?,attempt_started_at=?,attempt_budget_ms=?${attempt === 1 ? ",reason=NULL" : ""} WHERE id=? AND status='running'`)
       .bind(attempt, attempt > 1 ? MAX_ATTEMPTS : null, attempt > 1 ? Date.now() : null, attempt > 1 ? ATTEMPT_BUDGET_MS : null, run.id).run();
-    const { state, questions } = await classifyInput({ env, job: run, link, config });
-    return { link, config, result: await judge(env, state, questions, run) };
+    const { state, questions } = subject.target
+      ? await browserInput({ env, job: run, target: subject.target, config })
+      : await classifyInput({ env, job: run, link: subject.link, config });
+    return { subject, config, result: await judge(env, state, questions, run) };
   } catch (error) {
     const failure = beforeCall(error);
-    if (failure.phase === "sent" || !link) throw failure;
+    if (failure.phase === "sent" || !subject) throw failure;
     // A failure outside the provider's answer (metering, say) may still come after the claim: the claim decides.
     const row = await env.DB.prepare("SELECT jev_call,jev_outcome FROM jobs WHERE id=?").bind(run.id)
       .first<Pick<Run, "jev_call" | "jev_outcome">>().catch((e: unknown) => { throw uncertain(e); });
     const recorded = row ? recordedCall(row) : null;
     if (!recorded) throw failure;
-    return { link, config, result: recorded };
+    return { subject, config, result: recorded };
   }
+}
+
+async function load(env: Env, run: Run): Promise<Subject> {
+  if (run.target_id) {
+    const target = await loadTarget(env.DB, run.target_id, run.user_id);
+    if (!target) throw new JevFailure("before_call", "before_call", "The browser capture no longer exists.");
+    return { link: null, target };
+  }
+  const link = await env.DB.prepare("SELECT * FROM links WHERE id=? AND user_id=?").bind(run.link_id, run.user_id).first<Link>();
+  if (!link) throw new JevFailure("before_call", "before_call", "The link no longer exists.");
+  return { link, target: null };
 }
 
 /** The answer of a call this job claimed, or null if it claimed none. Throws the call's recorded failure. */
@@ -163,7 +186,7 @@ async function settle(env: Env, run: Run, settlement: Settlement) {
       statements.push(...stop.statements);
     }
   }
-  statements.push(promoteWaiting(env.DB, run.link_id));
+  if (run.link_id) statements.push(promoteWaiting(env.DB, run.link_id));
   await env.DB.batch(statements);
   await logJevBatchProgress(env, run.id, run.kind);
   await startNext(env, [run.link_id, ...stopped]);

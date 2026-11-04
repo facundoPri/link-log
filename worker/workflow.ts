@@ -3,7 +3,8 @@ import {
   type WorkflowEvent,
   type WorkflowStep,
 } from "cloudflare:workers";
-import { browserHandlers, handlers, type BrowserTargetRow, type Pool } from "./handlers";
+import { browserHandlers, handlers, type Pool } from "./handlers";
+import { loadTarget } from "./handlers/browser";
 import { preservedContentStateSql } from "./content-state";
 import { accountStop, poolLimit, contentMissing, promoteWaiting, startNext, type Config, type JobRow } from "./jobs";
 import type { Link } from "../src/types";
@@ -38,13 +39,7 @@ export async function loadOwnedJob(db: D1Database, jobId: string) {
         .bind(row.link_id, row.user_id)
         .first<Link>()
     : null;
-  const target = row.target_id
-    ? await db.prepare(
-        "SELECT bt.id,bt.request_id,bt.target_key,bt.url,bt.title,bt.capture_key,bt.capture_meta FROM browser_targets bt JOIN browser_requests r ON r.request_id=bt.request_id WHERE bt.id=? AND r.user_id=?",
-      )
-        .bind(row.target_id, row.user_id)
-        .first<BrowserTargetRow>()
-    : null;
+  const target = row.target_id ? await loadTarget(db, row.target_id, row.user_id) : null;
   if (!link && !target)
     throw new Error(row.target_id ? "The browser capture no longer exists." : "The link no longer exists.");
   return { job: row as LoadedJob, link, target };
