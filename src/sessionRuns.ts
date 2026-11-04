@@ -2,7 +2,7 @@ import { useCallback, useEffect, useEffectEvent, useReducer, useRef } from "reac
 import { toast } from "sonner";
 import { api } from "./api";
 import { BATCH_WORDS } from "./batches";
-import { useLibrary, useWriteLibrary } from "./library";
+import { useInvalidateLibrary, useLibrary, useWriteLibrary } from "./library";
 import { plural, tokens, usd } from "./lib/format";
 import type { Batch, Library } from "./types";
 
@@ -10,7 +10,15 @@ import type { Batch, Library } from "./types";
 export type SessionRun = { add: (batchId: string) => void; end: () => void };
 export type StartRun = () => SessionRun;
 
-type Run = { batchIds: string[]; open: boolean };
+type Run = {
+  batchIds: string[];
+  open: boolean;
+  /**
+   * Library data from after this time lists every batch of the run that the library's 30-batch window holds. A batch
+   * it doesn't list then has left the window (or never got a job): it can't be followed, so it stops holding the toast.
+   */
+  listedAfter: number;
+};
 
 /**
  * Progress toasts for the actions this page started. A library action tracks each of its batches as a run of
@@ -24,18 +32,20 @@ export function useSessionRuns({
   /** A run's batches once they all finished; `failed` when some of their jobs failed. */
   onSettled: (batches: Batch[], failed: boolean) => void;
 }) {
-  const { data } = useLibrary();
+  const { data, dataUpdatedAt } = useLibrary();
   const writeLibrary = useWriteLibrary();
+  const invalidateLibrary = useInvalidateLibrary();
   // By toast id.
   const runs = useRef(new Map<string, Run>());
   const [version, changed] = useReducer((n: number) => n + 1, 0);
 
+  /** Called once the library that answered the batch's request is in the cache. */
   const trackBatch = useCallback((batchId: string) => {
-    runs.current.set(crypto.randomUUID(), { batchIds: [batchId], open: false });
+    runs.current.set(crypto.randomUUID(), { batchIds: [batchId], open: false, listedAfter: 0 });
     changed();
   }, []);
   const startRun = useCallback<StartRun>(() => {
-    const run: Run = { batchIds: [], open: true };
+    const run: Run = { batchIds: [], open: true, listedAfter: Infinity };
     runs.current.set(crypto.randomUUID(), run);
     return {
       add: (batchId) => {
@@ -44,10 +54,12 @@ export function useSessionRuns({
       },
       end: () => {
         run.open = false;
+        run.listedAfter = Date.now();
+        if (run.batchIds.length) void invalidateLibrary();
         changed();
       },
     };
-  }, []);
+  }, [invalidateLibrary]);
 
   const cancelBatches = async (ids: string[]) => {
     try {
@@ -69,11 +81,15 @@ export function useSessionRuns({
   };
 
   const showRuns = useEffectEvent(() => {
-    const listed = data?.batches ?? [];
+    const listed = new Map(data?.batches.map((batch) => [batch.id, batch]));
     for (const [toastId, run] of runs.current) {
-      const batches = listed.filter((batch) => run.batchIds.includes(batch.id));
+      const batches = run.batchIds.flatMap((id) => listed.get(id) ?? []);
+      const awaitingListing = batches.length < run.batchIds.length && dataUpdatedAt <= run.listedAfter;
       if (!batches.length) {
-        if (!run.open && !run.batchIds.length) runs.current.delete(toastId);
+        if (!run.open && !awaitingListing) {
+          runs.current.delete(toastId);
+          toast.dismiss(toastId);
+        }
         continue;
       }
       const sumOf = (count: (batch: Batch) => number) => batches.reduce((n, batch) => n + count(batch), 0);
@@ -85,7 +101,7 @@ export function useSessionRuns({
         ? { usd: sumOf((batch) => batch.usage!.usd!), tokens: sumOf((batch) => batch.usage!.input_tokens + batch.usage!.output_tokens) }
         : null;
       const words = BATCH_WORDS[batches[0]!.kind];
-      if (run.open || batches.length < run.batchIds.length || sumOf((batch) => batch.active) > 0) {
+      if (run.open || awaitingListing || sumOf((batch) => batch.active) > 0) {
         toast.loading(`${words.verb} ${plural(total, words.noun)}…`, {
           id: toastId,
           description: `${finished} of ${total} done`,
@@ -111,7 +127,7 @@ export function useSessionRuns({
       onSettled(batches, failed > 0);
     }
   });
-  useEffect(() => showRuns(), [data?.batches, version]);
+  useEffect(() => showRuns(), [data?.batches, dataUpdatedAt, version]);
 
   return { trackBatch, startRun };
 }
