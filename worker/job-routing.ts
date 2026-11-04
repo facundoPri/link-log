@@ -10,7 +10,7 @@ export function parseBatchKind(value: unknown): BatchKind {
 
 export type JobMessage = { id: string };
 
-// Jobs of these kinds call Jev. They run directly in the Jev queue's consumer, with no Workflow (ADR 0001).
+// Jobs of these kinds call Jev. They run directly in the Jev queue's consumer, with no Workflow (ADR 0002).
 const JEV_KINDS = new Set<BatchKind>(["autotag", "lens", "query", "browser-lens", "browser-autogroup"]);
 export const runsInJevQueue = (kind: BatchKind) => JEV_KINDS.has(kind);
 

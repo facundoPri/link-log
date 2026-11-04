@@ -1,4 +1,4 @@
-// The Jev queue's consumer (ADR 0001): lens, auto-tag, query and Browser evaluation jobs run here directly, one message per job,
+// The Jev queue's consumer (ADR 0002): lens, auto-tag, query and Browser evaluation jobs run here directly, one message per job,
 // with no Workflow and no lease. The queue's max_batch_size × max_concurrency caps simultaneous Jev calls.
 // Delivery is at-least-once and nothing here is durable, so every step is derived from the job's row:
 // the guarded start, the `jev_call` claim inside judge() and the running-status fence on every write.
