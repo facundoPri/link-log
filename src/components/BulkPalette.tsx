@@ -11,9 +11,8 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { cn } from "@/lib/utils";
+import { plural } from "../lib/format";
 import type { PaletteCommand, Picker, SelectionNoun } from "./SelectionSurface";
-
-const count = (n: number, noun: SelectionNoun) => (n === 1 ? noun : `${noun}s`);
 
 const gutter = (group: string) =>
   cn(
@@ -75,14 +74,14 @@ export function BulkPalette({
       open={open}
       onOpenChange={onOpenChange}
       title="Commands"
-      description={selected ? `Act on ${selected} selected ${count(selected, noun)}` : "Commands for this view"}
+      description={selected ? `Act on ${plural(selected, noun)}` : "Commands for this view"}
       showCloseButton={false}
       className="top-[18%] translate-y-0 sm:max-w-[600px]"
     >
       <div className="flex items-center gap-2 border-b px-3 py-2 text-[12px] text-muted-foreground">
         {page ? (
           <button type="button" className="hover:text-foreground" onClick={() => onPage(null)}>
-            ← {page.label} on {selected} {count(selected, noun)}
+            ← {page.label} on {plural(selected, noun)}
           </button>
         ) : selected ? (
           <>

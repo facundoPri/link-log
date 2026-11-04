@@ -6,7 +6,7 @@ import { BulkChip, BulkDock } from "./BulkBar";
 import { BulkDrawer, BulkMobileBar } from "./BulkMobile";
 import { BulkPalette } from "./BulkPalette";
 import type { BulkResult } from "./BulkResults";
-import { overlayOpen } from "../lib/overlay";
+import { isInput, overlayOpen } from "../lib/overlay";
 
 export type PickerChoice = { id: string; label: string; description?: string; icon: ReactNode };
 
@@ -37,10 +37,6 @@ export type PaletteCommand = {
 export type SelectionNoun = "link" | "tab";
 
 const NO_RESULTS: BulkResult[] = [];
-
-function isInput(target: EventTarget | null) {
-  return target instanceof HTMLElement && !!target.closest('input,textarea,select,[contenteditable="true"]');
-}
 
 /**
  * The selection surface of a view: the desktop bar, the narrow chip or the phone bar and drawer, the command

@@ -30,7 +30,7 @@ import { usd, tokens } from "./lib/format";
 import { submitInChunks, type BatchReply } from "./batches";
 import { actionStates, BULK_ACTIONS, bulkProgress, lacksContent, runAction, type BulkRunners } from "./bulkActions";
 import { copyLinks } from "./lib/copy-links";
-import { overlayOpen } from "./lib/overlay";
+import { isInput, overlayOpen } from "./lib/overlay";
 import { failureMessage } from "./failures";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -66,13 +66,6 @@ function useMedia(query: string) {
     return () => mql.removeEventListener("change", fn);
   }, [query]);
   return matches;
-}
-
-function isInput(target: EventTarget | null) {
-  return (
-    target instanceof HTMLElement &&
-    !!target.closest('input,textarea,select,[contenteditable="true"]')
-  );
 }
 
 export function App({
@@ -177,8 +170,8 @@ export function App({
       ),
   );
   const browserActions = browserController.actions;
-  const openUrlsRef = useRef(browserActions.requestOpen);
-  openUrlsRef.current = browserActions.requestOpen;
+  const requestOpenRef = useRef(browserActions.requestOpen);
+  requestOpenRef.current = browserActions.requestOpen;
   const libraryLenses = useMemo(
     () => library.lenses.filter((l) => l.scope !== "browser"),
     [library.lenses],
@@ -519,7 +512,7 @@ export function App({
       if (urls.length) {
         e.preventDefault();
         // Browser opens tabs; only Library saves. Opening asks first, with the URLs filled in.
-        if (view === "browser") openUrlsRef.current(urls.join("\n"));
+        if (view === "browser") requestOpenRef.current(urls.join("\n"));
         else capture(urls.join("\n"));
       } else if (/https?:\/\//i.test(e.clipboardData?.getData("text/plain") || "")) {
         toast.error("Couldn't read this link list", { description: "Use one URL per line, or copy links with their titles." });

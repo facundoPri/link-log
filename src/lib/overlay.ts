@@ -5,3 +5,6 @@ export const overlayOpen = () =>
   [...document.querySelectorAll('[role="dialog"],[role="alertdialog"],[role="menu"],[role="listbox"]')].some(
     (el) => !el.closest('[data-state="closed"]'),
   );
+
+export const isInput = (target: EventTarget | null) =>
+  target instanceof HTMLElement && !!target.closest('input,textarea,select,[contenteditable="true"]');

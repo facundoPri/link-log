@@ -3,11 +3,11 @@ import type { ActionMeta, ActionState, BulkProgress } from "../bulkActions";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
+import { plural } from "../lib/format";
 import { progressText } from "./BulkBar";
 import { BulkResultsPopover, resultTitle, type BulkResult } from "./BulkResults";
 import type { Picker, SelectionNoun } from "./SelectionSurface";
 
-const count = (n: number, noun: SelectionNoun) => `${n} ${n === 1 ? noun : `${noun}s`}`;
 
 // Mobile bar: clear on the left, the count over a one-tap select-all (or the running job), and a large Actions
 // button. With nothing selected it stays only to report the last run.
@@ -153,7 +153,7 @@ export function BulkDrawer({
             </Button>
           )}
           <SheetTitle className="min-w-0 flex-1 truncate text-[15px] tabular">
-            {page ? `${page.label} on ${count(selected, noun)}` : `${selected} selected`}
+            {page ? `${page.label} on ${plural(selected, noun)}` : `${selected} selected`}
           </SheetTitle>
           {!page && !allVisibleSelected && (
             <Button variant="ghost" className="-mr-2 h-11 px-3 text-[14px]" onClick={onSelectAll}>
