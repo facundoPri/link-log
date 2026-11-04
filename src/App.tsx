@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "./api";
@@ -28,15 +28,14 @@ import { openUnavailable, useOpenLinks } from "./browser/openLinks";
 import { BrowserInspector } from "./components/browser/BrowserInspector";
 import { BrowserDialogs } from "./components/browser/BrowserDialogs";
 import { useBrowserActions } from "./browser/useBrowserActions";
-import { usd, tokens } from "./lib/format";
-import { submitInChunks, type BatchReply } from "./batches";
+import { BATCH_WORDS, submitInChunks, type BatchReply } from "./batches";
 import { actionForKey, actionStates, BULK_ACTIONS, bulkProgress, lacksContent, type BulkAction, type BulkRunners } from "./bulkActions";
 import { copyLinks } from "./lib/copy-links";
 import { useQueryClient } from "@tanstack/react-query";
 import { failureMessage } from "./failures";
 import { batchJobsOptions, useRunningJobs } from "./entities";
 import { emptyLibrary, useInvalidateLibrary, useLibrary, useWriteLibrary } from "./library";
-import type { StartRun } from "./sessionRuns";
+import { useSessionRuns } from "./sessionRuns";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
@@ -72,14 +71,6 @@ function useMedia(query: string) {
   }, [query]);
   return matches;
 }
-
-/** Toast wording per batch kind: "Auto-tagging 3 links…", then "Auto-tagged 3 links". */
-const RUN_WORDS: Record<string, { verb: string; done: string }> = {
-  autotag: { verb: "Auto-tagging", done: "Auto-tagged" },
-  extract: { verb: "Extracting context for", done: "Extracted" },
-  lens: { verb: "Applying lens to", done: "Lens applied to" },
-  "browser-autogroup": { verb: "Autogrouping", done: "Suggested groups for" },
-};
 
 function isInput(target: EventTarget | null) {
   return (
@@ -166,34 +157,21 @@ export function App({
     return inspectorW.current;
   });
   const search = useRef<HTMLInputElement>(null);
-  // Actions this page started, by toast id. A library action reports each of its batches on its own toast;
-  // a browser run reports all of its batches (one per 20 tabs) on one toast.
-  const sessionRuns = useRef(new Map<string, { batchIds: string[]; open: boolean }>());
-  const [runsVersion, runsChanged] = useReducer((n: number) => n + 1, 0);
-  const trackBatch = (batchId: string) => {
-    sessionRuns.current.set(batchId, { batchIds: [batchId], open: false });
-    runsChanged();
-  };
-  const startRun = useCallback<StartRun>(() => {
-    const run = { batchIds: [] as string[], open: true };
-    sessionRuns.current.set(crypto.randomUUID(), run);
-    return {
-      add: (batchId) => {
-        run.batchIds.push(batchId);
-        runsChanged();
-      },
-      end: () => {
-        run.open = false;
-        runsChanged();
-      },
-    };
-  }, []);
   // Batches started from the selection surface; the ones that settle with failures get a results card.
   const selectionBatches = useRef(new Set<string>());
   // "Extract, then auto-tag" is one flow with one results card, on the auto-tag batch: the extract batches are
   // reported through it, since the auto-tag jobs that fail do so because their extraction did.
   const extractFlows = useRef(new Map<string, string[]>());
   const flowExtracts = useRef(new Set<string>());
+  const { trackBatch, startRun } = useSessionRuns({
+    onActivity: () => setActivityOpen(true),
+    onSettled: (batches, failed) => {
+      for (const batch of batches) {
+        if (failed ? selectionBatches.current.has(batch.id) : extractFlows.current.has(batch.id)) void showFailures(batch);
+        selectionBatches.current.delete(batch.id);
+      }
+    },
+  });
   const narrow = useMedia("(max-width: 1099px)");
   const mobile = useMedia("(max-width: 767px)");
   const ws = useBrowserWorkspace(library, view === "browser", loaded && !loadError, startRun);
@@ -224,56 +202,6 @@ export function App({
 
   const jobsByLink = useRunningJobs(library.batches);
   const queryClient = useQueryClient();
-
-  // Progress toasts for the actions this session started, with their batches' counts added up.
-  useEffect(() => {
-    for (const [id, run] of sessionRuns.current) {
-      const batches = library.batches.filter((b) => run.batchIds.includes(b.id));
-      const b = batches[0];
-      if (!b) {
-        if (!run.open && !run.batchIds.length) sessionRuns.current.delete(id);
-        continue;
-      }
-      const sum = (count: (b: Batch) => number) => batches.reduce((n, x) => n + count(x), 0);
-      const n = sum((x) => x.total);
-      const failed = sum((x) => x.failed);
-      const cancelled = sum((x) => x.cancelled);
-      const finished = sum((x) => x.done) + failed + cancelled;
-      const usage = batches.every((x) => x.usage?.usd != null)
-        ? { usd: sum((x) => x.usage!.usd!), tokens: sum((x) => x.usage!.input_tokens + x.usage!.output_tokens) }
-        : null;
-      const noun = (count: number) => `${count} ${b.kind.startsWith("browser-") ? "tab" : "link"}${count === 1 ? "" : "s"}`;
-      const words = RUN_WORDS[b.kind] ?? RUN_WORDS.lens!;
-      if (run.open || batches.length < run.batchIds.length || sum((x) => x.active) > 0) {
-        toast.loading(`${words.verb} ${noun(n)}…`, {
-          id,
-          description: `${finished} of ${n} done`,
-          action: { label: "Cancel", onClick: () => void cancelBatches(run.batchIds) },
-        });
-        continue;
-      }
-      sessionRuns.current.delete(id);
-      if (cancelled === n) {
-        toast("Cancelled", { id });
-        if (extractFlows.current.has(id)) void showFailures(b);
-      } else if (failed === 0) {
-        toast.success(`${words.done} ${noun(n - cancelled)}`, {
-          id,
-          description: usage ? `${usd(usage.usd)} · ${tokens(usage.tokens)} tokens` : undefined,
-          action: { label: "Activity", onClick: () => setActivityOpen(true) },
-        });
-        if (extractFlows.current.has(id)) void showFailures(b);
-      } else {
-        toast[failed === n ? "error" : "success"](`${words.done} ${noun(n)}`, {
-          id,
-          description: `${failed} failed — see Activity`,
-          action: { label: "Activity", onClick: () => setActivityOpen(true) },
-        });
-        if (selectionBatches.current.has(id)) void showFailures(b);
-      }
-      selectionBatches.current.delete(id);
-    }
-  }, [library.batches, runsVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The same jobs Activity lists, narrowed to the failed ones, so the selection surface can say why and re-select them.
   const showFailures = async (b: Batch) => {
@@ -737,25 +665,6 @@ export function App({
     setConfirmExtract(ids);
   };
 
-  const cancelBatches = async (ids: string[]) => {
-    try {
-      let cancelled = 0, dependents = 0;
-      for (const id of ids) {
-        const data = await api<Library & { cancelled?: number; dependents?: number }>(`/batches/${id}`, "DELETE");
-        setLibrary(data);
-        cancelled += data.cancelled ?? 0;
-        dependents += data.dependents ?? 0;
-      }
-      toast(
-        cancelled
-          ? `Cancelled ${cancelled} queued ${cancelled === 1 ? "job" : "jobs"}${dependents ? `, and ${dependents} waiting for that extraction` : ""}`
-          : "Nothing left to cancel",
-      );
-    } catch (e) {
-      toast.error((e as Error).message);
-    }
-  };
-
   const manualTagged = pickedLinks.filter((l) =>
     l.tags.some((t) => t.origin === "manual"),
   ).length;
@@ -825,16 +734,7 @@ export function App({
       activeBatch={
         activeBatch
           ? {
-              label:
-                activeBatch.kind === "autotag"
-                  ? "Auto-tagging"
-                  : activeBatch.kind === "extract"
-                    ? "Extracting"
-                    : activeBatch.kind === "preview"
-                      ? "Fetching preview"
-                      : activeBatch.kind === "browser-autogroup"
-                        ? "Autogrouping"
-                        : "Applying lens",
+              label: BATCH_WORDS[activeBatch.kind].running,
               done: activeBatch.done + activeBatch.failed + activeBatch.cancelled,
               total: activeBatch.total,
             }
