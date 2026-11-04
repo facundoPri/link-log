@@ -15,6 +15,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { api } from "../api";
+import { useBatchJobs, useInvalidateBatches } from "../entities";
 import { useLibrary, useWriteLibrary } from "../library";
 import type { Library } from "../types";
 import type { Batch, Job, Lens, OcrUsage, UsageTotals } from "../types";
@@ -126,31 +127,11 @@ async function cancelJob(job: Job, onLibrary: (l: Library) => void) {
 }
 
 function BatchJobs({ batch, onLibrary }: { batch: Batch; onLibrary: (l: Library) => void }) {
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [error, setError] = useState("");
-  const [reload, setReload] = useState(0);
-  useEffect(() => {
-    let alive = true;
-    const load = () =>
-      api<{ jobs: Job[] }>(`/batches/${batch.id}`)
-        .then((r) => {
-          if (alive) {
-            setJobs(r.jobs);
-            setError("");
-          }
-        })
-        .catch((e) => alive && setError(e.message));
-    void load();
-    const timer = batch.active ? setInterval(load, 1600) : undefined;
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, [batch.id, batch.active, reload]);
+  const { data: jobs = [], error } = useBatchJobs(batch.id);
   const lens = configLens(batch);
   return (
     <div className="space-y-1 px-2 pb-2">
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      {error && <p className="text-xs text-destructive">{error.message}</p>}
       {jobs.map((j) => {
         const result = j.result ? JSON.parse(j.result) : null;
         const answer = result?.answer ?? result?.answers?.lens;
@@ -224,7 +205,7 @@ function BatchJobs({ batch, onLibrary }: { batch: Batch; onLibrary: (l: Library)
                       size="icon-xs"
                       className="-my-0.5 shrink-0"
                       aria-label="Cancel"
-                      onClick={() => void cancelJob(j, (l) => (onLibrary(l), setReload((n) => n + 1)))}
+                      onClick={() => void cancelJob(j, onLibrary)}
                     >
                       <X className="size-3" />
                     </Button>
@@ -314,6 +295,11 @@ export function ActivitySheet({ open, onOpenChange }: { open: boolean; onOpenCha
   useEffect(() => {
     if (open) void refetch();
   }, [open, refetch]);
+  const invalidateBatches = useInvalidateBatches();
+  const applyLibrary = (library: Library) => {
+    onLibrary(library);
+    void invalidateBatches();
+  };
   const [totals, setTotals] = useState<UsageTotals | null>(null);
   const hadActive = useRef(false);
   const activeCount = batches.filter((b) => b.active).length;
@@ -386,7 +372,7 @@ export function ActivitySheet({ open, onOpenChange }: { open: boolean; onOpenCha
                         aria-label="Cancel batch"
                         onClick={(e) => {
                           e.stopPropagation();
-                          void cancelBatch(b.id, onLibrary);
+                          void cancelBatch(b.id, applyLibrary);
                         }}
                       >
                         <X className="size-3.5" />
@@ -407,7 +393,7 @@ export function ActivitySheet({ open, onOpenChange }: { open: boolean; onOpenCha
                               aria-label="Retry failed"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                void retryFailed(b.id, undefined, onLibrary);
+                                void retryFailed(b.id, undefined, applyLibrary);
                               }}
                             >
                               <RotateCw className="size-3.5" />
@@ -449,7 +435,7 @@ export function ActivitySheet({ open, onOpenChange }: { open: boolean; onOpenCha
                   />
                 )}
                 <CollapsibleContent>
-                  <BatchJobs batch={b} onLibrary={onLibrary} />
+                  <BatchJobs batch={b} onLibrary={applyLibrary} />
                 </CollapsibleContent>
               </div>
             </Collapsible>

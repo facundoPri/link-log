@@ -20,6 +20,7 @@ import {
   X,
 } from "lucide-react";
 import { api } from "../api";
+import { useLinkContent } from "../entities";
 import type { Lens, Library, Link, Tag, ContentDetails, MediaItem } from "../types";
 import { canRetryPreview } from "../attention";
 import { failureMessage } from "../failures";
@@ -144,7 +145,6 @@ export function Inspector({
   /** Why Auto-tag and lenses can't run (Jev not configured), or null. */
   jevReason?: string | null;
 }) {
-  const [markdown, setMarkdown] = useState("");
   const [draft, setDraft] = useState("");
   const [editing, setEditing] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -171,9 +171,10 @@ export function Inspector({
   const scrollArea = useRef<HTMLDivElement>(null);
   const contentBody = useRef<HTMLDivElement>(null);
 
+  const markdown = useLinkContent(link.id, link.content_version).data ?? "";
+
   useEffect(() => {
-    let alive = true;
-    setMarkdown("");
+    setDraft("");
     setEditing(false);
     setSelectedMedia(0);
     setExpanded(false);
@@ -182,17 +183,6 @@ export function Inspector({
     setHiddenOpen(false);
     setJumpToMedia(null);
     setError("");
-    api<{ markdown: string }>(`/links/${link.id}/content`)
-      .then((r) => {
-        if (alive) {
-          setMarkdown(r.markdown);
-          setDraft(r.markdown);
-        }
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
   }, [link.id, link.content_version]);
 
   useEffect(() => {

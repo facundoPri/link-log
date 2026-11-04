@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import { Link2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "./api";
-import type { Batch, Job, Lens, LensResult, LensScope, Library, Link, Tag } from "./types";
+import type { Batch, Lens, LensResult, LensScope, Library, Link, Tag } from "./types";
 import { jevUnavailable, needsAttention } from "./attention";
 import { clipboardUrls, pastedUrls } from "./url";
 import { Sidebar, type View } from "./components/Sidebar";
@@ -32,8 +32,10 @@ import { usd, tokens } from "./lib/format";
 import { submitInChunks, type BatchReply } from "./batches";
 import { actionForKey, actionStates, BULK_ACTIONS, bulkProgress, lacksContent, type BulkAction, type BulkRunners } from "./bulkActions";
 import { copyLinks } from "./lib/copy-links";
+import { useQueryClient } from "@tanstack/react-query";
 import { failureMessage } from "./failures";
-import { busy, emptyLibrary, useInvalidateLibrary, useLibrary, useWriteLibrary } from "./library";
+import { batchJobsOptions, useRunningJobs } from "./entities";
+import { emptyLibrary, useInvalidateLibrary, useLibrary, useWriteLibrary } from "./library";
 import type { StartRun } from "./sessionRuns";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -140,9 +142,6 @@ export function App({
   const [results, setResults] = useState<BulkResult[]>([]);
   const [dragging, setDragging] = useState(false);
   const [focusTags, setFocusTags] = useState(false);
-  const [jobsByLink, setJobsByLink] = useState<
-    Map<string, { kind: "extract" | "preview" | "autotag" | "lens" | "query"; status: string; step: string | null }>
-  >(new Map());
   const dragDepth = useRef(0);
   const [pendingUrls, setPendingUrls] = useState<string[]>([]);
   const pendingSaves = useRef(new Map<string, string>());
@@ -223,35 +222,8 @@ export function App({
     );
   }, [sidebarOpen]);
 
-  const busyPolling = busy(libraryQuery.data);
-
-  // Per-batch jobs of the active batches, read again each time the library updates while work is in flight.
-  useEffect(() => {
-    if (!busyPolling) {
-      setJobsByLink(new Map());
-      return;
-    }
-    let alive = true;
-    const active = library.batches.filter((b) => b.active > 0);
-    void (async () => {
-      const map = new Map<string, { kind: "extract" | "preview" | "autotag" | "lens" | "query"; status: string; step: string | null }>();
-      for (const b of active) {
-        try {
-          const { jobs } = await api<{ jobs: Job[] }>(`/batches/${b.id}`);
-          for (const j of jobs)
-            // A waiting job never hides the job it waits for.
-            if (j.link_id && ["queued", "running", "waiting"].includes(j.status) && !(j.status === "waiting" && map.has(j.link_id)) && (b.kind === "extract" || b.kind === "preview" || b.kind === "autotag" || b.kind === "lens" || b.kind === "query"))
-              map.set(j.link_id, { kind: b.kind, status: j.status, step: j.step });
-        } catch {
-          /* batch may be gone */
-        }
-      }
-      if (alive) setJobsByLink(map);
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [busyPolling, libraryQuery.dataUpdatedAt]); // eslint-disable-line react-hooks/exhaustive-deps
+  const jobsByLink = useRunningJobs(library.batches);
+  const queryClient = useQueryClient();
 
   // Progress toasts for the actions this session started, with their batches' counts added up.
   useEffect(() => {
@@ -307,7 +279,7 @@ export function App({
   const showFailures = async (b: Batch) => {
     if (flowExtracts.current.has(b.id)) return;
     const failedOf = async (batchId: string) => {
-      const { jobs } = await api<{ jobs: Job[] }>(`/batches/${batchId}`);
+      const jobs = await queryClient.fetchQuery({ ...batchJobsOptions(batchId), staleTime: 0 });
       return jobs
         .filter((j) => j.status === "failed" && j.step !== "Cancelled" && j.link_id)
         .map((j) => ({
@@ -1385,10 +1357,6 @@ export function App({
         <TagDialog
           tag={dialog.tag}
           onClose={() => setDialog(null)}
-          onChange={setLibrary}
-          linkCount={(id) =>
-            library.links.filter((l) => l.tags.some((t) => t.id === id)).length
-          }
         />
       )}
       <AlertDialog open={!!deleteLink} onOpenChange={(o) => !o && setDeleteLink(null)}>
