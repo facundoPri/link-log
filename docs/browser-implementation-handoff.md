@@ -171,9 +171,34 @@ se abre la página **Connect**, donde se concede (o no) el acceso a contenido.
   evalúa por origen, así que también respeta permisos por sitio que otorgue Chrome.
 - El bridge no necesita `host_permissions` (sólo el `matches` de su content script).
 - Sin history, cookies, debugger, nativeMessaging ni `externally_connectable`.
-- Estados honestos: *Loading*, *No access*, *Can't read* (chrome://, extensiones, store, PDF),
-  *Not loaded* (descartada), *Frozen*. Nunca se activa, recarga ni desplaza una pestaña para leerla.
-  Para esas pestañas existe la opción explícita **Use title** (sólo título y URL, marcada como tal).
+- Estados honestos: *Loading* (navegación en curso, como mucho 30 s; después *Not responding*),
+  *No access*, *Can't read* (chrome://, extensiones, store, PDF) y *Sleeping* (ver abajo). Nada
+  despierta una pestaña salvo **Load content**, que el usuario pide. Para pestañas ilegibles existe
+  la opción explícita **Use title** (sólo título y URL, marcada como tal).
+
+### Pestañas dormidas, Load content y pestañas fijadas (FAC-163)
+- **Sleeping tab** (ver `GLOSSARY.md`): Chrome no tiene la página cargada. El motivo es un detalle
+  (`SleepReason`: `unloaded` = descartada, `frozen`, `not-loaded` = restaurada al iniciar y nunca
+  cargada, `status: "unloaded"` con `discarded: false`). Esta última caía antes en *Loading* para
+  siempre; la sonda nativa lo reprodujo (`planning/fac-163/run.md`).
+- **Load content** (`apps/extension/src/background/loader.ts`): una sola corrida en el worker para
+  todas las páginas. Ventana deslizante de 3 pestañas despiertas, 30 s por pestaña. Cada una:
+  revalidar → `tabs.reload` sin activar → esperar `complete` + 1 s → capturar a la caché → `tabs.discard`.
+  Una congelada se descarta primero (los scripts no corren en una página congelada) y queda dormida.
+  El estado vive en `storage.session` y marca `woke` antes de recargar: un worker reiniciado sigue sin
+  recargar dos veces. Sólo duerme lo que despertó y si sigue siendo el mismo documento; una pestaña que
+  el usuario activó, que suena o que navegó queda despierta. Si Chrome no deja dormirla, la corrida se
+  pausa. Pausa, cancelar (duerme lo despertado) y reintentar fallidas. El progreso viaja en el
+  snapshot/patch (`BrowserTab.load`, `WindowSnapshot.loadRun`). Nunca guarda en la biblioteca.
+- El contenido capturado queda en la caché de capturas (3 MB, se desaloja lo más viejo). Una pestaña
+  dormida con captura de su documento es legible: inspector, previews y lentes la usan sin despertarla.
+- **Put to sleep** (`sleepTabs`): excluye la activa, las que suenan, las de Chrome y las ya dormidas; si
+  Chrome se niega (p. ej. usa cámara o pantalla) se informa. Chrome no expone un indicador de captura.
+- **Fijadas nativas**: `moveToGroup` las rechaza ("Pinned — kept in place.") y vuelve a leer el pin justo
+  antes de agrupar, porque agrupar desfija. Autogroup no las sugiere. Filas e inspector muestran el pin.
+- **Integración nativa**: `LINKLOG_BROWSER_ONLY=sleeping bun run test:browser` corre sólo estas
+  comprobaciones por CDP directo (`tests/browser/cdp.ts`): bajo Playwright, descartar una pestaña cerró
+  Chromium 153. Los despertares se cuentan por pedidos al sitio de fixtures.
 
 ### Contenido, previews e inspector
 - **Extractor** (`apps/extension/src/extract`): copia saneada del DOM visible (sin scripts, formularios,

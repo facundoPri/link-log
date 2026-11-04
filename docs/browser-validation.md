@@ -104,6 +104,46 @@ facturación real).
   normal (dedupe, un batch `extract`, sin contenido local), catálogo sin escrituras.
 - `tests/claim-rounds.test.ts`: Re-evaluate evalúa cada pestaña una vez aunque haga varias rondas.
 
+## Pestañas dormidas y pestañas fijadas (FAC-163)
+
+Corrida nativa: **11/11 checks pasan** —
+[`browser-validation/sleeping-run.md`](browser-validation/sleeping-run.md) (detalle en `sleeping-run.json`).
+
+| | |
+| --- | --- |
+| Navegador | Chrome for Testing 153.0.8010.12 (Playwright chromium-1243), headless nuevo, perfil aislado |
+| Extensión | Linklog 0.1.1, ID `ohpalbbmodgclkjoknohidbcnnnaadic`, build de `7fd7b6e` |
+| Comando | `LINKLOG_BROWSER_ONLY=sleeping bun run test:browser` (sólo esta sección; sin la corrida Playwright) |
+| Driver | CDP crudo (`tests/browser/cdp.ts`): Playwright se adjunta a todas las páginas y un `discard` bajo Playwright cerraba Chromium 153. Este cliente se adjunta sólo al worker y a la página de Linklog |
+| Despertares | contados por hits al servidor de fixtures, que sobreviven al reinicio del worker |
+
+| Check | Resultado | Capturas |
+| --- | --- | --- |
+| Pestañas restauradas y nunca cargadas | 26 de 30 con `status: "unloaded"`, `discarded: false`; las 26 dicen Sleeping y 0 dicen Loading tras 20 s | 20 |
+| Filtro Sleeping | 26 filas, todas Sleeping; contador en el header | 21 |
+| Sin despertares implícitos | entrar a Browser, filtrar y seleccionar: 0 cargas | — |
+| Load content desde el banner | 26/26, cada página cargada una vez, máximo 3 cargando, pestaña activa intacta, las 26 descartadas de nuevo | 22, 23 |
+| Contenido capturado en el inspector | se muestra sin despertar la pestaña | 24 |
+| Pestaña congelada | `frozen: true` → `discarded: true`; la UI avisa que quedó dormida | 25 |
+| Put to sleep con selección mixta | orden de la barra Save · Group · Autogroup · Load content · Put to sleep · Close · Copy; 2 de 3, 1 omitida con motivo, advertencia de estado no guardado | 26, 27 |
+| Pestañas fijadas | pin, índice, grupo y ventana sin cambios tras Put to sleep y Load content; marcador visible | 28 |
+| Move to group con fijadas | agrupa sólo la no fijada; una pestaña fijada después de seleccionarla queda en su lugar ("Pinned — kept in place.") | — |
+| Barra de lente | "0/46 · 34 waiting · 8 sleeping · 4 unreadable" → tras Load content "40/46 · 2 waiting · 4 unreadable", sin otro clic | 29, 30 |
+| Cola de 450 pestañas | 450/450 en 201 s (2.24 pestañas/s), máximo 3 despiertas (muestreo cada 100 ms), worker detenido tras 100 y reanudado, cada página cargada exactamente una vez, 0 despiertas al final | 31 |
+
+Límites medidos:
+
+- **Memoria**: la suma de RSS del árbol de procesos del navegador quedó plana durante la cola
+  (56405 → pico 56410 MB). El valor absoluto cuenta las páginas compartidas una vez por proceso, así
+  que no es un tamaño de RAM; sólo muestra que la cola no sumó memoria medible. No hay un techo de
+  RAM garantizado para sitios arbitrarios.
+- **Tiempo**: las páginas sintéticas locales cargan en ~70 ms; 2.24 pestañas/s es un techo, no una
+  predicción para sitios reales (que tienen el límite de 30 s por pestaña).
+- **Captura de pantalla, cámara o micrófono**: `chrome.tabs` no la expone; se detecta sólo cuando
+  Chrome rechaza el descarte, y se informa por pestaña. No verificado de forma nativa.
+- El detalle del check de lente en `sleeping-run.md` muestra sólo la primera línea de la barra; el
+  texto completo de arriba sale de las capturas 29 y 30 (el runner ya imprime la barra entera).
+
 ## Lo que no se pudo verificar aquí
 
 - **Smoke con Jev real: no realizado.** El entorno no tiene `.dev.vars` ni credenciales de
@@ -116,11 +156,8 @@ facturación real).
   integración ("page capture excludes form values and passwords").
 - **Reinicio real de Chrome con grupos restaurados**: Playwright no restaura sesiones; la
   re-vinculación está cubierta por `groups.test.ts`.
-- **Pestañas descartadas/congeladas en integración**: `chrome.tabs.discard()` (y abrir
-  `chrome://…` desde la extensión) cierra el contexto de Playwright en Chromium headless,
-  reproducido con una extensión vacía. Cubierto por tests unitarios de `contentAccess`; conviene
-  una verificación manual con `bun run extension:chrome` (clic derecho → descartar vía
-  `chrome://discards`).
+- **Pestañas descartadas/congeladas en la corrida Playwright**: `chrome.tabs.discard()` cierra el
+  contexto de Playwright. Desde FAC-163 se verifican en la sección nativa por CDP crudo (arriba).
 - **Diálogo de permisos**: el prompt nativo de `chrome.permissions.request` no es automatizable;
   la build de test concede los hosts de fixtures al instalar y un origen no concedido
   (`localhost:3099`) valida el estado *No access*. La página Connect se probó en la corrida smoke.

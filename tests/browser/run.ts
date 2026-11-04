@@ -7,9 +7,12 @@ import { resolve } from "node:path";
 import type { BrowserContext, Page, Worker } from "playwright-core";
 import { PROTOCOL_VERSION } from "@linklog/browser-protocol";
 import { api, API, API_PORT, buildAll, createAccount, EXTENSION, launch, OTHER_APP_PORT, OUT, ROOT, SITE, startApi, startMarkedApp, startSite, UI, UI_PORT, waitFor } from "./env";
+import { sleepingChecks } from "./sleeping";
 
 // LINKLOG_BROWSER_EVIDENCE writes the run elsewhere (e.g. .cache/...) instead of the committed evidence.
 const EVIDENCE = resolve(ROOT, process.env.LINKLOG_BROWSER_EVIDENCE ?? "docs/browser-validation");
+// LINKLOG_BROWSER_ONLY=sleeping runs only the native Sleeping-tab checks (FAC-163).
+const ONLY = process.env.LINKLOG_BROWSER_ONLY;
 type Check = { area: string; name: string; ok: boolean; detail: string; ms: number };
 const checks: Check[] = [];
 const meta: Record<string, unknown> = { startedAt: new Date().toISOString() };
@@ -130,7 +133,7 @@ async function createLens(body: Record<string, unknown>) {
 const art = (i: number, marker: string) => `${SITE}/a/${i}?m=${encodeURIComponent(marker)}`;
 
 // ---------- run ----------
-await rm(EVIDENCE, { recursive: true, force: true });
+if (!ONLY) await rm(EVIDENCE, { recursive: true, force: true });
 await mkdir(EVIDENCE, { recursive: true });
 section("Setup");
 await buildAll();
@@ -138,7 +141,7 @@ const site = startSite();
 const markedApp = startMarkedApp();
 
 // D1 migration on existing data: apply 0001–0009, seed through the old schema, then 0010.
-await check("0010 applies on a real local D1 with existing rows", async () => {
+if (!ONLY) await check("0010 applies on a real local D1 with existing rows", async () => {
   const dir = resolve(OUT, "migration");
   await rm(dir, { recursive: true, force: true });
   await mkdir(resolve(dir, "old"), { recursive: true });
@@ -166,6 +169,47 @@ await check("0010 applies on a real local D1 with existing rows", async () => {
 });
 
 const dev = await startApi();
+
+/** Writes the evidence for the checks that ran and exits with their verdict. */
+async function finish(name: string, close: () => Promise<unknown>) {
+  meta.finishedAt = new Date().toISOString();
+  meta.providerCalls = await calls().catch(() => null);
+  await writeFile(resolve(EVIDENCE, `${name}.json`), JSON.stringify({ meta, checks }, null, 2));
+  const md = [
+    `# Browser integration run`,
+    ``,
+    `- Chromium: ${meta.browser ?? meta.sleepingBrowser}`,
+    `- Extension: ${meta.extensionId ?? (meta.sleepingExtension as { id: string } | undefined)?.id} v${meta.extensionVersion ?? (meta.sleepingExtension as { version: string } | undefined)?.version}`,
+    `- Build: ${meta.build}`,
+    `- Started: ${meta.startedAt} · finished: ${meta.finishedAt}`,
+    `- Fixture Jev calls (mock provider, not paid): ${meta.providerCalls}`,
+    ...(meta.queue ? [`- ${QUEUE_LABEL}: ${JSON.stringify(meta.queue)}`] : []),
+    ``,
+    `| Area | Check | Result | Detail |`,
+    `| --- | --- | --- | --- |`,
+    ...checks.map((c) => `| ${c.area} | ${c.name} | ${c.ok ? "pass" : "**FAIL**"} | ${c.detail.replaceAll("|", "\\|")} |`),
+    ``,
+  ].join("\n");
+  await writeFile(resolve(EVIDENCE, `${name}.md`), md);
+  await close().catch(() => {});
+  dev.kill();
+  site.stop();
+  markedApp.stop();
+  const failed = checks.filter((c) => !c.ok);
+  console.log(`\n${checks.length - failed.length}/${checks.length} checks passed. Evidence: ${EVIDENCE}`);
+  process.exit(failed.length ? 1 : 0);
+}
+const QUEUE_LABEL = "Load content queue";
+meta.build = (await Bun.$`git -C ${ROOT} rev-parse --short HEAD`.text()).trim() + ((await Bun.$`git -C ${ROOT} status --porcelain -- apps packages`.text()).trim() ? " + uncommitted changes" : "");
+
+if (ONLY === "sleeping") {
+  try {
+    await sleepingChecks({ check, assert, section, evidence: EVIDENCE, meta });
+  } finally {
+    await finish("sleeping-run", async () => {});
+  }
+}
+
 const A = await launch("A");
 const ctx = A.context;
 const extensionId = new URL((await sw(ctx)).url()).host;
@@ -1020,29 +1064,7 @@ try {
     await shot(L, "16-second-account");
     return `refused sign-out (503) kept ${before} cached entries, metadata ${JSON.stringify(metaBefore)} and the bridge; retry: forgotten, old cookie 401; second account: new library id, 0 groups, 0 lens cells, none of ${lensNamesA.length} lenses`;
   });
+  await sleepingChecks({ check, assert, section, evidence: EVIDENCE, meta });
 } finally {
-  meta.finishedAt = new Date().toISOString();
-  meta.providerCalls = await calls().catch(() => null);
-  await writeFile(resolve(EVIDENCE, "run.json"), JSON.stringify({ meta, checks }, null, 2));
-  const md = [
-    `# Browser integration run`,
-    ``,
-    `- Chromium: ${meta.browser}`,
-    `- Extension: ${meta.extensionId} v${meta.extensionVersion}`,
-    `- Started: ${meta.startedAt} · finished: ${meta.finishedAt}`,
-    `- Fixture Jev calls (mock provider, not paid): ${meta.providerCalls}`,
-    ``,
-    `| Area | Check | Result | Detail |`,
-    `| --- | --- | --- | --- |`,
-    ...checks.map((c) => `| ${c.area} | ${c.name} | ${c.ok ? "pass" : "**FAIL**"} | ${c.detail.replaceAll("|", "\\|")} |`),
-    ``,
-  ].join("\n");
-  await writeFile(resolve(EVIDENCE, "run.md"), md);
-  await ctx.close().catch(() => {});
-  dev.kill();
-  site.stop();
-  markedApp.stop();
-  const failed = checks.filter((c) => !c.ok);
-  console.log(`\n${checks.length - failed.length}/${checks.length} checks passed. Evidence: ${EVIDENCE}`);
-  process.exit(failed.length ? 1 : 0);
+  await finish("run", () => ctx.close());
 }
