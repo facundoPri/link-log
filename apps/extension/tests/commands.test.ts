@@ -296,6 +296,22 @@ describe("bridge commands", () => {
       expect(chromeFake.groups.size).toBe(1);
     });
 
+    test("a retry leaves alone a tab the user moved to another group meanwhile", async () => {
+      await setup(0);
+      chromeFake.createErrors.set("https://broken.dev/", "Boom");
+      await hello();
+      const target = { kind: "new" as const, title: "Reading", color: "green" as const, description: "" };
+      const urls = ["https://a.dev/", "https://b.dev/", "https://broken.dev/"];
+      const first = await run("openTabs", { operationId: "op1", urls, target });
+      const [a, b] = created();
+      chromeFake.groups.set(9, { id: 9, windowId: 1, title: "Mine", color: "red", collapsed: false } as chrome.tabGroups.TabGroup);
+      chromeFake.tabs.get(b!.id!)!.groupId = 9;
+      chromeFake.createErrors.clear();
+      const retry = await run("openTabs", { operationId: "op1", urls, target });
+      expect(retry.group).toEqual({ ok: true, groupId: first.group.groupId, grouped: 2 });
+      expect([a!.id, b!.id].map((id) => chromeFake.tabs.get(id!)!.groupId)).toEqual([first.group.groupId, 9]);
+    });
+
     test("an existing group in another window is refused, but the tabs stay open", async () => {
       await setup(0);
       chromeFake.groups.set(7, { id: 7, windowId: 2, title: "Elsewhere", color: "red", collapsed: false } as chrome.tabGroups.TabGroup);

@@ -4,6 +4,8 @@ import type { BrowserActions, GroupDialogState } from "../../browser/useBrowserA
 import { plural } from "../../lib/format";
 import { GroupDialog, type GroupDraft } from "./GroupDialog";
 import { AutogroupDialog } from "./AutogroupDialog";
+import { OpenLinksDialog } from "./OpenLinksDialog";
+import { openUnavailable } from "../../browser/openLinks";
 import { GroupPicker } from "./GroupPicker";
 import { groupTitle } from "./groups";
 import {
@@ -118,6 +120,17 @@ export function BrowserDialogs({ ws, controller }: { ws: BrowserWorkspace; contr
           void ops.clean(dialog.lens);
         }}
       />
+      {dialog?.kind === "open" && (
+        <OpenLinksDialog
+          text={dialog.text}
+          destinations={ws.destinations}
+          unavailable={openUnavailable(ws.browser)}
+          canGroup={!!ws.browser.hello?.capabilities.includes("open-group")}
+          toTarget={ops.moveTarget}
+          onClose={close}
+          onOpen={ops.openUrls}
+        />
+      )}
       {dialog?.kind === "autogroup" && (
         <AutogroupDialog
           tabs={dialog.tabs}

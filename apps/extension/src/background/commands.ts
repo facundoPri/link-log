@@ -104,10 +104,13 @@ async function groupInWindow(groupId: number, windowId: number) {
 }
 
 async function groupOpened(target: MoveTarget, ledger: OpenRecord, windowId: number, scope: string, s: Services): Promise<OpenGroupOutcome> {
-  const live = await Promise.all(ledger.tabIds().map((id) => chrome.tabs.get(id).catch(() => null)));
-  const tabIds = live.filter((t) => t?.windowId === windowId).map((t) => t!.id!);
-  if (!tabIds.length) return { ok: false, error: "No new tab was opened, so nothing was grouped." };
   const previous = ledger.groupId();
+  const live = await Promise.all(ledger.tabIds().map((id) => chrome.tabs.get(id).catch(() => null)));
+  // A retry leaves alone the tabs the user grouped elsewhere since the first attempt.
+  const tabIds = live
+    .filter((t) => t?.windowId === windowId && ((t.groupId ?? -1) < 0 || t.groupId === previous))
+    .map((t) => t!.id!);
+  if (!tabIds.length) return { ok: false, error: "No new tab was opened, so nothing was grouped." };
   const reuse = previous !== null && (await chrome.tabGroups.get(previous).catch(() => null))?.windowId === windowId;
   try {
     const groupId = await groupInto(reuse ? { kind: "group", groupId: previous! } : target, tabIds as [number, ...number[]], windowId, scope, s);

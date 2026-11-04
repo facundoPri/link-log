@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CircleAlert,
+  ExternalLink,
   Globe,
+  ListChecks,
   Lock,
   PanelLeft,
   Search,
@@ -23,7 +25,10 @@ import { Banner, Connect } from "./BrowserConnect";
 import { DomainChip, DomainFilter } from "../DomainFilter";
 import { TabRow } from "./TabRow";
 import { LensFilterBar } from "./LensFilterBar";
-import { BrowserSelectionBar } from "./BrowserSelectionBar";
+import { SelectionSurface, type Picker } from "../SelectionSurface";
+import { actionStates, runAction } from "../../bulkActions";
+import { TAB_ACTIONS, type TabRunners } from "../../browser/tabActions";
+import { openUnavailable } from "../../browser/openLinks";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -38,6 +43,8 @@ export function BrowserView({
   actions,
   picked,
   setPicked,
+  narrow,
+  mobile,
   onToggleSidebar,
   onEditLens,
 }: {
@@ -46,6 +53,8 @@ export function BrowserView({
   actions: Actions;
   picked: string[];
   setPicked: (fn: (ids: string[]) => string[]) => void;
+  narrow: boolean;
+  mobile: boolean;
   onToggleSidebar: () => void;
   onEditLens: (lens: Lens) => void;
 }) {
@@ -115,6 +124,46 @@ export function BrowserView({
   const somePicked = visible.some((t) => picked.includes(t.tabInstanceId));
   const pickMany = (ids: string[], checked: boolean) =>
     setPicked((cur) => (checked ? [...new Set([...cur, ...ids])] : cur.filter((id) => !ids.includes(id))));
+  const selectAllVisible = () => pickMany(visible.map((t) => t.tabInstanceId), true);
+
+  // The same surfaces as Library, reading the tab registry.
+  const tabStates = actionStates(TAB_ACTIONS, pickedTabs, {
+    busy: actions.busy,
+    jevReason: ws.jevReason,
+    destinations: ws.destinations.length,
+  });
+  const tabRunners: TabRunners = {
+    save: (ts) => void actions.save(ts),
+    move: (ts, key) => {
+      const d = ws.destinations.find((x) => x.key === key);
+      if (d) void actions.move(ts, d);
+    },
+    autogroup: actions.autogroup,
+    ungroup: (ts) => void actions.ungroup(ts),
+    copy: (ts, withTitles) => void actions.copyMany(ts, withTitles),
+    close: actions.requestClose,
+  };
+  const groupPicker: Picker = {
+    placeholder: "Move to group…",
+    empty: ws.destinations.length ? "No groups match" : "No groups yet",
+    choices: ws.destinations.map((d) =>
+      d.kind === "group"
+        ? {
+            id: d.key,
+            label: groupTitle(d.group.title),
+            icon: <span className="size-2 shrink-0 rounded-full" style={{ background: GROUP_STYLE[d.group.color].dot }} />,
+          }
+        : {
+            id: d.key,
+            label: d.pinned.name,
+            description: "Pinned · creates it in this window",
+            icon: <span className="size-2 shrink-0 rounded-full" style={{ boxShadow: `inset 0 0 0 1.5px ${GROUP_STYLE[d.pinned.color].dot}` }} />,
+          },
+    ),
+    newLabel: "New group…",
+    onNew: () => actions.newGroup(pickedTabs),
+  };
+  const openReason = openUnavailable(browser);
 
   // One listener for the view's lifetime; it reads the latest state through a ref.
   const onKey = useRef<(e: KeyboardEvent) => void>(() => {});
@@ -125,7 +174,7 @@ export function BrowserView({
       search.current?.focus();
     } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "a" && !typing) {
       e.preventDefault();
-      pickMany(visible.map((t) => t.tabInstanceId), true);
+      selectAllVisible();
     } else if (e.key === "Escape" && !typing && !document.querySelector("[role=dialog],[role=menu],[role=alertdialog]")) {
       if (ws.activeTabId) ws.setActiveTabId(null);
       else setPicked(() => []);
@@ -238,6 +287,15 @@ export function BrowserView({
               onToggle={ws.toggleDomain}
               onClear={() => ws.setDomainFilter([])}
             />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button size="sm" aria-label="Open links" onClick={() => actions.requestOpen()}>
+                  <ExternalLink className="size-3.5" />
+                  <span className="hidden @2xl:inline">Open links</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Open tabs in this window, optionally in a group. Also in ⌘K.</TooltipContent>
+            </Tooltip>
           </div>
         </div>
         {snapshot && browser.connection !== "connected" && (
@@ -355,21 +413,39 @@ export function BrowserView({
           </div>
         )}
       </div>
-      {!!pickedTabs.length && (
-        <BrowserSelectionBar
-          tabs={pickedTabs}
-          destinations={ws.destinations}
-          busy={actions.busy}
-          onSave={() => void actions.save(pickedTabs)}
-          onMove={(d) => void actions.move(pickedTabs, d)}
-          onNewGroup={() => actions.newGroup(pickedTabs)}
-          onUngroup={() => void actions.ungroup(pickedTabs)}
-          onAutogroup={() => actions.autogroup(pickedTabs)}
-          onClose={() => actions.requestClose(pickedTabs)}
-          onClear={() => setPicked(() => [])}
-          jevReason={ws.jevReason}
-        />
-      )}
+      <SelectionSurface
+        noun="tab"
+        narrow={narrow}
+        mobile={mobile}
+        selected={pickedTabs.length}
+        visibleCount={visible.length}
+        allVisibleSelected={allPicked}
+        states={tabStates}
+        commands={[
+          {
+            id: "open",
+            label: "Open links…",
+            description: "Open tabs in this window, optionally in a group",
+            icon: ExternalLink,
+            disabled: openReason,
+            onSelect: () => actions.requestOpen(),
+          },
+          {
+            id: "select-all",
+            label: `Select all ${visible.length} visible`,
+            description: "Then pick an action here",
+            icon: ListChecks,
+            shortcut: "⌘A",
+            keepOpen: true,
+            disabled: visible.length ? null : "No tabs to select",
+            onSelect: selectAllVisible,
+          },
+        ]}
+        picker={(id) => (id === "group" ? groupPicker : null)}
+        onRun={runAction(TAB_ACTIONS, tabStates, tabRunners)}
+        onSelectAll={selectAllVisible}
+        onClear={() => setPicked(() => [])}
+      />
     </>
   );
 }

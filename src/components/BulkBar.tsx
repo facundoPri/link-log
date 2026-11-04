@@ -1,5 +1,6 @@
 import { ChevronDown, CircleAlert, Loader2, MoreHorizontal, X } from "lucide-react";
-import type { ActionState, BulkAction, BulkProgress } from "../bulkActions";
+import type { ActionMeta, ActionState, BulkProgress } from "../bulkActions";
+import type { SelectionNoun } from "./SelectionSurface";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
@@ -17,6 +18,7 @@ import { BulkResultCard, BulkResultsPopover, type BulkResult } from "./BulkResul
 // The desktop selection surface: the running job and the results of earlier runs stack above the bar, which exists
 // only while links are selected.
 export function BulkDock({
+  noun,
   selected,
   visibleCount,
   states,
@@ -29,12 +31,13 @@ export function BulkDock({
   onSelectFailed,
   onDismissResult,
 }: {
+  noun: SelectionNoun;
   selected: number;
   visibleCount: number;
   states: ActionState[];
   progress: BulkProgress | null;
   results: BulkResult[];
-  onInvoke: (action: BulkAction) => void;
+  onInvoke: (action: ActionMeta) => void;
   onSelectAll: () => void;
   onClear: () => void;
   onOpenPalette: () => void;
@@ -70,7 +73,7 @@ export function BulkDock({
       {selected > 0 && (
         <div
           role="toolbar"
-          aria-label="Selected link actions"
+          aria-label={`Selected ${noun} actions`}
           className="selection-bar flex items-center gap-1 rounded-xl border bg-popover p-1.5 shadow-lg animate-in fade-in slide-in-from-bottom-2 duration-200"
         >
           <DropdownMenu>
@@ -137,6 +140,7 @@ export const progressText = (p: BulkProgress) => `${p.label} ${p.done}/${p.total
 // The narrow surface: a chip that opens the same palette. A running job shows in it and results open from it, and
 // it stays after the selection clears for as long as there is something to report.
 export function BulkChip({
+  noun,
   selected,
   progress,
   results,
@@ -145,6 +149,7 @@ export function BulkChip({
   onSelectFailed,
   onDismissResult,
 }: {
+  noun: SelectionNoun;
   selected: number;
   progress: BulkProgress | null;
   results: BulkResult[];
@@ -158,7 +163,7 @@ export function BulkChip({
   return (
     <div
       role="toolbar"
-      aria-label="Selected link actions"
+      aria-label={`Selected ${noun} actions`}
       className="selection-bar fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] left-1/2 z-40 flex max-w-[calc(100vw-1.5rem)] -translate-x-1/2 items-center gap-1 rounded-full border bg-popover p-1 pl-3 shadow-lg animate-in fade-in slide-in-from-bottom-2 duration-200"
     >
       {selected > 0 && <span className="whitespace-nowrap text-[13px] font-medium tabular">{selected} selected</span>}

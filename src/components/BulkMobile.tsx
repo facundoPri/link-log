@@ -1,16 +1,18 @@
 import { ArrowLeft, ChevronUp, CircleAlert, Loader2, Plus, X } from "lucide-react";
-import type { Lens } from "../types";
-import { plural, type ActionState, type BulkAction, type BulkProgress } from "../bulkActions";
+import type { ActionMeta, ActionState, BulkProgress } from "../bulkActions";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import { progressText } from "./BulkBar";
 import { BulkResultsPopover, resultTitle, type BulkResult } from "./BulkResults";
-import { lensIcon } from "./Sidebar";
+import type { Picker, SelectionNoun } from "./SelectionSurface";
+
+const count = (n: number, noun: SelectionNoun) => `${n} ${n === 1 ? noun : `${noun}s`}`;
 
 // Mobile bar: clear on the left, the count over a one-tap select-all (or the running job), and a large Actions
 // button. With nothing selected it stays only to report the last run.
 export function BulkMobileBar({
+  noun,
   selected,
   visibleCount,
   allVisibleSelected,
@@ -22,6 +24,7 @@ export function BulkMobileBar({
   onSelectFailed,
   onDismissResult,
 }: {
+  noun: SelectionNoun;
   selected: number;
   visibleCount: number;
   allVisibleSelected: boolean;
@@ -44,7 +47,7 @@ export function BulkMobileBar({
   return (
     <div
       role="toolbar"
-      aria-label="Selected link actions"
+      aria-label={`Selected ${noun} actions`}
       className="fixed right-3 bottom-[calc(0.75rem+env(safe-area-inset-bottom))] left-3 z-40 flex min-h-16 items-center gap-1 rounded-[22px] border bg-popover/95 p-1.5 shadow-lg backdrop-blur-xl animate-in fade-in slide-in-from-bottom-3 duration-200"
     >
       {selected > 0 ? (
@@ -107,33 +110,33 @@ export function BulkDrawer({
   onOpenChange,
   page,
   onPage,
+  picker,
+  noun,
   selected,
   visibleCount,
   allVisibleSelected,
   states,
-  lenses,
   onInvoke,
   onSelectAll,
-  onNewLens,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** The picker action whose choices replace the tiles, or null. */
-  page: BulkAction | null;
-  onPage: (action: BulkAction | null) => void;
+  page: ActionMeta | null;
+  onPage: (action: ActionMeta | null) => void;
+  picker: Picker | null;
+  noun: SelectionNoun;
   selected: number;
   visibleCount: number;
   allVisibleSelected: boolean;
   states: ActionState[];
-  lenses: Lens[];
-  onInvoke: (action: BulkAction, detail?: string) => void;
+  onInvoke: (action: ActionMeta, detail?: string) => void;
   onSelectAll: () => void;
-  onNewLens: () => void;
 }) {
   const tiles = states.filter((s) => s.action.group !== "Danger");
   const danger = states.filter((s) => s.action.group === "Danger");
   const partial = tiles.filter((s) => s.badge);
-  const skippedIds = new Set(partial.flatMap((s) => s.availability.skipped.map((x) => x.link.id)));
+  const skippedItems = new Set(partial.flatMap((s) => s.availability.skipped.map((x) => x.item)));
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
@@ -142,7 +145,7 @@ export function BulkDrawer({
         className="max-h-[85dvh] gap-0 rounded-t-2xl px-4 pt-2 pb-[calc(1rem+env(safe-area-inset-bottom))]"
       >
         <div className="mx-auto mb-1 h-1.5 w-10 shrink-0 rounded-full bg-muted-foreground/30" />
-        <SheetDescription className="sr-only">Actions for the selected links</SheetDescription>
+        <SheetDescription className="sr-only">Actions for the selected {noun}s</SheetDescription>
         <div className="mb-2 flex min-h-11 shrink-0 items-center gap-1">
           {page && (
             <Button variant="ghost" size="icon" className="-ml-2 size-11" aria-label="Back to actions" onClick={() => onPage(null)}>
@@ -150,7 +153,7 @@ export function BulkDrawer({
             </Button>
           )}
           <SheetTitle className="min-w-0 flex-1 truncate text-[15px] tabular">
-            {page ? `${page.label} on ${selected} ${plural(selected)}` : `${selected} selected`}
+            {page ? `${page.label} on ${count(selected, noun)}` : `${selected} selected`}
           </SheetTitle>
           {!page && !allVisibleSelected && (
             <Button variant="ghost" className="-mr-2 h-11 px-3 text-[14px]" onClick={onSelectAll}>
@@ -158,25 +161,25 @@ export function BulkDrawer({
             </Button>
           )}
         </div>
-        {page ? (
+        {page && picker ? (
           <div className="flex min-h-0 flex-col overflow-y-auto">
-            {lenses.map((lens) => (
+            {picker.choices.map((c) => (
               <button
-                key={lens.id}
+                key={c.id}
                 type="button"
                 className="flex min-h-14 items-center gap-3 border-b px-1 text-left active:bg-muted"
-                onClick={() => onInvoke(page, lens.id)}
+                onClick={() => onInvoke(page, c.id)}
               >
-                {lensIcon(lens.type, "size-5 shrink-0")}
+                {c.icon}
                 <span className="min-w-0">
-                  <span className="block truncate text-[15px]">{lens.name}</span>
-                  <span className="block truncate text-[12px] text-muted-foreground">{lens.question}</span>
+                  <span className="block truncate text-[15px]">{c.label}</span>
+                  {c.description && <span className="block truncate text-[12px] text-muted-foreground">{c.description}</span>}
                 </span>
               </button>
             ))}
-            <button type="button" className="flex min-h-14 items-center gap-3 px-1 text-left text-[15px] active:bg-muted" onClick={onNewLens}>
+            <button type="button" className="flex min-h-14 items-center gap-3 px-1 text-left text-[15px] active:bg-muted" onClick={picker.onNew}>
               <Plus className="size-5 shrink-0" />
-              New lens…
+              {picker.newLabel}
             </button>
           </div>
         ) : (
@@ -211,8 +214,8 @@ export function BulkDrawer({
             </div>
             {partial.length > 0 && (
               <p className="mt-2 text-[12px] text-muted-foreground">
-                Numbers show how many of the {selected} selected {plural(selected)} each action can run on.{" "}
-                {skippedIds.size} {skippedIds.size === 1 ? "is" : "are"} skipped by {partial.map((s) => s.action.label).join(" and ")}:{" "}
+                Numbers show how many of the {selected} selected {selected === 1 ? noun : `${noun}s`} each action can run on.{" "}
+                {skippedItems.size} {skippedItems.size === 1 ? "is" : "are"} skipped by {partial.map((s) => s.action.label).join(" and ")}:{" "}
                 {partial[0]!.availability.skipped[0]!.reason.toLowerCase()}.
               </p>
             )}
