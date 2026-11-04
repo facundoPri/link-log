@@ -1,0 +1,82 @@
+$ bun tests/browser/run.ts
+
+Setup
+  ✓ 0010 applies on a real local D1 with existing rows — links 1, jobs 2, usage_events.job_id kept (j1), leases 1
+  Chromium 153.0.8010.12 · extension ooljkkippbfiehnhmfkgbogjmlggbkhn v0.1.1
+
+Connection
+  ✓ without the extension Browser shows connect/install steps
+  ✓ lists only the tabs of Linklog's window (20 here, 3 in the other window) — window 1198903648: 20 rows; window 1198903654 tabs hidden
+
+Lenses and cache
+  ✓ activating lens A evaluates all 20 tabs once — 20 Jev calls (fixture provider)
+  ✓ toggling lens A off and on reuses results (0 new calls)
+  ✓ 3 new tabs with A active: only the 3 missing are evaluated; inactive B waits — 20 reused + 3 new = 23 calls
+  ✓ filters narrow the list, never the evaluation scope — Yes → 12 rows; new No tab still evaluated (24 done); inverse No filter → 12
+  ✓ two active lenses: AND across lenses, OR within a lens — Yes∧Article = 4; Yes∧(Article∨Reference) = 7; Yes∧(any option) = 12
+  ✓ classifying tabs never creates saved links — 0 links before and after 48 evaluations
+
+Lifecycle and recovery
+  ✓ closing and reopening Linklog keeps done results (0 new calls)
+  ✓ real service-worker suspension keeps session and results — worker stopped and restarted; session 6e76c9e7… unchanged; 0 new calls
+  ✓ API outage: stored answers stay visible, nothing is emptied — banner shown; recovered by request id; 2 new calls (A, B) for the new tab
+  ✓ response lost after the POST was accepted: same job, no duplicate — 2 responses dropped; reconciled by GET; 2 batches, 2 calls
+  ✓ queue redelivery / recovery sweeps don't repeat evaluations; polling stays calm — 4 recovery sweeps during running jobs; 4 calls for 2 tabs × 2 lenses; 6 status polls in 5.9 s
+
+Identity and invalidation
+  ✓ closing and reopening the same URL is a new tab instance — new tabInstanceId; re-evaluated (2 calls)
+  ✓ navigation invalidates; hash change doesn't; SPA pushState does — hash: 0 calls; pushState: 2; full navigation: 2
+  ✓ editing a lens: threshold reuses answers, a new question re-evaluates — threshold: 0 calls; question: 28 calls (one per tab)
+  ✓ Re-evaluate this window runs every readable tab exactly once — 28 tabs → 28 calls, even across claim rounds of 20
+  ✓ Clean drops results, turns the lens off and doesn't re-evaluate — 0 results for A, A off, lens definition kept
+
+States that are not answers
+  ✓ provider failure is Failed with explicit retry, never No — no automatic retry; explicit retry = 1 call
+  ✓ no permission and internal pages stay manageable with honest states — No access / Can't read shown; neither evaluated nor activated
+  ✓ application pages keep deterministic evidence (GitHub PR state) — facts: state Merged, 2 comments; sent to Jev as evidence and shown as a badge
+  ✓ page capture excludes form values and passwords
+
+Content, previews and domains
+  ✓ rows show the page's own preview (description and image), read locally — description and og:image from the page's metadata; nothing sent to the API
+  ✓ clicking a tab opens the inspector with the page as Markdown and its links — Markdown with GFM table, fenced code and absolute links (399 chars)
+  ✓ domain filter: pick several (OR), remove one, clear — 32 tabs → 1 (github.com) → 30 (+127.0.0.1) → cleared
+
+Bridge security
+  ✓ non-Linklog pages get no bridge and can't reach the extension — {"bridge":null,"connect":"no chrome.runtime on the page","reply":"no answer"}
+  ✓ bridge finds Linklog on a non-default port (3610) with no configured origin — content script matches http://localhost/*, http://127.0.0.1/*; Linklog connected on :3610
+  ✓ a local page with the marker gets the bridge, but nothing before a handshake — bridge attached; snapshot before hello → “Connect first.”
+  ✓ bridge rejects malformed commands and ids from another window — unknown command dropped by the bridge; other-window tab refused and still open
+
+Save and Close
+  ✓ Save adds links through the normal library pipeline (extraction queued) — 2 links from URLs only; 1 normal extract batch queued; re-save = duplicate, tags kept
+  ✓ Close closes only the selected tabs, after revalidation — 2 closed; 2 saved links untouched
+  ✓ Open creates background tabs once per operation, even when the request is repeated — 2 background tabs in window 1198903648; repeating the operation opened none
+
+Groups
+  ✓ create a pinned group from the selection — native group 1492305455 bound to pinned c2c70fad…
+  ✓ pinned group appears in another window without tabs and materializes on use — created group 720674231 in window 1198903654 bound to the same definition
+  ✓ same name never merges groups — two native 'Research' groups in window 1, one pinned definition
+  ✓ Autogroup keeps tabs grouped meanwhile and moves the rest after review — 1 Activity batch, 2 calls; tab kept in “Manual”; other moved to pinned Research (1492305455 = 1492305455)
+  ✓ Move to group changes a grouped tab; Ungroup keeps it open — tab 1198903665 open and ungrouped
+  ✓ group filters: one group, several groups (union), ungrouped — Ungrouped = 29 rows; Ungrouped ∪ Manual shown together
+
+Two pages, moves and a second profile
+  ✓ two Linklog pages in one window share results without duplicate jobs — 31 tabs, 31 calls from two concurrent activations
+  ✓ moving a tab to another window keeps its cached result — row left window 1, appeared in window 2, cache unchanged
+  ✓ moving the Linklog page switches its scope to the new window — patch stream re-scoped after onAttached
+  ✓ second profile shares pinned definitions, not tabs — installation 31b861a6… vs 044fed33…
+  ✓ Unpin keeps real groups and their metadata — 3 native “Research” groups still open; definition removed
+
+Commands and Open links
+  ✓ ⌘K opens one Commands palette with 0, 1 and 2 tabs selected; G and C run tab actions — 0: 2 rows · 1: 9 rows · 2: 9 rows; G → group picker; C → 2 copied, library unchanged
+  ✓ narrow chip and phone drawer are the same surface as All links — 900 px: Actions chip; 390 px: phone bar, drawer tiles with Close 2 tabs and the group picker in place
+  ✓ Open links opens tabs in Linklog's window into a new group, and saves nothing — 2 tabs in new group “Later” (1281796803) in window 1198903648; the already-open one kept its place; window 1198903654 unchanged; 0 library writes
+  ✓ pasting URLs in Browser opens Open links prefilled; nothing is saved — dialog prefilled; Escape: 0 tabs opened, library unchanged
+
+Activity
+  ✓ browser evaluations appear in Activity with their usage
+
+Accounts
+  ✓ sign-out makes the extension forget this account; the next account sees none of it — refused sign-out (503) kept 65 cached entries, metadata {"meta":2,"hints":2} and the bridge; retry: forgotten, old cookie 401; second account: new library id, 0 groups, 0 lens cells, none of 3 lenses
+
+50/50 checks passed. Evidence: /Users/facundopri/orca/workspaces/link-log/fac-184-unified-command-palette/.cache/fac184/native-after
