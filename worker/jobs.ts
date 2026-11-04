@@ -1,4 +1,5 @@
 import type { JobConfig, Pool } from "./handlers";
+import { parseBatchKind, runsInJevQueue, sendJobs, type BatchKind } from "./job-routing";
 import { badRequest } from "./http/context";
 import { capabilities, parseLensDefinition } from "./store";
 import { jevUnavailable } from "../src/attention";
@@ -51,15 +52,35 @@ const ahead = (j: string) =>
 export const promoteWaiting = (db: D1Database, linkId?: string, guard?: { sql: string; params: unknown[] }) =>
   db.prepare(`UPDATE jobs SET status='queued' WHERE status='waiting' AND link_id IS NOT NULL${linkId ? " AND link_id=?" : ""} AND ${ahead("jobs")}${guard ? ` AND ${guard.sql}` : ""}`)
     .bind(...(linkId ? [linkId] : []), ...(guard?.params ?? []));
+/**
+ * Jev refused the account for this job: the rest of its batch would fail the same way, so its queued and waiting
+ * jobs stop without calling. The statements apply only once this job settled with that reason, in the same
+ * transaction. Returns the stopped jobs' links, whose next waiting jobs start after it.
+ */
+export async function accountStop({ db, job, now, httpStatus }: { db: D1Database; job: { id: string; batch_id: string }; now: string; httpStatus: number | null }) {
+  const links = (await db.prepare("SELECT link_id FROM jobs WHERE batch_id=? AND id<>? AND status IN ('queued','waiting')")
+    .bind(job.batch_id, job.id).all<{ link_id: string | null }>()).results.map((r) => r.link_id);
+  console.log(JSON.stringify({ event: "jev_batch_stopped", batch_id: job.batch_id, job_id: job.id, http_status: httpStatus, stopped: links.length }));
+  return {
+    links,
+    statements: [
+      db.prepare(
+        `UPDATE jobs SET status='failed',step='Stopped',error=?,reason='account_stopped',completed_at=? WHERE batch_id=? AND id<>? AND status IN ('queued','waiting') AND EXISTS (SELECT 1 FROM jobs WHERE id=? AND status='failed' AND reason='account')`,
+      ).bind(JEV_FAILURE_MESSAGES.account_stopped, now, job.batch_id, job.id, job.id),
+      // Jobs of other batches waiting behind a stopped one start now.
+      promoteWaiting(db),
+    ],
+  };
+}
 /** Sends the queued jobs of these links. A lost send is resent by recover(), and dispatch ignores repeats. */
 export async function startNext(env: Env, linkIds: (string | null)[]) {
   const ids = [...new Set(linkIds.filter((id): id is string => !!id))];
   if (!ids.length) return;
-  const rows = await env.DB.prepare(`SELECT id FROM jobs WHERE status='queued' AND link_id IN (SELECT value FROM json_each(?))`)
-    .bind(JSON.stringify(ids)).all<{ id: string }>();
+  const rows = await env.DB.prepare(`SELECT j.id,b.kind FROM jobs j JOIN batches b ON b.id=j.batch_id WHERE j.status='queued' AND j.link_id IN (SELECT value FROM json_each(?))`)
+    .bind(JSON.stringify(ids)).all<{ id: string; kind: string }>();
   if (!rows.results.length) return;
   try {
-    await env.JOBS.sendBatch(rows.results.map((body) => ({ body })));
+    await sendJobs(env, rows.results.map((r) => ({ id: r.id, kind: parseBatchKind(r.kind) })));
   } catch {
     console.error("Queue dispatch deferred to outbox recovery");
   }
@@ -79,7 +100,7 @@ async function stopWorkflow(env: Env, id: string) {
   }
 }
 /**
- * Cancels one job (FAC-55). A queued or waiting job is dropped; a running one has its workflow terminated first.
+ * Cancels one job (FAC-55). A queued or waiting job is dropped; a running Workflow job has its workflow terminated first.
  * Either way it ends as Cancelled, as if it had never been requested: what already ran is kept, a queued
  * extraction's link goes back to how it was, the slot is released, Needs attention is never touched, and the
  * link's next waiting job starts. Cancelling an extraction also cancels the Jev jobs waiting for it.
@@ -91,11 +112,15 @@ export async function cancelJob(env: Env, userId: string, id: string) {
     const job = await env.DB.prepare("SELECT j.id,j.batch_id,j.link_id,j.status,b.kind FROM jobs j JOIN batches b ON b.id=j.batch_id WHERE j.id=? AND b.user_id=?")
       .bind(id, userId).first<JobRow & { kind: string }>();
     if (!job) return null;
+    const kind = parseBatchKind(job.kind);
     if (job.status === "done" || job.status === "failed") throw new JobFinished("This job already finished.");
-    if (job.status === "running") await stopWorkflow(env, id);
+    // A Jev queue job has no Workflow to stop: the cancel alone fences its writes, and a call already sent
+    // finishes (billed) with its answer discarded. A Jev job still in a Workflow from before the queue is
+    // fenced the same way, since every one of its writes and its call claim require it running.
+    if (job.status === "running" && !runsInJevQueue(kind)) await stopWorkflow(env, id);
     const now = new Date().toISOString();
     const won = "EXISTS (SELECT 1 FROM jobs WHERE id=? AND step='Cancelled' AND completed_at=?)";
-    const extract = job.kind === "extract" && !!job.link_id;
+    const extract = kind === "extract" && !!job.link_id;
     const results = await env.DB.batch([
       env.DB.prepare(
         `UPDATE jobs SET status='failed',step='Cancelled',error=CASE WHEN jev_call IS NOT NULL THEN ? ELSE 'Cancelled' END,reason=NULL,attempt_started_at=NULL,completed_at=? WHERE id=? AND status IN (${job.status === "running" ? "'running'" : "'queued','waiting'"})`,
@@ -124,7 +149,7 @@ export async function enqueue(
   env: Env,
   userId: string,
   ids: string[],
-  kind: "extract" | "preview" | "autotag" | "lens",
+  kind: Extract<BatchKind, "extract" | "preview" | "autotag" | "lens">,
   lensId?: string,
   extract: Pick<Config, "track" | "step"> = {},
   retryOf?: string,
@@ -216,7 +241,7 @@ export async function enqueue(
   // D1 is the durable outbox. If dispatch fails, scheduled recovery resends these IDs.
   const queued = await env.DB.prepare("SELECT id FROM jobs WHERE batch_id=? AND status='queued'").bind(id).all<{ id: string }>();
   try {
-    if (queued.results.length) await env.JOBS.sendBatch(queued.results.map((body) => ({ body })));
+    if (queued.results.length) await sendJobs(env, queued.results.map(({ id }) => ({ id, kind })));
   } catch {
     console.error("Queue dispatch deferred to outbox recovery");
   }
@@ -238,10 +263,10 @@ export async function recover(env: Env) {
   await promoteWaiting(env.DB).run();
   const rows = await env.DB.prepare(
     // Unassigned legacy batches stay untouched until adjudicated; they have no owner to run as.
-    "SELECT j.id FROM jobs j JOIN batches b ON b.id=j.batch_id WHERE b.user_id IS NOT NULL AND j.status IN ('queued','running') ORDER BY j.created_at LIMIT 100",
-  ).all<{ id: string }>();
-  if (rows.results.length)
-    await env.JOBS.sendBatch(rows.results.map((body) => ({ body })));
+    // A running job the consumer never started (no started_at) belongs to a Workflow.
+    "SELECT j.id,b.kind,j.status='running' AND j.started_at IS NULL AS in_workflow FROM jobs j JOIN batches b ON b.id=j.batch_id WHERE b.user_id IS NOT NULL AND j.status IN ('queued','running') ORDER BY j.created_at LIMIT 100",
+  ).all<{ id: string; kind: string; in_workflow: number }>();
+  if (rows.results.length) await sendJobs(env, rows.results.map((r) => ({ id: r.id, kind: parseBatchKind(r.kind), inWorkflow: !!r.in_workflow })));
 }
 export async function dispatch(batch: MessageBatch<{ id: string }>, env: Env) {
   for (const m of batch.messages) {

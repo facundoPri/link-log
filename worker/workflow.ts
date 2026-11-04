@@ -3,9 +3,10 @@ import {
   type WorkflowEvent,
   type WorkflowStep,
 } from "cloudflare:workers";
-import { browserHandlers, handlers, type BrowserTargetRow, type Pool } from "./handlers";
+import { browserHandlers, handlers, type Pool } from "./handlers";
+import { loadTarget } from "./handlers/browser";
 import { preservedContentStateSql } from "./content-state";
-import { poolLimit, contentMissing, promoteWaiting, startNext, type Config, type JobRow } from "./jobs";
+import { accountStop, poolLimit, contentMissing, promoteWaiting, startNext, type Config, type JobRow } from "./jobs";
 import type { Link } from "../src/types";
 
 import { contentPrefix } from "./store";
@@ -13,10 +14,11 @@ import { contentFailureAttentionSql } from "./attention";
 import { canUsePreview, dropUnusedPreview, readPreview, storePreview, usePreviewStatement } from "./preview-content";
 import { adapterMessage, classify, logResidualFailure, LinkFailure } from "./failures";
 import { JevFailure } from "./ai/jev";
-import { JEV_FAILURE_MESSAGES } from "../src/failures";
 import { INTERRUPTED_USAGE } from "./usage";
+import { logJevBatchProgress, logJevJobStarted } from "./jev-metrics";
+import { parseBatchKind, type BatchKind } from "./job-routing";
 
-export type LoadedJob = JobRow & { kind: string; config: string; user_id: string };
+export type LoadedJob = JobRow & { kind: BatchKind; config: string; user_id: string };
 /**
  * Resolves the job owner from the persisted batch and loads its link or browser capture only for
  * that owner. Exported for tests: a job whose target belongs to someone else, or whose batch has
@@ -38,16 +40,11 @@ export async function loadOwnedJob(db: D1Database, jobId: string) {
         .bind(row.link_id, row.user_id)
         .first<Link>()
     : null;
-  const target = row.target_id
-    ? await db.prepare(
-        "SELECT bt.id,bt.request_id,bt.target_key,bt.url,bt.title,bt.capture_key,bt.capture_meta FROM browser_targets bt JOIN browser_requests r ON r.request_id=bt.request_id WHERE bt.id=? AND r.user_id=?",
-      )
-        .bind(row.target_id, row.user_id)
-        .first<BrowserTargetRow>()
-    : null;
+  const target = row.target_id ? await loadTarget(db, row.target_id, row.user_id) : null;
   if (!link && !target)
     throw new Error(row.target_id ? "The browser capture no longer exists." : "The link no longer exists.");
-  return { job: row as LoadedJob, link, target };
+  const job: LoadedJob = { ...row, user_id: row.user_id, kind: parseBatchKind(row.kind) };
+  return { job, link, target };
 }
 
 
@@ -63,6 +60,7 @@ export class LinkWorkflow extends WorkflowEntrypoint<Env, { id: string }> {
         .run();
       // Cancelled between the read and the start.
       if (!started.meta.changes) throw new Error("The job was cancelled before it started.");
+      logJevJobStarted(row);
       return { job: row, link, target };
     });
     const { job, link, target } = data;
@@ -125,6 +123,7 @@ export class LinkWorkflow extends WorkflowEntrypoint<Env, { id: string }> {
           ).bind(new Date().toISOString(), job.id),
           ...(job.link_id ? [promoteWaiting(env.DB, job.link_id)] : []),
         ]);
+        await logJevBatchProgress(env, job);
       });
     } catch (error) {
       stoppedLinks = await step.do("record-failure", { retries: { limit: 5, delay: "2 seconds", backoff: "exponential" } }, async () => {
@@ -174,22 +173,16 @@ export class LinkWorkflow extends WorkflowEntrypoint<Env, { id: string }> {
         // Running jobs see this job's reason before they send (see judge).
         let stopped: (string | null)[] = [];
         if (jev?.reason === "account") {
-          stopped = (await env.DB.prepare("SELECT link_id FROM jobs WHERE batch_id=? AND id<>? AND status IN ('queued','waiting')")
-            .bind(job.batch_id, job.id).all<{ link_id: string | null }>()).results.map((r) => r.link_id);
-          statements.push(
-            env.DB.prepare(
-              `UPDATE jobs SET status='failed',step='Stopped',error=?,reason='account_stopped',completed_at=? WHERE batch_id=? AND id<>? AND status IN ('queued','waiting') AND EXISTS (SELECT 1 FROM jobs WHERE id=? AND status='failed' AND reason='account')`,
-            ).bind(JEV_FAILURE_MESSAGES.account_stopped, now, job.batch_id, job.id, job.id),
-            // Jobs of other batches waiting behind a stopped one start now.
-            promoteWaiting(env.DB),
-          );
-          console.log(JSON.stringify({ event: "jev_batch_stopped", batch_id: job.batch_id, job_id: job.id, http_status: jev.detail.http_status ?? null, stopped: stopped.length }));
+          const stop = await accountStop({ db: env.DB, job, now, httpStatus: jev.detail.http_status ?? null });
+          stopped = stop.links;
+          statements.push(...stop.statements);
         }
         try {
           await env.DB.batch(statements);
         } finally {
           if (usedPreview) await dropUnusedPreview(env, link!.id, fallbackKey);
         }
+        await logJevBatchProgress(env, job);
         return stopped;
       });
     } finally {

@@ -6,6 +6,7 @@ interface __BaseEnv_Env {
 	DB: D1Database;
 	EMAIL: SendEmail;
 	JOBS: Queue;
+	JEV_JOBS: Queue;
 	BROWSER: BrowserRun;
 	AI: Ai;
 	ASSETS: Fetcher;

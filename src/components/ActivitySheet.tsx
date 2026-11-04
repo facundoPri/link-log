@@ -35,7 +35,6 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
 import {
   Tooltip,
   TooltipContent,
@@ -374,9 +373,8 @@ export function ActivitySheet({
                   </span>
                   </CollapsibleTrigger>
                   {b.active ? (
-                    <span className="flex items-center gap-1.5 text-2xs text-muted-foreground tabular">
+                    <span className="flex items-center gap-1.5 text-2xs text-muted-foreground">
                       <Loader2 className="size-3 animate-spin" />
-                      {b.done + b.failed + b.cancelled}/{b.total}
                       <Button
                         variant="ghost"
                         size="icon-sm"
@@ -439,12 +437,6 @@ export function ActivitySheet({
                     )}
                   />
                 </div>
-                {!!b.active && (
-                  <Progress
-                    value={((b.done + b.failed + b.cancelled) / Math.max(b.total, 1)) * 100}
-                    className="mx-3 h-1 w-auto"
-                  />
-                )}
                 <CollapsibleContent>
                   <BatchJobs batch={b} onLibrary={onLibrary} />
                 </CollapsibleContent>

@@ -24,6 +24,16 @@ _Avoid_: Processing, scraping
 A URL submitted again for a link the user already has. It refreshes the link's recency and is never extracted or charged again.
 _Avoid_: Re-upload, resubmission
 
+## Work
+
+**Batch**:
+One action a user starts over a set of links, such as applying a lens to 240 links. It is made of jobs.
+_Avoid_: Run, queue batch
+
+**Job**:
+One batch's action on one link. A link runs one job at a time.
+_Avoid_: Task, request
+
 ## Programmatic access
 
 **API key**:

@@ -18,23 +18,30 @@ function resourceId(value: unknown): string {
   if (typeof value !== "string" || !/^[a-f0-9-]{32,36}$/.test(value)) throw new Error("Invalid resource ID");
   return value;
 }
+type QueueConsumer = { consumer_id: string; script?: string; script_name?: string; type?: string };
+type QueueInfo = { queue_name: string; queue_id: string; consumers?: QueueConsumer[] };
+
 export async function resources(cf: Cloudflare, repositoryId: string, pr: string, create: boolean) {
   const n = names(repositoryId, pr);
   let db = await cf.named("/d1/database", "name", n.db);
-  let queue = await cf.named("/queues", "queue_name", n.queue);
+  const queues: Record<string, QueueInfo | undefined> = {};
+  for (const [key, name] of Object.entries(n.queues)) queues[key] = await cf.named("/queues", "queue_name", name);
   let bucket = (await cf.api(`/r2/buckets/${n.bucket}`, "GET", undefined, true))?.result;
   if (bucket && bucket.name !== n.bucket) throw new Error("R2 identity mismatch");
   if (create) {
     db ??= (await cf.api("/d1/database", "POST", { name: n.db })).result;
-    queue ??= (await cf.api("/queues", "POST", { queue_name: n.queue })).result;
+    for (const [key, name] of Object.entries(n.queues)) queues[key] ??= (await cf.api("/queues", "POST", { queue_name: name })).result;
     bucket ??= (await cf.api("/r2/buckets", "POST", { name: n.bucket })).result;
   }
-  if (db && db.name !== n.db || queue && queue.queue_name !== n.queue || bucket && bucket.name !== n.bucket) throw new Error("Resource identity mismatch");
+  if (db && db.name !== n.db || bucket && bucket.name !== n.bucket) throw new Error("Resource identity mismatch");
   if (db) resourceId(db.uuid);
-  if (queue) {
+  for (const [key, name] of Object.entries(n.queues)) {
+    const queue = queues[key];
+    if (!queue) continue;
+    if (queue.queue_name !== name) throw new Error("Resource identity mismatch");
     resourceId(queue.queue_id);
     const detail = (await cf.api(`/queues/${queue.queue_id}`)).result;
-    if (detail.queue_name !== n.queue) throw new Error("Queue identity mismatch");
+    if (detail.queue_name !== name) throw new Error("Queue identity mismatch");
     for (const consumer of detail.consumers ?? []) {
       // Live Queue responses use script; the documented API shape uses script_name.
       // Require every supplied name to match, so conflicting identities fail closed.
@@ -44,22 +51,23 @@ export async function resources(cf: Cloudflare, repositoryId: string, pr: string
         throw new Error("Queue has a foreign consumer; refusing to mutate");
       }
     }
-    queue = detail;
+    queues[key] = detail;
   }
-  return { db, queue, bucket };
+  return { db, queues, bucket };
 }
 
 export async function cleanup(cf: Cloudflare, repositoryId: string, pr: string) {
   const n = names(repositoryId, pr);
-  const { db, queue, bucket } = await resources(cf, repositoryId, pr, false);
+  const { db, queues, bucket } = await resources(cf, repositoryId, pr, false);
+  const found = Object.values(queues).filter((queue): queue is QueueInfo => !!queue);
   // Stop asynchronous writers before destroying storage. Missing resources alone are benign;
   // permissions/network errors abort and are retried by rerunning the same workflow.
-  for (const consumer of queue?.consumers ?? []) {
+  for (const queue of found) for (const consumer of queue.consumers ?? []) {
     await cf.api(`/queues/${resourceId(queue.queue_id)}/consumers/${resourceId(consumer.consumer_id)}`, "DELETE", undefined, true);
   }
   await cf.api(`/workflows/${n.workflow}`, "DELETE", undefined, true);
   await cf.api(`/workers/scripts/${n.worker}`, "DELETE", undefined, true);
-  if (queue) await cf.api(`/queues/${resourceId(queue.queue_id)}`, "DELETE", undefined, true);
+  for (const queue of found) await cf.api(`/queues/${resourceId(queue.queue_id)}`, "DELETE", undefined, true);
   if (bucket) {
     // Re-read the first page after deletion: no cursor can skip objects as the set shrinks.
     for (let page = 0; ; page++) {
