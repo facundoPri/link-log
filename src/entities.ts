@@ -1,9 +1,8 @@
 import { useCallback, useMemo } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
+import { POLL_MS } from "./library";
 import type { Batch, Job } from "./types";
-
-const POLL_MS = 1800;
 
 export const batchJobsKey = (batchId: string) => ["batch", batchId] as const;
 
@@ -19,9 +18,11 @@ export function useBatchJobs(batchId: string) {
   return useQuery(batchJobsOptions(batchId));
 }
 
-export type RunningJob = { kind: "extract" | "preview" | "autotag" | "lens" | "query"; status: string; step: string | null };
+const RUNNING_KINDS = ["extract", "preview", "autotag", "lens", "query"] as const;
+type RunningKind = (typeof RUNNING_KINDS)[number];
+const isRunningKind = (kind: string): kind is RunningKind => (RUNNING_KINDS as readonly string[]).includes(kind);
 
-const RUNNING_KINDS = new Set(["extract", "preview", "autotag", "lens", "query"]);
+export type RunningJob = { kind: RunningKind; status: string; step: string | null };
 
 /**
  * The job each link is waiting on or running, from the jobs of the batches that have active work.
@@ -45,11 +46,11 @@ export function useRunningJobs(batches: Batch[]) {
   return useMemo(() => {
     const running = new Map<string, RunningJob>();
     watched.forEach((b, i) => {
-      if (b.active === 0 || !RUNNING_KINDS.has(b.kind)) return;
+      if (b.active === 0 || !isRunningKind(b.kind)) return;
       for (const j of jobs[i] ?? [])
         // A waiting job never hides the job it waits for.
         if (j.link_id && isLive(j) && !(j.status === "waiting" && running.has(j.link_id)))
-          running.set(j.link_id, { kind: b.kind as RunningJob["kind"], status: j.status, step: j.step });
+          running.set(j.link_id, { kind: b.kind, status: j.status, step: j.step });
     });
     return running;
   }, [jobs, watchedIds]); // eslint-disable-line react-hooks/exhaustive-deps

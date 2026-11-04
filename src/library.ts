@@ -11,7 +11,7 @@ import type { Library } from "./types";
 //   without returning the library invalidates it once the server accepts the work, so its batch
 //   shows in Activity and polling starts.
 export const libraryKey = ["library"] as const;
-const POLL_MS = 1800;
+export const POLL_MS = 1800;
 
 export const emptyLibrary: Library = {
   links: [],
