@@ -24,6 +24,9 @@ async function run(cmd: string[], env: Record<string, string> = {}) {
   return out;
 }
 
+/** Page requests the fixture site served, by path: each one is a page load, e.g. a woken tab. */
+export const siteHits = new Map<string, number>();
+
 /** Fixture pages. Markers steer the fixture Jev provider (see worker/ai/fixture.ts). */
 export function startSite() {
   return Bun.serve({
@@ -31,6 +34,7 @@ export function startSite() {
     hostname: "127.0.0.1",
     fetch(req) {
       const url = new URL(req.url);
+      if (!url.pathname.startsWith("/img/") && url.pathname !== "/favicon.ico") siteHits.set(url.pathname, (siteHits.get(url.pathname) ?? 0) + 1);
       if (url.pathname.startsWith("/img/"))
         return new Response(`<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><rect width="320" height="180" fill="#0f766e"/><text x="24" y="100" font-size="28" fill="#fff" font-family="sans-serif">${url.pathname.slice(5)}</text></svg>`, { headers: { "content-type": "image/svg+xml" } });
       const marker = url.searchParams.get("m") ?? "";
@@ -121,6 +125,9 @@ export async function startApi() {
   }
   throw new Error("API did not start");
 }
+
+/** The run account's session cookie, for browsers this module doesn't launch. */
+export const sessionCookie = () => session;
 
 /** A second real account (sign-up + emailed verification), for account-switch checks. */
 export async function createAccount(email: string, password: string) {

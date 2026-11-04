@@ -248,8 +248,8 @@ describe("content access states", () => {
   const grants = ["https://*/*"];
   test("each unreadable case has its own state, never an answer", () => {
     expect(contentAccess(tab({}), inst, grants, 10_000)).toBe("available");
-    expect(contentAccess(tab({ discarded: true, status: "unloaded" }), inst, grants, 10_000)).toBe("discarded");
-    expect(contentAccess(tab({ frozen: true } as Partial<chrome.tabs.Tab>), inst, grants, 10_000)).toBe("frozen");
+    expect(contentAccess(tab({ discarded: true, status: "unloaded" }), inst, grants, 10_000)).toBe("sleeping");
+    expect(contentAccess(tab({ frozen: true } as Partial<chrome.tabs.Tab>), inst, grants, 10_000)).toBe("sleeping");
     expect(contentAccess(tab({ url: "chrome://settings" }), inst, grants, 10_000)).toBe("restricted");
     expect(contentAccess(tab({ url: "http://a.dev/" }), inst, grants, 10_000)).toBe("no-permission");
     expect(contentAccess(tab({ status: "loading" }), inst, grants, 10_000)).toBe("loading");

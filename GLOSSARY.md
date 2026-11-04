@@ -37,3 +37,9 @@ _Avoid_: Disabled key
 **Deleted API key**:
 An API key removed for good. Its Links stay, and Usage keeps counting them under the name of the key's newest submission, marked as deleted.
 _Avoid_: Revoked key
+
+## Browser
+
+**Sleeping tab**:
+An open browser tab whose page Chrome does not currently have loaded, so its content cannot be read until it loads again. The reason (unloaded to save memory, frozen, or restored but never loaded) is a detail, not a separate concept.
+_Avoid_: Hibernated tab, discarded tab, unloaded tab

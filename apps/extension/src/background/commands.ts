@@ -4,6 +4,7 @@ import {
   jsonBytes,
   PROTOCOL_VERSION,
   toEvaluationTarget,
+  urlAccess,
   type ClaimTarget,
   type Commands,
   type ItemResult,
@@ -16,7 +17,8 @@ import { EXTENSION_VERSION } from "../config";
 import type { ResultCache } from "./cache";
 import { captureTab, CaptureError, metadataCapture, previewTab } from "./capture";
 import type { GroupMetaStore } from "./groups";
-import type { Connection, Hub } from "./hub";
+import { sleepReason, type Connection, type Hub } from "./hub";
+import type { LoadQueue } from "./loader";
 import type { OpenLedger } from "./opens";
 import type { TabRegistry } from "./registry";
 
@@ -26,6 +28,7 @@ export type Services = {
   groups: GroupMetaStore;
   hub: Hub;
   opens: OpenLedger;
+  loader: LoadQueue;
   ids: { installationId: string; browserSessionId: string };
 };
 
@@ -105,6 +108,17 @@ async function groupInWindow(groupId: number, windowId: number) {
 const previewCache = new Map<string, TabPreview>();
 const PREVIEW_CACHE_MAX = 500;
 
+const PINNED_KEPT = "Pinned — kept in place.";
+
+/** Why Put to sleep leaves this tab alone, or null. */
+function sleepProblem(tab: chrome.tabs.Tab): string | null {
+  if (sleepReason(tab)) return "Already asleep.";
+  if (urlAccess(tab.url || tab.pendingUrl || "") === "restricted") return "Chrome doesn't allow putting this page to sleep.";
+  if (tab.active) return "It's the active tab.";
+  if (tab.audible) return "It's playing audio or video.";
+  return null;
+}
+
 const handlers: { [K in keyof Commands]: Handler<K> } = {
   async hello(args, { c, windowId, s }) {
     c.scope = args.libraryScope;
@@ -115,7 +129,7 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
       installationId: s.ids.installationId,
       browserSessionId: s.ids.browserSessionId,
       windowId,
-      capabilities: ["tabs", "groups", "lenses", "capture", "save", "close", "open", "forget"],
+      capabilities: ["tabs", "groups", "lenses", "capture", "save", "close", "open", "forget", "load", "sleep"],
       contentAccess: s.hub.granted,
     };
   },
@@ -154,7 +168,10 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
       documentRevision: t.documentRevision,
       eligible:
         (!explicit || explicit.has(t.tabInstanceId)) &&
-        (source === "metadata" ? !!explicit && t.status !== "loading" : t.content === "available"),
+        (source === "metadata"
+          ? !!explicit && t.status !== "loading"
+          : // A Sleeping tab is read only through what Load content captured for this document.
+            t.content === "available" || (t.content === "sleeping" && !!t.capturedAt)),
     }));
     const { requestId, claimed, skipped } = await s.cache.claim({
       scope,
@@ -184,6 +201,7 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
         // One capture per document revision serves every lens in the batch.
         let capture = await s.cache.getCapture(claim.tabInstanceId, claim.documentRevision, source);
         if (!capture) {
+          if (source === "dom" && tab.content !== "available") fail("The tab is sleeping. Load content to read it.");
           capture = source === "metadata" ? metadataCapture(tab) : await captureTab(tab.tabId);
           sameDocument(capture, tab.url);
           await s.cache.putCapture(claim.tabInstanceId, claim.documentRevision, source, capture);
@@ -269,8 +287,8 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
         const source = args.source ?? "dom";
         let capture = args.fresh ? null : await s.cache.getCapture(ref.tabInstanceId, instance.documentRevision, source);
         if (!capture) {
-          if (source === "dom" && (tab.discarded || tab.status !== "complete"))
-            fail(tab.discarded ? "The tab is not loaded." : "The tab is still loading.");
+          if (source === "dom" && sleepReason(tab)) fail("The tab is sleeping. Load content to read it.");
+          if (source === "dom" && tab.status !== "complete") fail("The tab is still loading.");
           capture = source === "metadata" ? metadataCapture(tab) : await captureTab(ref.tabId);
           sameDocument(capture, tab.url || "");
           // Navigated while it was read: the capture belongs to another document.
@@ -291,6 +309,12 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
     const readable = new Map(snap.tabs.filter((t) => t.content === "available").map((t) => [t.tabInstanceId, t]));
     const wanted = args.tabs.filter((r) => readable.get(r.tabInstanceId)?.tabId === r.tabId);
     const previews: TabPreview[] = [];
+    // A Sleeping tab's preview comes from its captured content; it is never woken for one.
+    for (const t of snap.tabs.filter((t) => t.content === "sleeping" && t.capturedAt && args.tabs.some((r) => r.tabInstanceId === t.tabInstanceId))) {
+      const capture = await s.cache.getCapture(t.tabInstanceId, t.documentRevision, "dom");
+      if (capture)
+        previews.push({ tabInstanceId: t.tabInstanceId, documentRevision: t.documentRevision, description: capture.description.slice(0, 400), siteName: capture.siteName, image: capture.image ?? "" });
+    }
     let next = 0;
     const worker = async () => {
       while (next < wanted.length) {
@@ -335,9 +359,20 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
   async moveToGroup(args, { c, windowId, s }) {
     const scope = requireScope(c);
     const { ok, items } = await each(args.tabs, windowId, s, (tab) =>
-      // Autogroup keeps tabs that already have a group, even if one was added while Jev ran.
-      args.onlyIfUngrouped && tab.groupId !== undefined && tab.groupId >= 0 ? "Already in a group — kept." : null,
+      tab.pinned
+        ? PINNED_KEPT
+        : // Autogroup keeps tabs that already have a group, even if one was added while Jev ran.
+          args.onlyIfUngrouped && tab.groupId !== undefined && tab.groupId >= 0
+          ? "Already in a group — kept."
+          : null,
     );
+    // Chrome unpins a tab it groups: re-read the pin right before the mutation.
+    for (const tab of [...ok]) {
+      const now = await chrome.tabs.get(tab.id!).catch(() => null);
+      if (now && !now.pinned) continue;
+      ok.splice(ok.indexOf(tab), 1);
+      Object.assign(items.find((i) => i.tabId === tab.id)!, { ok: false, error: now ? PINNED_KEPT : "The tab is already closed." });
+    }
     const tabIds = ok.map((t) => t.id!) as [number, ...number[]];
     if (!tabIds.length) return { items, groupId: null };
     const target = args.target;
@@ -438,6 +473,45 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
       }
       return items;
     });
+    s.hub.schedule(0);
+    return { items };
+  },
+  async loadContent(args, { windowId, s }) {
+    const snap = await s.hub.snapshot(windowId, null);
+    const add: Parameters<LoadQueue["add"]>[0] = [];
+    const { items } = await each(args.tabs, windowId, s, (tab, ref) => {
+      const dto = snap.tabs.find((t) => t.tabInstanceId === ref.tabInstanceId);
+      if (!dto) return "The tab is no longer in this window.";
+      if (dto.content === "restricted") return "Chrome doesn't let extensions read this page.";
+      if (dto.content === "no-permission") return "Allow page content access first.";
+      if (dto.content !== "sleeping" && dto.content !== "stalled") return "Already loaded.";
+      add.push({ tabInstanceId: dto.tabInstanceId, windowId, documentRevision: dto.documentRevision, url: tab.url || dto.url, reason: dto.sleep });
+      return null;
+    });
+    if (add.length) await s.loader.add(add);
+    return { items, loadRun: s.loader.runView(windowId) };
+  },
+  async loadControl(args, { windowId, s }) {
+    await s.loader.control(args.action);
+    return { loadRun: s.loader.runView(windowId) };
+  },
+  async sleepTabs(args, { windowId, s }) {
+    const { ok, items } = await each(args.tabs, windowId, s, sleepProblem);
+    for (const tab of ok) {
+      const item = items.find((i) => i.tabId === tab.id)!;
+      // Re-read right before the mutation: the user may have just started using it.
+      const now = await chrome.tabs.get(tab.id!).catch(() => null);
+      const problem = now ? sleepProblem(now) : "The tab is already closed.";
+      if (problem) {
+        Object.assign(item, { ok: false, error: problem });
+        continue;
+      }
+      try {
+        if (!(await chrome.tabs.discard(tab.id!))) throw new Error();
+      } catch {
+        Object.assign(item, { ok: false, error: "Chrome kept this tab awake (it may be using the camera, microphone or screen)." });
+      }
+    }
     s.hub.schedule(0);
     return { items };
   },

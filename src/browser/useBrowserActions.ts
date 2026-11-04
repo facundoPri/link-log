@@ -11,6 +11,7 @@ import {
   type EvaluationRequest,
   type EvaluationTarget,
   type ItemResult,
+  type LoadAction,
   type MoveTarget,
   type PinnedGroup,
   type SaveResult,
@@ -22,6 +23,7 @@ import { call, evaluationStatus, postEvaluation } from "./api";
 import type { BrowserWorkspace, Destination } from "./useBrowserWorkspace";
 import type { GroupDraft } from "../components/browser/GroupDialog";
 import { groupTitle } from "../components/browser/groups";
+import { SLEEP_WARNING } from "./sleeping";
 
 /** The tab as the page saw it: commands refuse it if it navigated since. */
 const ref = (t: BrowserTab): TabRef => ({ tabId: t.tabId, tabInstanceId: t.tabInstanceId, documentRevision: t.documentRevision });
@@ -41,14 +43,14 @@ export type BrowserDialog =
   /** `run` starts on the click that opens the dialog, so it runs exactly once per action. */
   | { kind: "autogroup"; tabs: BrowserTab[]; run: Promise<AutogroupResult> };
 
-function summarize(items: ItemResult[], verb: string) {
+/** One toast per bulk action: how many it did, and each distinct reason it skipped the rest. */
+function summarize(items: ItemResult[], verb: string, note?: string) {
   const ok = items.filter((i) => i.ok).length;
   const failed = items.filter((i) => !i.ok);
-  if (!failed.length) toast.success(`${verb} ${plural(ok, "tab")}`);
-  else
-    toast[ok ? "success" : "error"](`${verb} ${ok} of ${plural(items.length, "tab")}`, {
-      description: [...new Set(failed.map((f) => f.error))].join(" "),
-    });
+  const reasons = [...new Set(failed.map((f) => f.error))].map((e) => `${failed.filter((f) => f.error === e).length} skipped: ${e}`);
+  const description = [...reasons, ok ? note : undefined].filter(Boolean).join(" ") || undefined;
+  if (!failed.length) toast.success(`${verb} ${plural(ok, "tab")}`, { description });
+  else toast[ok ? "success" : "error"](`${verb} ${ok} of ${plural(items.length, "tab")}`, { description });
 }
 
 const FINAL_STATES = ["done", "failed", "expired", "acked"];
@@ -226,17 +228,35 @@ export function useBrowserActions(ws: BrowserWorkspace, setLibrary: (l: Library)
       });
     },
     autogroup: (tabs: BrowserTab[]) => {
-      const ungrouped = tabs.filter((t) => t.groupId === null);
+      // Chrome unpins a tab it groups, so pinned tabs are never suggested or moved.
+      const ungrouped = tabs.filter((t) => t.groupId === null && !t.pinned);
+      const pinned = tabs.filter((t) => t.pinned).length;
       if (ws.jevReason) toast.error(ws.jevReason);
       else if (!ws.destinations.length) toast.error("Create or pin a group with a description first.");
-      else if (!ungrouped.length) toast("Autogroup only places tabs that have no group.");
+      else if (!ungrouped.length)
+        toast(pinned ? "Autogroup skips pinned tabs; they stay in place." : "Autogroup only places tabs that have no group.");
       else {
+        if (pinned) toast(`${plural(pinned, "pinned tab")} kept in place`, { description: "Autogroup never groups pinned tabs." });
         const run = suggest(ungrouped);
         run.catch(() => {}); // the dialog shows the error
         setDialog({ kind: "autogroup", tabs: ungrouped, run });
       }
     },
     requestClean: (lens: Lens) => setDialog({ kind: "clean", lens }),
+    /** Joins the one Load content run the extension keeps for every Linklog page. */
+    loadContent: (tabs: BrowserTab[]) =>
+      void request("loadContent", { tabs: tabs.map(ref) })
+        .then(({ items }) => {
+          if (items.some((i) => i.ok)) summarize(items, "Loading content for");
+          else toast("Nothing to load", { description: [...new Set(items.map((i) => i.error))].join(" ") });
+        })
+        .catch((e) => toast.error((e as Error).message)),
+    loadControl: (action: LoadAction) => void request("loadControl", { action }).catch((e) => toast.error((e as Error).message)),
+    sleep: (tabs: BrowserTab[]) =>
+      guard(async () => {
+        const { items } = await request("sleepTabs", { tabs: tabs.map(ref) });
+        summarize(items, "Put to sleep", SLEEP_WARNING);
+      }),
     /** Re-evaluate: every given tab (default: the window) once, even if it has an answer. */
     reevaluate: (lens: Lens, tabs?: BrowserTab[]) =>
       ws.jevReason
@@ -313,6 +333,7 @@ export function useBrowserActions(ws: BrowserWorkspace, setLibrary: (l: Library)
       for (const a of assignments) byKey.set(a.key, [...(byKey.get(a.key) ?? []), a.tab]);
       let moved = 0,
         kept = 0,
+        pinnedKept = 0,
         missing = 0;
       for (const [key, tabs] of byKey) {
         const d = ws.destinations.find((x) => x.key === key);
@@ -323,10 +344,18 @@ export function useBrowserActions(ws: BrowserWorkspace, setLibrary: (l: Library)
         // Revalidated in the extension: a tab grouped meanwhile stays where it is.
         const { items } = await request("moveToGroup", { tabs: tabs.map(ref), target: moveTarget(d), onlyIfUngrouped: true });
         moved += items.filter((i) => i.ok).length;
-        kept += items.filter((i) => !i.ok).length;
+        pinnedKept += items.filter((i) => !i.ok && i.error?.startsWith("Pinned")).length;
+        kept += items.filter((i) => !i.ok && !i.error?.startsWith("Pinned")).length;
       }
       toast.success(`Grouped ${plural(moved, "tab")}`, {
-        description: [kept && `${kept} kept in the group they have now`, missing && `${missing} skipped: their group is gone`].filter(Boolean).join(" · ") || undefined,
+        description:
+          [
+            kept && `${kept} kept in the group they have now`,
+            pinnedKept && `${plural(pinnedKept, "tab")} pinned meanwhile, kept in place`,
+            missing && `${missing} skipped: their group is gone`,
+          ]
+            .filter(Boolean)
+            .join(" · ") || undefined,
       });
       clearPicked(assignments.map((a) => a.tab.tabId));
     },

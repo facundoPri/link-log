@@ -3,6 +3,7 @@ import {
   CircleAlert,
   Globe,
   Lock,
+  Moon,
   PanelLeft,
   Search,
   Unplug,
@@ -24,6 +25,9 @@ import { DomainChip, DomainFilter } from "../DomainFilter";
 import { TabRow } from "./TabRow";
 import { LensFilterBar } from "./LensFilterBar";
 import { BrowserSelectionBar } from "./BrowserSelectionBar";
+import { LoadContentBanner } from "./LoadContentBanner";
+import { isSleepingWait } from "./BrowserLensStatus";
+import { LOAD_IN_PROGRESS } from "../../browser/sleeping";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -53,6 +57,7 @@ export function BrowserView({
   const [query, setQuery] = useState("");
   const [filters, setFilters] = useState<Record<string, LensFilter>>({});
   const [sortLensId, setSortLensId] = useState<string | null>(null);
+  const [sleepingOnly, setSleepingOnly] = useState(false);
   const search = useRef<HTMLInputElement>(null);
   const lastIndex = useRef<number | null>(null);
 
@@ -89,6 +94,7 @@ export function BrowserView({
     const words = query.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
     const groupsById = new Map(groups.map((g) => [g.groupId, g]));
     const list = tabs.filter((t) => {
+      if (sleepingOnly && t.content !== "sleeping") return false;
       if (ws.groupFilter.length && !ws.groupFilter.includes(t.groupId ?? "none")) return false;
       if (ws.domainFilter.length && !ws.domainFilter.includes(tabDomain(t))) return false;
       const answers = (lensId: string) => {
@@ -108,7 +114,13 @@ export function BrowserView({
         return score(b) - score(a) || a.index - b.index;
       });
     return list;
-  }, [tabs, groups, query, ws.groupFilter, ws.domainFilter, ws.previews, filters, activeLenses, runner.results, sortLensId]);
+  }, [tabs, groups, query, sleepingOnly, ws.groupFilter, ws.domainFilter, ws.previews, filters, activeLenses, runner.results, sortLensId]);
+  // What the banner counts and Load content loads: this view, scope and filters included.
+  const sleepingInView = useMemo(
+    () => visible.filter((t) => t.content === "sleeping" && !t.capturedAt && !(t.load && LOAD_IN_PROGRESS.includes(t.load.state))),
+    [visible],
+  );
+  const sleepingCount = useMemo(() => tabs.filter((t) => t.content === "sleeping").length, [tabs]);
 
   const pickedTabs = tabs.filter((t) => picked.includes(t.tabInstanceId));
   const allPicked = visible.length > 0 && visible.every((t) => picked.includes(t.tabInstanceId));
@@ -146,7 +158,7 @@ export function BrowserView({
   }, []);
 
   const snapshot = browser.snapshot;
-  const filtered = !!(query || ws.groupFilter.length || ws.domainFilter.length || Object.values(filters).some((f) => f.keys.length || f.minLevel !== null));
+  const filtered = !!(query || sleepingOnly || ws.groupFilter.length || ws.domainFilter.length || Object.values(filters).some((f) => f.keys.length || f.minLevel !== null));
 
   return (
     <>
@@ -191,6 +203,15 @@ export function BrowserView({
                 </span>
               );
             })}
+            {sleepingOnly && (
+              <span className="inline-flex h-5 items-center gap-1 rounded-md bg-muted px-1.5 text-2xs font-medium">
+                <Moon className="size-3" />
+                Sleeping · {sleepingCount}
+                <button aria-label="Remove sleeping filter" onClick={() => setSleepingOnly(false)}>
+                  <X className="size-3" />
+                </button>
+              </span>
+            )}
             {ws.domainFilter.map((name) => (
               <DomainChip
                 key={name}
@@ -204,6 +225,7 @@ export function BrowserView({
                 size="sm"
                 onClick={() => {
                   setQuery("");
+                  setSleepingOnly(false);
                   ws.setGroupFilter([]);
                   ws.setDomainFilter([]);
                   setFilters({});
@@ -214,6 +236,23 @@ export function BrowserView({
             )}
           </div>
           <div className="ml-auto flex shrink-0 items-center gap-2">
+            {sleepingCount > 0 && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant={sleepingOnly ? "secondary" : "ghost"}
+                    size="sm"
+                    aria-pressed={sleepingOnly}
+                    aria-label={`Show only sleeping tabs (${sleepingCount})`}
+                    onClick={() => setSleepingOnly((v) => !v)}
+                  >
+                    <Moon className="size-3.5" />
+                    <span className="tabular">{sleepingCount}</span>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Sleeping tabs: Chrome hasn't loaded their pages</TooltipContent>
+              </Tooltip>
+            )}
             <div className="relative">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
@@ -274,6 +313,16 @@ export function BrowserView({
             {runner.notice}
           </Banner>
         )}
+        {snapshot && (
+          <LoadContentBanner
+            sleeping={sleepingInView}
+            run={snapshot.loadRun}
+            sleepingOnly={sleepingOnly}
+            onLoad={() => actions.loadContent(sleepingInView)}
+            onControl={actions.loadControl}
+            onToggleFilter={() => setSleepingOnly((v) => !v)}
+          />
+        )}
         {snapshot && activeLenses.length > 0 && (
           <LensFilterBar
             lenses={activeLenses}
@@ -290,6 +339,7 @@ export function BrowserView({
                 tabs.filter((t) => ["failed", "expired"].includes(runner.results[t.tabInstanceId]?.[lens.id]?.state ?? "")),
               )
             }
+            onLoadSleeping={(lens) => actions.loadContent(tabs.filter((t) => isSleepingWait(t, runner.results[t.tabInstanceId]?.[lens.id])))}
             onReevaluate={(lens) => actions.reevaluate(lens)}
             onClean={actions.requestClean}
             onEdit={onEditLens}
@@ -349,6 +399,8 @@ export function BrowserView({
                 onMove={() => actions.chooseMove([tab])}
                 onUngroup={() => void actions.ungroup([tab])}
                 onCopy={() => actions.copy(tab)}
+                onLoad={() => actions.loadContent([tab])}
+                onSleep={() => void actions.sleep([tab])}
                 jevReason={ws.jevReason}
               />
             ))}
@@ -365,6 +417,8 @@ export function BrowserView({
           onNewGroup={() => actions.newGroup(pickedTabs)}
           onUngroup={() => void actions.ungroup(pickedTabs)}
           onAutogroup={() => actions.autogroup(pickedTabs)}
+          onLoad={() => actions.loadContent(pickedTabs)}
+          onSleep={() => void actions.sleep(pickedTabs)}
           onClose={() => actions.requestClose(pickedTabs)}
           onClear={() => setPicked(() => [])}
           jevReason={ws.jevReason}
