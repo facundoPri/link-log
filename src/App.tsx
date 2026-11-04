@@ -969,6 +969,8 @@ export function App({
       onRetry={(lens) => browserActions.reevaluate(lens, [activeTab])}
       onMetadata={(lens) => browserActions.evaluateMetadata(lens, activeTab)}
       onAllowAccess={() => void ws.browser.request("openPermissions", {}).catch(() => {})}
+      onLoad={() => browserActions.loadContent([activeTab])}
+      onSleep={() => browserActions.sleep([activeTab])}
       onToggleGroup={ws.toggleGroupFilter}
       onDomainFilter={ws.toggleDomain}
       onSaveRelated={(url) => save(url)}

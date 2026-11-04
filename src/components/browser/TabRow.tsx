@@ -1,15 +1,5 @@
 import { useRef, useState } from "react";
-import {
-  BookmarkCheck,
-  Ellipsis,
-  FileWarning,
-  Globe,
-  Loader2,
-  Lock,
-  Moon,
-  SquareArrowOutUpRight,
-  Volume2,
-} from "lucide-react";
+import { BookmarkCheck, Ellipsis, Globe, SquareArrowOutUpRight, Volume2 } from "lucide-react";
 import type { BrowserGroup, BrowserTab, LensRecord, TabPreview } from "@linklog/browser-protocol";
 import type { Lens, Link, Tag } from "../../types";
 import { cn } from "../../lib/utils";
@@ -18,7 +8,9 @@ import { youtubeId } from "../../lib/youtube";
 import { lensIcon } from "../Sidebar";
 import { TagChip } from "../TagChip";
 import { GROUP_STYLE, groupTitle } from "./groups";
-import { ACCESS_LABEL, BrowserLensStatus } from "./BrowserLensStatus";
+import { BrowserLensStatus } from "./BrowserLensStatus";
+import { ContentBadge, PinnedMarker } from "./TabMarkers";
+import { loadBlocked, SLEEP_WARNING, sleepBlocked } from "../../browser/sleeping";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -48,6 +40,7 @@ function LensCell({
   named,
   onRetry,
   onMetadata,
+  onLoad,
   blocked,
 }: {
   lens: Lens;
@@ -56,6 +49,7 @@ function LensCell({
   named: boolean;
   onRetry: () => void;
   onMetadata: () => void;
+  onLoad: () => void;
   blocked: string | null;
 }) {
   // Flat, borderless cell: the lens icon (and its name when several lenses are on) + its state.
@@ -68,7 +62,7 @@ function LensCell({
     >
       {lensIcon(lens.type, "size-3 shrink-0 text-muted-foreground")}
       {named && <span className="max-w-24 truncate text-muted-foreground">{lens.name}</span>}
-      <BrowserLensStatus lens={lens} record={record} tab={tab} size="sm" onRetry={onRetry} onMetadata={onMetadata} blocked={blocked} />
+      <BrowserLensStatus lens={lens} record={record} tab={tab} size="sm" onRetry={onRetry} onMetadata={onMetadata} onLoad={onLoad} blocked={blocked} />
     </span>
   );
 }
@@ -96,6 +90,8 @@ export function TabRow({
   onMove,
   onUngroup,
   onCopy,
+  onLoad,
+  onSleep,
   jevReason,
 }: {
   tab: BrowserTab;
@@ -120,6 +116,8 @@ export function TabRow({
   onMove: () => void;
   onUngroup: () => void;
   onCopy: () => void;
+  onLoad: () => void;
+  onSleep: () => void;
   /** Why nothing can be evaluated now (Jev not configured), or null. */
   jevReason: string | null;
 }) {
@@ -128,7 +126,8 @@ export function TabRow({
   const [menuOpen, setMenuOpen] = useState(false);
   const lastShift = useRef(false);
   const { host, rest } = pathOf(tab.url);
-  const access = tab.content === "available" ? null : ACCESS_LABEL[tab.content];
+  const cantLoad = loadBlocked(tab);
+  const cantSleep = sleepBlocked(tab);
   const readAt = Object.values(records ?? {})
     .map((r) => r.capture?.capturedAt)
     .filter((t): t is string => !!t)
@@ -179,6 +178,7 @@ export function TabRow({
       <div className="min-w-0 flex-1">
         <p className="flex items-center gap-1.5 text-sm font-medium leading-5">
           <span className="truncate">{tab.title || tab.url}</span>
+          {tab.pinned && <PinnedMarker />}
           {tab.audible && <Volume2 className="size-3.5 shrink-0 text-muted-foreground" aria-label="Playing audio" />}
         </p>
         <p className="truncate text-xs text-muted-foreground">
@@ -229,25 +229,7 @@ export function TabRow({
             </Badge>
           )}
           {saved?.tags.map((tag: Tag) => <TagChip key={tag.id} tag={tag} />)}
-          {access && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Badge variant="outline" className="gap-1 font-normal text-muted-foreground">
-                  {tab.content === "loading" ? (
-                    <Loader2 className="size-3 animate-spin" />
-                  ) : tab.content === "discarded" || tab.content === "frozen" ? (
-                    <Moon className="size-3" />
-                  ) : tab.content === "no-permission" ? (
-                    <Lock className="size-3" />
-                  ) : (
-                    <FileWarning className="size-3" />
-                  )}
-                  {access.label}
-                </Badge>
-              </TooltipTrigger>
-              <TooltipContent className="max-w-64">{access.hint}</TooltipContent>
-            </Tooltip>
-          )}
+          <ContentBadge tab={tab} />
           {facts.map((f) => (
             <Badge key={f.key} variant="secondary" className="font-normal" aria-label={`${f.label}: ${f.value}`}>
               {f.value}
@@ -262,6 +244,7 @@ export function TabRow({
               named={lenses.length > 1}
               onRetry={() => onRetry(lens)}
               onMetadata={() => onMetadata(lens)}
+              onLoad={onLoad}
               blocked={jevReason}
             />
           ))}
@@ -300,7 +283,21 @@ export function TabRow({
               {saved ? "Already saved" : "Save to library"}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={onMove}>Move to group…</DropdownMenuItem>
+            <DropdownMenuItem onClick={onLoad} disabled={!!cantLoad}>
+              Load content
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={onSleep} disabled={!!cantSleep} title={cantSleep ?? SLEEP_WARNING}>
+              Put to sleep
+            </DropdownMenuItem>
+            {(cantLoad || cantSleep) && (
+              <DropdownMenuLabel className="max-w-56 text-2xs font-normal text-muted-foreground">
+                {[cantLoad && `Load content: ${cantLoad}.`, cantSleep && `Put to sleep: ${cantSleep}.`].filter(Boolean).join(" ")}
+              </DropdownMenuLabel>
+            )}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={onMove} disabled={tab.pinned}>
+              {tab.pinned ? "Pinned tabs stay ungrouped" : "Move to group…"}
+            </DropdownMenuItem>
             {group && <DropdownMenuItem onClick={onUngroup}>Remove from group</DropdownMenuItem>}
             {lenses.length > 0 && (
               <>
