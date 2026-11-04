@@ -4,11 +4,16 @@ const REPLAY_WINDOW_MS = 10 * 60_000;
 
 const keepOpenedTab = () => {};
 
-type Entry = { at: number; opened: Record<string, number> };
+type Entry = { at: number; opened: Record<string, number>; groupId?: number };
 
 export type OpenRecord = {
   has(url: string): boolean;
   record(url: string, tabId: number): Promise<void>;
+  /** Tabs this operation opened, in every attempt. */
+  tabIds(): number[];
+  /** The group this operation created or used, so a retry groups into it instead of making another. */
+  groupId(): number | null;
+  recordGroup(groupId: number): Promise<void>;
 };
 
 export class OpenLedger {
@@ -28,6 +33,12 @@ export class OpenLedger {
         has: (url) => Object.hasOwn(entry.opened, url),
         record: async (url, tabId) => {
           entry.opened[url] = tabId;
+          await this.kv.set({ [key]: entry }).catch(keepOpenedTab);
+        },
+        tabIds: () => Object.values(entry.opened),
+        groupId: () => entry.groupId ?? null,
+        recordGroup: async (groupId) => {
+          entry.groupId = groupId;
           await this.kv.set({ [key]: entry }).catch(keepOpenedTab);
         },
       });

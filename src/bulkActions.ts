@@ -4,7 +4,7 @@ import type { Batch, Link, Tag } from "./types";
 
 // The only place that knows which selected links an action applies to. The desktop bar, the palette and the
 // keyboard shortcuts all read it, so they cannot disagree. Adding an action is one entry in BULK_ACTIONS plus
-// its runner in BulkRunners.
+// its runner in BulkRunners. Browser tabs have their own registry of the same shape (src/browser/tabActions.ts).
 
 export type BulkContext = {
   tags: Tag[];
@@ -18,15 +18,38 @@ export type BulkContext = {
   opening: boolean;
 };
 
-export type Availability = {
-  eligible: Link[];
-  skipped: { link: Link; reason: string }[];
+export type Availability<T = Link> = {
+  eligible: T[];
+  skipped: { item: T; reason: string }[];
   /** Why the action can't start at all; the UI disables it. */
   blocked: string | null;
 };
 
-export type BulkGroup = "Process" | "Organize" | "Share" | "Danger";
-export const BULK_GROUPS: BulkGroup[] = ["Process", "Organize", "Share", "Danger"];
+/** What the selection surfaces show and match keys against; the same for links and tabs. */
+export type ActionMeta = {
+  id: string;
+  label: string;
+  /** The palette's gutter heading; registries list actions in group order. "Danger" renders destructive. */
+  group: string;
+  /** Shown in a Kbd and matched against key presses: a letter, optionally prefixed with ⇧. */
+  shortcut?: string;
+  /** Needs a choice (a lens, a group) before it runs; `run` then receives the chosen id as `detail`. */
+  picker?: string;
+  /** Shown as its own button in the desktop bar. */
+  promoted?: boolean;
+  icon: LucideIcon;
+  /** The desktop bar's text when it should say more than `label`, e.g. "Open 3". */
+  barLabel?: (eligible: number) => string;
+  /** The mobile drawer tile's label when `label` is too long for a quarter of the row. */
+  tileLabel?: string;
+};
+
+export type SelectionAction<T, R, C> = ActionMeta & {
+  availability: (items: T[], ctx: C) => Availability<T>;
+  /** Tooltip/row text when only some of the items qualify. */
+  partial?: (skipped: number, total: number) => string;
+  run: (runners: R, eligible: T[], detail?: string) => void | Promise<void>;
+};
 
 /** What a runner needs from the app; each call goes through the same code path as the matching button always did. */
 export type BulkRunners = {
@@ -37,42 +60,27 @@ export type BulkRunners = {
   open: (links: Link[]) => void;
 };
 
-export type BulkAction = {
-  id: string;
-  label: string;
-  group: BulkGroup;
-  /** Shown in a Kbd and matched against key presses: a letter, optionally prefixed with ⇧. */
-  shortcut?: string;
-  /** Needs a choice (a lens) before it runs; `run` then receives the chosen id as `detail`. */
-  picker?: "lens";
-  /** Shown as its own button in the desktop bar. */
-  promoted?: boolean;
-  icon: LucideIcon;
-  /** The desktop bar's text when it should say more than `label`, e.g. "Open 3". */
-  barLabel?: (eligible: number) => string;
-  /** The mobile drawer tile's label when `label` is too long for a quarter of the row. */
-  tileLabel?: string;
-  availability: (links: Link[], ctx: BulkContext) => Availability;
-  /** Tooltip/row text when only some of the links qualify. */
-  partial?: (skipped: number, total: number) => string;
-  run: (runners: BulkRunners, eligible: Link[], detail?: string) => void | Promise<void>;
-};
+export type BulkAction = SelectionAction<Link, BulkRunners, BulkContext>;
 
 // Jev runs on links with content or with an extraction on the way; the others are skipped (or, for auto-tag,
 // extracted first when the user asks).
 export const lacksContent = (l: Link) => !l.content_key && l.content_state !== "queued";
 
-const everyLink = (links: Link[], blocked: string | null): Availability => ({
-  eligible: links,
+export const everyItem = <T>(items: T[], blocked: string | null): Availability<T> => ({
+  eligible: items,
   skipped: [],
   blocked,
 });
 
-const needsContent = (links: Link[], reason: string, blocked: string | null): Availability => ({
-  eligible: links.filter((l) => !lacksContent(l)),
-  skipped: links.filter(lacksContent).map((link) => ({ link, reason })),
+/** Items that pass `ok` are eligible; the rest are skipped with `reason`. */
+export const splitBy = <T>(items: T[], ok: (item: T) => boolean, reason: string, blocked: string | null): Availability<T> => ({
+  eligible: items.filter(ok),
+  skipped: items.filter((i) => !ok(i)).map((item) => ({ item, reason })),
   blocked,
 });
+
+const needsContent = (links: Link[], reason: string, blocked: string | null) =>
+  splitBy(links, (l) => !lacksContent(l), reason, blocked);
 
 const STILL_PROCESSING = "Some links are still processing";
 export const plural = (n: number) => (n === 1 ? "link" : "links");
@@ -122,7 +130,7 @@ export const BULK_ACTIONS: BulkAction[] = [
     shortcut: "E",
     icon: FileText,
     tileLabel: "Extract",
-    availability: (ls, ctx) => everyLink(ls, ctx.running ? STILL_PROCESSING : null),
+    availability: (ls, ctx) => everyItem(ls, ctx.running ? STILL_PROCESSING : null),
     run: (h) => h.extract(),
   },
   {
@@ -134,7 +142,7 @@ export const BULK_ACTIONS: BulkAction[] = [
     icon: ExternalLink,
     barLabel: (n) => `Open ${n}`,
     availability: (ls, ctx) =>
-      everyLink(ls, ctx.openReason ?? openLimitReason(ls.length) ?? (ctx.opening ? "Opening links…" : null)),
+      everyItem(ls, ctx.openReason ?? openLimitReason(ls.length) ?? (ctx.opening ? "Opening links…" : null)),
     run: (h, eligible) => h.open(eligible),
   },
   {
@@ -143,7 +151,7 @@ export const BULK_ACTIONS: BulkAction[] = [
     group: "Share",
     shortcut: "C",
     icon: Copy,
-    availability: (ls) => everyLink(ls, null),
+    availability: (ls) => everyItem(ls, null),
     run: (h, eligible) => h.copy(eligible, false),
   },
   {
@@ -152,19 +160,14 @@ export const BULK_ACTIONS: BulkAction[] = [
     group: "Share",
     shortcut: "⇧C",
     icon: ClipboardList,
-    availability: (ls) => everyLink(ls, null),
+    availability: (ls) => everyItem(ls, null),
     run: (h, eligible) => h.copy(eligible, true),
   },
 ];
 
-export const ACTION_GROUPS = BULK_GROUPS.map((group) => ({
-  group,
-  actions: BULK_ACTIONS.filter((a) => a.group === group),
-})).filter((g) => g.actions.length);
-
-export type ActionState = {
-  action: BulkAction;
-  availability: Availability;
+export type ActionState<T = unknown> = {
+  action: ActionMeta;
+  availability: Availability<T>;
   /** The action can't be started. */
   disabled: boolean;
   /** Why it is disabled, or what the skipped links mean; null when everything qualifies. */
@@ -173,7 +176,7 @@ export type ActionState = {
   badge: string | null;
 };
 
-export function actionState(action: BulkAction, selected: Link[], ctx: BulkContext): ActionState {
+export function actionState<T, C>(action: SelectionAction<T, never, C>, selected: T[], ctx: C): ActionState<T> {
   const availability = action.availability(selected, ctx);
   const { eligible, skipped, blocked } = availability;
   return {
@@ -185,21 +188,60 @@ export function actionState(action: BulkAction, selected: Link[], ctx: BulkConte
   };
 }
 
-export const actionStates = (selected: Link[], ctx: BulkContext) =>
-  BULK_ACTIONS.map((a) => actionState(a, selected, ctx));
+export const actionStates = <T, C>(actions: SelectionAction<T, never, C>[], selected: T[], ctx: C) =>
+  actions.map((a) => actionState(a, selected, ctx));
+
+/** Runs an action by id on its eligible items, through the registry's runner. */
+export const runAction =
+  <T, R, C>(actions: SelectionAction<T, R, C>[], states: ActionState<T>[], runners: R) =>
+  (id: string, detail?: string) => {
+    const action = actions.find((a) => a.id === id);
+    const state = states.find((s) => s.action.id === id);
+    if (action && state) void action.run(runners, state.availability.eligible, detail);
+  };
 
 type KeyLike = Pick<KeyboardEvent, "key" | "shiftKey" | "metaKey" | "ctrlKey" | "altKey">;
 
 /** The action a key press runs. Letters only: ⌘/Ctrl/Alt combinations belong to the app and the browser. */
-export function actionForKey(e: KeyLike): BulkAction | null {
+export function actionForKey<A extends ActionMeta>(e: KeyLike, actions: A[]): A | null {
   if (e.metaKey || e.ctrlKey || e.altKey) return null;
   return (
-    BULK_ACTIONS.find((a) => {
+    actions.find((a) => {
       if (!a.shortcut) return false;
       const shift = a.shortcut.startsWith("⇧");
       return shift === e.shiftKey && a.shortcut.slice(shift ? 1 : 0).toLowerCase() === e.key.toLowerCase();
     }) ?? null
   );
+}
+
+export type KeyRoute<A> =
+  /** Open the command palette (or the phone drawer), or close it when it is the open overlay. */
+  | { kind: "palette" }
+  /** ⌘K while another dialog or menu is open: swallowed, so the browser's own ⌘K doesn't fire either. */
+  | { kind: "ignore" }
+  | { kind: "action"; action: A };
+
+export type KeyScene = {
+  /** Items selected in the current view. */
+  selected: number;
+  paletteOpen: boolean;
+  /** Focus is in a text field. */
+  typing: boolean;
+  /** A dialog, sheet, menu or listbox is open (the palette counts when it is open). */
+  overlay: boolean;
+};
+
+/**
+ * What one key press does on a selection surface. ⌘K is the only command key: it always opens the palette,
+ * whatever the selection, and closes it again. Letters run selection actions only with a selection and
+ * nothing else in the way.
+ */
+export function routeKey<A extends ActionMeta>(e: KeyLike & { repeat?: boolean }, actions: A[], scene: KeyScene): KeyRoute<A> | null {
+  if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "k")
+    return scene.overlay && !scene.paletteOpen ? { kind: "ignore" } : { kind: "palette" };
+  if (!scene.selected || e.repeat || scene.typing || scene.overlay) return null;
+  const action = actionForKey(e, actions);
+  return action ? { kind: "action", action } : null;
 }
 
 const PROGRESS_VERB: Partial<Record<Batch["kind"], string>> = {

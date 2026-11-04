@@ -83,7 +83,7 @@ export default (async ({ page, api, fixture, step, check, shot, aria, note }) =>
   for (const name of ["Auto-tag", "Lens", "More"])
     await check(`"${name}" is still in the bar`, () => bar.getByRole("button", { name: new RegExp(`^${name}`) }).isVisible());
   await page.keyboard.press("ControlOrMeta+k");
-  const palette = page.getByRole("dialog", { name: "Bulk actions" });
+  const palette = page.getByRole("dialog", { name: "Commands" });
   await check("Palette rows Extract context and Copy URLs are still enabled", async () => {
     const enabled = async (name: string) => (await palette.getByRole("option", { name: new RegExp(`^${name}`) }).first().getAttribute("aria-disabled")) !== "true";
     return (await enabled("Extract context")) && (await enabled("Copy URLs"));

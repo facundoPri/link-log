@@ -1,17 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link2 } from "lucide-react";
+import { Link2, ListChecks, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "./api";
 import type { Batch, Job, Lens, LensResult, LensScope, Library, Link, Tag } from "./types";
 import { jevUnavailable, needsAttention } from "./attention";
 import { clipboardUrls, pastedUrls } from "./url";
-import { Sidebar, type View } from "./components/Sidebar";
+import { lensIcon, Sidebar, type View } from "./components/Sidebar";
 import { Toolbar, type ContextFilter } from "./components/Toolbar";
 import { LinkList } from "./components/LinkList";
 import { PendingLinks } from "./components/PendingLinks";
-import { BulkChip, BulkDock } from "./components/BulkBar";
-import { BulkDrawer, BulkMobileBar } from "./components/BulkMobile";
-import { BulkPalette } from "./components/BulkPalette";
+import { SelectionSurface, type Picker } from "./components/SelectionSurface";
 import type { BulkResult } from "./components/BulkResults";
 import { Inspector } from "./components/Inspector";
 import { TagDialog } from "./components/TagDialog";
@@ -30,8 +28,9 @@ import { BrowserDialogs } from "./components/browser/BrowserDialogs";
 import { useBrowserActions } from "./browser/useBrowserActions";
 import { usd, tokens } from "./lib/format";
 import { submitInChunks, type BatchReply } from "./batches";
-import { actionForKey, actionStates, BULK_ACTIONS, bulkProgress, lacksContent, type BulkAction, type BulkRunners } from "./bulkActions";
+import { actionStates, BULK_ACTIONS, bulkProgress, lacksContent, runAction, type BulkRunners } from "./bulkActions";
 import { copyLinks } from "./lib/copy-links";
+import { isInput, overlayOpen } from "./lib/overlay";
 import { failureMessage } from "./failures";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -68,17 +67,6 @@ function useMedia(query: string) {
   }, [query]);
   return matches;
 }
-
-function isInput(target: EventTarget | null) {
-  return (
-    target instanceof HTMLElement &&
-    !!target.closest('input,textarea,select,[contenteditable="true"]')
-  );
-}
-
-// Radix menus, popovers, dialogs and sheets mount into portals with these roles while open.
-const overlayOpen = () =>
-  !!document.querySelector('[role="dialog"],[role="alertdialog"],[role="menu"],[role="listbox"]');
 
 export function App({
   account,
@@ -129,7 +117,6 @@ export function App({
   const [extractFirst, setExtractFirst] = useState(false);
   const [confirmExtract, setConfirmExtract] = useState<string[] | null>(null);
   const [running, setRunning] = useState(false);
-  const [palette, setPalette] = useState<{ page: string | null } | null>(null);
   const [results, setResults] = useState<BulkResult[]>([]);
   const [dragging, setDragging] = useState(false);
   const [focusTags, setFocusTags] = useState(false);
@@ -183,6 +170,8 @@ export function App({
       ),
   );
   const browserActions = browserController.actions;
+  const requestOpenRef = useRef(browserActions.requestOpen);
+  requestOpenRef.current = browserActions.requestOpen;
   const libraryLenses = useMemo(
     () => library.lenses.filter((l) => l.scope !== "browser"),
     [library.lenses],
@@ -463,35 +452,13 @@ export function App({
     [refresh],
   );
 
-  // Keyboard: ⌘K add (or the bulk palette while links are selected), T/L/E/C bulk actions, / search, Esc close
-  // inspector, ↑/↓ navigate while inspector open.
-  const hasPicked = picked.length > 0;
-  const invokeBulkRef = useRef<(action: BulkAction, detail?: string) => void>(() => {});
-  // The confirms are alert dialogs of their own, not `dialog`, but block the keys the same way.
-  const confirming = confirmNoContent || confirmAutoTag || !!confirmExtract || !!deleteLink || !!deleteTag || !!deleteLens;
-  const paletteOpen = !!palette;
+  // Keyboard: / search, ⌘\ sidebar, ⌘A select all, Esc close inspector, ↑/↓ navigate while inspector open.
+  // ⌘K and the action keys belong to each view's SelectionSurface.
   const filteredRef = useRef<Link[]>([]);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        // The open palette is itself an overlay, and ⌘K closes it.
-        if (dialog || confirming || (!paletteOpen && overlayOpen())) return;
-        // With links selected ⌘K is the actions palette; otherwise it adds a link.
-        if (hasPicked && view !== "browser") setPalette((p) => (p ? null : { page: null }));
-        else setDialog("add");
-        return;
-      }
       // Browser view has its own search, selection and Escape handling.
       if (view === "browser" && e.key !== "\\") return;
-      if (hasPicked && !e.repeat && !dialog && !confirming && !isInput(e.target) && !overlayOpen()) {
-        const action = actionForKey(e);
-        if (action) {
-          e.preventDefault();
-          invokeBulkRef.current(action);
-          return;
-        }
-      }
       if (e.key === "/" && !isInput(e.target) && !dialog) {
         e.preventDefault();
         search.current?.focus();
@@ -540,9 +507,13 @@ export function App({
     const paste = (e: ClipboardEvent) => {
       if (isInput(e.target) || dialog || activityOpen) return;
       const urls = e.clipboardData ? clipboardUrls(e.clipboardData) : [];
+      // Browser's own dialogs (Autogroup review, Open links, confirms) keep what the user is doing.
+      if (view === "browser" && overlayOpen()) return;
       if (urls.length) {
         e.preventDefault();
-        capture(urls.join("\n"));
+        // Browser opens tabs; only Library saves. Opening asks first, with the URLs filled in.
+        if (view === "browser") requestOpenRef.current(urls.join("\n"));
+        else capture(urls.join("\n"));
       } else if (/https?:\/\//i.test(e.clipboardData?.getData("text/plain") || "")) {
         toast.error("Couldn't read this link list", { description: "Use one URL per line, or copy links with their titles." });
       }
@@ -553,7 +524,7 @@ export function App({
       window.removeEventListener("keydown", key);
       window.removeEventListener("paste", paste);
     };
-  }, [dialog, confirming, paletteOpen, activeId, activityOpen, capture, view, hasPicked]);
+  }, [dialog, activeId, activityOpen, capture, view]);
 
   useEffect(() => {
     setTagIds((current) => current.filter((id) => library.tags.some((t) => t.id === id)));
@@ -816,32 +787,25 @@ export function App({
     copy: (links, withTitles) => void copyLinks(links, withTitles),
     open: (links) => void openLinks.open(links),
   };
-  const bulkStates = actionStates(pickedLinks, {
+  const bulkStates = actionStates(BULK_ACTIONS, pickedLinks, {
     tags: library.tags,
     jevReason,
     running,
     openReason: openUnavailable(ws.browser),
     opening: openLinks.opening,
   });
-  const invokeBulk = (action: BulkAction, detail?: string) => {
-    const state = bulkStates.find((s) => s.action.id === action.id);
-    if (!state) return;
-    if (state.disabled) {
-      toast(state.reason ?? `${action.label} isn't available`);
-      return;
-    }
-    if (action.picker && detail === undefined) {
-      setPalette({ page: action.id });
-      return;
-    }
-    setPalette(null);
-    void action.run(bulkRunners, state.availability.eligible, detail);
+  const lensPicker: Picker = {
+    placeholder: "Pick a lens…",
+    empty: libraryLenses.length ? "No matching lens" : "No lenses yet",
+    choices: libraryLenses.map((lens) => ({
+      id: lens.id,
+      label: lens.name,
+      description: lens.question,
+      icon: lensIcon(lens.type, "size-4 shrink-0"),
+    })),
+    newLabel: "New lens…",
+    onNew: () => setDialog({ lens: "new" }),
   };
-  invokeBulkRef.current = invokeBulk;
-  useEffect(() => {
-    if (!picked.length) setPalette(null);
-  }, [picked.length]);
-  const paletteAction = BULK_ACTIONS.find((a) => a.id === palette?.page) ?? null;
   const pickedSet = new Set(picked);
   const allVisibleSelected = filtered.length > 0 && filtered.every((l) => pickedSet.has(l.id));
   const progress = bulkProgress(library.batches, selectionBatches.current);
@@ -1054,7 +1018,9 @@ export function App({
             .split("\n")
             .find((l) => l && !l.startsWith("#")) ||
           e.dataTransfer.getData("text/plain");
-        if (text) capture(text);
+        if (!text) return;
+        if (view === "browser") browserActions.requestOpen(text);
+        else capture(text);
       }}
     >
       {!mobile && sidebarOpen && (
@@ -1078,6 +1044,8 @@ export function App({
             actions={browserActions}
             picked={browserPicked}
             setPicked={setBrowserPicked}
+            narrow={narrow}
+            mobile={mobile}
             onToggleSidebar={() =>
               mobile ? setMenuOpen(true) : setSidebarOpen((o) => !o)
             }
@@ -1272,79 +1240,42 @@ export function App({
           {inspector}
         </SheetContent>
       </Sheet>
-      {view !== "browser" && !narrow && (
-        <BulkDock
-          selected={picked.length}
-          visibleCount={filtered.length}
-          states={bulkStates}
-          progress={progress}
-          results={results}
-          onInvoke={invokeBulk}
-          onSelectAll={() => setPicked(filtered.map((l) => l.id))}
-          onClear={() => setPicked([])}
-          onOpenPalette={() => setPalette({ page: null })}
-          onSelectFailed={selectFailed}
-          onDismissResult={dismissResult}
-        />
-      )}
-      {view !== "browser" && narrow && !mobile && (
-        <BulkChip
-          selected={picked.length}
-          progress={progress}
-          results={results}
-          onOpenPalette={() => setPalette({ page: null })}
-          onClear={() => setPicked([])}
-          onSelectFailed={selectFailed}
-          onDismissResult={dismissResult}
-        />
-      )}
-      {view !== "browser" && mobile && (
-        <BulkMobileBar
-          selected={picked.length}
-          visibleCount={filtered.length}
-          allVisibleSelected={allVisibleSelected}
-          progress={progress}
-          results={results}
-          onSelectAll={() => setPicked(filtered.map((l) => l.id))}
-          onClear={() => setPicked([])}
-          onOpenDrawer={() => setPalette({ page: null })}
-          onSelectFailed={selectFailed}
-          onDismissResult={dismissResult}
-        />
-      )}
-      {!!picked.length && view !== "browser" && !mobile && (
-        <BulkPalette
-          open={!!palette}
-          onOpenChange={(o) => !o && setPalette(null)}
-          page={paletteAction}
-          onPage={(a) => setPalette({ page: a?.id ?? null })}
-          selected={picked.length}
-          states={bulkStates}
-          lenses={libraryLenses}
-          onInvoke={invokeBulk}
-          onNewLens={() => {
-            setPalette(null);
-            setDialog({ lens: "new" });
-          }}
-        />
-      )}
-      {!!picked.length && view !== "browser" && mobile && (
-        <BulkDrawer
-          open={!!palette}
-          onOpenChange={(o) => !o && setPalette(null)}
-          page={paletteAction}
-          onPage={(a) => setPalette({ page: a?.id ?? null })}
+      {view !== "browser" && (
+        <SelectionSurface
+          noun="link"
+          narrow={narrow}
+          mobile={mobile}
           selected={picked.length}
           visibleCount={filtered.length}
           allVisibleSelected={allVisibleSelected}
           states={bulkStates}
-          lenses={libraryLenses}
-          onInvoke={invokeBulk}
+          commands={[
+            {
+              id: "add",
+              label: "Add links…",
+              description: "Save to your Library, with optional tags",
+              icon: Plus,
+              onSelect: () => setDialog("add"),
+            },
+            {
+              id: "select-all",
+              label: `Select all ${filtered.length} visible`,
+              description: "Then pick an action here",
+              icon: ListChecks,
+              shortcut: "⌘A",
+              keepOpen: true,
+              disabled: filtered.length ? null : "No links to select",
+              onSelect: () => setPicked(filtered.map((l) => l.id)),
+            },
+          ]}
+          picker={(id) => (id === "lens" ? lensPicker : null)}
+          progress={progress}
+          results={results}
+          onRun={runAction(BULK_ACTIONS, bulkStates, bulkRunners)}
           onSelectAll={() => setPicked(filtered.map((l) => l.id))}
-          onNewLens={() => {
-            setPalette(null);
-            setDialog({ lens: "new" });
-          }}
+          onClear={() => setPicked([])}
+          onSelectFailed={selectFailed}
+          onDismissResult={dismissResult}
         />
       )}
       {dialog === "add" && (
@@ -1591,7 +1522,7 @@ export function App({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
           <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed p-10 text-center">
             <Link2 className="size-6 text-muted-foreground" />
-            <p className="text-sm font-medium">Drop to save</p>
+            <p className="text-sm font-medium">{view === "browser" ? "Drop to open as tabs" : "Drop to save"}</p>
           </div>
         </div>
       )}

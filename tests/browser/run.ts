@@ -6,7 +6,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { BrowserContext, Page, Worker } from "playwright-core";
 import { PROTOCOL_VERSION } from "@linklog/browser-protocol";
-import { api, API, API_PORT, buildAll, createAccount, EXTENSION, launch, OTHER_APP_PORT, OUT, ROOT, SITE, startApi, startMarkedApp, startSite, UI, UI_PORT, waitFor } from "./env";
+import { api, API, API_PORT, buildAll, createAccount, EXTENSION, launch, OTHER_APP_PORT, OUT, ROOT, SITE, SITE_PORT, startApi, startMarkedApp, startSite, UI, UI_PORT, waitFor } from "./env";
 
 // LINKLOG_BROWSER_EVIDENCE writes the run elsewhere (e.g. .cache/...) instead of the committed evidence.
 const EVIDENCE = resolve(ROOT, process.env.LINKLOG_BROWSER_EVIDENCE ?? "docs/browser-validation");
@@ -119,6 +119,13 @@ async function shot(page: Page, name: string) {
 }
 async function toggleLens(page: Page, name: string) {
   await page.locator("aside button[aria-pressed]", { hasText: name }).first().click();
+}
+/** The shared selection surface (bar, chip or phone bar) of the Browser view. */
+const tabBar = (page: Page) => page.getByRole("toolbar", { name: "Selected tab actions" });
+/** Runs a palette-only action (e.g. Close tabs) through More ⌘K. */
+async function fromMore(page: Page, option: RegExp) {
+  await tabBar(page).getByRole("button", { name: /^More/ }).click();
+  await page.getByRole("dialog", { name: "Commands" }).getByRole("option", { name: option }).click();
 }
 async function selectTabs(page: Page, tabIds: number[]) {
   for (const id of tabIds) await page.locator(`[data-tab-id="${id}"] button[role=checkbox]`).click();
@@ -405,7 +412,7 @@ try {
     await settle(ctx, lensA.id, 28);
     await settle(ctx, lensB.id, 28);
     await waitFor("2 calls", async () => (await calls()) === 60);
-    await inSw(ctx, async (id: number) => chrome.tabs.update(id, { url: "http://127.0.0.1:3099/a/99?m=jev:no" }), t.id!);
+    await inSw(ctx, async ({ id, url }: { id: number; url: string }) => chrome.tabs.update(id, { url }), { id: t.id!, url: `${SITE}/a/99?m=jev:no` });
     await waitFor("2 more calls", async () => (await calls()) === 62, 30000);
     return "hash: 0 calls; pushState: 2; full navigation: 2";
   });
@@ -466,7 +473,7 @@ try {
     return "no automatic retry; explicit retry = 1 call";
   });
   await check("no permission and internal pages stay manageable with honest states", async () => {
-    const [noAccess] = await createTabs(ctx, W1, ["http://localhost:3099/private"]);
+    const [noAccess] = await createTabs(ctx, W1, [`http://localhost:${SITE_PORT}/private`]);
     // chrome:// pages and tabs.discard() close the Playwright context in headless Chromium
     // (reproduced with an empty extension); an extension page is equally unreadable, and the
     // discarded/frozen states are covered by apps/extension/tests (contentAccess).
@@ -608,7 +615,7 @@ try {
   await check("bridge rejects malformed commands and ids from another window", async () => {
     const other = (await tabOf(ctx, "/w2/0"))!;
     const inst = await inSw(ctx, async () => (await chrome.storage.session.get("instances")).instances as Record<string, any>, 0);
-    const res = await L.evaluate(async ([tabId, tabInstanceId]) => {
+    const res = await L.evaluate(async ([tabId, tabInstanceId, url]) => {
       const ask = (request: unknown) =>
         new Promise((r) => {
           const on = (e: MessageEvent) => {
@@ -622,9 +629,9 @@ try {
           setTimeout(() => r("timeout"), 3000);
         });
       const bad = await ask({ id: "bad1", command: "eval", args: { code: "1" } });
-      const foreign = await ask({ id: "far1", command: "closeTabs", args: { tabs: [{ tabId, tabInstanceId, url: "http://127.0.0.1:3099/w2/0" }] } });
+      const foreign = await ask({ id: "far1", command: "closeTabs", args: { tabs: [{ tabId, tabInstanceId, url }] } });
       return { bad, foreign };
-    }, [other.id!, inst[String(other.id)].tabInstanceId] as [number, string]);
+    }, [other.id!, inst[String(other.id)].tabInstanceId, `${SITE}/w2/0`] as [number, string, string]);
     const stillOpen = await tabOf(ctx, "/w2/0");
     assert(res.bad === "timeout", `malformed command was answered: ${JSON.stringify(res.bad)}`);
     assert(JSON.stringify(res.foreign).includes("no longer in this window") && stillOpen, JSON.stringify(res.foreign));
@@ -641,7 +648,7 @@ try {
     };
     L.on("request", spy);
     await selectTabs(L, ids);
-    await L.getByRole("button", { name: "Save", exact: true }).click();
+    await tabBar(L).getByRole("button", { name: "Save to Library" }).click();
     await waitFor("2 links", async () => (await api<{ links: any[] }>("/library")).links.length === before.links.length + 2, 20000);
     L.off("request", spy);
     const after = await api<{ links: any[]; batches: any[] }>("/library");
@@ -656,7 +663,7 @@ try {
     await waitFor("Saved badge", async () => (await L.locator("[data-tab-id]", { hasText: "Saved" }).count()) === 2);
     // Tag one (once its extraction job ends, as in All links), save again: duplicate, tags untouched.
     await waitFor("tagged", async () => !(await api(`/links/${saved[0].id}`, "PATCH", { tags: ["keep-me"] })).error, 30000);
-    await L.getByRole("button", { name: "Save", exact: true }).click();
+    await tabBar(L).getByRole("button", { name: "Save to Library" }).click();
     await Bun.sleep(1500);
     const again = await api<{ links: any[] }>("/library");
     assert(again.links.length === after.links.length, "duplicate created");
@@ -669,7 +676,7 @@ try {
     const ids = [(await tabOf(ctx, "/a/5?"))!.id!, (await tabOf(ctx, "/a/6?"))!.id!];
     const total = await inSw(ctx, async () => (await chrome.tabs.query({})).length, 0);
     await selectTabs(L, ids);
-    await L.locator("[aria-label='Selected tab actions']").getByRole("button", { name: "Close" }).click();
+    await fromMore(L, /^Close tabs/);
     await L.getByRole("button", { name: "Close tabs" }).click();
     await waitFor("closed", async () => (await inSw(ctx, async () => (await chrome.tabs.query({})).length, 0)) === total - 2);
     await waitFor("rows removed", async () => (await L.locator(`[data-tab-id="${ids[0]}"], [data-tab-id="${ids[1]}"]`).count()) === 0, 10000);
@@ -720,7 +727,7 @@ try {
   await check("create a pinned group from the selection", async () => {
     const ids = [(await tabOf(ctx, "/a/7?"))!.id!, (await tabOf(ctx, "/a/8?"))!.id!];
     await selectTabs(L, ids);
-    await L.locator("[aria-label='Selected tab actions']").getByRole("button", { name: "Group", exact: true }).click();
+    await tabBar(L).getByRole("button", { name: "Move to group" }).click();
     await L.getByRole("option", { name: /New group/ }).click();
     await L.locator("#group-name").fill("Research");
     await L.locator("#group-description").fill("Papers and articles for the thesis");
@@ -751,7 +758,7 @@ try {
     await waitFor("pinned destination", async () => (await L2.locator("aside", { hasText: "Research" }).count()) > 0);
     const w2Tab = (await tabOf(ctx, "/w2/1"))!;
     await selectTabs(L2, [w2Tab.id!]);
-    await L2.locator("[aria-label='Selected tab actions']").getByRole("button", { name: "Group", exact: true }).click();
+    await tabBar(L2).getByRole("button", { name: "Move to group" }).click();
     await L2.getByRole("option", { name: /Research/ }).click();
     const g = await waitFor("group in W2", async () => {
       const list = await inSw(ctx, async (w: number) => chrome.tabGroups.query({ windowId: w }), W2);
@@ -792,7 +799,7 @@ try {
     await selectTabs(L, a);
     const batches = async () => (await api<{ batches: { id: string; kind: string }[] }>("/library")).batches.filter((b) => b.kind === "browser-autogroup").map((b) => b.id);
     const batchesBefore = await batches();
-    await L.getByRole("button", { name: "Autogroup" }).click();
+    await tabBar(L).getByRole("button", { name: "Autogroup" }).click();
     await waitFor("suggestions", async () => (await L.getByRole("button", { name: /^Apply/ }).isEnabled().catch(() => false)), 40000);
     await Bun.sleep(1500);
     // One click = one run: one Activity batch and one Jev call per tab (dev StrictMode included).
@@ -822,14 +829,13 @@ try {
     const t = (await tabOf(ctx, "/a/7?"))!;
     await L.getByRole("button", { name: "Clear selection" }).click({ timeout: 2000 }).catch(() => {});
     await selectTabs(L, [t.id!]);
-    await L.locator("[aria-label='Selected tab actions']").getByRole("button", { name: "Group", exact: true }).click();
+    await tabBar(L).getByRole("button", { name: "Move to group" }).click();
     await L.getByRole("option", { name: /Manual/ }).click();
     await waitFor("moved", async () => {
       const tab = await inSw(ctx, async (id: number) => chrome.tabs.get(id), t.id!);
       return tab.groupId !== t.groupId && tab.groupId >= 0;
     });
-    await L.locator("[aria-label='Selected tab actions']").getByRole("button", { name: "Group", exact: true }).click();
-    await L.getByRole("option", { name: /Remove from group/ }).click();
+    await fromMore(L, /^Remove from group/);
     const tab = await waitFor("ungrouped", async () => {
       const x = await inSw(ctx, async (id: number) => chrome.tabs.get(id).catch(() => null), t.id!);
       return x && x.groupId === -1 ? x : null;
@@ -838,10 +844,10 @@ try {
     return `tab ${tab.id} open and ungrouped`;
   });
   await check("group filters: one group, several groups (union), ungrouped", async () => {
-    const counts = await inSw(ctx, async (w: number) => {
+    const counts = await inSw(ctx, async ({ w, ui }: { w: number; ui: string }) => {
       const tabs = await chrome.tabs.query({ windowId: w });
-      return tabs.filter((t) => !t.url?.includes(":3010")).reduce<Record<string, number>>((m, t) => ((m[t.groupId] = (m[t.groupId] ?? 0) + 1), m), {});
-    }, W1);
+      return tabs.filter((t) => !t.url?.startsWith(ui)).reduce<Record<string, number>>((m, t) => ((m[t.groupId] = (m[t.groupId] ?? 0) + 1), m), {});
+    }, { w: W1, ui: UI });
     await L.locator("aside").getByRole("button", { name: /^Ungrouped/ }).click();
     await waitFor("ungrouped rows", async () => (await rowCount(L)) === counts["-1"]);
     await L.locator("aside").getByRole("button", { name: /^Manual/ }).click();
@@ -920,6 +926,125 @@ try {
     const after = await inSw(ctx, async () => (await chrome.tabGroups.query({ title: "Research" })).length, 0);
     assert(before === after && after >= 2, `${before} → ${after}`);
     return `${after} native “Research” groups still open; definition removed`;
+  });
+
+  section("Commands and Open links");
+  await check("⌘K opens one Commands palette with 0, 1 and 2 tabs selected; G and C run tab actions", async () => {
+    await L.bringToFront();
+    await L.getByRole("button", { name: "Clear selection" }).click({ timeout: 2000 }).catch(() => {});
+    const palette = L.getByRole("dialog", { name: "Commands" });
+    const dialogs = () => L.getByRole("dialog").count();
+    const ids = [(await tabOf(ctx, "/a/11?"))!.id!, (await tabOf(ctx, "/a/12?"))!.id!];
+    const seen: string[] = [];
+    for (const n of [0, 1, 2]) {
+      if (n) await selectTabs(L, [ids[n - 1]!]);
+      await L.keyboard.press("ControlOrMeta+k");
+      await waitFor(`palette with ${n} selected`, async () => (await palette.isVisible()) && (await dialogs()) === 1);
+      const open = palette.getByRole("option", { name: /^Open links…/ });
+      const save = palette.getByRole("option", { name: /^Save to Library/ });
+      assert(await open.isVisible(), "Open links missing");
+      assert((await palette.getByRole("option", { name: /^Add links…/ }).count()) === 0, "Library's Add links offered in Browser");
+      assert((await save.count()) === (n ? 1 : 0), `Save row with ${n} selected`);
+      if (n === 2) assert(/2\/2/.test((await save.textContent()) ?? ""), "Save count");
+      if (n !== 1) await shot(L, `fac184-palette-${n}-selected`);
+      seen.push(`${n}: ${(await palette.getByRole("option").allTextContents()).length} rows`);
+      await L.keyboard.press("Escape");
+      await waitFor("closed", async () => !(await palette.isVisible()));
+    }
+    await L.keyboard.press("g");
+    await waitFor("G opens the group picker", async () => (await palette.isVisible()) && (await palette.getByRole("option", { name: /New group/ }).isVisible()));
+    await L.keyboard.press("Escape");
+    await waitFor("closed", async () => !(await palette.isVisible()));
+    await shot(L, "fac184-bar-2-selected");
+    const links = (await api<{ links: unknown[] }>("/library")).links.length;
+    await L.keyboard.press("c");
+    await waitFor("copied toast", async () => (await L.getByText("2 links copied").count()) > 0, 5000);
+    assert((await api<{ links: unknown[] }>("/library")).links.length === links, "a key saved links");
+    return seen.join(" · ") + "; G → group picker; C → 2 copied, library unchanged";
+  });
+  await check("narrow chip and phone drawer are the same surface as All links", async () => {
+    try {
+      await L.setViewportSize({ width: 900, height: 820 });
+      await waitFor("chip", async () => (await tabBar(L).getByRole("button", { name: /^Actions/ }).isVisible()));
+      await shot(L, "fac184-narrow-chip");
+      await L.setViewportSize({ width: 390, height: 844 });
+      await waitFor("phone bar", async () => (await tabBar(L).getByRole("button", { name: /^Actions/ }).isVisible()));
+      await shot(L, "fac184-phone-bar");
+      await tabBar(L).getByRole("button", { name: /^Actions/ }).click();
+      const drawer = L.getByRole("dialog", { name: "2 selected" });
+      await waitFor("drawer", async () => (await drawer.isVisible()) && (await drawer.getByRole("button", { name: /Close 2 tabs/ }).isVisible()));
+      await Bun.sleep(400);
+      await shot(L, "fac184-phone-drawer");
+      await drawer.getByRole("button", { name: /^Group$/ }).click();
+      const picker = L.getByRole("dialog", { name: "Move to group on 2 tabs" });
+      await waitFor("group picker in the drawer", async () => (await picker.getByRole("button", { name: /New group/ }).isVisible()));
+      await L.keyboard.press("Escape");
+    } finally {
+      await L.setViewportSize({ width: 1280, height: 820 });
+    }
+    await L.getByRole("button", { name: "Clear selection" }).click({ timeout: 2000 }).catch(() => {});
+    return "900 px: Actions chip; 390 px: phone bar, drawer tiles with Close 2 tabs and the group picker in place";
+  });
+  await check("Open links opens tabs in Linklog's window into a new group, and saves nothing", async () => {
+    const urls = [`${SITE}/fac184/1`, `${SITE}/fac184/2`];
+    const already = `${SITE}/fac184/already`;
+    const [alreadyId] = await createTabs(ctx, W1, [already]);
+    await waitFor("already-open row", async () => (await L.locator(`[data-tab-id="${alreadyId}"]`).count()) === 1);
+    const writes: string[] = [];
+    const spy = (r: { method: () => string; url: () => string }) => {
+      if (r.method() !== "GET" && /\/api\/(import|links|browser\/save)/.test(r.url())) writes.push(r.url());
+    };
+    L.on("request", spy);
+    const before = await api<{ links: unknown[]; batches: unknown[] }>("/library");
+    const w2Before = await inSw(ctx, async (w: number) => (await chrome.tabs.query({ windowId: w })).length, W2);
+    await L.getByRole("button", { name: "Open links" }).click();
+    const dialog = L.getByRole("dialog", { name: "Open links" });
+    await dialog.getByRole("textbox", { name: "Links to open" }).fill([...urls, already].join("\n"));
+    await dialog.getByLabel("Group").selectOption({ label: "New group…" });
+    await dialog.getByRole("textbox", { name: "New group name" }).fill("Later");
+    await shot(L, "fac184-open-links-dialog");
+    await dialog.getByRole("button", { name: "Open 3 tabs" }).click();
+    const group = await waitFor("tabs grouped in Later", async () => {
+      const groups = await inSw(ctx, async (w: number) => chrome.tabGroups.query({ windowId: w, title: "Later" }), W1);
+      if (groups.length !== 1) return null;
+      const inGroup = await inSw(ctx, async (g: number) => (await chrome.tabs.query({ groupId: g })).map((t) => t.url || t.pendingUrl || ""), groups[0]!.id);
+      return inGroup.length === 2 ? { id: groups[0]!.id, inGroup } : null;
+    }, 20000);
+    assert(urls.every((u) => group.inGroup.includes(u)), `grouped: ${group.inGroup.join(", ")}`);
+    const alreadyTab = await inSw(ctx, async (id: number) => chrome.tabs.get(id), alreadyId!);
+    assert(alreadyTab.groupId !== group.id, "the already-open tab was moved into the group");
+    await waitFor("result toast", async () => (await L.getByText(/Opened 2 links · 1 already open · 2 tabs in “Later”/).count()) > 0, 10000);
+    await shot(L, "fac184-open-links-result");
+    const w2After = await inSw(ctx, async (w: number) => (await chrome.tabs.query({ windowId: w })).length, W2);
+    assert(w2After === w2Before, "tabs opened in the other window");
+    await Bun.sleep(1000);
+    L.off("request", spy);
+    const after = await api<{ links: unknown[]; batches: unknown[] }>("/library");
+    assert(after.links.length === before.links.length && after.batches.length === before.batches.length, "Open links saved to the Library");
+    assert(!writes.length, `library writes: ${writes.join(", ")}`);
+    await inSw(ctx, async (list: string[]) => {
+      for (const t of await chrome.tabs.query({})) if (list.some((u) => (t.url || t.pendingUrl || "").startsWith(u))) await chrome.tabs.remove(t.id!);
+    }, [...urls, already]);
+    return `2 tabs in new group “Later” (${group.id}) in window ${W1}; the already-open one kept its place; window ${W2} unchanged; 0 library writes`;
+  });
+  await check("pasting URLs in Browser opens Open links prefilled; nothing is saved", async () => {
+    const url = `${SITE}/fac184/pasted`;
+    const before = (await api<{ links: unknown[] }>("/library")).links.length;
+    await L.locator("main").click({ position: { x: 5, y: 5 } }).catch(() => {});
+    await L.evaluate((u) => {
+      const dt = new DataTransfer();
+      dt.setData("text/plain", u);
+      window.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true }));
+    }, url);
+    const dialog = L.getByRole("dialog", { name: "Open links" });
+    await waitFor("prefilled dialog", async () => (await dialog.isVisible()) && (await dialog.getByRole("textbox", { name: "Links to open" }).inputValue()) === url);
+    await shot(L, "fac184-paste-open-links");
+    await L.keyboard.press("Escape");
+    await Bun.sleep(1500);
+    const after = (await api<{ links: unknown[] }>("/library")).links.length;
+    const opened = await inSw(ctx, async (u: string) => (await chrome.tabs.query({})).filter((t) => (t.url || t.pendingUrl) === u).length, url);
+    assert(after === before && opened === 0, `links ${before} → ${after}; tabs ${opened}`);
+    return "dialog prefilled; Escape: 0 tabs opened, library unchanged";
   });
 
   section("Activity");

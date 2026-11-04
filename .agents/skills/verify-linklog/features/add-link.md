@@ -5,7 +5,7 @@ A user saves one URL or a pasted list. The link appears in the list at once, its
 ## Sub-features
 
 - `add-dialog` saves one URL from the Add link dialog, with optional tags.
-- `add-shortcut` opens the same dialog with ⌘K or Ctrl+K.
+- `add-shortcut` opens the same dialog from the ⌘K (Ctrl+K) command palette: its `Add links…` command.
 - `add-paste` saves a URL pasted outside any field, without a dialog.
 - `add-import` saves several URLs pasted into the dialog or onto the page as one batch, without tags.
 - `add-drop` saves a link dragged onto the page.
@@ -16,7 +16,7 @@ A user saves one URL or a pasted list. The link appears in the list at once, its
 
 - The toolbar `Add link` button. It shows as a `+` icon when the inspector is open, and keeps the same accessible name.
 - The `Add link` button in the empty state of an empty library.
-- ⌘K on macOS, or Ctrl+K elsewhere, from anywhere on the page.
+- ⌘K on macOS, or Ctrl+K elsewhere, opens the `Commands` palette from anywhere on the page; its `Add links…` row (Enter) opens the dialog.
 - Paste one URL or a list while focus is outside a text field.
 - Drag a link from another tab onto the page.
 
@@ -27,7 +27,7 @@ Preconditions:
 - The baseline from `README.md`.
 - `const url = fixture("article", "one")`, which has an immediate preview and Markdown.
 
-- **Open dialog.** Run `page.getByRole("button", { name: "Add link" }).first().click()` or `page.keyboard.press("ControlOrMeta+K")`. A dialog named `Add link` appears, with focus in its textbox.
+- **Open dialog.** Run `page.getByRole("button", { name: "Add link" }).first().click()`, or `page.keyboard.press("ControlOrMeta+K")` then `Enter` on `Add links…`. A dialog named `Add link` appears, with focus in its textbox.
 - **Save.** Run `dialog.getByRole("textbox").fill(url)` and then `dialog.getByRole("button", { name: /^Save/ }).click()`, where `dialog = page.getByRole("dialog", { name: "Add link" })`. The dialog closes, a `Link saved` toast appears, and the row shows while processing.
 - **Tags at save.** Before saving, click `Add tag` in the dialog, type a new name in the picker, and choose it. After the save, `(await api.link(url)).tags` contains it.
 - **Extraction settles.** Run `check` until `api.link(url)` has `!processing`, `status === "ready"`, `content_state === "ready"` and `attention_kind === null`. Allow a 60 s timeout. The row shows `QA article <path>` and `A normal page.`.
