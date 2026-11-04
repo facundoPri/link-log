@@ -202,21 +202,6 @@ export function actionForKey(e: KeyLike): BulkAction | null {
   );
 }
 
-const PROGRESS_VERB: Partial<Record<Batch["kind"], string>> = {
-  extract: "Extracting",
-  autotag: "Auto-tagging",
-  lens: "Running lens",
-};
-
-export type BulkProgress = { label: string; done: number; total: number };
-
-/** The run in progress among the batches started from the selection: the first kind that still has jobs, summed over its chunks. */
-export function bulkProgress(batches: Batch[], started: ReadonlySet<string>): BulkProgress | null {
-  const active = batches.filter((b) => started.has(b.id) && b.active > 0);
-  const kind = active[0]?.kind;
-  if (!kind) return null;
-  const same = active.filter((b) => b.kind === kind);
-  const total = same.reduce((n, b) => n + b.total, 0);
-  const left = same.reduce((n, b) => n + b.active, 0);
-  return { label: PROGRESS_VERB[kind] ?? "Working on", done: total - left, total };
-}
+/** The batch toast's progress line: jobs that have settled, however they ended, out of all of them. */
+export const batchProgressNote = (b: Pick<Batch, "total" | "done" | "failed" | "cancelled">) =>
+  `${b.done + b.failed + b.cancelled} of ${b.total}`;

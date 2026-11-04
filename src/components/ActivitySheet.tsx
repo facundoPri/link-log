@@ -35,7 +35,6 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
 import {
   Tooltip,
   TooltipContent,
@@ -439,12 +438,6 @@ export function ActivitySheet({
                     )}
                   />
                 </div>
-                {!!b.active && (
-                  <Progress
-                    value={((b.done + b.failed + b.cancelled) / Math.max(b.total, 1)) * 100}
-                    className="mx-3 h-1 w-auto"
-                  />
-                )}
                 <CollapsibleContent>
                   <BatchJobs batch={b} onLibrary={onLibrary} />
                 </CollapsibleContent>
