@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import {
   Check,
   ChevronRight,
@@ -15,10 +15,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { api } from "../api";
-import { useBatchJobs, useInvalidateBatches } from "../entities";
+import { useBatchJobs, useInvalidateBatches, useInvalidateUsage, useUsageTotals } from "../entities";
 import { useLibrary, useWriteLibrary } from "../library";
 import type { Library } from "../types";
-import type { Batch, Job, Lens, OcrUsage, UsageTotals } from "../types";
+import type { Batch, Job, Lens, OcrUsage } from "../types";
 import { LensVerdict } from "./LensVerdict";
 import { jobProgress } from "../failures";
 import { relativeTime } from "../lib/time";
@@ -294,23 +294,15 @@ export function ActivitySheet({ open, onOpenChange }: { open: boolean; onOpenCha
     if (open) void refetch();
   }, [open, refetch]);
   const { cancelBatch, retryFailed } = useActivityActions();
-  const [totals, setTotals] = useState<UsageTotals | null>(null);
+  const { data: totals } = useUsageTotals(open);
+  const invalidateUsage = useInvalidateUsage();
   const hadActive = useRef(false);
   const activeCount = batches.filter((b) => b.active).length;
+  // A batch settling adds to the totals, whether or not the sheet is open.
   useEffect(() => {
-    if (!open) {
-      hadActive.current = false;
-      return;
-    }
-    const justFinished = hadActive.current && !activeCount;
+    if (hadActive.current && !activeCount) invalidateUsage();
     hadActive.current = !!activeCount;
-    if (!justFinished && totals) return;
-    api<{ totals: UsageTotals }>("/usage")
-      .then((r) => {
-        setTotals(r.totals);
-      })
-      .catch(() => {});
-  }, [open, activeCount]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeCount, invalidateUsage]);
   const sorted = [...batches].sort((a, b) =>
     b.created_at.localeCompare(a.created_at),
   );

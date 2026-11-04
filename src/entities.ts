@@ -2,7 +2,7 @@ import { useCallback, useMemo } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
 import { POLL_MS } from "./library";
-import type { Batch, Job } from "./types";
+import type { Batch, Job, Usage, UsageTotals } from "./types";
 
 export const batchJobsKey = (batchId: string) => ["batch", batchId] as const;
 
@@ -70,4 +70,30 @@ export function useLinkContent(linkId: string, version: number) {
     placeholderData: (previous, previousQuery) =>
       previousQuery?.queryKey[1] === linkId ? previous : undefined,
   });
+}
+
+export const usageTotalsKey = ["usage"] as const;
+export const usageSummaryKey = ["usage-summary"] as const;
+
+/** What all work has cost, for Activity. It revalidates each time `enabled` turns on (the sheet opens). */
+export function useUsageTotals(enabled: boolean) {
+  return useQuery({
+    queryKey: usageTotalsKey,
+    queryFn: async () => (await api<{ totals: UsageTotals }>("/usage")).totals,
+    enabled,
+  });
+}
+
+/** Settings' usage summary: this hour's quota and this month's links and cost. */
+export function useUsageSummary() {
+  return useQuery({ queryKey: usageSummaryKey, queryFn: () => api<Usage>("/usage/summary") });
+}
+
+/** Cost totals and the usage summary follow the work: call this once a batch has settled. */
+export function useInvalidateUsage() {
+  const client = useQueryClient();
+  return useCallback(() => {
+    void client.invalidateQueries({ queryKey: usageTotalsKey });
+    void client.invalidateQueries({ queryKey: usageSummaryKey });
+  }, [client]);
 }
