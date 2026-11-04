@@ -16,8 +16,9 @@ import { adapterMessage, classify, logResidualFailure, LinkFailure } from "./fai
 import { JevFailure } from "./ai/jev";
 import { INTERRUPTED_USAGE } from "./usage";
 import { logJevBatchProgress, logJevJobStarted } from "./jev-metrics";
+import { parseBatchKind, type BatchKind } from "./job-routing";
 
-export type LoadedJob = JobRow & { kind: string; config: string; user_id: string };
+export type LoadedJob = JobRow & { kind: BatchKind; config: string; user_id: string };
 /**
  * Resolves the job owner from the persisted batch and loads its link or browser capture only for
  * that owner. Exported for tests: a job whose target belongs to someone else, or whose batch has
@@ -42,7 +43,8 @@ export async function loadOwnedJob(db: D1Database, jobId: string) {
   const target = row.target_id ? await loadTarget(db, row.target_id, row.user_id) : null;
   if (!link && !target)
     throw new Error(row.target_id ? "The browser capture no longer exists." : "The link no longer exists.");
-  return { job: row as LoadedJob, link, target };
+  const job: LoadedJob = { ...row, user_id: row.user_id, kind: parseBatchKind(row.kind) };
+  return { job, link, target };
 }
 
 
@@ -58,7 +60,7 @@ export class LinkWorkflow extends WorkflowEntrypoint<Env, { id: string }> {
         .run();
       // Cancelled between the read and the start.
       if (!started.meta.changes) throw new Error("The job was cancelled before it started.");
-      logJevJobStarted(row, row.kind);
+      logJevJobStarted(row);
       return { job: row, link, target };
     });
     const { job, link, target } = data;
@@ -121,7 +123,7 @@ export class LinkWorkflow extends WorkflowEntrypoint<Env, { id: string }> {
           ).bind(new Date().toISOString(), job.id),
           ...(job.link_id ? [promoteWaiting(env.DB, job.link_id)] : []),
         ]);
-        await logJevBatchProgress(env, job.id, job.kind);
+        await logJevBatchProgress(env, job);
       });
     } catch (error) {
       stoppedLinks = await step.do("record-failure", { retries: { limit: 5, delay: "2 seconds", backoff: "exponential" } }, async () => {
@@ -171,7 +173,7 @@ export class LinkWorkflow extends WorkflowEntrypoint<Env, { id: string }> {
         // Running jobs see this job's reason before they send (see judge).
         let stopped: (string | null)[] = [];
         if (jev?.reason === "account") {
-          const stop = await accountStop(env.DB, job, now, jev.detail.http_status ?? null);
+          const stop = await accountStop({ db: env.DB, job, now, httpStatus: jev.detail.http_status ?? null });
           stopped = stop.links;
           statements.push(...stop.statements);
         }
@@ -180,7 +182,7 @@ export class LinkWorkflow extends WorkflowEntrypoint<Env, { id: string }> {
         } finally {
           if (usedPreview) await dropUnusedPreview(env, link!.id, fallbackKey);
         }
-        await logJevBatchProgress(env, job.id, job.kind);
+        await logJevBatchProgress(env, job);
         return stopped;
       });
     } finally {

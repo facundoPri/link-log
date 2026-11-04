@@ -1,5 +1,5 @@
 import type { JobConfig, Pool } from "./handlers";
-import { runsInJevQueue, sendJobs, type BatchKind } from "./job-routing";
+import { parseBatchKind, runsInJevQueue, sendJobs, type BatchKind } from "./job-routing";
 import { badRequest } from "./http/context";
 import { capabilities, parseLensDefinition } from "./store";
 import { jevUnavailable } from "../src/attention";
@@ -57,7 +57,7 @@ export const promoteWaiting = (db: D1Database, linkId?: string, guard?: { sql: s
  * jobs stop without calling. The statements apply only once this job settled with that reason, in the same
  * transaction. Returns the stopped jobs' links, whose next waiting jobs start after it.
  */
-export async function accountStop(db: D1Database, job: { id: string; batch_id: string }, now: string, httpStatus: number | null) {
+export async function accountStop({ db, job, now, httpStatus }: { db: D1Database; job: { id: string; batch_id: string }; now: string; httpStatus: number | null }) {
   const links = (await db.prepare("SELECT link_id FROM jobs WHERE batch_id=? AND id<>? AND status IN ('queued','waiting')")
     .bind(job.batch_id, job.id).all<{ link_id: string | null }>()).results.map((r) => r.link_id);
   console.log(JSON.stringify({ event: "jev_batch_stopped", batch_id: job.batch_id, job_id: job.id, http_status: httpStatus, stopped: links.length }));
@@ -77,10 +77,10 @@ export async function startNext(env: Env, linkIds: (string | null)[]) {
   const ids = [...new Set(linkIds.filter((id): id is string => !!id))];
   if (!ids.length) return;
   const rows = await env.DB.prepare(`SELECT j.id,b.kind FROM jobs j JOIN batches b ON b.id=j.batch_id WHERE j.status='queued' AND j.link_id IN (SELECT value FROM json_each(?))`)
-    .bind(JSON.stringify(ids)).all<{ id: string; kind: BatchKind }>();
+    .bind(JSON.stringify(ids)).all<{ id: string; kind: string }>();
   if (!rows.results.length) return;
   try {
-    await sendJobs(env, rows.results);
+    await sendJobs(env, rows.results.map((r) => ({ id: r.id, kind: parseBatchKind(r.kind) })));
   } catch {
     console.error("Queue dispatch deferred to outbox recovery");
   }
@@ -112,14 +112,15 @@ export async function cancelJob(env: Env, userId: string, id: string) {
     const job = await env.DB.prepare("SELECT j.id,j.batch_id,j.link_id,j.status,b.kind FROM jobs j JOIN batches b ON b.id=j.batch_id WHERE j.id=? AND b.user_id=?")
       .bind(id, userId).first<JobRow & { kind: string }>();
     if (!job) return null;
+    const kind = parseBatchKind(job.kind);
     if (job.status === "done" || job.status === "failed") throw new JobFinished("This job already finished.");
     // A Jev queue job has no Workflow to stop: the cancel alone fences its writes, and a call already sent
     // finishes (billed) with its answer discarded. A Jev job still in a Workflow from before the queue is
     // fenced the same way, since every one of its writes and its call claim require it running.
-    if (job.status === "running" && !runsInJevQueue(job.kind)) await stopWorkflow(env, id);
+    if (job.status === "running" && !runsInJevQueue(kind)) await stopWorkflow(env, id);
     const now = new Date().toISOString();
     const won = "EXISTS (SELECT 1 FROM jobs WHERE id=? AND step='Cancelled' AND completed_at=?)";
-    const extract = job.kind === "extract" && !!job.link_id;
+    const extract = kind === "extract" && !!job.link_id;
     const results = await env.DB.batch([
       env.DB.prepare(
         `UPDATE jobs SET status='failed',step='Cancelled',error=CASE WHEN jev_call IS NOT NULL THEN ? ELSE 'Cancelled' END,reason=NULL,attempt_started_at=NULL,completed_at=? WHERE id=? AND status IN (${job.status === "running" ? "'running'" : "'queued','waiting'"})`,
@@ -264,8 +265,8 @@ export async function recover(env: Env) {
     // Unassigned legacy batches stay untouched until adjudicated; they have no owner to run as.
     // A running job the consumer never started (no started_at) belongs to a Workflow.
     "SELECT j.id,b.kind,j.status='running' AND j.started_at IS NULL AS in_workflow FROM jobs j JOIN batches b ON b.id=j.batch_id WHERE b.user_id IS NOT NULL AND j.status IN ('queued','running') ORDER BY j.created_at LIMIT 100",
-  ).all<{ id: string; kind: BatchKind; in_workflow: number }>();
-  if (rows.results.length) await sendJobs(env, rows.results.map((r) => ({ id: r.id, kind: r.kind, inWorkflow: !!r.in_workflow })));
+  ).all<{ id: string; kind: string; in_workflow: number }>();
+  if (rows.results.length) await sendJobs(env, rows.results.map((r) => ({ id: r.id, kind: parseBatchKind(r.kind), inWorkflow: !!r.in_workflow })));
 }
 export async function dispatch(batch: MessageBatch<{ id: string }>, env: Env) {
   for (const m of batch.messages) {

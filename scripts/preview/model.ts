@@ -7,7 +7,7 @@ export const WRANGLER_VERSION = "4.136.1";
 // A preview gets one queue per entry, named `<worker>-<queue minus "linklog-">`, so adding a queue
 // there provisions, binds and tears it down in previews with no second list.
 type Consumer = { queue: string; max_batch_size: number; max_batch_timeout: number; max_retries: number; max_concurrency: number };
-const { producers, consumers } = wrangler.queues as { producers: { binding: string; queue: string }[]; consumers: Consumer[] };
+const { queues: { producers, consumers } }: { queues: { producers: { binding: string; queue: string }[]; consumers: Consumer[] } } = wrangler;
 const QUEUES = producers.map(({ binding, queue }) => {
   const consumer = consumers.find(c => c.queue === queue);
   if (!consumer || !queue.startsWith("linklog-")) throw new Error(`wrangler.jsonc queue ${queue} needs a consumer and a linklog- prefix`);

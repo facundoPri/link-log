@@ -1,11 +1,18 @@
+const BATCH_KINDS = ["extract", "preview", "autotag", "lens", "query", "browser-lens", "browser-autogroup"] as const;
 /** The kind of the batch a job belongs to (`batches.kind`). */
-export type BatchKind = "extract" | "preview" | "autotag" | "lens" | "query" | "browser-lens" | "browser-autogroup";
+export type BatchKind = (typeof BATCH_KINDS)[number];
+/** A `batches.kind` read from D1. Throws on a kind this code does not know. */
+export function parseBatchKind(value: unknown): BatchKind {
+  const kind = BATCH_KINDS.find((k) => k === value);
+  if (!kind) throw new Error(`Unknown batch kind: ${String(value)}`);
+  return kind;
+}
 
 export type JobMessage = { id: string };
 
-// Jobs of these kinds run directly in the Jev queue's consumer, with no Workflow (ADR 0001).
-const JEV_QUEUE_KINDS = new Set<string>(["autotag", "lens", "query", "browser-lens", "browser-autogroup"] satisfies BatchKind[]);
-export const runsInJevQueue = (kind: string) => JEV_QUEUE_KINDS.has(kind);
+// Jobs of these kinds call Jev. They run directly in the Jev queue's consumer, with no Workflow (ADR 0001).
+const JEV_KINDS = new Set<BatchKind>(["autotag", "lens", "query", "browser-lens", "browser-autogroup"]);
+export const runsInJevQueue = (kind: BatchKind) => JEV_KINDS.has(kind);
 
 /** Whether a consumer batch comes from the Jev queue (`linklog-jev`, `linklog-jev-production`). */
 export const isJevQueue = (name: string) => /-jev(-production)?$/.test(name);

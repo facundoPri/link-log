@@ -194,8 +194,8 @@ describe("resource lifecycle against mock Cloudflare API", () => {
         script: n.worker, type: "worker", consumer_id: "3".repeat(32),
       }] } } : existing(call));
     const found = await resources(cf, repo, pr, true);
-    expect(found.queues.jobs.queue_id).toBe(queueId);
-    expect(found.queues.jev.queue_id).toBe(jevQueueId);
+    expect(found.queues.jobs?.queue_id).toBe(queueId);
+    expect(found.queues.jev?.queue_id).toBe(jevQueueId);
     expect(calls.every(c => c.method === "GET")).toBe(true);
   });
   test("cleanup recognizes the live script field and stops its consumer first", async () => {
