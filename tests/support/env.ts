@@ -26,11 +26,14 @@ export const TEST_ORIGIN = "http://localhost:3000";
 
 export function makeEnv(db: TestD1, overrides: Record<string, unknown> = {}) {
   const outbox: SentEmail[] = [];
+  // Jobs sent to either queue (jobs or Jev), in send order.
   const queued: { id: string }[] = [];
+  const queue = { sendBatch: async (messages: { body: { id: string } }[]) => void queued.push(...messages.map((m) => m.body)) };
   const env = {
     DB: db.d1,
     CONTENT: new FakeR2(),
-    JOBS: { sendBatch: async (messages: { body: { id: string } }[]) => void queued.push(...messages.map((m) => m.body)) },
+    JOBS: queue,
+    JEV_JOBS: queue,
     PROCESS_LINK: {},
     EMAIL: { send: async (message: SentEmail) => (outbox.push(message), { messageId: crypto.randomUUID() }) },
     ASSETS: { fetch: async () => new Response("<!doctype html><title>Linklog</title>", { headers: { "content-type": "text/html" } }) },

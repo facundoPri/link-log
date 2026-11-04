@@ -44,7 +44,8 @@ test("a batch logs queue wait, call latency, first result, duration and its 429 
   const log = capture();
   const batch = (await s.api("/batches", "POST", { kind: "autotag", ids })).data.batchId as string;
   tick(3000);
-  await s.runQueued();
+  // One delivery at a time, so each call's scripted latency is its own on the shared clock.
+  for (const m of s.jevSent.splice(0)) await s.runJob(m.body.id);
   log.stop();
   const jobs = s.db.query("SELECT id,status FROM jobs WHERE batch_id=? ORDER BY rowid").all(batch) as { id: string; status: string }[];
   expect(jobs.map((j) => j.status)).toEqual(["done", "failed", "done"]);

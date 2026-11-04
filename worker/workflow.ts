@@ -5,7 +5,7 @@ import {
 } from "cloudflare:workers";
 import { browserHandlers, handlers, type BrowserTargetRow, type Pool } from "./handlers";
 import { preservedContentStateSql } from "./content-state";
-import { poolLimit, contentMissing, promoteWaiting, startNext, type Config, type JobRow } from "./jobs";
+import { accountStop, poolLimit, contentMissing, promoteWaiting, startNext, type Config, type JobRow } from "./jobs";
 import type { Link } from "../src/types";
 
 import { contentPrefix } from "./store";
@@ -13,7 +13,6 @@ import { contentFailureAttentionSql } from "./attention";
 import { canUsePreview, dropUnusedPreview, readPreview, storePreview, usePreviewStatement } from "./preview-content";
 import { adapterMessage, classify, logResidualFailure, LinkFailure } from "./failures";
 import { JevFailure } from "./ai/jev";
-import { JEV_FAILURE_MESSAGES } from "../src/failures";
 import { INTERRUPTED_USAGE } from "./usage";
 import { logJevBatchProgress, logJevJobStarted } from "./jev-metrics";
 
@@ -177,16 +176,9 @@ export class LinkWorkflow extends WorkflowEntrypoint<Env, { id: string }> {
         // Running jobs see this job's reason before they send (see judge).
         let stopped: (string | null)[] = [];
         if (jev?.reason === "account") {
-          stopped = (await env.DB.prepare("SELECT link_id FROM jobs WHERE batch_id=? AND id<>? AND status IN ('queued','waiting')")
-            .bind(job.batch_id, job.id).all<{ link_id: string | null }>()).results.map((r) => r.link_id);
-          statements.push(
-            env.DB.prepare(
-              `UPDATE jobs SET status='failed',step='Stopped',error=?,reason='account_stopped',completed_at=? WHERE batch_id=? AND id<>? AND status IN ('queued','waiting') AND EXISTS (SELECT 1 FROM jobs WHERE id=? AND status='failed' AND reason='account')`,
-            ).bind(JEV_FAILURE_MESSAGES.account_stopped, now, job.batch_id, job.id, job.id),
-            // Jobs of other batches waiting behind a stopped one start now.
-            promoteWaiting(env.DB),
-          );
-          console.log(JSON.stringify({ event: "jev_batch_stopped", batch_id: job.batch_id, job_id: job.id, http_status: jev.detail.http_status ?? null, stopped: stopped.length }));
+          const stop = await accountStop(env.DB, job, now, jev.detail.http_status ?? null);
+          stopped = stop.links;
+          statements.push(...stop.statements);
         }
         try {
           await env.DB.batch(statements);
