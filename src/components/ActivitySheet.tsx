@@ -15,6 +15,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { api } from "../api";
+import { useLibrary, useWriteLibrary } from "../library";
 import type { Library } from "../types";
 import type { Batch, Job, Lens, OcrUsage, UsageTotals } from "../types";
 import { LensVerdict } from "./LensVerdict";
@@ -305,17 +306,14 @@ async function cancelBatch(id: string, onLibrary: (l: Library) => void) {
   }
 }
 
-export function ActivitySheet({
-  open,
-  batches,
-  onOpenChange,
-  onLibrary,
-}: {
-  open: boolean;
-  batches: Batch[];
-  onOpenChange: (open: boolean) => void;
-  onLibrary: (library: Library) => void;
-}) {
+export function ActivitySheet({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const { data, refetch } = useLibrary();
+  const batches = data?.batches ?? [];
+  const onLibrary = useWriteLibrary();
+  // Shows the cached batches right away and fetches the latest each time it opens.
+  useEffect(() => {
+    if (open) void refetch();
+  }, [open, refetch]);
   const [totals, setTotals] = useState<UsageTotals | null>(null);
   const hadActive = useRef(false);
   const activeCount = batches.filter((b) => b.active).length;

@@ -1541,12 +1541,7 @@ export function App({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      <ActivitySheet
-        open={activityOpen}
-        batches={library.batches}
-        onOpenChange={setActivityOpen}
-        onLibrary={setLibrary}
-      />
+      <ActivitySheet open={activityOpen} onOpenChange={setActivityOpen} />
       {dragging && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
           <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed p-10 text-center">
