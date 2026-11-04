@@ -34,7 +34,7 @@ import { copyLinks } from "./lib/copy-links";
 import { useQueryClient } from "@tanstack/react-query";
 import { failureMessage } from "./failures";
 import { batchJobsOptions, useRunningJobs } from "./entities";
-import { emptyLibrary, useInvalidateLibrary, useLibrary, useWriteLibrary } from "./library";
+import { emptyLibrary, useLibrary, useWriteLibrary } from "./library";
 import { useSessionRuns } from "./sessionRuns";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -97,7 +97,6 @@ export function App({
   const loaded = !libraryQuery.isPending;
   const loadError = libraryQuery.isLoadingError ? libraryQuery.error.message : "";
   const setLibrary = useWriteLibrary();
-  const refresh = useInvalidateLibrary();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [picked, setPicked] = useState<string[]>([]);
   const [view, setView] = useState<View>("all");
@@ -340,7 +339,6 @@ export function App({
           toast(`Skipped ${skipped.length} ${skipped.length === 1 ? "link" : "links"} without content`, {
             description: "Extract the content first.",
           });
-        await refresh();
       } catch (e) {
         toast.error((e as Error).message);
         throw e;
@@ -348,7 +346,7 @@ export function App({
         setRunning(false);
       }
     },
-    [refresh, setLibrary, trackBatch],
+    [setLibrary, trackBatch],
   );
 
   // Keyboard: ⌘K add (or the bulk palette while links are selected), T/L/E/C bulk actions, / search, Esc close
@@ -849,10 +847,7 @@ export function App({
       lenses={libraryLenses}
       onClose={() => setActiveId(null)}
       onChange={setLibrary}
-      onDeleted={() => {
-        void refresh();
-        setActiveId(null);
-      }}
+      onDeleted={() => setActiveId(null)}
       onRunLens={(lens) => void runBatch("lens", [activeLink.id], lens.id)}
       onOpenLens={(id) => setView({ kind: "lens", id })}
       onToggleTag={toggleTagFilter}

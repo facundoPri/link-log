@@ -138,8 +138,8 @@ async function recordFeedback(page: Page) {
     if (w.__feedback) clearInterval(w.__feedback.timer);
     const old = new WeakSet(document.querySelectorAll("[data-sonner-toast]"));
     const index = new WeakMap<Element, number>();
-    const rec = { timer: 0 as unknown as ReturnType<typeof setInterval>, toasts: [] as string[][], sidebar: [] as string[] };
-    rec.timer = setInterval(() => {
+    const rec = { timer: 0 as unknown as ReturnType<typeof setInterval>, sample: () => {}, toasts: [] as string[][], sidebar: [] as string[] };
+    rec.sample = () => {
       for (const el of document.querySelectorAll("[data-sonner-toast]")) {
         if (old.has(el)) continue;
         if (!index.has(el)) index.set(el, rec.toasts.push([]) - 1);
@@ -149,13 +149,16 @@ async function recordFeedback(page: Page) {
       }
       const indicator = [...document.querySelectorAll("aside button")].map((b) => (b.textContent ?? "").trim()).find((t) => /^(Activity|Applying lens|Autogrouping|Extracting|Auto-tagging|Fetching preview)/.test(t));
       if (indicator && rec.sidebar.at(-1) !== indicator) rec.sidebar.push(indicator);
-    }, 100);
+    };
+    rec.timer = setInterval(rec.sample, 100);
     w.__feedback = rec;
   });
   return (): Promise<Feedback> =>
     page.evaluate(() => {
-      const rec = (window as unknown as { __feedback: { timer: ReturnType<typeof setInterval>; toasts: string[][]; sidebar: string[] } }).__feedback;
+      const rec = (window as unknown as { __feedback: { timer: ReturnType<typeof setInterval>; sample: () => void; toasts: string[][]; sidebar: string[] } }).__feedback;
       clearInterval(rec.timer);
+      // The last change can land between two samples.
+      rec.sample();
       return { toasts: rec.toasts, sidebar: rec.sidebar };
     });
 }

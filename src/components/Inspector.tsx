@@ -1011,7 +1011,7 @@ export function Inspector({
             <AlertDialogAction
               onClick={async () => {
                 try {
-                  await api(`/links/${link.id}`, "DELETE");
+                  onChange(await api(`/links/${link.id}`, "DELETE"));
                   toast.success("Link deleted");
                   onDeleted();
                 } catch (e) {
