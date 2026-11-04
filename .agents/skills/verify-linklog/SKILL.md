@@ -9,7 +9,7 @@ Linklog is a personal link library: a React UI (Bun server on the UI port, proxy
 
 The instance runs the QA Worker from `qa/video/worker-entry.ts`. It is the product Worker with fakes at its external edges. DNS, preview fetches, Browser Rendering Markdown and Jev answer from the fixture catalog in `qa/video/fixtures.ts`, and every other outbound fetch is refused. A run therefore costs nothing and cannot reach a real site. Use a fixture URL whenever a journey saves a link. Any other host is treated as unreachable.
 
-All commands run from the repo root. `V` below stands for `bun .agents/skills/verify-linklog/scripts/verify.ts`.
+All commands run from the repo root. `V` below stands for `.agents/skills/verify-linklog/scripts/verify.ts`, run as `bun $V up` (or the command written out). Keep `bun` out of the variable: zsh does not split `$V`, so `V="bun …"; $V` fails.
 
 ## Launch
 
@@ -77,6 +77,7 @@ Driving rules:
 - Make every claim a `check`, and assert both the UI and the API. The UI polls the library, so it can trail the API by a second or two. Check the API first, then check the UI with a polling `check`.
 - Extraction is asynchronous. Wait for `!link.processing` plus the end state you expect (`status`, `content_state`, `attention_kind`), not for a fixed delay.
 - Pick fixtures by behavior. `README.md` in `qa/video/` has the catalog, and `about` on each entry in `qa/video/fixtures.ts` says what it does. Examples: `article` (preview and content right away), `gone` (404), `down` (503 every time), `flaky` (503 once, then OK), `login-wall`, `pdf`, `blocked`, `nowhere` (DNS miss) and `article-yes` (content with a `jev:yes` marker, so fixture Jev applies tags).
+- Assert a formatted value (a cost, a count, a duration) as a number through `api` first. When the rendered text matters, read its formatter and match every form it can print with an anchored pattern: `<$0.0001` contains `$0.00`. Seed values at production magnitude, so the formatter shows what users see.
 
 The feature map in `features/README.md` lists every user-facing feature with its entry points, handles and end states. Read the feature's file before you write its journey.
 
@@ -95,6 +96,15 @@ Proof standards:
 - Check side effects alongside the visible UI: stored content (`GET /links/:id/content`), jobs (`GET /batches/:id`), tags and scores (`api.library()`).
 - Fixtures replace only the external systems: DNS, sites, Browser Rendering and Jev. D1, R2, Queues, Workflows, auth and email run for real on the local runtime.
 - When you report, give the evidence path, the PASS/FAIL line, and the features or entry points you did not cover.
+
+### Before and after for a PR
+
+To show a change fixes something, run the same journey on `origin/main` and on the branch:
+1. `git worktree add ../<slug>-before origin/main`, copy the journey into its `journeys/`, `bun install --frozen-lockfile` there.
+2. In that worktree, `bun $V up --ui-port 3600 --api-port 9300` (ports clear of the branch instance), then `bun $V run <journey>`. A failing check on `main` is the "before" evidence.
+3. Run it on the branch, `bun $V down` in both, then `git worktree remove ../<slug>-before`.
+
+PR screenshots live on an orphan branch, never on `main`: `git worktree add --orphan -b <ticket>-evidence <dir>`, files under `<ticket>/before/` and `<ticket>/after/`, linked as `https://raw.githubusercontent.com/<owner>/<repo>/<ticket>-evidence/<ticket>/<file>`. Pushing it creates a remote branch; say so in the PR.
 
 ## Cleanup
 

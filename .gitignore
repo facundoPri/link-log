@@ -47,6 +47,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 !/docs/agents/issue-tracker.md
 !/docs/agents/triage-labels.md
 !/docs/agents/domain.md
+!/docs/adr/
 
 # Isolated Chrome profiles and packaged extensions
 /.profiles/

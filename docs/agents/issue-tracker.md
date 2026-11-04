@@ -10,7 +10,8 @@ Issues and specs live in the existing [Linklog project](https://linear.app/facun
 
 Use the connected Linear tools. If using Orca's CLI, first load the `orca-linear` skill and its version-matched guide.
 
-- Fetch a ticket by its `FAC-<number>` identifier, UUID, or Linear URL; include comments when relevant.
+- Fetch a ticket by its `FAC-<number>` identifier, UUID, or Linear URL, with its comments. A later comment that records an owner decision overrides the description.
+- When the owner decides something in conversation that changes a ticket's scope or behaviour, record it as a ticket comment, quoting their words, before implementing it. A review's spec is the description plus those comments.
 - List issues scoped to the Linklog project. Project-search results alone do not establish whether it has tickets.
 - When a skill says to publish an issue or spec, create an issue in this project and team. Check for an existing ticket first.
 - Apply the label names in `docs/agents/triage-labels.md`. Read the existing labels before editing and preserve unrelated labels.
@@ -35,6 +36,8 @@ authorization for that action.
 | Deliver the ticket's result for review, with verification evidence and a non-draft PR when code is involved | `In Review`                         |
 | All code required by the ticket is merged into `main`                                                       | `Done`                              |
 | The owner accepts a research or decision ticket's deliverable                                               | `Done`, without requiring a code PR |
+
+Verification evidence for `In Review` is two runs, both reported in the PR before the status changes: the `code-review` skill against `origin/main` with the ticket as its spec, and the change proven on the surface where the symptom shows (`verify-linklog` for the web UI or API, `bun run test:browser` for the extension). Passing tests alone are not that evidence.
 
 Reading a board or proposing possible work does not start every ticket mentioned.
 Keep draft or incomplete work `In Progress`. A ready PR moves to `In Review`
