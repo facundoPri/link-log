@@ -131,12 +131,13 @@ async function evaluate(env: Env, run: Run, attempt: number, abandoned: boolean)
     return { subject, config, result: await judge(env, state, questions, run) };
   } catch (error) {
     const failure = beforeCall(error);
-    if (failure.phase === "sent" || !subject) throw failure;
-    // A failure outside the provider's answer (metering, say) may still come after the claim: the claim decides.
+    if (failure.phase === "sent") throw failure;
+    // A failure outside the provider's answer (metering, or loading a taken-over job) may come after the claim: the claim decides.
     const row = await env.DB.prepare("SELECT jev_call,jev_outcome FROM jobs WHERE id=?").bind(run.id)
       .first<Pick<Run, "jev_call" | "jev_outcome">>().catch((e: unknown) => { throw uncertain(e); });
     const recorded = row ? recordedCall(row) : null;
     if (!recorded) throw failure;
+    if (!subject) throw uncertain(failure.detail.technical ?? failure.message);
     return { subject, config, result: recorded };
   }
 }

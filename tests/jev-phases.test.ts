@@ -362,6 +362,18 @@ for (const [name, setupFault] of [
   });
 }
 
+test("a run taken over after its call was sent settles as possibly billed even when its link can't be read", async () => {
+  const { s, ids } = await start();
+  const calls = provider(() => new Promise<Response>(() => {}));
+  s.queue.timeoutMs = 20;
+  const batch = await autotag(s, ids);
+  await s.runQueued();
+  fakes.failSql = /^SELECT \* FROM links WHERE id=\? AND user_id=\?/;
+  await abandon(s);
+  expect(calls.n).toBe(1);
+  expect(jobs(s, batch)[0]).toMatchObject({ status: "failed", reason: "interrupted", error: JEV_FAILURE_MESSAGES.interrupted });
+});
+
 test("a redelivery that can't read its job fails closed: it never sends, and is retried", async () => {
   const { s, ids } = await start();
   const calls = provider(() => new Promise<Response>(() => {}));
@@ -486,4 +498,17 @@ test("a successful answer whose metering outlives the step is recovered, not pai
   hold.open();
   await Bun.sleep(10);
   expect(usage(s)).toEqual([{ job_id: jobs(s, batch)[0]!.id, status: "done" }]);
+});
+
+test("a run taken over with a recorded answer it can't save, its link unreadable, settles as possibly billed", async () => {
+  const { s, ids } = await start();
+  const calls = provider(answer);
+  holdFinalize();
+  s.queue.timeoutMs = 20;
+  const batch = await autotag(s, ids);
+  await s.runQueued();
+  fakes.failSql = /^SELECT \* FROM links WHERE id=\? AND user_id=\?/;
+  await abandon(s);
+  expect(calls.n).toBe(1);
+  expect(jobs(s, batch)[0]).toMatchObject({ status: "failed", reason: "interrupted", error: JEV_FAILURE_MESSAGES.interrupted });
 });
