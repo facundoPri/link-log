@@ -20,6 +20,7 @@ env:
   CI: 'true'
 
 jobs:
+  # Same steps as check.yml, which runs them on every PR.
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 15
