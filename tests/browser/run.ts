@@ -173,6 +173,18 @@ async function activityRows(page: Page, label: RegExp) {
   return rows;
 }
 
+/** Opens Activity from the sidebar once it shows running work, and returns the text of the row for `label` while that row is still running. */
+async function activeActivityRow(page: Page, label: RegExp) {
+  await page.locator("aside").getByRole("button", { name: /^(Applying lens|Autogrouping)/ }).click({ timeout: 20000 });
+  const sheet = page.getByRole("dialog", { name: "Activity" });
+  await sheet.waitFor();
+  const row = sheet.locator("div").filter({ has: page.getByText(label) }).filter({ has: page.getByRole("button", { name: "Cancel batch" }) }).last();
+  const text = await waitFor("a running row in Activity", async () => (await row.count()) > 0 && (await row.innerText()), 10000);
+  await page.keyboard.press("Escape");
+  await sheet.waitFor({ state: "hidden" });
+  return text;
+}
+
 // ---------- run ----------
 await rm(EVIDENCE, { recursive: true, force: true });
 await mkdir(EVIDENCE, { recursive: true });
@@ -241,7 +253,8 @@ try {
     for (const t of await chrome.tabs.query({})) if (t.id !== keep) await chrome.tabs.remove(t.id!);
   }, l1Tab.id!);
   const W2 = await inSw(ctx, async (urls: string[]) => (await chrome.windows.create({ url: urls, focused: false }))!.id!, [0, 1, 2].map((i) => `${SITE}/w2/${i}`));
-  const w1Ids = await createTabs(ctx, W1, Array.from({ length: 20 }, (_, i) => art(i, i % 2 ? "jev:no" : "jev:yes")));
+  // Tab 0 answers slowly, so a run over the window stays active long enough to watch it in Activity.
+  const w1Ids = await createTabs(ctx, W1, Array.from({ length: 20 }, (_, i) => art(i, i === 0 ? "jev:slow=3000 jev:yes" : i % 2 ? "jev:no" : "jev:yes")));
   await check("lists only the tabs of Linklog's window (20 here, 3 in the other window)", async () => {
     await waitFor("20 rows", async () => (await rowCount(L1)) === 20, 20000);
     const text = await L1.locator("main").innerText();
@@ -264,16 +277,19 @@ try {
   await L1.reload();
   await L1.locator("aside").getByRole("button", { name: /^Browser/ }).click();
   let activation: Feedback | null = null;
+  let live = "";
   await check("activating lens A evaluates all 20 tabs once", async () => {
     // An activation covers the tabs that are readable when it happens: wait until every row shows its preview.
     await waitFor("20 readable rows", async () => (await L1.locator("[data-tab-id]", { hasText: "Fixture page" }).count()) === 20, 20000);
     const feedback = await recordFeedback(L1);
     await toggleLens(L1, "Relevant");
+    live = await activeActivityRow(L1, /^Browser lens: Relevant/);
     await settle(ctx, lensA.id, 20);
     const n = await calls();
     assert(n === 20, `expected 20 provider calls, got ${n}`);
     await waitFor("verdicts in rows", async () => (await L1.locator("[data-tab-id]", { hasText: /Yes|No/ }).count()) === 20);
     await shot(L1, "02-lens-active");
+    await waitFor("completion toast", async () => (await L1.locator("[data-sonner-toast]", { hasText: "Lens applied to 20 tabs" }).count()) > 0, 10000);
     activation = await feedback();
     return "20 Jev calls (fixture provider)";
   });
@@ -285,9 +301,11 @@ try {
     assert(progress.length === 1, `expected 1 progress toast, got ${progress.length}: ${JSON.stringify(activation.toasts)}`);
     const done = toastsMatching(activation.toasts, /Lens applied to 20 tabs/);
     assert(done.length === 1, `expected 1 completion toast, got ${done.length}: ${JSON.stringify(activation.toasts)}`);
+    const progressed = /(\d+)\/20/.exec(live);
+    assert(progressed && Number(progressed[1]) < 20, `Activity didn't show the running batch's progress: ${JSON.stringify(live)}`);
     const rows = await activityRows(L1, /^Browser lens: Relevant/);
     assert(rows === 1, `expected 1 "Browser lens: Relevant" row in Activity, got ${rows}`);
-    return `sidebar ${running.slice(0, 3).join(" → ")}…; toast ${progress[0]!.join(" → ")}; 1 Activity row`;
+    return `sidebar ${running.slice(0, 3).join(" → ")}…; toast ${progress[0]!.join(" → ")}; Activity row while running: ${progressed[0]}`;
   });
   await check("toggling lens A off and on reuses results (0 new calls)", async () => {
     await toggleLens(L1, "Relevant");
@@ -527,6 +545,38 @@ try {
     assert((await cacheStats(ctx, lensA.id)).done === 0, "results remain");
     assert((await L.locator("aside button[aria-pressed=true]", { hasText: "Relevant" }).count()) === 0, "lens still active");
     return "0 results for A, A off, lens definition kept";
+  });
+
+  await check("activating a lens while another lens's run is in flight runs it at once with its toast; the next automatic run stays quiet", async () => {
+    const answered = () => L.locator(`[data-lens-cell="${lensA.id}"]`, { hasText: /Yes|No|Unsure/ }).count();
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let held = false;
+    await L.route("**/api/browser/evaluations", async (route) => {
+      if (route.request().method() === "POST" && !held) {
+        held = true;
+        await gate;
+      }
+      await route.continue();
+    });
+    const activation = await recordFeedback(L);
+    await createTabs(ctx, W1, [art(34, "jev:yes")]);
+    await waitFor("lens B's automatic run held at its POST", async () => held, 20000);
+    await toggleLens(L, "Relevant");
+    await Bun.sleep(1500);
+    release();
+    const tabs = await rowCount(L);
+    const ranAtOnce = await waitFor("lens A answered every tab", async () => (await answered()) === tabs, 30000).then(() => true, () => false);
+    const first = toastsMatching((await activation()).toasts, /Applying lens|Lens applied/);
+    const automatic = await recordFeedback(L);
+    await createTabs(ctx, W1, [art(35, "jev:no")]);
+    await waitFor("lens A answered the new tab too", async () => (await answered()) === tabs + 1, 30000);
+    await waitFor("lens B settled", async () => (await cacheStats(ctx, lensB.id)).inflight === 0, 30000);
+    await Bun.sleep(1500);
+    const later = toastsMatching((await automatic()).toasts, /Applying lens|Lens applied/);
+    await L.unroute("**/api/browser/evaluations");
+    assert(ranAtOnce && first.length === 1 && later.length === 0, `ran at once: ${ranAtOnce}; activation toasts ${JSON.stringify(first)}; automatic run toasts ${JSON.stringify(later)}`);
+    return `lens A ran over ${tabs} tabs right after lens B's run, one toast (${first[0]!.at(-1)}); the next automatic run: 0 toasts`;
   });
 
   section("States that are not answers");
