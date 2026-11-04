@@ -4,7 +4,7 @@ status: accepted
 
 # Jev jobs run in their own queue, not in Workflows
 
-Jev jobs (lens, auto-tag, query) run directly in the consumer of a dedicated `linklog-jev` Queue, and the Queue's `max_batch_size × max_concurrency` is the ceiling on simultaneous Jev calls. This replaces one Workflow per job holding a slot in the D1 `provider_leases` pool, which waited blindly in 2-second retries and capped throughput far below Jev's rate limit. Extraction and Browser jobs stay in Workflows, because their many durable steps need it (FAC-180).
+Jev jobs (lens, auto-tag, query, and the Browser lens and autogroup evaluations) run directly in the consumer of a dedicated `linklog-jev` Queue, and the Queue's `max_batch_size × max_concurrency` is the ceiling on simultaneous Jev calls. This replaces one Workflow per job holding a slot in the D1 `provider_leases` pool, which waited blindly in 2-second retries and capped throughput far below Jev's rate limit. Extraction jobs stay in Workflows, because their many durable steps need it (FAC-180).
 
 ## Considered Options
 
