@@ -4,7 +4,8 @@ export const GEMMA_USD_PER_M_OUTPUT = 0.30;
 /**
  * Browser Rendering, Quick Actions (the Markdown and content calls): $0.09 per browser hour, billed on browser
  * time only. Cloudflare's pricing page (developers.cloudflare.com/browser-run/pricing, updated 2026-04-21, read
- * 2026-11-01). This is the list price above the plan's 10 free hours a month, so it overstates a small account.
+ * 2026-11-01). Always the list price, never net of the plan's 10 free hours a month: a customer is charged
+ * for every call whatever our own allowance or discount (FAC-168).
  */
 export const BROWSER_USD_PER_HOUR = 0.09;
 export const OCR_USAGE_COLUMNS = "sum(service='image-ocr') ocr_images,sum(CASE WHEN service='image-ocr' THEN input_tokens ELSE 0 END) ocr_input_tokens,sum(CASE WHEN service='image-ocr' THEN output_tokens ELSE 0 END) ocr_output_tokens,max(CASE WHEN service='image-ocr' THEN model END) ocr_model,sum(CASE WHEN service='image-ocr' THEN estimated_usd END) ocr_usd,sum(service='image-ocr' AND estimated_usd IS NULL) ocr_unknown_cost_calls";
