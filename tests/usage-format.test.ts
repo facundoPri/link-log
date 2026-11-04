@@ -11,6 +11,7 @@ test("units read in the unit a feature is billed in", () => {
 
 test("a small estimate keeps its digits; nothing billed reads as a dash", () => {
   expect([formatUsd(0.0009), formatUsd(0.042), formatUsd(12.5)]).toEqual(["$0.0009", "$0.042", "$12.50"]);
+  expect(formatUsd(0.000045)).toBe("<$0.0001");
   expect(featureCost({ usd: 0.042 })).toBe("$0.042");
   expect(featureCost({ usd: 0 })).toBe("—");
 });

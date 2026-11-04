@@ -16,7 +16,7 @@ export function formatBrowserTime(ms: number) {
 
 /** Small amounts keep their digits ($0.0009): an estimate that rounds to $0.00 would hide the spend. */
 export const formatUsd = (usd: number) =>
-  new Intl.NumberFormat("en", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: usd > 0 && usd < 1 ? 4 : 2 }).format(usd);
+  usd > 0 && usd < 0.0001 ? "<$0.0001" : new Intl.NumberFormat("en", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: usd > 0 && usd < 1 ? 4 : 2 }).format(usd);
 
 /** What a feature used, in the units it is billed in: tokens and/or browser time. */
 export const featureUnits = (f: Pick<FeatureUsage, "inputTokens" | "outputTokens" | "browserMs">) =>

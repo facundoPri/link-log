@@ -3,6 +3,7 @@
 // GET /api/usage/summary. No feature is capped; every run is counted, retries included.
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { fakes, resetClock, setup } from "./worker-harness";
+import { recover } from "../worker/jobs";
 
 let spy: ReturnType<typeof spyOn>;
 beforeEach(() => void (spy = spyOn(console, "log").mockImplementation(() => {})));
@@ -135,6 +136,31 @@ test("a browser call cut short by a cancel is priced at the service's average, n
   const { rows } = await features(s);
   expect(rows.content).toMatchObject({ unknownCostCalls: 0 });
   expect(rows.content!.usd).toBeCloseTo(0.0018, 10);
+  const activity = await activityUsage(s);
+  expect(activity.unknown_cost_calls).toBe(0);
+  expect(activity.usd).toBeCloseTo(0.0018, 10);
+});
+
+test("a browser call left started when its job settled is priced by recovery at the owner's recent average", async () => {
+  const s = await setup();
+  fakes.browser = renders(36_000);
+  const id = await save(s, URL_1);
+  await runAll(s);
+  fakes.browser = renders(72_000);
+  expect((await s.api("/batches", "POST", { kind: "extract", ids: [id] })).status).toBe(200);
+  await runAll(s);
+  fakes.browser = renders(18_000);
+  expect((await s.api("/batches", "POST", { kind: "extract", ids: [id] })).status).toBe(200);
+  await runAll(s);
+  s.db.exec("UPDATE usage_events SET status='started',browser_ms=NULL,estimated_usd=NULL WHERE rowid=(SELECT max(rowid) FROM usage_events WHERE service='browser-markdown')");
+  await recover(s.env);
+  const { rows } = await features(s);
+  expect(rows.content).toMatchObject({ runs: 3, unknownCostCalls: 0 });
+  // 0.0009 + 0.0018 for the two finished calls, plus their average for the interrupted one.
+  expect(rows.content!.usd).toBeCloseTo(0.0027 + 0.00135, 10);
+  const activity = await activityUsage(s);
+  expect(activity.unknown_cost_calls).toBe(0);
+  expect(activity.usd).toBeCloseTo(0.00405, 10);
 });
 
 test("a call that finishes without a price is logged as an error", async () => {

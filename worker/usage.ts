@@ -10,10 +10,13 @@ export const GEMMA_USD_PER_M_OUTPUT = 0.30;
 export const BROWSER_USD_PER_HOUR = 0.09;
 export const OCR_USAGE_COLUMNS = "sum(service='image-ocr') ocr_images,sum(CASE WHEN service='image-ocr' THEN input_tokens ELSE 0 END) ocr_input_tokens,sum(CASE WHEN service='image-ocr' THEN output_tokens ELSE 0 END) ocr_output_tokens,max(CASE WHEN service='image-ocr' THEN model END) ocr_model,sum(CASE WHEN service='image-ocr' THEN estimated_usd END) ocr_usd,sum(service='image-ocr' AND estimated_usd IS NULL) ocr_unknown_cost_calls";
 /**
- * Settles a call cut short before it reported its units (a crash, a cancel, an abandoned attempt). It may
- * still be billed, so it is priced at the average of the service's finished calls (FAC-168).
+ * The estimate for a call cut short before it reported its units (a crash, a cancel, an abandoned attempt):
+ * it may still be billed, so it costs the average of the owner's last 50 finished calls to that service, or
+ * everyone's when the owner has none (FAC-168). Migration 0027 applies the same estimate to older rows.
  */
-export const INTERRUPTED_USAGE = "status='failed',error='Provider call interrupted before completion',estimated_usd=(SELECT avg(p.estimated_usd) FROM usage_events p WHERE p.service=usage_events.service AND p.status='done' AND p.estimated_usd IS NOT NULL)";
+const recentAverage = (owner: string) =>
+  `(SELECT avg(e) FROM (SELECT p.estimated_usd e FROM usage_events p WHERE ${owner}p.service=usage_events.service AND p.status='done' AND p.estimated_usd IS NOT NULL ORDER BY p.created_at DESC LIMIT 50))`;
+export const INTERRUPTED_USAGE = `status='failed',error='Provider call interrupted before completion',estimated_usd=coalesce(${recentAverage("p.user_id=usage_events.user_id AND ")},${recentAverage("")})`;
 /** A stored row keeps the price known when it finished: adding a rate needs a backfill migration (0027). */
 export function priceUsage(u: {
   provider: string;

@@ -6,7 +6,7 @@ import type { FeatureUsage } from "../src/types";
 //
 // Usage rows (`usage_events`) carry the tokens, browser time and estimated cost of every provider call;
 // `jobs` and `batches` give the runs. Cost comes from `priceUsage`: a call it cannot price is counted
-// in `unknownCostCalls`, never as free.
+// in `unknownCostCalls` (logged as `usage_unpriced`, not shown to users), never as free.
 export type UsageFeatureKey = "extract" | "content" | "lens" | "autotag" | "ocr" | "autogroup";
 
 type FeatureDefinition = {
