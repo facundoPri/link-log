@@ -68,7 +68,8 @@ async function consume(env: Env, message: Message<JobMessage>) {
       : env.DB.prepare("UPDATE jobs SET status='running',step='Preparing content',started_at=? WHERE id=? AND status='queued'").bind(now, run.id)
     ).run();
     if (!started.meta.changes) return message.ack();
-    if (!abandoned) logJevJobStarted(run, run.kind);
+    // started_at survives a retry: only the job's first start is logged.
+    if (run.started_at === null) logJevJobStarted(run, run.kind);
     if ((await execute(env, run, abandoned)) === "retry") return message.retry({ delaySeconds: RETRY_DELAY_S });
     message.ack();
   } catch (error) {
