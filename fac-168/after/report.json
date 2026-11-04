@@ -1,0 +1,100 @@
+{
+  "journey": "/Users/facundopri/orca/workspaces/link-log/fac-168-costs-grill-docs/.agents/skills/verify-linklog/journeys/usage-no-unpriced.ts",
+  "ui": "http://127.0.0.1:3400",
+  "commit": "ca72bcb+dirty",
+  "startedAt": "2026-11-04T14:49:32.778Z",
+  "status": "passed",
+  "steps": [
+    {
+      "ms": 373,
+      "text": "An article is extracted: its Browser call is priced by browser time"
+    },
+    {
+      "ms": 1711,
+      "text": "Auto-tag runs with the fixture Jev, which has no rate"
+    },
+    {
+      "ms": 3055,
+      "text": "A page whose Browser call hangs is cancelled from Activity while the call runs"
+    },
+    {
+      "ms": 6229,
+      "text": "Activity shows a cost and nothing about unknown costs"
+    },
+    {
+      "ms": 7222,
+      "text": "Settings > Usage shows each feature's cost and never 'unpriced'"
+    }
+  ],
+  "checks": [
+    {
+      "name": "API: the article has content",
+      "ok": true,
+      "ms": 1318
+    },
+    {
+      "name": "API: Autotag +1 run, counted as unpriced in the API only",
+      "ok": true,
+      "ms": 1297
+    },
+    {
+      "name": "API: the hanging page has a Browser call in flight",
+      "ok": true,
+      "ms": 1366
+    },
+    {
+      "name": "Exactly one batch is still running",
+      "ok": true,
+      "ms": 6
+    },
+    {
+      "name": "The running job offers Cancel",
+      "ok": true,
+      "ms": 320
+    },
+    {
+      "name": "API: the cancelled call is failed, interrupted, and priced",
+      "ok": true,
+      "ms": 43
+    },
+    {
+      "name": "API: Content has no unpriced calls, and its cost grew by the priced and the estimated call",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "Activity header shows a dollar total",
+      "ok": true,
+      "ms": 4
+    },
+    {
+      "name": "Activity never says unpriced, costs unknown or known subtotal",
+      "ok": true,
+      "ms": 3
+    },
+    {
+      "name": "Content row shows a cost that is not $0.00",
+      "ok": true,
+      "ms": 44
+    },
+    {
+      "name": "Autotag row shows a dash, not 'unpriced'",
+      "ok": true,
+      "ms": 4
+    },
+    {
+      "name": "Usage never says unpriced",
+      "ok": true,
+      "ms": 2
+    }
+  ],
+  "artifacts": [
+    "01-activity-running-job.png",
+    "01-usage.json",
+    "02-activity.png",
+    "02-activity.aria.yml",
+    "03-settings-usage.png",
+    "03-settings-usage.aria.yml",
+    "video.webm"
+  ]
+}

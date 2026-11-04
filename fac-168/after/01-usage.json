@@ -1,0 +1,57 @@
+{
+  "interrupted": {
+    "id": "9a2c3d93-a03b-498f-bdda-b0e2c63faeec",
+    "batch_id": "0a35c895-5a05-4836-a111-875e65d392e3",
+    "job_id": "c8de00c0-f38e-4a83-9209-efc9085c3286",
+    "link_id": "4e7fdb42-3318-4e47-991b-938b293d75a2",
+    "provider": "cloudflare",
+    "service": "browser-markdown",
+    "model": null,
+    "operation": "extract",
+    "status": "failed",
+    "input_tokens": null,
+    "output_tokens": null,
+    "browser_ms": null,
+    "estimated_usd": 0.000022499999999999998,
+    "rate_snapshot": "{}",
+    "created_at": "2026-11-04T14:49:36.894Z",
+    "duration_ms": null,
+    "error": "Provider call interrupted before completion",
+    "title": "Hanging article usage-no-unpriced-144932/cancelled",
+    "usd": 0.000022499999999999998
+  },
+  "content": {
+    "key": "content",
+    "label": "Content (browser)",
+    "runs": 4,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "browserMs": 1800,
+    "usd": 0.00008999999999999999,
+    "unknownCostCalls": 0
+  },
+  "autotag": {
+    "key": "autotag",
+    "label": "Autotag",
+    "runs": 2,
+    "inputTokens": 228,
+    "outputTokens": 24,
+    "browserMs": 0,
+    "usd": 0,
+    "unknownCostCalls": 2
+  },
+  "total": {
+    "usd": 0.00008999999999999999,
+    "unknownCostCalls": 2
+  },
+  "autotagBefore": {
+    "key": "autotag",
+    "label": "Autotag",
+    "runs": 2,
+    "inputTokens": 228,
+    "outputTokens": 24,
+    "browserMs": 0,
+    "usd": 0,
+    "unknownCostCalls": 2
+  }
+}

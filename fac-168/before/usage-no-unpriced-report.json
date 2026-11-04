@@ -1,0 +1,60 @@
+{
+  "journey": "/Users/facundopri/orca/workspaces/link-log/fac168-before/.agents/skills/verify-linklog/journeys/usage-no-unpriced.ts",
+  "ui": "http://127.0.0.1:3600",
+  "commit": "6f5ade7",
+  "startedAt": "2026-11-04T14:50:13.971Z",
+  "status": "failed",
+  "steps": [
+    {
+      "ms": 3584,
+      "text": "An article is extracted: its Browser call is priced by browser time"
+    },
+    {
+      "ms": 4859,
+      "text": "Auto-tag runs with the fixture Jev, which has no rate"
+    },
+    {
+      "ms": 6083,
+      "text": "A page whose Browser call hangs is cancelled from Activity while the call runs"
+    }
+  ],
+  "checks": [
+    {
+      "name": "API: the article has content",
+      "ok": true,
+      "ms": 1130
+    },
+    {
+      "name": "API: Autotag +1 run, counted as unpriced in the API only",
+      "ok": true,
+      "ms": 1161
+    },
+    {
+      "name": "API: the hanging page has a Browser call in flight",
+      "ok": true,
+      "ms": 1152
+    },
+    {
+      "name": "Exactly one batch is still running",
+      "ok": true,
+      "ms": 32
+    },
+    {
+      "name": "The running job offers Cancel",
+      "ok": true,
+      "ms": 318
+    },
+    {
+      "name": "API: the cancelled call is failed, interrupted, and priced",
+      "ok": false,
+      "ms": 30207,
+      "error": "still false after 30 s"
+    }
+  ],
+  "artifacts": [
+    "01-activity-running-job.png",
+    "failed.png",
+    "video.webm"
+  ],
+  "error": "API: the cancelled call is failed, interrupted, and priced: still false after 30 s"
+}
