@@ -205,3 +205,17 @@ export function actionForKey(e: KeyLike): BulkAction | null {
 /** The batch toast's progress line: jobs that have settled, however they ended, out of all of them. */
 export const batchProgressNote = (b: Pick<Batch, "total" | "done" | "failed" | "cancelled">) =>
   `${b.done + b.failed + b.cancelled} of ${b.total}`;
+
+/**
+ * The running batch toast, the only progress indicator: its progress line, Cancel, and Activity. Opening
+ * Activity keeps the toast on screen.
+ */
+export const runningBatchToast = ({ batch, onCancel, onActivity }: {
+  batch: Pick<Batch, "total" | "done" | "failed" | "cancelled">;
+  onCancel: () => void;
+  onActivity: () => void;
+}) => ({
+  description: batchProgressNote(batch),
+  cancel: { label: "Cancel", onClick: onCancel },
+  action: { label: "Activity", onClick: (event: { preventDefault(): void }) => { event.preventDefault(); onActivity(); } },
+});

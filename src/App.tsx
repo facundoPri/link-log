@@ -30,7 +30,7 @@ import { BrowserDialogs } from "./components/browser/BrowserDialogs";
 import { useBrowserActions } from "./browser/useBrowserActions";
 import { usd, tokens } from "./lib/format";
 import { submitInChunks, type BatchReply } from "./batches";
-import { actionForKey, actionStates, BULK_ACTIONS, batchProgressNote, lacksContent, type BulkAction, type BulkRunners } from "./bulkActions";
+import { actionForKey, actionStates, BULK_ACTIONS, runningBatchToast, lacksContent, type BulkAction, type BulkRunners } from "./bulkActions";
 import { copyLinks } from "./lib/copy-links";
 import { failureMessage } from "./failures";
 import { Toaster } from "@/components/ui/sonner";
@@ -266,8 +266,7 @@ export function App({
       if (b.active > 0) {
         toast.loading(`${verb} ${n} ${n === 1 ? "link" : "links"}…`, {
           id: b.id,
-          description: batchProgressNote(b),
-          action: { label: "Cancel", onClick: () => void cancelBatch(b.id) },
+          ...runningBatchToast({ batch: b, onCancel: () => void cancelBatch(b.id), onActivity: () => setActivityOpen(true) }),
         });
       } else if (b.cancelled === n) {
         toast("Cancelled", { id: b.id });
@@ -870,8 +869,6 @@ export function App({
                     : activeBatch.kind === "preview"
                       ? "Fetching preview"
                       : "Applying lens",
-              done: activeBatch.done + activeBatch.failed + activeBatch.cancelled,
-              total: activeBatch.total,
             }
           : null
       }
