@@ -11,6 +11,8 @@ import {
 import { call, cancelTargets, evaluationStatus, evaluationTargets, OfflineError, postEvaluation } from "./api";
 import type { BrowserState } from "./useBrowser";
 import { claimRounds } from "./claimRounds";
+import { useInvalidateLibrary } from "../library";
+import type { SessionRun, StartRun } from "../sessionRuns";
 
 export const lensRef = (lens: Lens): LensRef => ({ id: lens.id, fingerprint: lensFingerprint(lens) });
 
@@ -25,8 +27,9 @@ const POLL_IDLE_MS = 5000;
  * extension (which stores the request id first), POSTs them, polls, deposits
  * results back into the extension cache and confirms them to the backend.
  */
-export function useLensRunner(browser: BrowserState, active: Lens[], allLenses: Lens[], enabled: boolean) {
+export function useLensRunner(browser: BrowserState, active: Lens[], allLenses: Lens[], enabled: boolean, startRun: StartRun) {
   const { request, connection, snapshot, catalog, hello, resultsVersion } = browser;
+  const invalidateLibrary = useInvalidateLibrary();
   const [results, setResults] = useState<Record<string, Record<string, LensRecord>>>({});
   const [pendingCount, setPendingCount] = useState(0);
   const [offline, setOffline] = useState<string | null>(null);
@@ -65,9 +68,19 @@ export function useLensRunner(browser: BrowserState, active: Lens[], allLenses: 
     void loadResults();
   }, [loadResults, snapshot?.revision, resultsVersion]);
 
+  /** Records an accepted request; its batch enters the library, so Activity and the sidebar show it. */
+  const accepted = useCallback(
+    async (requestId: string, status: { batchId: string; targets: { targetKey: string; jobId: string }[] }, run?: SessionRun) => {
+      await request("accepted", { requestId, batchId: status.batchId, jobs: status.targets.map((t) => ({ targetKey: t.targetKey, jobId: t.jobId })) });
+      run?.add(status.batchId);
+      void invalidateLibrary();
+    },
+    [request, invalidateLibrary],
+  );
+
   /** POSTs one claim; on a lost response the request id stays in the extension for recovery. */
   const submit = useCallback(
-    async (ref: LensRef, claim: ClaimResult) => {
+    async (ref: LensRef, claim: ClaimResult, run?: SessionRun) => {
       if (!claim.requestId || !claim.targets.length || !catalog || !hello) return;
       const body = {
         kind: "lens" as const,
@@ -87,8 +100,7 @@ export function useLensRunner(browser: BrowserState, active: Lens[], allLenses: 
       }
       if (res.status === 409 && res.data.code === "conflict") {
         const existing = await evaluationStatus(claim.requestId).catch(() => null);
-        if (existing?.status === 200)
-          await request("accepted", { requestId: claim.requestId, batchId: existing.data.batchId, jobs: existing.data.targets.map((t) => ({ targetKey: t.targetKey, jobId: t.jobId })) });
+        if (existing?.status === 200) await accepted(claim.requestId, existing.data, run);
         return;
       }
       if (res.status >= 400) {
@@ -97,31 +109,51 @@ export function useLensRunner(browser: BrowserState, active: Lens[], allLenses: 
         if (res.status === 429) setNotice(res.data.error || "Processing limit reached. Try again later.");
         return;
       }
-      await request("accepted", {
-        requestId: claim.requestId,
-        batchId: res.data.batchId,
-        jobs: res.data.targets.map((t) => ({ targetKey: t.targetKey, jobId: t.jobId })),
-      });
+      await accepted(claim.requestId, res.data, run);
     },
-    [catalog, hello, request],
+    [catalog, hello, request, accepted],
   );
 
   /** Claims and POSTs in rounds; an explicit set of tabs is evaluated exactly once per call. */
   const claimAndSubmit = useCallback(
-    (ref: LensRef, extra: Omit<ClaimArgs, "lens" | "limit" | "tabInstanceIds"> & { tabInstanceIds?: string[] } = {}) =>
-      claimRounds(
-        (tabInstanceIds) => request("claim", { ...extra, lens: ref, limit: 20, tabInstanceIds }, 120_000),
-        (claim) => submit(ref, claim),
-        extra.tabInstanceIds,
-      ),
+    async (ref: LensRef, extra: Omit<ClaimArgs, "lens" | "limit" | "tabInstanceIds"> & { tabInstanceIds?: string[] } = {}, run?: SessionRun) => {
+      try {
+        await claimRounds(
+          (tabInstanceIds) => request("claim", { ...extra, lens: ref, limit: 20, tabInstanceIds }, 120_000),
+          (claim) => submit(ref, claim, run),
+          extra.tabInstanceIds,
+        );
+      } finally {
+        run?.end();
+      }
+    },
     [request, submit],
   );
 
-  // Auto-complete: every active lens covers every eligible tab of the window.
+  // Auto-complete: every active lens covers every eligible tab of the window. The fill round right
+  // after the user activates a lens is that user's run, with its toast; any other round runs quietly.
+  // A mark lasts until the next round or until the runner turns out to be off, so a later automatic
+  // fill never inherits it.
+  const activated = useRef(new Set<string>());
+  /** The next fill round of these lenses is the user's activation, not an automatic one. */
+  const markActivated = useCallback((lensIds: string[], on: boolean) => {
+    for (const id of lensIds) {
+      if (on) activated.current.add(id);
+      else activated.current.delete(id);
+    }
+  }, []);
+  // A round that repeats because the lenses changed while it ran covers the lenses active now.
+  const latestRefs = useRef(refs);
+  useEffect(() => {
+    latestRefs.current = refs;
+  }, [refs]);
   const running = useRef(false);
   const again = useRef(false);
   const fill = useCallback(async () => {
-    if (!enabled || !connected || !refs.length) return;
+    if (!enabled || !connected || !refs.length) {
+      activated.current.clear();
+      return;
+    }
     if (running.current) {
       again.current = true;
       return;
@@ -130,14 +162,16 @@ export function useLensRunner(browser: BrowserState, active: Lens[], allLenses: 
     try {
       do {
         again.current = false;
-        for (const ref of refs) await claimAndSubmit(ref);
+        const explicit = activated.current;
+        activated.current = new Set();
+        for (const ref of latestRefs.current) await claimAndSubmit(ref, {}, explicit.has(ref.id) ? startRun() : undefined);
       } while (again.current);
     } catch {
       /* surfaced through record states */
     } finally {
       running.current = false;
     }
-  }, [enabled, connected, refs, claimAndSubmit]);
+  }, [enabled, connected, refs, claimAndSubmit, startRun]);
 
   useEffect(() => {
     const timer = setTimeout(() => void fill(), 350);
@@ -188,8 +222,7 @@ export function useLensRunner(browser: BrowserState, active: Lens[], allLenses: 
         }
         if (res.status !== 200) continue;
         const status = res.data;
-        if (!req.batchId)
-          await request("accepted", { requestId: req.requestId, batchId: status.batchId, jobs: status.targets.map((t) => ({ targetKey: t.targetKey, jobId: t.jobId })) });
+        if (!req.batchId) await accepted(req.requestId, status);
         const items: DepositItem[] = status.targets
           .filter((t) => t.state !== "acked")
           .map((t) => ({
@@ -209,7 +242,7 @@ export function useLensRunner(browser: BrowserState, active: Lens[], allLenses: 
         if (done.length) await call(`/browser/evaluations/${req.requestId}/ack`, "POST", { targetKeys: done }).catch(() => {});
       }
     }
-  }, [connected, request, submit]);
+  }, [connected, request, submit, accepted]);
 
   // One self-scheduling loop: faster while work is pending. Result events don't restart it.
   const pollRef = useRef(poll);
@@ -242,9 +275,10 @@ export function useLensRunner(browser: BrowserState, active: Lens[], allLenses: 
      * exactly once per call, including ones that already have an answer.
      */
     evaluate: async (lens: Lens, tabInstanceIds: string[], source: "dom" | "metadata" = "dom") => {
-      await claimAndSubmit(lensRef(lens), { tabInstanceIds, force: true, source });
+      await claimAndSubmit(lensRef(lens), { tabInstanceIds, force: true, source }, startRun());
       await poll();
     },
+    markActivated,
     /** Clean: drop results, bump generation, cancel exactly the cleaned targets' queued work. */
     clean: async (lensIds: string[], tabInstanceIds?: string[]) => {
       const { removed, requests } = await request("clean", { lensIds, tabInstanceIds });
