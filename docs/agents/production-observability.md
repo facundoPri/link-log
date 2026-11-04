@@ -11,7 +11,7 @@ What production (`https://linklog.facundopri.com`, `wrangler.jsonc` → `env.pro
 | Workflow instances (`linklog-process-link-production`, id = job id) | When `create()` ran ("Queued"), when it started, each step's start, end, output and error. | `wrangler workflows instances describe` |
 | Workers Logs | `console.log` JSON events, mostly failures (`grep -rhoE 'event: "[a-z_]+"' worker` lists them). | Dashboard → Workers → linklog → Logs. The Observability API answers 403 to Wrangler's OAuth token. |
 | `wrangler tail` | Live invocations: URL, outcome, wall/CPU time, logs, exceptions. Only while connected. | `bunx wrangler tail linklog --format json` |
-| Queue `linklog-jobs-production` | Producers and consumers. | `wrangler queues info` |
+| Queues `linklog-jobs-production`, `linklog-jev-production` | Producers and consumers. Lens, auto-tag and query jobs run in the Jev queue's consumer with no Workflow instance; their D1 `jobs` row (`started_at`, `jev_call`, `jev_outcome`) is the record. | `wrangler queues info` |
 | Deployments | Which version is live, and its tag/message. | `wrangler deployments list --env production` |
 
 ### Jev timing events (Workers Logs)

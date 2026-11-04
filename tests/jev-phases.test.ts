@@ -1,9 +1,13 @@
 // FAC-54: Jev failures are split by phase. Before the request is sent (no cost) only known border cases
 // (a transient R2 read, a D1 conflict or timeout) are retried, once. After it may have been sent nothing is
 // retried automatically. An account error (401/402/403, balance, quota) stops the rest of its batch.
+// FAC-193: these jobs run from the Jev queue's consumer. The pre-call retry is a message retry, and a run whose
+// consumer invocation died is settled from what it recorded once it is abandoned, never sent again.
 import { afterEach, expect, test } from "bun:test";
-import { fakes, resetClock, setup } from "./worker-harness";
+import { fakes, resetClock, setup, tick } from "./worker-harness";
 import { judge, JevFailure } from "../worker/ai/jev";
+import { ABANDONED_MS } from "../worker/jev-queue";
+import { recover } from "../worker/jobs";
 import { JEV_FAILURE_MESSAGES, jobProgress } from "../src/failures";
 
 afterEach(resetClock);
@@ -40,7 +44,16 @@ const jobs = (s: S, batch: string) =>
   s.db.query("SELECT id,link_id,status,step,error,reason,attempt,max_attempts FROM jobs WHERE batch_id=? ORDER BY rowid").all(batch) as
     { id: string; link_id: string; status: string; step: string; error: string | null; reason: string | null; attempt: number | null; max_attempts: number | null }[];
 const usage = (s: S) => s.db.query("SELECT job_id,status FROM usage_events WHERE service='jev' ORDER BY rowid").all() as { job_id: string; status: string }[];
-const jevSteps = (s: S) => s.steps.filter((x) => x.name === "evaluate-jev");
+// How each delivery of the job's messages ended, in order.
+const deliveries = (s: S, job: string) => s.deliveries.filter((d) => d.job === job).map((d) => d.outcome);
+// The consumer invocation running the job died: the platform redelivers, and once the run is abandoned the
+// periodic recovery's resend settles it.
+async function abandon(s: S) {
+  s.queue.timeoutMs = undefined;
+  tick(ABANDONED_MS + 1);
+  await recover(s.env);
+  await s.runQueued();
+}
 
 test("a transient R2 read error before the call is retried once and succeeds with one provider call", async () => {
   const { s, ids } = await start();
@@ -50,7 +63,8 @@ test("a transient R2 read error before the call is retried once and succeeds wit
   content.get = async (k: string) => (failures-- > 0 ? Promise.reject(new Error("We encountered an internal error. Please try again.")) : get(k));
   const batch = await autotag(s, ids);
   await s.runQueued();
-  expect(jevSteps(s)[0]).toMatchObject({ attempts: 2, retries: { limit: 1 } });
+  expect(deliveries(s, jobs(s, batch)[0]!.id)).toEqual(["retry", "ack"]);
+  expect(s.deliveries[0]!.delaySeconds).toBe(5);
   expect(calls.n).toBe(1);
   expect(jobs(s, batch)[0]).toMatchObject({ status: "done", attempt: 2, max_attempts: 2 });
   expect(usage(s)).toEqual([{ job_id: jobs(s, batch)[0]!.id, status: "done" }]);
@@ -67,8 +81,16 @@ test("a D1 conflict before the call is retried once; Activity shows the attempt 
       during = s.db.query("SELECT status,step,attempt,max_attempts,reason,attempt_started_at,attempt_budget_ms FROM jobs WHERE reason IS NOT NULL").get();
   };
   const batch = await autotag(s, ids);
+  await s.deliver(s.jevSent.splice(0));
+  // While the retry waits in the queue, Activity shows the coming attempt and why the last one failed.
+  const waiting = (await s.api(`/batches/${batch}`)).data.jobs[0];
+  expect(waiting).toMatchObject({ status: "queued", attempt: 2, max_attempts: 2, reason: "storage_busy" });
+  expect(jobProgress(waiting)).toEqual({
+    step: "Preparing content · Attempt 2 of 2 · Waiting to retry",
+    note: `Previous attempt: ${JEV_FAILURE_MESSAGES.storage_busy}`,
+  });
   await s.runQueued();
-  expect(jevSteps(s)[0]!.attempts).toBe(2);
+  expect(deliveries(s, jobs(s, batch)[0]!.id)).toEqual(["retry", "ack"]);
   expect(calls.n).toBe(1);
   expect(jobs(s, batch)[0]!.status).toBe("done");
   // Between the attempts the job carries attempt 2 of 2 and the previous reason.
@@ -85,7 +107,7 @@ test("pre-call failures that persist end after 2 attempts, with no provider call
   (s.env.CONTENT as any).get = async () => { throw new Error("R2 internal error"); };
   const batch = await autotag(s, ids);
   await s.runQueued();
-  expect(jevSteps(s)[0]!.attempts).toBe(2);
+  expect(deliveries(s, jobs(s, batch)[0]!.id)).toEqual(["retry", "ack"]);
   expect(jobs(s, batch)[0]).toMatchObject({ status: "failed", step: "Failed", error: JEV_FAILURE_MESSAGES.storage_busy, reason: "storage_busy" });
   expect(calls.n).toBe(0);
   expect(usage(s)).toEqual([]);
@@ -98,7 +120,7 @@ test("missing saved content is not a border case: one attempt, no call, no usage
   (s.env.CONTENT as any).get = async () => null;
   const batch = await autotag(s, ids);
   await s.runQueued();
-  expect(jevSteps(s)[0]!.attempts).toBe(1);
+  expect(deliveries(s, jobs(s, batch)[0]!.id)).toEqual(["ack"]);
   expect(jobs(s, batch)[0]).toMatchObject({ status: "failed", error: "Saved content is missing. Extract it again.", reason: "before_call" });
   expect(calls.n + usage(s).length).toBe(0);
 });
@@ -108,9 +130,9 @@ test("a provider 5xx is not retried; Activity says it may have been billed and a
   const calls = provider(() => new Response("upstream", { status: 503 }), answer);
   const batch = await autotag(s, ids);
   await s.runQueued();
-  expect(jevSteps(s)[0]!.attempts).toBe(1);
-  expect(calls.n).toBe(1);
   const [job] = jobs(s, batch);
+  expect(deliveries(s, job!.id)).toEqual(["ack"]);
+  expect(calls.n).toBe(1);
   expect(job).toMatchObject({ status: "failed", step: "Failed", error: "Jev returned an error (may have been billed).", reason: "provider_error" });
   expect(usage(s)).toEqual([{ job_id: job!.id, status: "failed" }]);
   // Activity lists the job with that copy; the link never enters Needs attention.
@@ -160,20 +182,24 @@ test("network errors and timeouts after sending are not retried", async () => {
     const batch = await autotag(s, ids);
     await s.runQueued();
     expect(calls.n).toBe(1);
-    expect(jevSteps(s)[0]!.attempts).toBe(1);
+    expect(deliveries(s, jobs(s, batch)[0]!.id)).toEqual(["ack"]);
     expect(["network", "no_answer"]).toContain(jobs(s, batch)[0]!.reason!);
     expect(usage(s).map((u) => u.status)).toEqual(["failed"]);
   }
 });
 
-test("an attempt the engine ended after sending is never sent again", async () => {
+test("a run whose invocation died after sending is never sent again; once abandoned it settles as possibly billed", async () => {
   const { s, ids } = await start();
   const calls = provider(() => new Promise<Response>(() => {}));
-  s.engine.timeoutMs = 20;
+  s.queue.timeoutMs = 20;
   const batch = await autotag(s, ids);
   await s.runQueued();
-  expect(jevSteps(s)[0]!.attempts).toBe(2);
+  // The redelivery finds the job running and leaves it to its run.
+  expect(deliveries(s, jobs(s, batch)[0]!.id)).toEqual(["killed", "ack"]);
+  expect(jobs(s, batch)[0]!.status).toBe("running");
+  await abandon(s);
   expect(calls.n).toBe(1);
+  expect(usage(s)).toEqual([{ job_id: jobs(s, batch)[0]!.id, status: "failed" }]);
   expect(jobs(s, batch)[0]).toMatchObject({ status: "failed", reason: "interrupted", error: JEV_FAILURE_MESSAGES.interrupted });
 });
 
@@ -183,25 +209,27 @@ test("an account error on the first job stops the rest of the batch with no furt
   // belongs to another batch.
   const extract = (await s.api("/batches", "POST", { kind: "extract", ids: [ids[2]] })).data.batchId;
   s.sent.splice(0);
+  expect(s.jevSent).toEqual([]);
   const calls = provider(() => Response.json({ error: "Insufficient balance" }, { status: 402 }));
   const batch = await autotag(s, ids);
   const lens = (await s.api("/lenses", "POST", { name: "Useful", type: "noul", question: "Is it useful?", threshold: 0.8 })).data.lenses[0];
   const other = (await s.api("/batches", "POST", { kind: "lens", ids: [ids[2]], lensId: lens.id })).data.batchId;
   expect(jobs(s, batch).map((j) => j.status)).toEqual(["queued", "queued", "waiting"]);
 
-  const [first] = s.sent.splice(0, 1);
-  await s.runJob(first!.body.id);
+  const [first] = s.jevSent.splice(0, 1);
+  await s.deliver([first!]);
   expect(calls.n).toBe(1);
   const [a, b, c] = jobs(s, batch);
   expect(a).toMatchObject({ status: "failed", reason: "account", error: JEV_FAILURE_MESSAGES.account });
   for (const j of [b, c]) expect(j).toMatchObject({ status: "failed", step: "Stopped", reason: "account_stopped", error: JEV_FAILURE_MESSAGES.account_stopped });
   // The second job's queue message is ignored; nothing else calls Jev or writes Usage.
-  await s.runQueued();
+  await s.drainJev();
   expect(calls.n).toBe(1);
   expect(usage(s)).toEqual([{ job_id: a!.id, status: "failed" }]);
   // The extraction still runs, and the other batch's lens (outside the stopped batch) runs after it.
   await s.runJob(jobs(s, extract)[0]!.id);
   expect(jobs(s, other)[0]!.status).toBe("queued");
+  expect(s.jevSent.map((m) => m.body.id)).toEqual([jobs(s, other)[0]!.id]);
   for (const id of ids) expect((await s.view(id)).attention).toBe(false);
   // Retrying the stopped batch from Activity enqueues all three links again.
   const retry = await s.api(`/batches/${batch}/retry`, "POST", {});
@@ -216,7 +244,7 @@ test("a job already past its start sees the account stop and fails before callin
   const [a, b] = jobs(s, batch);
   // Job a was refused by Jev while b was already on its way (dequeued before the stop).
   s.db.query("UPDATE jobs SET status='failed',step='Failed',reason='account' WHERE id=?").run(a!.id);
-  s.sent.splice(0);
+  s.jevSent.splice(0);
   await s.runJob(b!.id);
   expect(calls.n).toBe(0);
   expect(usage(s)).toEqual([]);
@@ -269,7 +297,7 @@ const gate = () => {
 };
 const claimSql = /^UPDATE jobs SET jev_call=/;
 
-test("a first attempt delayed before its claim, released after the second attempt finished, never sends", async () => {
+test("a run whose invocation died before its claim never sends, even when it resumes after being settled", async () => {
   const { s, ids } = await start();
   const calls = provider(answer);
   const hold = gate();
@@ -277,16 +305,16 @@ test("a first attempt delayed before its claim, released after the second attemp
   fakes.onSql = async (sql, phase) => {
     if (phase === "write" && claimSql.test(sql) && !paused) await (paused = hold.opened);
   };
-  s.engine.timeoutMs = 20;
+  s.queue.timeoutMs = 20;
   const batch = await autotag(s, ids);
   await s.runQueued();
-  expect(jobs(s, batch)[0]!.status).toBe("done");
-  expect(calls.n).toBe(1);
+  await abandon(s);
+  expect(jobs(s, batch)[0]).toMatchObject({ status: "failed", reason: "before_call", error: JEV_FAILURE_MESSAGES.before_call });
   hold.open();
   await Bun.sleep(10);
-  expect(calls.n).toBe(1);
-  expect(usage(s)).toEqual([{ job_id: jobs(s, batch)[0]!.id, status: "done" }]);
-  expect(jobs(s, batch)[0]!.status).toBe("done");
+  expect(calls.n).toBe(0);
+  expect(usage(s)).toEqual([]);
+  expect(jobs(s, batch)[0]!.status).toBe("failed");
 });
 
 test("a running job paused right before its claim does not send once another job stopped the batch", async () => {
@@ -296,7 +324,7 @@ test("a running job paused right before its claim does not send once another job
   const lens = (await s.api("/lenses", "POST", { name: "Useful", type: "noul", question: "Is it useful?", threshold: 0.8 })).data.lenses[0];
   const other = (await s.api("/batches", "POST", { kind: "lens", ids: [ids[1]], lensId: lens.id })).data.batchId;
   const [a, b] = jobs(s, batch);
-  s.sent.splice(0);
+  s.jevSent.splice(0);
   const hold = gate();
   let paused = false;
   fakes.onSql = async (sql, phase) => {
@@ -323,8 +351,8 @@ for (const [name, setupFault] of [
     const { s, ids } = await start(2);
     const calls = provider(setupFault({} as S));
     const batch = await autotag(s, ids);
-    const [first] = s.sent.splice(0, 1);
-    await s.runJob(first!.body.id);
+    const [first] = s.jevSent.splice(0, 1);
+    await s.deliver([first!]);
     await s.runQueued();
     expect(calls.n).toBe(1);
     const [a, b] = jobs(s, batch);
@@ -333,30 +361,33 @@ for (const [name, setupFault] of [
   });
 }
 
-test("a replay guard that can't read the claim fails closed with the may-have-been-billed copy", async () => {
+test("a redelivery that can't read its job fails closed: it never sends, and is retried", async () => {
   const { s, ids } = await start();
   const calls = provider(() => new Promise<Response>(() => {}));
-  s.engine.timeoutMs = 20;
+  s.queue.timeoutMs = 20;
+  let reads = 0;
   fakes.onSql = async (sql, phase) => {
-    if (phase === "read" && /^SELECT jev_call/.test(sql)) throw new Error("D1_ERROR: database is locked (SQLITE_BUSY)");
+    if (phase === "read" && /^SELECT j\.id,j\.batch_id/.test(sql) && ++reads === 2) throw new Error("D1_ERROR: database is locked (SQLITE_BUSY)");
   };
   const batch = await autotag(s, ids);
   await s.runQueued();
+  expect(deliveries(s, jobs(s, batch)[0]!.id)).toEqual(["killed", "retry", "ack"]);
+  await abandon(s);
   expect(calls.n).toBe(1);
   expect(usage(s)).toHaveLength(1);
   expect(jobs(s, batch)[0]).toMatchObject({ status: "failed", reason: "interrupted", error: JEV_FAILURE_MESSAGES.interrupted });
 });
 
-test("an engine error that escapes the Jev step is reported as possibly billed, without sending", async () => {
+test("a run whose invocation died before the call settles at no cost once abandoned, without sending", async () => {
   const { s, ids } = await start();
   const calls = provider(answer);
-  (s.env.CONTENT as any).get = () => new Promise(() => {}); // both attempts hang before the call
-  s.engine.timeoutMs = 20;
+  (s.env.CONTENT as any).get = () => new Promise(() => {}); // the read before the call hangs
+  s.queue.timeoutMs = 20;
   const batch = await autotag(s, ids);
   await s.runQueued();
-  expect(jevSteps(s)[0]!.attempts).toBe(2);
+  await abandon(s);
   expect(calls.n + usage(s).length).toBe(0);
-  expect(jobs(s, batch)[0]).toMatchObject({ status: "failed", reason: "interrupted", error: JEV_FAILURE_MESSAGES.interrupted });
+  expect(jobs(s, batch)[0]).toMatchObject({ status: "failed", reason: "before_call", error: JEV_FAILURE_MESSAGES.before_call });
 });
 
 test("permanent or unknown R2 errors are final: one attempt, no call, no usage", async () => {
@@ -366,7 +397,7 @@ test("permanent or unknown R2 errors are final: one attempt, no call, no usage",
     (s.env.CONTENT as any).get = async () => { throw new Error(message); };
     const batch = await autotag(s, ids);
     await s.runQueued();
-    expect(jevSteps(s)[0]!.attempts).toBe(1);
+    expect(deliveries(s, jobs(s, batch)[0]!.id)).toEqual(["ack"]);
     expect(calls.n + usage(s).length).toBe(0);
     expect(jobs(s, batch)[0]).toMatchObject({ status: "failed", reason: "before_call", error: "Failed before calling Jev (no cost): the saved content could not be read." });
   }
@@ -388,10 +419,12 @@ test("an account error whose metering outlives the step still settles as account
   const calls = provider(() => Response.json({ error: "Insufficient balance" }, { status: 402 }));
   const batch = await autotag(s, ids);
   const hold = holdFinalize();
-  s.engine.timeoutMs = 20;
-  const [first] = s.sent.splice(0, 1);
-  await s.runJob(first!.body.id); // A's first attempt is stuck finalizing Usage; the engine retries the step
+  s.queue.timeoutMs = 20;
+  const [first] = s.jevSent.splice(0, 1);
+  await s.deliver([first!]); // A's invocation dies while it finalizes Usage
   await s.runQueued(); // B runs before A's write is released
+  expect(jobs(s, batch)[1]).toMatchObject({ status: "failed", reason: "account_stopped" });
+  await abandon(s); // A settles from the outcome it recorded
   const [a, b] = jobs(s, batch);
   expect(a).toMatchObject({ status: "failed", reason: "account", error: JEV_FAILURE_MESSAGES.account });
   expect(b).toMatchObject({ status: "failed", reason: "account_stopped" });
@@ -408,7 +441,7 @@ test("a running job of the batch can't claim once another job recorded an accoun
   const batch = await autotag(s, ids);
   const hold = holdFinalize();
   const [a, b] = jobs(s, batch);
-  s.sent.splice(0);
+  s.jevSent.splice(0);
   const runningA = s.runJob(a!.id); // A has its 402 recorded and is still finalizing Usage
   await Bun.sleep(5);
   await s.runJob(b!.id);
@@ -422,10 +455,10 @@ test("a running job of the batch can't claim once another job recorded an accoun
 test("a 401 is an account error even when its body never arrives", async () => {
   const { s, ids } = await start(2);
   const calls = provider(() => new Response(new ReadableStream({ start: () => {} }), { status: 401 }));
-  s.engine.timeoutMs = 20;
+  s.queue.timeoutMs = 20;
   const batch = await autotag(s, ids);
-  const [first] = s.sent.splice(0, 1);
-  await s.runJob(first!.body.id);
+  const [first] = s.jevSent.splice(0, 1);
+  await s.deliver([first!]);
   await s.runQueued();
   expect(calls.n).toBe(1);
   expect(jobs(s, batch)[0]).toMatchObject({ status: "failed", reason: "account" });
@@ -437,9 +470,10 @@ test("a successful answer whose metering outlives the step is recovered, not pai
   const { s, ids } = await start();
   const calls = provider(answer);
   const hold = holdFinalize();
-  s.engine.timeoutMs = 20;
+  s.queue.timeoutMs = 20;
   const batch = await autotag(s, ids);
   await s.runQueued();
+  await abandon(s); // the run is taken over from the answer it recorded
   expect(calls.n).toBe(1);
   expect(jobs(s, batch)[0]!.status).toBe("done");
   expect(s.db.query("SELECT count(*) n FROM tag_evaluations WHERE link_id=?").get(ids[0]!)).toEqual({ n: 1 });

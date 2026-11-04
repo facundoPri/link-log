@@ -75,8 +75,11 @@ export async function startApi() {
     d1_databases: [{ binding: "DB", database_name: "linklog", database_id: "00000000-0000-0000-0000-000000000001", migrations_dir: resolve(ROOT, "migrations") }],
     r2_buckets: [{ binding: "CONTENT", bucket_name: "linklog-content" }],
     queues: {
-      producers: [{ binding: "JOBS", queue: "linklog-jobs" }],
-      consumers: [{ queue: "linklog-jobs", max_batch_size: 10, max_batch_timeout: 1, max_retries: 3, max_concurrency: 10 }],
+      producers: [{ binding: "JOBS", queue: "linklog-jobs" }, { binding: "JEV_JOBS", queue: "linklog-jev" }],
+      consumers: [
+        { queue: "linklog-jobs", max_batch_size: 10, max_batch_timeout: 1, max_retries: 3, max_concurrency: 10 },
+        { queue: "linklog-jev", max_batch_size: 4, max_batch_timeout: 1, max_retries: 3, max_concurrency: 12 },
+      ],
     },
     workflows: [{ binding: "PROCESS_LINK", name: "linklog-process-link", class_name: "LinkWorkflow" }],
     // Auth email is simulated locally (files under .wrangler/tmp/email); required by the config check.
