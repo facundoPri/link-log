@@ -16,7 +16,7 @@ A user creates tags with a description for the AI and a confidence threshold, ad
 ## How to get to it (user POV)
 
 - The sidebar `TAGS` section: `New tag`, or `Create one` when there are no tags yet. Each tag has a `Tag options for <name>` menu.
-- Select rows with their `Select <title>` checkbox, or with `Select all N links`. On desktop the `Selected link actions` toolbar shows `Auto-tag`, `Lens` and `Open N` (see `bulk-open.md`), each with an `eligible/total` badge such as `4/7` when only some links qualify, plus `More` (`⌘K`), which opens the actions palette with every action, including `Extract context`, `Copy URLs` and `Copy URLs + titles`. With links selected, `T`/`L`/`E`/`O`/`C`/`⇧C` run actions directly. Narrow screens show an `Actions ⌘K` chip, and phones show an `Actions` button that opens a bottom drawer; see `journeys/bulk-actions-desktop.ts` and `journeys/bulk-actions-responsive.ts`.
+- Select rows with their `Select <title>` checkbox, or with `Select all N links`. On desktop the `Selected link actions` toolbar shows `Auto-tag`, `Lens` and `Open N` (see `bulk-open.md`), each with an `eligible/total` badge such as `4/7` when only some links qualify, plus `More` (`⌘K`), which opens the `Commands` palette with every action, including `Extract context`, `Copy URLs` and `Copy URLs + titles`. With links selected, `T`/`L`/`E`/`O`/`C`/`⇧C` run actions directly. Narrow screens show an `Actions ⌘K` chip, and phones show an `Actions` button that opens a bottom drawer; see `journeys/bulk-actions-desktop.ts` and `journeys/bulk-actions-responsive.ts`.
 - The inspector's `Add tag` button, and a row's `Link actions` → `Edit tags`.
 - The sidebar `LENSES` section: `New lens`, and `Lens options for <name>`.
 
