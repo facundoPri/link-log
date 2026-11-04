@@ -276,12 +276,51 @@ describe("bridge commands", () => {
       expect(outcomes(next)).toEqual(["already-open"]);
     });
 
+    test("a target groups exactly the tabs this operation opened, and a retry reuses that group", async () => {
+      await setup(1);
+      chromeFake.createErrors.set("https://broken.dev/", "Boom");
+      await hello();
+      const target = { kind: "new" as const, title: "Reading", color: "green" as const, description: "Later" };
+      const urls = ["https://a.dev/", "https://site.dev/1", "https://broken.dev/", "https://b.dev/"];
+      const first = await run("openTabs", { operationId: "op1", urls, target });
+      expect(outcomes(first)).toEqual(["opened", "already-open", "failed", "opened"]);
+      expect(first.group).toMatchObject({ ok: true, grouped: 2 });
+      const groupId = first.group.groupId;
+      expect(created().map((t) => t.groupId)).toEqual([groupId, groupId]);
+      expect(chromeFake.tabs.get(1)!.groupId).toBe(-1);
+      expect(chromeFake.groups.get(groupId)).toMatchObject({ title: "Reading", color: "green", windowId: 1 });
+      chromeFake.createErrors.clear();
+      const retry = await run("openTabs", { operationId: "op1", urls, target });
+      expect(outcomes(retry)).toEqual(["opened", "already-open", "opened", "opened"]);
+      expect(retry.group).toEqual({ ok: true, groupId, grouped: 3 });
+      expect(chromeFake.groups.size).toBe(1);
+    });
+
+    test("an existing group in another window is refused, but the tabs stay open", async () => {
+      await setup(0);
+      chromeFake.groups.set(7, { id: 7, windowId: 2, title: "Elsewhere", color: "red", collapsed: false } as chrome.tabGroups.TabGroup);
+      await hello();
+      const result = await run("openTabs", { operationId: "op1", urls: ["https://a.dev/"], target: { kind: "group", groupId: 7 } });
+      expect(outcomes(result)).toEqual(["opened"]);
+      expect(result.group).toEqual({ ok: false, error: "The group is not in this window any more." });
+      expect(created()).toHaveLength(1);
+    });
+
+    test("without a target nothing is grouped and no group outcome is sent", async () => {
+      await setup(0);
+      await hello();
+      const result = await run("openTabs", { operationId: "op1", urls: ["https://a.dev/"] });
+      expect(result.group).toBeUndefined();
+      expect(created()[0]!.groupId).toBe(-1);
+    });
+
     test("needs the handshake and is advertised", async () => {
       await setup(0);
       expect(run("openTabs", { operationId: "op1", urls: ["https://a.dev/"] })).rejects.toThrow("Connect first.");
       expect(created()).toHaveLength(0);
       const ack = await run("hello", { libraryScope: "local:lib" });
       expect(ack.capabilities).toContain("open");
+      expect(ack.capabilities).toContain("open-group");
     });
   });
 });
