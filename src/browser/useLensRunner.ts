@@ -144,7 +144,9 @@ export function useLensRunner(browser: BrowserState, active: Lens[], allLenses: 
   }, []);
   // A round that repeats because the lenses changed while it ran covers the lenses active now.
   const latestRefs = useRef(refs);
-  latestRefs.current = refs;
+  useEffect(() => {
+    latestRefs.current = refs;
+  }, [refs]);
   const running = useRef(false);
   const again = useRef(false);
   const fill = useCallback(async () => {

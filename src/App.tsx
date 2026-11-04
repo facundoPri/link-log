@@ -348,7 +348,7 @@ export function App({
         setRunning(false);
       }
     },
-    [refresh, setLibrary],
+    [refresh, setLibrary, trackBatch],
   );
 
   // Keyboard: ⌘K add (or the bulk palette while links are selected), T/L/E/C bulk actions, / search, Esc close
