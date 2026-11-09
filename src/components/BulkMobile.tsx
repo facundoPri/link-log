@@ -6,8 +6,7 @@ import { cn } from "@/lib/utils";
 import { plural } from "../lib/format";
 import { progressText } from "./BulkBar";
 import { BulkResultsPopover, resultTitle, type BulkResult } from "./BulkResults";
-import type { Picker, SelectionNoun } from "./SelectionSurface";
-
+import type { PaletteCommand, Picker, SelectionNoun } from "./SelectionSurface";
 
 // Mobile bar: clear on the left, the count over a one-tap select-all (or the running job), and a large Actions
 // button. With nothing selected it stays only to report the last run.
@@ -103,8 +102,8 @@ export function BulkMobileBar({
   );
 }
 
-// Mobile drawer: thumb-sized tiles read from the registry, the destructive actions in their own full-width slot, and
-// pickers replacing the tiles in place.
+// Mobile drawer: thumb-sized tiles read from the registry, the view's commands (Add links, Open links) as rows, the
+// destructive actions in their own full-width slot, and pickers replacing the tiles in place.
 export function BulkDrawer({
   open,
   onOpenChange,
@@ -116,7 +115,9 @@ export function BulkDrawer({
   visibleCount,
   allVisibleSelected,
   states,
+  commands,
   onInvoke,
+  onCommand,
   onSelectAll,
 }: {
   open: boolean;
@@ -130,7 +131,9 @@ export function BulkDrawer({
   visibleCount: number;
   allVisibleSelected: boolean;
   states: ActionState[];
+  commands: PaletteCommand[];
   onInvoke: (action: ActionMeta, detail?: string) => void;
+  onCommand: (command: PaletteCommand) => void;
   onSelectAll: () => void;
 }) {
   const tiles = states.filter((s) => s.action.group !== "Danger");
@@ -218,6 +221,28 @@ export function BulkDrawer({
                 {skippedItems.size} {skippedItems.size === 1 ? "is" : "are"} skipped by {partial.map((s) => s.action.label).join(" and ")}:{" "}
                 {partial[0]!.availability.skipped[0]!.reason.toLowerCase()}.
               </p>
+            )}
+            {commands.length > 0 && (
+              <div role="group" aria-label="View" className="mt-3 flex flex-col">
+                {commands.map((c) => {
+                  const Icon = c.icon;
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      disabled={!!c.disabled}
+                      onClick={() => onCommand(c)}
+                      className="flex min-h-12 items-center gap-3 rounded-xl px-1 text-left active:bg-muted disabled:opacity-40"
+                    >
+                      <Icon className="size-5 shrink-0" />
+                      <span className="min-w-0">
+                        <span className="block truncate text-[15px]">{c.label}</span>
+                        <span className="block truncate text-[12px] text-muted-foreground">{c.disabled ?? c.description}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             )}
             {danger.map((s) => {
               const Icon = s.action.icon;

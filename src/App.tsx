@@ -989,6 +989,8 @@ export function App({
     <div
       className="flex h-dvh overflow-hidden"
       onDragEnter={(e) => {
+        // Like paste: Browser's own dialogs (Autogroup review, Open links, confirms) keep what the user is doing.
+        if (view === "browser" && overlayOpen()) return;
         if (e.dataTransfer.types.some((t) => ["text/uri-list", "text/plain"].includes(t))) {
           e.preventDefault();
           dragDepth.current++;
@@ -1009,9 +1011,14 @@ export function App({
         }
       }}
       onDrop={(e) => {
-        e.preventDefault();
         dragDepth.current = 0;
         setDragging(false);
+        if (view === "browser" && overlayOpen()) {
+          // A drop into a field (the Open links textarea) inserts natively; anywhere else it must not navigate away.
+          if (!isInput(e.target)) e.preventDefault();
+          return;
+        }
+        e.preventDefault();
         const text =
           e.dataTransfer
             .getData("text/uri-list")

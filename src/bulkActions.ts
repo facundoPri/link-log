@@ -217,7 +217,7 @@ export function actionForKey<A extends ActionMeta>(e: KeyLike, actions: A[]): A 
 export type KeyRoute<A> =
   /** Open the command palette (or the phone drawer), or close it when it is the open overlay. */
   | { kind: "palette" }
-  /** ⌘K while another dialog or menu is open: swallowed, so the browser's own ⌘K doesn't fire either. */
+  /** ⌘K while another dialog or menu is open, or held down (a repeat): swallowed, so the browser's own ⌘K doesn't fire either. */
   | { kind: "ignore" }
   | { kind: "action"; action: A };
 
@@ -238,7 +238,7 @@ export type KeyScene = {
  */
 export function routeKey<A extends ActionMeta>(e: KeyLike & { repeat?: boolean }, actions: A[], scene: KeyScene): KeyRoute<A> | null {
   if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "k")
-    return scene.overlay && !scene.paletteOpen ? { kind: "ignore" } : { kind: "palette" };
+    return e.repeat || (scene.overlay && !scene.paletteOpen) ? { kind: "ignore" } : { kind: "palette" };
   if (!scene.selected || e.repeat || scene.typing || scene.overlay) return null;
   const action = actionForKey(e, actions);
   return action ? { kind: "action", action } : null;

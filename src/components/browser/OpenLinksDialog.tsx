@@ -48,6 +48,8 @@ export function OpenLinksDialog({
   const [choice, setChoice] = useState(NONE);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
+  // The hint shows while typing; it is announced only once a submit was tried, not on every invalid keystroke.
+  const [attempted, setAttempted] = useState(false);
   const groupId = useId();
   const urls = pastedUrls(text);
   const destination = destinations.find((d) => d.key === choice) ?? null;
@@ -62,6 +64,7 @@ export function OpenLinksDialog({
     (choice !== NONE && choice !== NEW && !destination ? "That group is gone. Pick another one." : null);
 
   async function submit() {
+    setAttempted(true);
     if (problem || !urls.length || busy) return;
     setBusy(true);
     try {
@@ -132,7 +135,7 @@ export function OpenLinksDialog({
             )}
           </div>
           {problem && (text.trim() || unavailable) && (
-            <p role="alert" className="text-xs text-destructive">
+            <p role={attempted || unavailable ? "alert" : undefined} className="text-xs text-destructive">
               {problem}
             </p>
           )}

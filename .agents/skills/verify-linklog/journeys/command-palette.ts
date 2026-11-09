@@ -100,8 +100,18 @@ export default (async ({ page, api, fixture, step, check, shot, note }) => {
     const names = await dialogNames();
     return names.length === 1 && !(await palette.isVisible()) && (await page.getByRole("dialog", { name: "2 selected" }).isVisible()) && names;
   });
+  const drawer = page.getByRole("dialog", { name: "2 selected" });
+  await check("Phone drawer lists the view's commands: Add links…", () => drawer.getByRole("button", { name: /^Add links…/ }).isVisible());
   await snap("after-06-phone-two-drawer");
+  await drawer.getByRole("button", { name: /^Add links…/ }).click();
+  await check("Add links from the drawer: only the Add link dialog", async () => {
+    const names = await dialogNames();
+    return names.length === 1 && names[0] === "Add link" && names;
+  });
+  // An Escape during the drawer's close animation doesn't reach Add link yet; a person never presses it that fast.
+  await page.waitForTimeout(500);
   await page.keyboard.press("Escape");
+  await check("Add link closed", async () => (await dialogNames()).length === 0);
   await page.setViewportSize({ width: 1280, height: 820 });
 
   await step("Browser without the extension: ⌘K opens the same palette with Open links");
@@ -143,5 +153,34 @@ export default (async ({ page, api, fixture, step, check, shot, note }) => {
   }, fixture("article", "second-paste"));
   await page.waitForTimeout(500);
   await check("The dialog keeps the first URL", async () => (await dialog.isVisible()) && (await dialog.getByRole("textbox", { name: "Links to open" }).inputValue()) === pasted);
+
+  await step("Browser: a drop while a Browser dialog is open doesn't replace it; into its field it is left to the browser");
+  const drop = (selector: string, url: string) =>
+    page.evaluate(
+      ([sel, u]) => {
+        const dt = new DataTransfer();
+        dt.setData("text/uri-list", u);
+        dt.setData("text/plain", u);
+        const target = document.querySelector(sel)!;
+        target.dispatchEvent(new DragEvent("dragenter", { dataTransfer: dt, bubbles: true, cancelable: true }));
+        const ev = new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true });
+        target.dispatchEvent(ev);
+        return ev.defaultPrevented;
+      },
+      [selector, url] as const,
+    );
+  const outside = await drop("h1, h2", fixture("article", "dropped-outside"));
+  await page.waitForTimeout(500);
+  await check("Drop outside the dialog: Open links keeps the first URL, and the page doesn't navigate", async () =>
+    outside && (await dialog.isVisible()) && (await dialog.getByRole("textbox", { name: "Links to open" }).inputValue()) === pasted && (await dialogNames()).length === 1);
+  const inField = await drop('textarea[aria-label="Links to open"]', fixture("article", "dropped-in-field"));
+  await check("Drop into the Links to open field: not cancelled, so Chrome inserts the text natively", async () => !inField && (await dialog.isVisible()));
+  await note("browser-drop", { outsidePrevented: outside, fieldPrevented: inField });
+  await page.keyboard.press("Escape");
+  await check("Open links closed", async () => !(await dialog.isVisible()));
+  const dropped = fixture("article", "dropped-no-dialog");
+  await drop("h1, h2", dropped);
+  await check("With no dialog open, a drop still opens Open links prefilled", async () =>
+    (await dialog.isVisible()) && (await dialog.getByRole("textbox", { name: "Links to open" }).inputValue()) === dropped);
   await page.keyboard.press("Escape");
 }) satisfies Journey;

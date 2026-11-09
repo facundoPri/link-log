@@ -196,7 +196,10 @@ export function SelectionSurface({
           visibleCount={visibleCount}
           allVisibleSelected={allVisibleSelected}
           states={states}
+          // The drawer's header has its own Select all.
+          commands={commands.filter((c) => c.id !== "select-all")}
           onInvoke={invoke}
+          onCommand={runCommand}
           onSelectAll={onSelectAll}
         />
       ) : (

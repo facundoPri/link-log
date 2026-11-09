@@ -219,6 +219,12 @@ describe("one ⌘K: the command palette in every view and selection", () => {
     expect(routeKey(cmdK, BULK_ACTIONS, scene({ paletteOpen: true, overlay: true, typing: true }))).toEqual({ kind: "palette" });
   });
 
+  test("holding ⌘K toggles the palette once: repeats are swallowed", () => {
+    const held = press("k", { metaKey: true, repeat: true });
+    expect(routeKey(held, BULK_ACTIONS, scene())).toEqual({ kind: "ignore" });
+    expect(routeKey(held, TAB_ACTIONS, scene({ selected: 2, paletteOpen: true, overlay: true }))).toEqual({ kind: "ignore" });
+  });
+
   test("⌘K from a text field still opens the palette; another dialog or menu swallows it", () => {
     expect(routeKey(cmdK, BULK_ACTIONS, scene({ typing: true }))).toEqual({ kind: "palette" });
     expect(routeKey(cmdK, BULK_ACTIONS, scene({ overlay: true }))).toEqual({ kind: "ignore" });
