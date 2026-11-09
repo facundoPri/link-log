@@ -266,7 +266,16 @@ export async function recover(env: Env) {
     // A running job the consumer never started (no started_at) belongs to a Workflow.
     "SELECT j.id,b.kind,j.status='running' AND j.started_at IS NULL AS in_workflow FROM jobs j JOIN batches b ON b.id=j.batch_id WHERE b.user_id IS NOT NULL AND j.status IN ('queued','running') ORDER BY j.created_at LIMIT 100",
   ).all<{ id: string; kind: string; in_workflow: number }>();
-  if (rows.results.length) await sendJobs(env, rows.results.map((r) => ({ id: r.id, kind: parseBatchKind(r.kind), inWorkflow: !!r.in_workflow })));
+  // A row with a kind this code does not know is skipped and logged, so it never blocks recovering the rest.
+  const jobs = rows.results.flatMap((r) => {
+    try {
+      return [{ id: r.id, kind: parseBatchKind(r.kind), inWorkflow: !!r.in_workflow }];
+    } catch {
+      console.error(JSON.stringify({ event: "recover_unknown_kind", job_id: r.id, kind: String(r.kind).slice(0, 100) }));
+      return [];
+    }
+  });
+  if (jobs.length) await sendJobs(env, jobs);
 }
 export async function dispatch(batch: MessageBatch<{ id: string }>, env: Env) {
   for (const m of batch.messages) {

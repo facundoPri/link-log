@@ -1,7 +1,7 @@
 // FAC-193: lens, auto-tag and query jobs run from the Jev queue's consumer, with no Workflow and no lease. The
 // queue's max_batch_size × max_concurrency caps simultaneous Jev calls, delivery is at-least-once, and the
 // `jev_call` claim keeps every job to one call and one usage row.
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import { dispatch, jevConsumer, resetClock, setup } from "./worker-harness";
 import { recover } from "../worker/jobs";
 
@@ -116,6 +116,69 @@ test("periodic recovery resends lost Jev jobs to the Jev queue", async () => {
   expect(s.jevSent).toHaveLength(2);
   await s.runQueued();
   expect(statuses(s, batch)).toEqual(["done", "done"]);
+  expect(calls.n).toBe(2);
+});
+
+test("recovery skips and logs a job whose batch kind is unknown, and still resends the rest", async () => {
+  const { s, ids } = await ready(2);
+  provider();
+  const send = s.env.JEV_JOBS.sendBatch;
+  (s.env.JEV_JOBS as any).sendBatch = async () => { throw new Error("Queue send failed"); };
+  const good = (await s.api("/batches", "POST", { kind: "autotag", ids: [ids[0]] })).data.batchId as string;
+  const bad = (await s.api("/batches", "POST", { kind: "autotag", ids: [ids[1]] })).data.batchId as string;
+  (s.env.JEV_JOBS as any).sendBatch = send;
+  // A batch written by a newer (or rolled-back) deploy with a kind this code does not know.
+  s.db.query("UPDATE batches SET kind='retired-kind' WHERE id=?").run(bad);
+  const badJob = (s.db.query("SELECT id FROM jobs WHERE batch_id=?").get(bad) as { id: string }).id;
+  const lines: Record<string, unknown>[] = [];
+  const spy = spyOn(console, "error").mockImplementation((line: unknown) => {
+    try { lines.push(JSON.parse(String(line))); } catch { /* not a structured event */ }
+  });
+  try {
+    await recover(s.env);
+  } finally {
+    spy.mockRestore();
+  }
+  expect(lines.filter((e) => e.event === "recover_unknown_kind")).toEqual([{ event: "recover_unknown_kind", job_id: badJob, kind: "retired-kind" }]);
+  expect(s.jevSent).toHaveLength(1);
+  await s.runQueued();
+  expect(statuses(s, good)).toEqual(["done"]);
+});
+
+test("a failure after the settlement commits is logged as such, not as a failed settlement; recovery starts the next job", async () => {
+  const { s, ids } = await ready(1);
+  const calls = provider();
+  const lens = await lensOf(s);
+  const tag = (await s.api("/batches", "POST", { kind: "autotag", ids })).data.batchId as string;
+  const ask = (await s.api("/batches", "POST", { kind: "lens", ids, lensId: lens.id })).data.batchId as string;
+  // Reading the link's next queued job, after the auto-tag's settlement committed, fails once.
+  const prepare = s.env.DB.prepare;
+  let broken = true;
+  (s.env.DB as any).prepare = (sql: string) => {
+    if (broken && sql.startsWith("SELECT j.id,b.kind FROM jobs j")) {
+      broken = false;
+      throw new Error("D1 read failed");
+    }
+    return prepare(sql);
+  };
+  const lines: Record<string, unknown>[] = [];
+  const spy = spyOn(console, "error").mockImplementation((line: unknown) => {
+    try { lines.push(JSON.parse(String(line))); } catch { /* not a structured event */ }
+  });
+  try {
+    await s.drainJev();
+  } finally {
+    spy.mockRestore();
+    (s.env.DB as any).prepare = prepare;
+  }
+  expect(statuses(s, tag)).toEqual(["done"]);
+  expect(statuses(s, ask)).toEqual(["queued"]);
+  const job = (s.db.query("SELECT id FROM jobs WHERE batch_id=?").get(tag) as { id: string }).id;
+  expect(lines.map((e) => e.event)).toEqual(["jev_start_next_failed"]);
+  expect(lines[0]).toMatchObject({ job_id: job });
+  await recover(s.env);
+  await s.runQueued();
+  expect(statuses(s, ask)).toEqual(["done"]);
   expect(calls.n).toBe(2);
 });
 

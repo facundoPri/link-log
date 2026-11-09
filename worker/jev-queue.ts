@@ -234,6 +234,11 @@ async function settle(env: Env, job: Job, settlement: Settlement) {
   }
   if (job.link_id) statements.push(promoteWaiting(env.DB, job.link_id));
   await env.DB.batch(statements);
-  await logJevBatchProgress(env, job);
-  await startNext(env, [job.link_id, ...stopped]);
+  // The job is settled. A failure from here on leaves the next jobs queued in D1, where recover() resends them.
+  try {
+    await logJevBatchProgress(env, job);
+    await startNext(env, [job.link_id, ...stopped]);
+  } catch (error) {
+    logError("jev_start_next_failed", job.id, error);
+  }
 }

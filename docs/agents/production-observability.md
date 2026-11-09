@@ -28,6 +28,8 @@ One JSON line each, ids and numbers only (`worker/jev-metrics.ts`). Group by `ba
 
 Only Jev kinds log them (`autotag`, `lens`, `query`, `browser-lens`, `browser-autogroup`). In the Workers Logs query builder the JSON fields are queryable. p95 Jev latency: filter `event = jev_call` and `ok = true`, then calculate `p95` of `latency_ms`. 429 count: filter `event = jev_rate_limited` and count. These lines do not exist before the deploy that ships them.
 
+Jev queue failures log `job_id` and `detail`: `jev_settle_failed` means the job's settlement did not commit (it stays running until a later delivery settles it); `jev_start_next_failed` means it settled but the link's next queued job was not sent (the cron's `recover()` resends it). `recover_unknown_kind` (`job_id`, `kind`) is a queued or running job that recovery skipped because this deploy does not know its batch kind.
+
 `invocation_logs` stay off on purpose: auth links carry tokens in the URL.
 
 ## Gaps
