@@ -10,7 +10,8 @@ const isLive = (job: Job) => ["queued", "running", "waiting"].includes(job.statu
 
 export const batchJobsOptions = (batchId: string) => ({
   queryKey: batchJobsKey(batchId),
-  queryFn: async () => (await api<{ jobs: Job[] }>(`/batches/${batchId}`)).jobs,
+  queryFn: async ({ signal }: { signal: AbortSignal }) =>
+    (await api<{ jobs: Job[] }>(`/batches/${batchId}`, "GET", undefined, signal)).jobs,
 });
 
 /** The jobs of one batch. The cache is the only copy, so every reader of a batch shares one request. */

@@ -33,7 +33,7 @@ export const createQueryClient = () =>
 export function useLibrary() {
   return useQuery({
     queryKey: libraryKey,
-    queryFn: () => api<Library>(),
+    queryFn: ({ signal }) => api<Library>("/library", "GET", undefined, signal),
     refetchInterval: (query) => (busy(query.state.data) ? POLL_MS : false),
     // Kept while no view reads it (Settings), for as long as the account's client lives.
     gcTime: Infinity,
