@@ -120,6 +120,7 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) =>
 );
 chrome.tabs.onRemoved.addListener((tabId) =>
   run(async () => {
+    hub.forgetTab(tabId);
     const change = await registry.remove(tabId);
     if (change) await applyChanges([change]);
     hub.schedule();
@@ -127,6 +128,7 @@ chrome.tabs.onRemoved.addListener((tabId) =>
 );
 chrome.tabs.onReplaced.addListener((addedTabId, removedTabId) =>
   run(async () => {
+    hub.forgetTab(removedTabId);
     const tab = await chrome.tabs.get(addedTabId).catch(() => null);
     await applyChanges(await registry.replace(addedTabId, removedTabId, tab?.url));
     hub.schedule();

@@ -114,13 +114,17 @@ export class LoadQueue {
   /** Adds tabs to the running run, or starts one. A tab already in it is not added twice. */
   add(tabs: { tabInstanceId: string; windowId: number; documentRevision: number; url: string; reason: SleepReason | null }[]) {
     return this.mutex.run(async () => {
-      if (!this.run || this.run.status === "done" || this.run.status === "cancelled") this.run = { status: "running", items: [] };
+      // A new run keeps the tabs a cancelled run's slots still hold: they finish (and go
+      // back to sleep) in it, stay persisted, and are not woken a second time.
+      if (!this.run || this.run.status === "done" || this.run.status === "cancelled")
+        this.run = { status: "running", items: this.run?.items.filter((i) => this.slots.has(i.tabInstanceId)) ?? [] };
       this.run.status = "running";
       delete this.run.pauseReason;
       for (const t of tabs) {
         const existing = this.run.items.find((i) => i.tabInstanceId === t.tabInstanceId);
-        if (existing && existing.state !== "failed" && existing.state !== "skipped") continue;
-        const item: Item = { ...t, docKey: documentKey(t.url), state: "queued", woke: false };
+        if (existing && ((existing.state !== "failed" && existing.state !== "skipped") || this.slots.has(existing.tabInstanceId))) continue;
+        // `woke` survives a requeue: a tab the run woke and couldn't put back is still the run's to put to sleep.
+        const item: Item = { ...t, docKey: documentKey(t.url), state: "queued", woke: existing?.woke ?? false };
         if (existing) Object.assign(existing, item, { error: undefined, note: undefined });
         else this.run.items.push(item);
       }
@@ -146,7 +150,8 @@ export class LoadQueue {
       if (action === "retry") {
         const failed = run.items.filter((i) => i.state === "failed");
         if (failed.length) {
-          for (const item of failed) Object.assign(item, { state: "queued", error: undefined, note: undefined, woke: false });
+          // Keep `woke`: a tab the run woke and couldn't put back to sleep must still go back to sleep.
+          for (const item of failed) Object.assign(item, { state: "queued", error: undefined, note: undefined });
           run.status = "running";
           delete run.pauseReason;
         }

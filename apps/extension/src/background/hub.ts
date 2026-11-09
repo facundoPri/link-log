@@ -115,6 +115,11 @@ export class Hub {
     await this.kv.set({ linklogOrigins: [...this.linklogOrigins] });
   }
 
+  /** A closed (or replaced) tab no longer needs its loading bound. */
+  forgetTab(tabId: number) {
+    this.loadingSince.delete(tabId);
+  }
+
   async tabDto(
     tab: chrome.tabs.Tab,
     now: number,

@@ -240,6 +240,41 @@ describe("Load content", () => {
     expect([1, 2, 3].map((id) => fake.count("reload", id))).toEqual([1, 2, 1]);
   });
 
+  test("retry after a failed put-back-to-sleep puts the tab back to sleep", async () => {
+    await setup();
+    sleepingTabs(1);
+    fake.discardErrors.set(1, "Cannot discard tab");
+    await run("loadContent", { tabs: await refs([1]) });
+    await settled(["paused"]);
+    expect(fake.tabs.get(1)!.discarded).toBe(false);
+    fake.discardErrors.delete(1);
+    await run("loadControl", { action: "retry" });
+    const snap = await settled();
+    expect(snap.tabs.find((t) => t.tabId === 1)!.load?.state).toBe("done");
+    expect(fake.tabs.get(1)!.discarded).toBe(true);
+    expect(fake.count("reload", 1)).toBe(1);
+  });
+
+  for (const restart of [false, true])
+    test(`Load content right after cancel wakes no tab twice and every woken tab ends asleep${restart ? ", across a worker restart" : ""}`, async () => {
+      await setup();
+      const ids = sleepingTabs(8);
+      fake.loadMs = 30;
+      await run("loadContent", { tabs: await refs(ids) });
+      await until("slots full", () => fake.count("reload") === N);
+      await run("loadControl", { action: "cancel" });
+      await run("loadContent", { tabs: await refs(ids) });
+      if (restart) {
+        s.loader.stop();
+        await boot();
+      }
+      const snap = await settled();
+      await until("everything asleep", () => ids.every((id) => fake.tabs.get(id)!.discarded));
+      expect(ids.map((id) => fake.count("reload", id))).toEqual(ids.map(() => 1));
+      expect(fake.maxAwakeByReload()).toBeLessThanOrEqual(N);
+      expect(snap.tabs.filter((t) => ids.includes(t.tabId)).every((t) => t.load !== null)).toBe(true);
+    });
+
   test("a tab the user opens while it loads stays awake", async () => {
     await setup();
     sleepingTabs(1);

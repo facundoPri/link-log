@@ -366,9 +366,10 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
           ? "Already in a group — kept."
           : null,
     );
-    // Chrome unpins a tab it groups: re-read the pin right before the mutation.
-    for (const tab of [...ok]) {
-      const now = await chrome.tabs.get(tab.id!).catch(() => null);
+    // Chrome unpins a tab it groups: re-read every pin together right before the mutation.
+    const fresh = await Promise.all(ok.map((tab) => chrome.tabs.get(tab.id!).catch(() => null)));
+    for (const [i, tab] of [...ok].entries()) {
+      const now = fresh[i];
       if (now && !now.pinned) continue;
       ok.splice(ok.indexOf(tab), 1);
       Object.assign(items.find((i) => i.tabId === tab.id)!, { ok: false, error: now ? PINNED_KEPT : "The tab is already closed." });
