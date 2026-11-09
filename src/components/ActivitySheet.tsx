@@ -15,7 +15,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { api } from "../api";
-import { useBatchJobs, useInvalidateBatches, useInvalidateUsage, useUsageTotals } from "../entities";
+import { useBatchJobs, useCancelBatches, useInvalidateBatches, useInvalidateUsage, useUsageTotals } from "../entities";
 import { useLibrary, useWriteLibrary } from "../library";
 import type { Library } from "../types";
 import type { Batch, Job, Lens, OcrUsage } from "../types";
@@ -112,6 +112,7 @@ const retriable = (b: Batch) => b.kind === "autotag" || b.kind === "lens";
 function useActivityActions() {
   const writeLibrary = useWriteLibrary();
   const invalidateBatches = useInvalidateBatches();
+  const cancelBatches = useCancelBatches();
   const apply = async <T extends Library>(request: Promise<T>, message: (data: T) => string) => {
     try {
       const data = await request;
@@ -132,12 +133,7 @@ function useActivityActions() {
       apply(api<Library & { dependents?: number }>(`/jobs/${job.id}`, "DELETE"), (data) =>
         data.dependents ? `Cancelled, and ${data.dependents} waiting for that extraction` : "Cancelled",
       ),
-    cancelBatch: (id: string) =>
-      apply(api<Library & { cancelled?: number; dependents?: number }>(`/batches/${id}`, "DELETE"), (data) =>
-        data.cancelled
-          ? `Cancelled ${data.cancelled} queued ${data.cancelled === 1 ? "job" : "jobs"}${data.dependents ? `, and ${data.dependents} waiting for that extraction` : ""}`
-          : "Nothing left to cancel",
-      ),
+    cancelBatch: (id: string) => cancelBatches([id]),
   };
 }
 

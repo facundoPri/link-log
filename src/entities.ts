@@ -1,8 +1,9 @@
 import { useCallback, useMemo } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { api } from "./api";
-import { POLL_MS } from "./library";
-import type { Batch, Job, Usage, UsageTotals } from "./types";
+import { POLL_MS, useWriteLibrary } from "./library";
+import type { Batch, Job, Library, Usage, UsageTotals } from "./types";
 
 export const batchJobsKey = (batchId: string) => ["batch", batchId] as const;
 
@@ -32,6 +33,8 @@ export type RunningJob = { kind: RunningKind; status: string; step: string | nul
  */
 export function useRunningJobs(batches: Batch[]) {
   const client = useQueryClient();
+  // Reading the cache in render is safe: a batch joins the watched set with library data (`active`) and leaves
+  // it with its own jobs (a watched query), and both re-render this hook.
   const watched = batches.filter(
     (b) => b.active > 0 || client.getQueryData<Job[]>(batchJobsKey(b.id))?.some(isLive),
   );
@@ -54,6 +57,7 @@ export function useRunningJobs(batches: Batch[]) {
           running.set(j.link_id, { kind: b.kind, status: j.status, step: j.step });
     });
     return running;
+    // `watched` is rebuilt every render; its ids and the jobs are what the result depends on.
   }, [jobs, watchedIds]); // eslint-disable-line react-hooks/exhaustive-deps
 }
 
@@ -61,6 +65,34 @@ export function useRunningJobs(batches: Batch[]) {
 export function useInvalidateBatches() {
   const client = useQueryClient();
   return useCallback(() => client.invalidateQueries({ queryKey: ["batch"] }), [client]);
+}
+
+/** Cancels the queued jobs of batches, from Activity or a progress toast, and reports how many with a toast. */
+export function useCancelBatches() {
+  const writeLibrary = useWriteLibrary();
+  const invalidateBatches = useInvalidateBatches();
+  return useCallback(
+    async (ids: string[]) => {
+      try {
+        let cancelled = 0, dependents = 0;
+        for (const id of ids) {
+          const reply = await api<Library & { cancelled?: number; dependents?: number }>(`/batches/${id}`, "DELETE");
+          writeLibrary(reply);
+          cancelled += reply.cancelled ?? 0;
+          dependents += reply.dependents ?? 0;
+        }
+        void invalidateBatches();
+        toast(
+          cancelled
+            ? `Cancelled ${cancelled} queued ${cancelled === 1 ? "job" : "jobs"}${dependents ? `, and ${dependents} waiting for that extraction` : ""}`
+            : "Nothing left to cancel",
+        );
+      } catch (e) {
+        toast.error((e as Error).message);
+      }
+    },
+    [writeLibrary, invalidateBatches],
+  );
 }
 
 /** A link's content at one version. A new version loads in place of the old text of the same link, not a blank. */

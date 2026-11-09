@@ -71,6 +71,7 @@ export function useLensRunner(browser: BrowserState, active: Lens[], allLenses: 
   /** Records an accepted request; its batch enters the library, so Activity and the sidebar show it. */
   const accepted = useCallback(
     async (requestId: string, status: { batchId: string; targets: { targetKey: string; jobId: string }[] }, run?: SessionRun) => {
+      // If the extension call throws, the batch still runs, just without a progress toast.
       await request("accepted", { requestId, batchId: status.batchId, jobs: status.targets.map((t) => ({ targetKey: t.targetKey, jobId: t.jobId })) });
       run?.add(status.batchId);
       void invalidateLibrary();

@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useEffectEvent, useReducer, useRef } from "react";
 import { toast } from "sonner";
-import { api } from "./api";
 import { BATCH_WORDS } from "./batches";
-import { useInvalidateLibrary, useLibrary, useWriteLibrary } from "./library";
+import { useCancelBatches } from "./entities";
+import { useInvalidateLibrary, useLibrary } from "./library";
 import { plural, tokens, usd } from "./lib/format";
-import type { Batch, Library } from "./types";
+import type { Batch } from "./types";
 
 /** An action this page started. Its batches share one toast, which settles once the run has ended and they all finished. */
 export type SessionRun = { add: (batchId: string) => void; end: () => void };
@@ -33,7 +33,6 @@ export function useSessionRuns({
   onSettled: (batches: Batch[], failed: boolean) => void;
 }) {
   const { data, dataUpdatedAt } = useLibrary();
-  const writeLibrary = useWriteLibrary();
   const invalidateLibrary = useInvalidateLibrary();
   // By toast id.
   const runs = useRef(new Map<string, Run>());
@@ -61,24 +60,7 @@ export function useSessionRuns({
     };
   }, [invalidateLibrary]);
 
-  const cancelBatches = async (ids: string[]) => {
-    try {
-      let cancelled = 0, dependents = 0;
-      for (const id of ids) {
-        const reply = await api<Library & { cancelled?: number; dependents?: number }>(`/batches/${id}`, "DELETE");
-        writeLibrary(reply);
-        cancelled += reply.cancelled ?? 0;
-        dependents += reply.dependents ?? 0;
-      }
-      toast(
-        cancelled
-          ? `Cancelled ${cancelled} queued ${cancelled === 1 ? "job" : "jobs"}${dependents ? `, and ${dependents} waiting for that extraction` : ""}`
-          : "Nothing left to cancel",
-      );
-    } catch (e) {
-      toast.error((e as Error).message);
-    }
-  };
+  const cancelBatches = useCancelBatches();
 
   const showRuns = useEffectEvent(() => {
     const listed = new Map(data?.batches.map((batch) => [batch.id, batch]));
