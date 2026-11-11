@@ -74,6 +74,8 @@ describe("preview trust and identity", () => {
     expect(cfg.vars.JEV_PROVIDER).toBe("typesafe");
     expect(cfg.browser.binding).toBe("BROWSER");
     expect(cfg.send_email[0]?.name).toBe("EMAIL");
+    expect(cfg.observability).toMatchObject({ issues: { enabled: true }, traces: { enabled: true }, logs: { invocation_logs: false } });
+    expect(cfg.upload_source_maps).toBe(true);
     expect(() => config(repo, pr, dbId, "evil.workers.dev/path", "auth@example.com")).toThrow();
   });
 });

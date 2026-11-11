@@ -38,11 +38,17 @@
   "vars": { "APP_ENV": "production" },
   // Auth links carry tokens in the query (verify, magic link) and path (reset). Invocation logs record
   // request URLs, so they stay off; console logs (sanitized auth events) remain.
+  // Issues groups errors (needs Wrangler >= 4.134.0, and must stay here or a deploy turns it off).
+  // Traces record spans per request, binding call, cron, queue and Workflow step.
   "observability": {
     "enabled": true,
     "redact_query_string": true,
     "logs": { "enabled": true, "invocation_logs": false },
+    "issues": { "enabled": true },
+    "traces": { "enabled": true, "head_sampling_rate": 1 },
   },
+  // Remaps stack traces in Issues, tail and logs. Wrangler < 4.150.0 only uploads maps when set.
+  "upload_source_maps": true,
   // `wrangler deploy --env production` → https://linklog.facundopri.com. The top level stays local:
   // dev and tests never touch these resources. Secrets (wrangler secret put --env production):
   // BETTER_AUTH_SECRET, TYPESAFE_API_KEY.
@@ -83,6 +89,8 @@
         "enabled": true,
         "redact_query_string": true,
         "logs": { "enabled": true, "invocation_logs": false },
+        "issues": { "enabled": true },
+        "traces": { "enabled": true, "head_sampling_rate": 1 },
       },
     },
   },

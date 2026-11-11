@@ -85,6 +85,7 @@ export function config(repositoryId: string, pr: string, databaseId: string, sub
     triggers: { crons: ["*/5 * * * *"] },
     ai: { binding: "AI" }, browser: { binding: "BROWSER" }, send_email: [{ name: "EMAIL" }],
     vars: { APP_ENV: "preview", BETTER_AUTH_URL: `https://${n.worker}.${subdomain}.workers.dev`, EMAIL_FROM: sender, JEV_PROVIDER: "typesafe" },
-    observability: { enabled: true, redact_query_string: true, logs: { enabled: true, invocation_logs: false } },
+    observability: { enabled: true, redact_query_string: true, logs: { enabled: true, invocation_logs: false }, issues: { enabled: true }, traces: { enabled: true, head_sampling_rate: 1 } },
+    upload_source_maps: true,
   };
 }
