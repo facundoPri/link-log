@@ -17,6 +17,8 @@ import {
   type TabRef,
 } from "@linklog/browser-protocol";
 import type { Lens, Library } from "../types";
+import { useInvalidateLibrary, useWriteLibrary } from "../library";
+import type { StartRun } from "../sessionRuns";
 import { plural } from "../lib/format";
 import { call, evaluationStatus, postEvaluation } from "./api";
 import type { BrowserWorkspace, Destination } from "./useBrowserWorkspace";
@@ -54,8 +56,10 @@ function summarize(items: ItemResult[], verb: string) {
 const FINAL_STATES = ["done", "failed", "expired", "acked"];
 
 /** Browser actions shared by the sidebar, rows, selection bar and inspector; dialogs render in <BrowserDialogs>. */
-export function useBrowserActions(ws: BrowserWorkspace, setLibrary: (l: Library) => void, clearPicked: (tabIds?: number[]) => void) {
+export function useBrowserActions(ws: BrowserWorkspace, startRun: StartRun, clearPicked: (tabIds?: number[]) => void) {
   const { request, catalog, hello } = ws.browser;
+  const setLibrary = useWriteLibrary();
+  const invalidateLibrary = useInvalidateLibrary();
   const [dialog, setDialog] = useState<BrowserDialog | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -139,11 +143,18 @@ export function useBrowserActions(ws: BrowserWorkspace, setLibrary: (l: Library)
       maxBytes: BROWSER_LIMITS.maxRequestBytes,
       overhead: jsonBytes({ ...base, requestId: crypto.randomUUID(), targets: [] }),
     });
-    for (const part of parts) {
-      const body: EvaluationRequest = { ...base, requestId: crypto.randomUUID(), targets: part };
-      const { status, data } = await postEvaluation(body);
-      if (status >= 400) throw new Error(data.error || "Autogroup failed.");
-      requestIds.push(body.requestId);
+    const run = startRun();
+    try {
+      for (const part of parts) {
+        const body: EvaluationRequest = { ...base, requestId: crypto.randomUUID(), targets: part };
+        const { status, data } = await postEvaluation(body);
+        if (status >= 400) throw new Error(data.error || "Autogroup failed.");
+        requestIds.push(body.requestId);
+        run.add(data.batchId);
+        void invalidateLibrary();
+      }
+    } finally {
+      run.end();
     }
     const open = new Set(requestIds);
     for (let i = 0; i < 180 && open.size; i++) {
