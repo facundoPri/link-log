@@ -20,6 +20,7 @@ import {
   X,
 } from "lucide-react";
 import { api } from "../api";
+import { useLinkContent } from "../entities";
 import type { Lens, Library, Link, Tag, ContentDetails, MediaItem } from "../types";
 import { canRetryPreview } from "../attention";
 import { failureMessage } from "../failures";
@@ -144,7 +145,6 @@ export function Inspector({
   /** Why Auto-tag and lenses can't run (Jev not configured), or null. */
   jevReason?: string | null;
 }) {
-  const [markdown, setMarkdown] = useState("");
   const [draft, setDraft] = useState("");
   const [editing, setEditing] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -171,9 +171,16 @@ export function Inspector({
   const scrollArea = useRef<HTMLDivElement>(null);
   const contentBody = useRef<HTMLDivElement>(null);
 
+  const content = useLinkContent(link.id, link.content_version);
+  const markdown = content.data ?? "";
+  // Shown text may be a placeholder (the previous version) or still loading; editing starts from the current text only.
+  const contentCurrent = content.isSuccess && !content.isPlaceholderData;
+  const startEditing = () => {
+    setDraft(markdown);
+    setEditing(true);
+  };
+
   useEffect(() => {
-    let alive = true;
-    setMarkdown("");
     setEditing(false);
     setSelectedMedia(0);
     setExpanded(false);
@@ -182,17 +189,6 @@ export function Inspector({
     setHiddenOpen(false);
     setJumpToMedia(null);
     setError("");
-    api<{ markdown: string }>(`/links/${link.id}/content`)
-      .then((r) => {
-        if (alive) {
-          setMarkdown(r.markdown);
-          setDraft(r.markdown);
-        }
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
   }, [link.id, link.content_version]);
 
   useEffect(() => {
@@ -626,7 +622,7 @@ export function Inspector({
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => setEditing(true)}
+                    onClick={startEditing}
                   >
                     Paste text
                   </Button>
@@ -655,7 +651,7 @@ export function Inspector({
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => setEditing(true)}
+                    onClick={startEditing}
                   >
                     Paste text
                   </Button>
@@ -706,10 +702,8 @@ export function Inspector({
                           variant="ghost"
                           size="icon-sm"
                           aria-label="Edit content"
-                          onClick={() => {
-                            setDraft(markdown);
-                            setEditing(true);
-                          }}
+                          disabled={!contentCurrent}
+                          onClick={startEditing}
                         >
                           <Pencil className="size-3.5" />
                         </Button>
@@ -1017,7 +1011,7 @@ export function Inspector({
             <AlertDialogAction
               onClick={async () => {
                 try {
-                  await api(`/links/${link.id}`, "DELETE");
+                  onChange(await api(`/links/${link.id}`, "DELETE"));
                   toast.success("Link deleted");
                   onDeleted();
                 } catch (e) {
