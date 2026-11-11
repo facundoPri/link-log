@@ -69,6 +69,47 @@ const scoreQuestion: Record<string, Question> = {
   },
 };
 
+const FRONTMATTER = '---\ntitle: "Parrot - Wikipedia"\nmeta:\n  "og:title": "Parrot - Wikipedia"\n---\n\n';
+const NAVIGATION =
+  "[Jump to content](#bodyContent)\n\nMain menu\n\nmove to sidebar hide\n\nNavigation\n\n" +
+  "- [Main page](https://en.wikipedia.org/wiki/Main_Page)\n- [Contents](https://en.wikipedia.org/wiki/Wikipedia:Contents)\n\n" +
+  "Search\n\nAppearance\n\nToggle the table of contents\n\n";
+const ARTICLE = "# Parrot\n\nThe parrot is a bird. " + "It lives in forests and eats seeds. ".repeat(900) + "TAIL";
+
+test("capJevText drops leading site navigation before the article title when the text is over the cap", () => {
+  const stored = FRONTMATTER + NAVIGATION + ARTICLE;
+  const state = { description: "A bird.", content: stored };
+  const out = capJevText(state) as typeof state;
+  expect(out.content.startsWith("# Parrot\n\nThe parrot is a bird.")).toBe(true);
+  expect(out.content).not.toContain("Jump to content");
+  expect(out.content).not.toContain("og:title");
+  expect(out.content.endsWith(MARKER)).toBe(true);
+  expect(textLength(out)).toBeLessThanOrEqual(MAX_JEV_TEXT_CHARS);
+  expect(state.content).toBe(stored);
+});
+
+test("capJevText sends a short page with navigation unchanged", () => {
+  const short = { content: FRONTMATTER + NAVIGATION + "# Parrot\n\nA bird." };
+  expect(capJevText(short)).toBe(short);
+});
+
+test("capJevText drops the navigation without a marker when the article then fits", () => {
+  const lead = NAVIGATION + "- [Link](https://example.com)\n".repeat(200);
+  const article = "# Parrot\n\n" + "A bird sentence. ".repeat(1200);
+  expect(lead.length + article.length).toBeGreaterThan(MAX_JEV_TEXT_CHARS);
+  expect(article.length).toBeLessThanOrEqual(MAX_JEV_TEXT_CHARS);
+  const out = capJevText({ content: lead + article }) as { content: string };
+  expect(out.content).toBe(article);
+});
+
+test("capJevText keeps a lead-in that has prose, and a lead-in that is too long", () => {
+  const prose = "This introduction explains in some detail what the following document is about and why it matters. ";
+  const withProse = { content: prose + "\n\n# Title\n\n" + "x".repeat(MAX_JEV_TEXT_CHARS) };
+  expect((capJevText(withProse) as { content: string }).content.startsWith("This introduction")).toBe(true);
+  const longLead = { content: "- [nav](https://example.com)\n".repeat(400) + "# Title\n\n" + "x".repeat(MAX_JEV_TEXT_CHARS) };
+  expect((capJevText(longLead) as { content: string }).content.startsWith("- [nav]")).toBe(true);
+});
+
 test("validateAnswers accepts a well-formed score answer", () => {
   const answers = validateAnswers(
     {

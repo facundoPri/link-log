@@ -162,9 +162,23 @@ export function lensAnswer(
 /** Description plus body sent to Jev. About 6k tokens, well under its 32k-token window per question. */
 export const MAX_JEV_TEXT_CHARS = 24_000;
 const TRUNCATION_MARKER = "\n\n[Content truncated for classification]";
+const LEADING_BOILERPLATE_MAX_CHARS = 8_000;
+const FRONTMATTER = /^---\n[\s\S]*?\n---\n/;
+const isProse = (line: string) => !/^\s*[-|\[!]/.test(line) && line.trim().split(/\s+/).length >= 15;
+/**
+ * Browser Rendering returns the whole page, so the article's `# Title` can follow thousands of characters of site
+ * navigation. Drops that lead-in, only when it is short and has no prose line. Conservative: otherwise unchanged.
+ */
+function dropLeadingBoilerplate(content: string): string {
+  const body = content.replace(FRONTMATTER, "");
+  const title = /^# .+$/m.exec(body);
+  if (!title || title.index === 0 || title.index > LEADING_BOILERPLATE_MAX_CHARS) return content;
+  return body.slice(0, title.index).split("\n").some(isProse) ? content : body.slice(title.index);
+}
 /**
  * Caps the text of a Jev state: `description` then `content`, together at most MAX_JEV_TEXT_CHARS.
  * The beginning of each is kept. A state within the cap is returned as is; the input is never mutated.
+ * Only a state over the cap loses leading boilerplate, to make room for the article.
  */
 export function capJevText(state: unknown): unknown {
   if (!state || typeof state !== "object") return state;
@@ -173,11 +187,13 @@ export function capJevText(state: unknown): unknown {
   const kept = typeof description === "string" ? description : "";
   if (kept.length + content.length <= MAX_JEV_TEXT_CHARS) return state;
   const head = kept.slice(0, MAX_JEV_TEXT_CHARS / 2);
+  const article = dropLeadingBoilerplate(content);
+  const fits = head.length + article.length <= MAX_JEV_TEXT_CHARS;
   const room = MAX_JEV_TEXT_CHARS - head.length - TRUNCATION_MARKER.length;
   return {
     ...(state as Record<string, unknown>),
     ...(typeof description === "string" ? { description: head } : {}),
-    content: content.slice(0, room) + TRUNCATION_MARKER,
+    content: fits ? article : article.slice(0, room) + TRUNCATION_MARKER,
   };
 }
 /** Where a Jev failure happened: before the request was sent (no cost) or after (it may have been billed). */

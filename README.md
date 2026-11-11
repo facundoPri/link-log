@@ -238,7 +238,9 @@ Classification sends Jev at most 24,000 characters of text (`MAX_JEV_TEXT_CHARS`
 about 6,000 tokens, well under TypeSafe's 32,000-token window per question). The
 text is the description first, then the beginning of the body. A longer body is cut
 there and ends with "[Content truncated for classification]", which counts inside
-the cap, so the end of a long document does not reach Jev. Only what is sent is
+the cap, so the end of a long document does not reach Jev. A body over the cap
+first loses leading site navigation (up to 8,000 characters before the first `# `
+title, with no prose line), because Browser Rendering returns the whole page. Only what is sent is
 capped: the saved document in R2 and the reader view are untouched. Jobs that
 failed earlier with "too long" succeed with "Retry failed". If the provider still
 rejects the size, the job fails with a clear message and preserves content, tags
