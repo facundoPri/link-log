@@ -42,3 +42,4 @@ Preconditions:
 - Links without content are skipped, and the result says `Skipped N link(s) without content`. `Extract, then auto-tag` is a separate, explicit choice.
 - Fixture Jev markers live in the content: `jev:yes`, `jev:fail` and `jev:slow=<ms>` (`worker/ai/fixture.ts`). Pick an `*-yes` fixture to get a positive score.
 - An Auto-tag requested while the link is still extracting waits (`waiting` job) and starts after extraction. Wait for `!processing` before asserting tags.
+- Jev receives at most 24,000 characters: the description, then the beginning of the content (`MAX_JEV_TEXT_CHARS`). The saved content is never cut, so assert the cap on the sent state in unit tests and assert that `GET /links/:id/content` still ends with its tail. `fixture("article-long", ...)` is far over the cap, and the fixture Jev rejects an uncapped state with `too_long`. `journeys/long-page-lens.ts` proves it.

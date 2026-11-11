@@ -14,6 +14,7 @@ export async function classifyInput({ env, job, link, config }: Classify) {
     state: {
       url: link.url,
       title: link.title,
+      description: link.description || undefined,
       content: await readSaved(env, link.content_key, "Saved content is missing. Extract it again."),
     },
     questions: job.kind === "autotag"
