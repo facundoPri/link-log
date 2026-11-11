@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useEffectEvent, useReducer, useRef } from "react";
 import { toast } from "sonner";
 import { BATCH_WORDS } from "./batches";
+import { runningBatchToast } from "./bulkActions";
 import { useCancelBatches } from "./entities";
 import { useInvalidateLibrary, useLibrary } from "./library";
 import { plural, tokens, usd } from "./lib/format";
@@ -86,25 +87,31 @@ export function useSessionRuns({
       if (run.open || awaitingListing || sumOf((batch) => batch.active) > 0) {
         toast.loading(`${words.verb} ${plural(total, words.noun)}…`, {
           id: toastId,
-          description: `${finished} of ${total} done`,
-          action: { label: "Cancel", onClick: () => void cancelBatches(run.batchIds) },
+          ...runningBatchToast({
+            batch: { total, done: finished - failed - cancelled, failed, cancelled },
+            onCancel: () => void cancelBatches(run.batchIds),
+            onActivity,
+          }),
         });
         continue;
       }
       runs.current.delete(toastId);
       const activity = { label: "Activity", onClick: onActivity };
-      if (cancelled === total) toast("Cancelled", { id: toastId });
+      // Sonner merges updates into the running toast, so clear its Cancel button explicitly.
+      if (cancelled === total) toast("Cancelled", { id: toastId, description: undefined, action: undefined, cancel: undefined });
       else if (failed === 0)
         toast.success(`${words.done} ${plural(total - cancelled, words.noun)}`, {
           id: toastId,
           description: usage ? `${usd(usage.usd)} · ${tokens(usage.tokens)} tokens` : undefined,
           action: activity,
+          cancel: undefined,
         });
       else
         toast[failed === total ? "error" : "success"](`${words.done} ${plural(total, words.noun)}`, {
           id: toastId,
           description: `${failed} failed — see Activity`,
           action: activity,
+          cancel: undefined,
         });
       onSettled(batches, failed > 0);
     }

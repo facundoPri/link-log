@@ -13,7 +13,7 @@ What production (`https://linklog.facundopri.com`, `wrangler.jsonc` → `env.pro
 | Workers Issues | Errors grouped by cause: uncaught exceptions, failed invocations, 5xx responses and `console.error` lines, with counts, first/last seen and source-mapped stack traces. Only traffic since FAC-219's deploy. | Dashboard → Workers → linklog → Issues. |
 | Workers Traces | One trace per invocation (fetch, cron, queue, Workflow step) with automatic spans for D1, R2, subrequests and their durations. Every invocation is sampled (`head_sampling_rate: 1`); kept 7 days. | Dashboard → Workers → linklog → Observability → Traces. |
 | `wrangler tail` | Live invocations: URL, outcome, wall/CPU time, logs, exceptions. Only while connected. | `bunx wrangler tail linklog --format json` |
-| Queue `linklog-jobs-production` | Producers and consumers. | `wrangler queues info` |
+| Queues `linklog-jobs-production`, `linklog-jev-production` | Producers and consumers. Lens, auto-tag, query, and Browser lens and auto-group jobs run in the Jev queue's consumer with no Workflow instance; their D1 `jobs` row (`started_at`, `jev_call`, `jev_outcome`) is the record. | `wrangler queues info` |
 | Deployments | Which version is live, and its tag/message. | `wrangler deployments list --env production` |
 
 ### Jev timing events (Workers Logs)
@@ -29,6 +29,8 @@ One JSON line each, ids and numbers only (`worker/jev-metrics.ts`). Group by `ba
 | `jev_batch_done` | `batch_id`, `kind`, `jobs`, `done`, `failed`, `first_result_ms`, `duration_ms` | Batch duration, once no job is left. Jobs settling together can log it twice: use the latest line per batch. A batch retry logs it again with the longer duration. |
 
 Only Jev kinds log them (`autotag`, `lens`, `query`, `browser-lens`, `browser-autogroup`). In the Workers Logs query builder the JSON fields are queryable. p95 Jev latency: filter `event = jev_call` and `ok = true`, then calculate `p95` of `latency_ms`. 429 count: filter `event = jev_rate_limited` and count. These lines do not exist before the deploy that ships them.
+
+Jev queue failures log `job_id` and `detail`: `jev_settle_failed` means the job's settlement did not commit (it stays running until a later delivery settles it); `jev_start_next_failed` means it settled but the link's next queued job was not sent (the cron's `recover()` resends it). `recover_unknown_kind` (`job_id`, `kind`) is a queued or running job that recovery skipped because this deploy does not know its batch kind.
 
 `invocation_logs` stay off on purpose: auth links carry tokens in the URL. Traces still record each request's `url.full` and `url.path`, and Cloudflare's docs don't say whether `redact_query_string` applies to them, so verify, magic-link and reset tokens may appear in traces of `/api/auth/*` requests for up to 7 days. Only account members can read them; lower `head_sampling_rate` or turn traces off if that is not acceptable.
 

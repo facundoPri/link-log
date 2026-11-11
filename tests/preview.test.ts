@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Cloudflare } from "../scripts/preview/cloudflare";
 import { authSecret, config, desired, hashPassword, names, seedSql, testAccount, type PullRequest } from "../scripts/preview/model";
 import { body, MARKER } from "../scripts/preview/comment";
+import wrangler from "../wrangler.jsonc";
 import { TestD1 } from "./support/d1";
 import { client, cookieOf, makeEnv } from "./support/env";
 import { cleanup, resources, settleDeployment } from "../scripts/preview/lifecycle";
@@ -11,6 +12,9 @@ const pr = "5";
 const n = names(repo, pr);
 const dbId = "11111111-1111-1111-1111-111111111111";
 const queueId = "2".repeat(32);
+const jevQueueId = "4".repeat(32);
+const consumerId = "3".repeat(32);
+const jevConsumerId = "5".repeat(32);
 function pull(overrides: Partial<PullRequest> = {}): PullRequest {
   return { number: 5, state: "open", head: { sha: "a".repeat(40), repo: { id: 12345 } },
     base: { repo: { id: 12345 } }, labels: [{ name: "pr-preview" }], user: { login: "writer" }, ...overrides };
@@ -30,8 +34,9 @@ function mockCloud(handler: (call: Call) => { result?: unknown; status?: number;
 }
 function existing(call: Call) {
   if (call.path.startsWith("/d1/database?")) return { result: [{ name: "linklog", uuid: "9".repeat(32) }, { name: n.db, uuid: dbId }] };
-  if (call.path.startsWith("/queues?")) return { result: [{ queue_name: "linklog-jobs", queue_id: "9".repeat(32) }, { queue_name: n.queue, queue_id: queueId }] };
-  if (call.path === `/queues/${queueId}` && call.method === "GET") return { result: { queue_name: n.queue, queue_id: queueId, consumers: [{ script_name: n.worker, consumer_id: "3".repeat(32) }] } };
+  if (call.path.startsWith("/queues?")) return { result: [{ queue_name: "linklog-jobs", queue_id: "9".repeat(32) }, { queue_name: n.queues.jobs, queue_id: queueId }, { queue_name: n.queues.jev, queue_id: jevQueueId }] };
+  if (call.path === `/queues/${queueId}` && call.method === "GET") return { result: { queue_name: n.queues.jobs, queue_id: queueId, consumers: [{ script_name: n.worker, consumer_id: consumerId }] } };
+  if (call.path === `/queues/${jevQueueId}` && call.method === "GET") return { result: { queue_name: n.queues.jev, queue_id: jevQueueId, consumers: [{ script_name: n.worker, consumer_id: jevConsumerId }] } };
   if (call.path === `/r2/buckets/${n.bucket}` && call.method === "GET") return { result: { name: n.bucket } };
   if (call.method === "DELETE") return { result: null };
   throw new Error(`Unexpected mock request ${call.method} ${call.path}`);
@@ -63,7 +68,7 @@ describe("preview trust and identity", () => {
     expect(cfg.vars.BETTER_AUTH_URL).toBe(`https://${n.worker}.preview-account.workers.dev`);
     expect(JSON.stringify(cfg)).not.toContain(seed);
     expect(cfg.d1_databases[0]?.database_name).toBe(n.db);
-    expect(cfg.queues.consumers[0]?.queue).toBe(cfg.queues.producers[0]?.queue);
+    for (const producer of cfg.queues.producers) expect(cfg.queues.consumers.some(c => c.queue === producer.queue)).toBe(true);
     expect(cfg.workflows[0]?.name).not.toBe("linklog-process-link");
     expect(cfg.ai.binding).toBe("AI");
     expect(cfg.vars.JEV_PROVIDER).toBe("typesafe");
@@ -133,12 +138,14 @@ describe("resource lifecycle against mock Cloudflare API", () => {
       if (call.path.startsWith("/d1/database?")) return { result: [{ name: n.db, uuid: dbId }] };
       if (call.path.startsWith("/queues?")) return { result: [] };
       if (call.path === `/r2/buckets/${n.bucket}`) return { status: 404 };
-      if (call.path === "/queues" && call.method === "POST") return { result: { queue_name: call.body.queue_name, queue_id: queueId } };
+      if (call.path === "/queues" && call.method === "POST") return { result: { queue_name: call.body.queue_name, queue_id: call.body.queue_name === n.queues.jev ? jevQueueId : queueId } };
       if (call.path === "/r2/buckets" && call.method === "POST") return { result: { name: call.body.name } };
       return existing(call);
     });
     await resources(cf, repo, pr, true);
-    expect(calls.filter(c => c.method === "POST").map(c => c.path)).toEqual(["/queues", "/r2/buckets"]);
+    expect(calls.filter(c => c.method === "POST").map(c => [c.path, c.body?.queue_name])).toEqual([
+      ["/queues", n.queues.jobs], ["/queues", n.queues.jev], ["/r2/buckets", undefined],
+    ]);
   });
   test("stops writers, drains multiple R2 pages and deletes only exact preview storage", async () => {
     let pages = 0;
@@ -151,9 +158,12 @@ describe("resource lifecycle against mock Cloudflare API", () => {
     });
     await cleanup(cf, repo, pr);
     const deletes = calls.filter(c => c.method === "DELETE").map(c => c.path);
-    expect(deletes[0]).toBe(`/queues/${queueId}/consumers/${"3".repeat(32)}`);
-    expect(deletes[1]).toBe(`/workflows/${n.workflow}`);
-    expect(deletes[2]).toBe(`/workers/scripts/${n.worker}`);
+    expect(deletes.slice(0, 4)).toEqual([
+      `/queues/${queueId}/consumers/${consumerId}`, `/queues/${jevQueueId}/consumers/${jevConsumerId}`,
+      `/workflows/${n.workflow}`, `/workers/scripts/${n.worker}`,
+    ]);
+    expect(deletes).toContain(`/queues/${queueId}`);
+    expect(deletes).toContain(`/queues/${jevQueueId}`);
     expect(deletes).toContain(`/r2/buckets/${n.bucket}/objects/a%2Fb%3Fx%23z`);
     expect(deletes).toContain(`/r2/buckets/${n.bucket}/objects/..%2Fanother`);
     expect(deletes.at(-1)).toBe(`/d1/database/${dbId}`);
@@ -164,33 +174,40 @@ describe("resource lifecycle against mock Cloudflare API", () => {
     const missing = mockCloud(call => call.path.includes("?") ? { result: [] } : { status: 404 });
     await cleanup(missing.cf, repo, pr);
     expect(missing.calls.filter(c => c.method === "DELETE").length).toBe(2);
+    const jevMissing = mockCloud(call => call.path.startsWith("/queues?") ? { result: [{ queue_name: n.queues.jobs, queue_id: queueId }], result_info: { total_pages: 1 } }
+      : call.path === `/queues/${jevQueueId}` ? { status: 404 } : call.path.endsWith("/objects?per_page=1000") ? { result: [] } : existing(call));
+    await cleanup(jevMissing.cf, repo, pr);
+    expect(jevMissing.calls.filter(c => c.method === "DELETE").map(c => c.path)).toContain(`/queues/${queueId}`);
     const denied = mockCloud(() => ({ status: 403, success: false }));
     await expect(cleanup(denied.cf, repo, pr)).rejects.toThrow("403");
     expect(denied.calls.some(c => c.method === "DELETE")).toBe(false);
   });
   test("foreign queue consumer blocks every deletion", async () => {
-    const { cf, calls } = mockCloud(call => call.path === `/queues/${queueId}`
-      ? { result: { queue_id: queueId, queue_name: n.queue, consumers: [{ script_name: "linklog" }] } } : existing(call));
-    await expect(cleanup(cf, repo, pr)).rejects.toThrow("foreign consumer");
-    expect(calls.some(c => c.method === "DELETE")).toBe(false);
+    for (const [id, queue_name] of [[queueId, n.queues.jobs], [jevQueueId, n.queues.jev]] as const) {
+      const { cf, calls } = mockCloud(call => call.path === `/queues/${id}`
+        ? { result: { queue_id: id, queue_name, consumers: [{ script_name: "linklog" }] } } : existing(call));
+      await expect(cleanup(cf, repo, pr)).rejects.toThrow("foreign consumer");
+      expect(calls.some(c => c.method === "DELETE")).toBe(false);
+    }
   });
   test("redeploy recognizes the script field returned by the live Queue API", async () => {
     const { cf, calls } = mockCloud(call => call.path === `/queues/${queueId}`
-      ? { result: { queue_id: queueId, queue_name: n.queue, consumers: [{
+      ? { result: { queue_id: queueId, queue_name: n.queues.jobs, consumers: [{
         script: n.worker, type: "worker", consumer_id: "3".repeat(32),
       }] } } : existing(call));
     const found = await resources(cf, repo, pr, true);
-    expect(found.queue.queue_id).toBe(queueId);
+    expect(found.queues.jobs?.queue_id).toBe(queueId);
+    expect(found.queues.jev?.queue_id).toBe(jevQueueId);
     expect(calls.every(c => c.method === "GET")).toBe(true);
   });
   test("cleanup recognizes the live script field and stops its consumer first", async () => {
     const { cf, calls } = mockCloud(call => call.path === `/queues/${queueId}` && call.method === "GET"
-      ? { result: { queue_id: queueId, queue_name: n.queue, consumers: [{
+      ? { result: { queue_id: queueId, queue_name: n.queues.jobs, consumers: [{
         script: n.worker, type: "worker", consumer_id: "3".repeat(32),
       }] } }
       : call.path.endsWith("/objects?per_page=1000") ? { result: [] } : existing(call));
     await cleanup(cf, repo, pr);
-    expect(calls.find(c => c.method === "DELETE")?.path).toBe(`/queues/${queueId}/consumers/${"3".repeat(32)}`);
+    expect(calls.find(c => c.method === "DELETE")?.path).toBe(`/queues/${queueId}/consumers/${consumerId}`);
   });
   test("foreign, missing, conflicting and non-worker identities remain blocked", async () => {
     for (const consumer of [
@@ -202,7 +219,7 @@ describe("resource lifecycle against mock Cloudflare API", () => {
       { script: n.worker, type: "unknown" },
     ]) {
       const { cf, calls } = mockCloud(call => call.path === `/queues/${queueId}`
-        ? { result: { queue_id: queueId, queue_name: n.queue, consumers: [consumer] } } : existing(call));
+        ? { result: { queue_id: queueId, queue_name: n.queues.jobs, consumers: [consumer] } } : existing(call));
       await expect(resources(cf, repo, pr, true)).rejects.toThrow("foreign consumer");
       await expect(cleanup(cf, repo, pr)).rejects.toThrow("foreign consumer");
       expect(calls.every(c => c.method === "GET")).toBe(true);
@@ -227,6 +244,19 @@ describe("resource lifecycle against mock Cloudflare API", () => {
     expect((await cf.named("/d1/database", "name", n.db)).uuid).toBe(dbId);
     expect(calls).toHaveLength(2);
   });
+});
+
+test("preview queues mirror the top-level wrangler.jsonc: same bindings and consumer settings, preview names", () => {
+  const cfg = config(repo, pr, dbId, "preview-account", "auth@example.com");
+  const prod = wrangler.queues as { producers: { binding: string }[]; consumers: { queue: string }[] };
+  expect(prod.producers.map(p => p.binding)).toContain("JEV_JOBS");
+  expect(cfg.queues.producers.map(p => p.binding)).toEqual(prod.producers.map(p => p.binding));
+  const strip = (c: { queue: string }) => Object.fromEntries(Object.entries(c).filter(([k]) => k !== "queue"));
+  expect(cfg.queues.consumers.map(strip)).toEqual(prod.consumers.map(strip));
+  expect(cfg.queues.consumers.map(c => c.queue)).toEqual(cfg.queues.producers.map(p => p.queue));
+  expect(cfg.queues.producers.map(p => p.queue)).toEqual(["jobs", "jev"].map(key => n.queues[key]!));
+  expect(n.queues.jev).toBe(`${n.worker}-jev`);
+  expect(cfg.queues.consumers.find(c => c.queue === n.queues.jev)).toMatchObject(strip(prod.consumers.find(c => c.queue === "linklog-jev")!));
 });
 
 test("workflow keeps PR execution out of the secret-bearing job and serializes mutations", async () => {
