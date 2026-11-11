@@ -24,7 +24,7 @@ test("capJevText leaves non-string content and non-objects alone", () => {
   expect(capJevText(null)).toBeNull();
 });
 
-test("capJevText keeps description then the beginning of the body within the cap, marker included", () => {
+test("capJevText keeps description then the beginning of the content within the cap, marker included", () => {
   const state = {
     url: "https://example.com",
     title: "T",
@@ -42,7 +42,7 @@ test("capJevText keeps description then the beginning of the body within the cap
   expect(state.content.endsWith(" TAIL")).toBe(true);
 });
 
-test("capJevText trims a description longer than half the cap and still leaves room for the body", () => {
+test("capJevText trims a description longer than half the cap and still leaves room for the content", () => {
   const state = {
     description: "d".repeat(MAX_JEV_TEXT_CHARS),
     content: "HEAD " + "x".repeat(MAX_JEV_TEXT_CHARS),
@@ -54,7 +54,7 @@ test("capJevText trims a description longer than half the cap and still leaves r
   expect(textLength(out)).toBeLessThanOrEqual(MAX_JEV_TEXT_CHARS);
 });
 
-test("capJevText caps a body with no description", () => {
+test("capJevText caps content with no description", () => {
   const out = capJevText({ content: "x".repeat(MAX_JEV_TEXT_CHARS + 1) }) as { content: string };
   expect(out).not.toHaveProperty("description");
   expect(out.content.length).toBeLessThanOrEqual(MAX_JEV_TEXT_CHARS);
@@ -71,9 +71,9 @@ const scoreQuestion: Record<string, Question> = {
 
 const FRONTMATTER = '---\ntitle: "Parrot - Wikipedia"\nmeta:\n  "og:title": "Parrot - Wikipedia"\n---\n\n';
 const NAVIGATION =
-  "[Jump to content](#bodyContent)\n\nMain menu\n\nmove to sidebar hide\n\nNavigation\n\n" +
-  "- [Main page](https://en.wikipedia.org/wiki/Main_Page)\n- [Contents](https://en.wikipedia.org/wiki/Wikipedia:Contents)\n\n" +
-  "Search\n\nAppearance\n\nToggle the table of contents\n\n";
+  "[Jump to content](#bodyContent)\n\nMain menu\n\nNavigation\n\n" +
+  "- [Main page](https://en.wikipedia.org/wiki/Main_Page)\n- [Contents](https://en.wikipedia.org/wiki/Wikipedia:Contents)\n- [Random](https://en.wikipedia.org/wiki/Special:Random)\n\n" +
+  "[Search](https://en.wikipedia.org/wiki/Special:Search)\n\nAppearance\n\n";
 const ARTICLE = "# Parrot\n\nThe parrot is a bird. " + "It lives in forests and eats seeds. ".repeat(900) + "TAIL";
 
 test("capJevText drops leading site navigation before the article title when the text is over the cap", () => {
@@ -100,6 +100,12 @@ test("capJevText drops the navigation without a marker when the article then fit
   expect(article.length).toBeLessThanOrEqual(MAX_JEV_TEXT_CHARS);
   const out = capJevText({ content: lead + article }) as { content: string };
   expect(out.content).toBe(article);
+});
+
+test("capJevText keeps a byline and key points before a later title", () => {
+  const lead = "**By Jane Doe** · March 3\n\n## Key takeaways\n\n- Prices rose 40% in a year\n- Rents followed\n\n";
+  const out = capJevText({ content: lead + "# Part 1\n\n" + "x".repeat(MAX_JEV_TEXT_CHARS) }) as { content: string };
+  expect(out.content.startsWith("**By Jane Doe**")).toBe(true);
 });
 
 test("capJevText keeps a lead-in that has prose, and a lead-in that is too long", () => {

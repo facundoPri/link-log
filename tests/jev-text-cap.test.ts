@@ -53,7 +53,6 @@ test("a lens on a long page sends description then the page beginning, within th
   expect(JSON.stringify(sent[0])).not.toContain("TAIL-MARKER");
   expect(Object.keys(state).indexOf("description")).toBeLessThan(Object.keys(state).indexOf("content"));
   expect(s.r2.get(key)).toBe(longPage);
-  expect(s.r2.get(key)).toContain("TAIL-MARKER");
 });
 
 test("auto-tag sends the link description too, and a short page reaches Jev whole", async () => {
@@ -98,6 +97,5 @@ test("the fixture provider enforces its window: a state the cap cannot shrink fa
     reason: "too_long",
     message: JEV_FAILURE_MESSAGES.too_long,
   });
-  // The same page capped by judge() is answered.
   expect((await judge(env, { content: "x".repeat(MAX_JEV_TEXT_CHARS * 20) }, questions, { ...job, id: "job2" })).model).toBe("fixture/jev");
 });

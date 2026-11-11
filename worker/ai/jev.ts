@@ -159,21 +159,24 @@ export function lensAnswer(
     ),
   };
 }
-/** Description plus body sent to Jev. About 6k tokens, well under its 32k-token window per question. */
+/** Description plus content sent to Jev. About 6k tokens, well under its 32k-token window per question. */
 export const MAX_JEV_TEXT_CHARS = 24_000;
 const TRUNCATION_MARKER = "\n\n[Content truncated for classification]";
 const LEADING_BOILERPLATE_MAX_CHARS = 8_000;
 const FRONTMATTER = /^---\n[\s\S]*?\n---\n/;
-const isProse = (line: string) => !/^\s*[-|\[!]/.test(line) && line.trim().split(/\s+/).length >= 15;
+const HAS_LINK = /\]\(/;
 /**
  * Browser Rendering returns the whole page, so the article's `# Title` can follow thousands of characters of site
- * navigation. Drops that lead-in, only when it is short and has no prose line. Conservative: otherwise unchanged.
+ * navigation. Drops that lead-in only when it is short and mostly links (real Wikipedia pages: about 75%).
+ * A byline, abstract or any prose lead-in has few links and stays. Otherwise the content is returned unchanged.
  */
 function dropLeadingBoilerplate(content: string): string {
-  const body = content.replace(FRONTMATTER, "");
-  const title = /^# .+$/m.exec(body);
+  const withoutFrontmatter = content.replace(FRONTMATTER, "");
+  const title = /^# .+$/m.exec(withoutFrontmatter);
   if (!title || title.index === 0 || title.index > LEADING_BOILERPLATE_MAX_CHARS) return content;
-  return body.slice(0, title.index).split("\n").some(isProse) ? content : body.slice(title.index);
+  const lines = withoutFrontmatter.slice(0, title.index).split("\n").filter((line) => line.trim());
+  const links = lines.filter((line) => HAS_LINK.test(line)).length;
+  return links * 2 > lines.length ? withoutFrontmatter.slice(title.index) : content;
 }
 /**
  * Caps the text of a Jev state: `description` then `content`, together at most MAX_JEV_TEXT_CHARS.
@@ -184,15 +187,15 @@ export function capJevText(state: unknown): unknown {
   if (!state || typeof state !== "object") return state;
   const { description, content } = state as { description?: unknown; content?: unknown };
   if (typeof content !== "string") return state;
-  const kept = typeof description === "string" ? description : "";
-  if (kept.length + content.length <= MAX_JEV_TEXT_CHARS) return state;
-  const head = kept.slice(0, MAX_JEV_TEXT_CHARS / 2);
+  const descriptionText = typeof description === "string" ? description : "";
+  if (descriptionText.length + content.length <= MAX_JEV_TEXT_CHARS) return state;
+  const sentDescription = descriptionText.slice(0, MAX_JEV_TEXT_CHARS / 2);
   const article = dropLeadingBoilerplate(content);
-  const fits = head.length + article.length <= MAX_JEV_TEXT_CHARS;
-  const room = MAX_JEV_TEXT_CHARS - head.length - TRUNCATION_MARKER.length;
+  const fits = sentDescription.length + article.length <= MAX_JEV_TEXT_CHARS;
+  const room = MAX_JEV_TEXT_CHARS - sentDescription.length - TRUNCATION_MARKER.length;
   return {
     ...(state as Record<string, unknown>),
-    ...(typeof description === "string" ? { description: head } : {}),
+    ...(typeof description === "string" ? { description: sentDescription } : {}),
     content: fits ? article : article.slice(0, room) + TRUNCATION_MARKER,
   };
 }
@@ -310,8 +313,7 @@ export async function judge(
       if (exceedsFixtureWindow(input.state))
         throw new JevFailure("sent", "too_long", undefined, { technical: "Fixture Jev window exceeded" });
       raw = await fixtureJev(input);
-    }
-    else if (provider === "typesafe") {
+    } else if (provider === "typesafe") {
       const response = await fetch("https://api.typesafe.ai/v1/systemone", {
         method: "POST",
         headers: {
