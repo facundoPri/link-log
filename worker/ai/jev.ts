@@ -2,7 +2,7 @@ import type { Answer, Lens, LensOption, Question, Tag } from "../../src/types";
 import { finishUsage, guardedUsageInsert, type Meter } from "../usage";
 import { capabilities } from "../store";
 import { jevUnavailable } from "../../src/attention";
-import { fixtureJev } from "./fixture";
+import { exceedsFixtureWindow, fixtureJev } from "./fixture";
 import { JEV_FAILURE_MESSAGES, type JevReason } from "../../src/failures";
 import { fixtureJevAllowed } from "../config";
 import { logJevCall, logJevRateLimited } from "../jev-metrics";
@@ -159,23 +159,26 @@ export function lensAnswer(
     ),
   };
 }
-export const MAX_STATE_CHARS = 160_000;
-export function truncateState(state: unknown): unknown {
-  if (
-    state &&
-    typeof state === "object" &&
-    typeof (state as { content?: unknown }).content === "string"
-  ) {
-    const content = (state as { content: string }).content;
-    if (content.length > MAX_STATE_CHARS)
-      return {
-        ...(state as Record<string, unknown>),
-        content:
-          content.slice(0, MAX_STATE_CHARS) +
-          "\n\n[Content truncated for classification]",
-      };
-  }
-  return state;
+/** Description plus body sent to Jev. About 6k tokens, well under its 32k-token window per question. */
+export const MAX_JEV_TEXT_CHARS = 24_000;
+const TRUNCATION_MARKER = "\n\n[Content truncated for classification]";
+/**
+ * Caps the text of a Jev state: `description` then `content`, together at most MAX_JEV_TEXT_CHARS.
+ * The beginning of each is kept. A state within the cap is returned as is; the input is never mutated.
+ */
+export function capJevText(state: unknown): unknown {
+  if (!state || typeof state !== "object") return state;
+  const { description, content } = state as { description?: unknown; content?: unknown };
+  if (typeof content !== "string") return state;
+  const kept = typeof description === "string" ? description : "";
+  if (kept.length + content.length <= MAX_JEV_TEXT_CHARS) return state;
+  const head = kept.slice(0, MAX_JEV_TEXT_CHARS / 2);
+  const room = MAX_JEV_TEXT_CHARS - head.length - TRUNCATION_MARKER.length;
+  return {
+    ...(state as Record<string, unknown>),
+    ...(typeof description === "string" ? { description: head } : {}),
+    content: content.slice(0, room) + TRUNCATION_MARKER,
+  };
 }
 /** Where a Jev failure happened: before the request was sent (no cost) or after (it may have been billed). */
 export type JevPhase = "before_call" | "sent";
@@ -268,9 +271,8 @@ export async function judge(
   questions: Record<string, Question>,
   job: JevJob,
 ) {
-  // Bytes are not tokens. Content past ~40k tokens is truncated before sending;
-  // the provider's tokenizer still enforces the real context window.
-  const input = { state: truncateState(state), questions };
+  // Jev rejects more than 32k tokens per question and bills per input token. Only what is sent is capped.
+  const input = { state: capJevText(state), questions };
   const provider = env.JEV_PROVIDER || "cloudflare";
   // The configuration can change between enqueue and run; fail before Usage records a call.
   if (provider === "fixture" && !fixtureJevAllowed(env)) throw new JevFailure("before_call", "not_configured", "The fixture Jev provider is only available in local and test environments.");
@@ -288,7 +290,11 @@ export async function judge(
   try {
     let raw: Record<string, unknown>;
     // Fixture: deterministic, unpaid answers for automated tests, only with ALLOW_FIXTURE_JEV.
-    if (provider === "fixture") raw = await fixtureJev(input);
+    if (provider === "fixture") {
+      if (exceedsFixtureWindow(input.state))
+        throw new JevFailure("sent", "too_long", undefined, { technical: "Fixture Jev window exceeded" });
+      raw = await fixtureJev(input);
+    }
     else if (provider === "typesafe") {
       const response = await fetch("https://api.typesafe.ai/v1/systemone", {
         method: "POST",
