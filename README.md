@@ -234,15 +234,17 @@ seconds (each attempt gives up after 20) and the Markdown step after two minutes
 run cron automatically in local dev.
 
 The full content is stored in R2 (maximum 2 MB; manual upload 500,000 characters).
-Classification sends the content up to 160,000 characters (`MAX_STATE_CHARS`);
-longer content is cut there and ends with "[Content truncated for classification]",
-so the end of a long document does not reach Jev. The provider's tokenizer still
-validates the real window, without confusing bytes with tokens. TypeSafe documents
-32,000 tokens for `state` plus the longest question and 64,000 for the complete
-request. If the provider rejects the size, the job fails with a clear message and
-preserves content, tags and previous scores. No per-fragment probabilities are
-added automatically; the strategy for documents that truly exceed the window is
-still pending.
+Classification sends Jev at most 24,000 characters of text (`MAX_JEV_TEXT_CHARS`,
+about 6,000 tokens, well under TypeSafe's 32,000-token window per question). The
+text is the description first, then the beginning of the content. Longer content is cut
+there and ends with "[Content truncated for classification]", which counts inside
+the cap, so the end of a long document does not reach Jev. Content over the cap
+first loses leading site navigation (up to 8,000 characters before the first `# `
+title, mostly links), because Browser Rendering returns the whole page. Only what is sent is
+capped: the saved document in R2 and the reader view are untouched. Jobs that
+failed earlier with "too long" succeed with "Retry failed". If the provider still
+rejects the size, the job fails with a clear message and preserves content, tags
+and previous scores.
 Processing uses full context per link, not embeddings or a vector index.
 
 ### Verification

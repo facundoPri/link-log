@@ -186,6 +186,18 @@ export const FIXTURES = {
     preview: { kind: "html", title: "Taggable article {path}", description: "A normal page that Jev tags." },
     browser: { kind: "markdown", markdown: article("Taggable article {path}", "jev:yes") },
   },
+  // FAC-220: a page far over the Jev text cap. The fixture Jev window (100,000 chars) rejects it unless the cap applies.
+  "article-long": {
+    about: "HTML preview with a DESCRIPTION-MARKER description, Browser Markdown of ~150,000 chars: `HEAD-MARKER` and `jev:yes` near the start, `TAIL-MARKER` at the very end",
+    preview: { kind: "html", title: "Long article {path}", description: "DESCRIPTION-MARKER A very long page that Jev tags." },
+    browser: {
+      kind: "markdown",
+      markdown: "# Long article {path}\n\nHEAD-MARKER jev:yes\n\n" +
+        Array.from({ length: 1_080 }, (_, i) =>
+          `Paragraph ${i + 1}. This deterministic QA article is long on purpose: it talks about gardens, rivers, bridges and the people who build them.`).join("\n\n") +
+        "\n\nTAIL-MARKER",
+    },
+  },
   "held-yes": {
     about: "HTML preview OK; Browser Markdown with a `jev:yes` marker after 10 s (time to cancel or to queue Jev behind it)",
     preview: { kind: "html", title: "Held article {path}", description: "A page that takes 10 s to read." },
