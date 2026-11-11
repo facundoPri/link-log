@@ -62,7 +62,9 @@ export default (async ({ page, api, fixture, step, check, shot }) => {
 
   await step("The batch ends and the toast resolves");
   await check("API: batch settled", async () => (await api.library()).batches.find((b) => b.id === batch.id && b.active === 0), { timeout: 90_000 });
-  await check("Toast resolves to Extracted 6 links", () => page.locator("[data-sonner-toast]").getByText("Extracted 6 links").isVisible());
+  const done = page.locator("[data-sonner-toast]").filter({ hasText: "Extracted 6 links" });
+  await check("Toast resolves to Extracted 6 links", () => done.isVisible());
+  await check("The settled toast drops Cancel", async () => (await done.getByRole("button", { name: "Cancel" }).count()) === 0);
   await check("No row reads In progress…", async () => (await page.getByText("In progress…", { exact: true }).count()) === 0);
   await shot("04-settled");
 }) satisfies Journey;
