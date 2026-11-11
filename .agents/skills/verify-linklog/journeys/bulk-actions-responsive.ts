@@ -47,7 +47,7 @@ export default (async ({ page, api, fixture, step, check, shot, note }) => {
   await check("No desktop buttons on the chip", async () => (await bar.getByRole("button", { name: /^Auto-tag/ }).count()) === 0);
   await snap("01-narrow-chip");
   await bar.getByRole("button", { name: /^Actions/ }).click();
-  const palette = page.getByRole("dialog", { name: "Bulk actions" });
+  const palette = page.getByRole("dialog", { name: "Commands" });
   await check("The chip opens the compact palette", () => palette.isVisible());
   await check("Palette rows carry counts: Auto-tag 4/7, Extract context 7/7", async () => /4\/7/.test((await palette.getByRole("option", { name: /^Auto-tag/ }).textContent()) ?? "") && /7\/7/.test((await palette.getByRole("option", { name: /^Extract context/ }).textContent()) ?? ""));
   const overflow = await check("Palette list fits without scrolling", async () => {

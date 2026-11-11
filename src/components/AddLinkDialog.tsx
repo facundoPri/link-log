@@ -61,8 +61,8 @@ export function AddLinkDialog({
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Add link</DialogTitle>
-          <DialogDescription className="sr-only">
-            Save one or more links
+          <DialogDescription>
+            Saves them to your Library and extracts them in the background.
           </DialogDescription>
         </DialogHeader>
         <form
@@ -139,7 +139,7 @@ export function AddLinkDialog({
           )}
           <DialogFooter>
             <Button type="submit" disabled={busy || !text.trim()}>
-              Save
+              Save to Library
               <Kbd className="ml-1">{multiple ? "⌘↵" : "↵"}</Kbd>
             </Button>
           </DialogFooter>

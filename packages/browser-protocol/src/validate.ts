@@ -129,7 +129,8 @@ const validators: { [K in CommandName]: (a: Obj) => boolean } = {
     Array.isArray(a.urls) &&
     a.urls.length >= 1 &&
     a.urls.length <= BROWSER_LIMITS.maxOpenUrls &&
-    a.urls.every((u) => str(u, BROWSER_LIMITS.maxUrlChars)),
+    a.urls.every((u) => str(u, BROWSER_LIMITS.maxUrlChars)) &&
+    (a.target === undefined || moveTarget(a.target)),
   openPermissions: () => true,
   forget: () => true,
 };

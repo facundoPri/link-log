@@ -87,7 +87,7 @@ export default (async ({ page, api, fixture, step, check, shot, note }) => {
 
   await step("⌘K opens the palette with no vertical scrollbar");
   await page.keyboard.press("ControlOrMeta+k");
-  const palette = page.getByRole("dialog", { name: "Bulk actions" });
+  const palette = page.getByRole("dialog", { name: "Commands" });
   await check("Palette is open", () => palette.isVisible());
   const list = palette.getByRole("listbox");
   const overflow = await check("Palette list fits without scrolling", async () => {
@@ -244,13 +244,15 @@ export default (async ({ page, api, fixture, step, check, shot, note }) => {
   await check("Menu closed", async () => !(await menu.isVisible()));
   await check("Still 3 selected", () => countButton(3).isVisible());
 
-  await step("⌘K with nothing selected is still Add link");
+  await step("⌘K with nothing selected is the same palette, with Add links as an explicit command");
   await bar.getByRole("button", { name: "Clear selection" }).click();
   await check("Bar is gone", async () => !(await bar.isVisible()));
   await page.keyboard.press("ControlOrMeta+k");
-  await check("Add link dialog opened", () => page.getByRole("dialog", { name: "Add link" }).isVisible());
-  await check("No palette", async () => !(await palette.isVisible()));
-  await snap("09-add-link-with-no-selection");
+  await check("Palette opened, not the Add link dialog", async () => (await palette.isVisible()) && !(await page.getByRole("dialog", { name: "Add link" }).isVisible()));
+  await check("Without a selection it lists only the view's commands", async () => (await palette.getByRole("option", { name: /^Auto-tag/ }).count()) === 0 && (await palette.getByRole("option", { name: /^Add links…/ }).isVisible()));
+  await snap("09-palette-with-no-selection");
+  await page.keyboard.press("Enter");
+  await check("Enter on Add links opens the Add link dialog", async () => (await page.getByRole("dialog", { name: "Add link" }).isVisible()) && !(await palette.isVisible()));
   await page.keyboard.press("Escape");
 
   await snap("10-done");

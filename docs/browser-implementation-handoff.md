@@ -15,8 +15,9 @@ qué límites conocidos quedan. Evidencia en [browser-validation.md](browser-val
 | `worker/handlers/browser.ts` | Handler de evaluación de capturas (reusa `judge`, pool Jev, leases, workflow, consumo). |
 | `migrations/0010_browser_targets.sql` | Target discriminado de job + tablas de browser. |
 | `migrations/0011_jobs_target_index.sql` | Índice `jobs(target_id)`. |
-| `src/browser/*` | Cliente del bridge, hooks de conexión/snapshot, driver de evaluación (`useLensRunner`, `claimRounds`), acciones (`useBrowserActions`, sin JSX). |
-| `src/components/browser/*` | Sidebar de grupos/lenses, filas de pestaña, estado de lens compartido (`BrowserLensStatus`), barra de filtros, barra de selección, inspector (`BrowserInspector` + `BrowserTabContent`), pantalla de conexión (`BrowserConnect`) y diálogos (`BrowserDialogs`). |
+| `src/browser/*` | Cliente del bridge, hooks de conexión/snapshot, driver de evaluación (`useLensRunner`, `claimRounds`), acciones (`useBrowserActions`, sin JSX) y el registro de acciones sobre pestañas seleccionadas (`tabActions.ts`). |
+| `src/components/SelectionSurface.tsx` | Superficie de selección compartida con All links: barra, chip, paleta `⌘K`, drawer de teléfono y teclas, leídos del registro de cada vista. |
+| `src/components/browser/*` | Sidebar de grupos/lenses, filas de pestaña, estado de lens compartido (`BrowserLensStatus`), barra de filtros, diálogo **Open links** (`OpenLinksDialog`), inspector (`BrowserInspector` + `BrowserTabContent`), pantalla de conexión (`BrowserConnect`) y diálogos (`BrowserDialogs`). |
 | `src/components/DomainFilter.tsx`, `MarkdownView.tsx` | Filtro de dominios y render de Markdown compartidos por All links y Browser. |
 | `scripts/ports.ts`, `scripts/dev.ts`, `scripts/chrome.ts` | Puertos configurables, dev sin matar procesos ajenos, launcher con perfil aislado. |
 | `tests/browser/` | Entorno aislado + runner de integración con Chromium real. |
@@ -164,6 +165,20 @@ se abre la página **Connect**, donde se concede (o no) el acceso a contenido.
   que corre una sola vez por acción aun con StrictMode; con más de 100 pestañas o más de 1,8 MB se
   parte en varios requests (una entrada de Activity por request) y las sugerencias se unen en la
   misma revisión.
+
+### Selección, ⌘K y Open links (FAC-184)
+- Browser usa la misma `SelectionSurface` que All links con su propio registro (`TAB_ACTIONS`):
+  Save `S`, Move to group `G` (picker de destinos con **New group…**), Autogroup `A`, Remove from
+  group `U`, Copy `C`/`⇧C` y Close tabs (sin tecla, en el grupo Danger). Cada vista monta una sola
+  superficie, así que `⌘K` y las teclas tienen un único handler; `App` ya no las maneja.
+- `⌘K` abre siempre la paleta **Commands**. Sin selección sólo lista los comandos de la vista:
+  en Browser **Open links…**, que abre pestañas y nunca guarda en la biblioteca.
+- `openTabs` acepta un `target` opcional (el mismo `MoveTarget` de `moveToGroup`) y agrupa sólo las
+  pestañas que abrió esa operación; las ya abiertas quedan donde estaban. El ledger guarda el
+  grupo creado, así que un reintento con el mismo `operationId` lo reutiliza. La página sólo
+  manda `target` si `hello` anuncia `open-group`; con una extensión anterior el selector de grupo
+  queda deshabilitado con el motivo.
+- Pegar o soltar URLs en Browser abre **Open links** con las URLs cargadas, en lugar de guardarlas.
 
 ### Permisos
 - Obligatorios: `tabs`, `tabGroups`, `storage`, `scripting` y los orígenes de Linklog (bridge).

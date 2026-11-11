@@ -131,6 +131,15 @@ describe("messages", () => {
     expect(open({ operationId: "bad id!", urls: urls(1) })).toBeNull();
     expect(open({ urls: urls(1) })).toBeNull();
   });
+
+  test("openTabs takes an optional group target, validated like moveToGroup's", () => {
+    const open = (target: unknown) => parsePageRequest({ id: "r1", command: "openTabs", args: { operationId: "op-1", urls: ["https://a.dev/"], target } });
+    expect(open({ kind: "new", title: "Reading", color: "blue", description: "" })?.command).toBe("openTabs");
+    expect(open({ kind: "group", groupId: 4 })?.command).toBe("openTabs");
+    expect(open({ kind: "new", title: "Reading", color: "neon", description: "" })).toBeNull();
+    expect(open({ kind: "group" })).toBeNull();
+    expect(open("Reading")).toBeNull();
+  });
 });
 
 describe("snapshots", () => {

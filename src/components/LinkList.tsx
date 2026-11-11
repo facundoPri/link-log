@@ -85,7 +85,7 @@ export function LinkList({
               ? `No links analyzed with this lens yet — select links and choose Lens → ${lens.name}.`
               : filtered
                 ? "Try a different title, domain or tag."
-                : "Paste a URL anywhere on this page, drag one from another tab, or press ⌘K."}
+                : "Paste a URL anywhere on this page, drag one from another tab, or press ⌘K and choose Add links."}
           </p>
           {lens ? null : filtered ? (
             <Button variant="ghost" size="sm" onClick={onClearFilters}>

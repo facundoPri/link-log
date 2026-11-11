@@ -39,4 +39,5 @@ Each entry: what could not be measured, the triage that hit it, and the cheapest
 - **No request latency.** Invocation logs are off and traces are not configured, so API latency per route is only visible live in `tail`. Fix: enable `observability.traces` at a low sampling rate after checking how it records URLs that carry auth tokens.
 - **Stored logs need the dashboard.** The Workers Observability query API returns 403 to Wrangler's OAuth token. Fix: a read-only API token with Workers Observability read, kept out of the repo.
 - **Deploys don't name their commit.** The 2026-10-30 deploy has no tag or message, so the live code can't be tied to a commit. Fix: deploy with `--tag`/`--message` (see README → Cloudflare: production).
+- **Client interactions are invisible.** Nothing records which UI command a key press, paste or click ran, so a keyboard or palette bug (FAC-184, 2026-11-04) can only be reproduced locally, never measured. Fix: none for now; reproduction with `verify-linklog` is cheaper than collecting UI events.
 - **No alerts.** Nobody is told when errors spike or jobs pile up. Fix: a Cloudflare notification, or a scheduled check over D1 failures.
