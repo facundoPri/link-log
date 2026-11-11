@@ -151,16 +151,25 @@ describe("snapshots", () => {
     discarded: false,
     frozen: false,
     content: "available",
+    sleep: null,
+    capturedAt: null,
+    load: null,
     firstSeenAt: 0,
   });
-  const snap: WindowSnapshot = { revision: 5, windowId: 1, tabs: [tab(1, 0), tab(2, 1)], groups: [], linklogTabs: 1 };
+  const snap: WindowSnapshot = { revision: 5, windowId: 1, tabs: [tab(1, 0), tab(2, 1)], groups: [], linklogTabs: 1, loadRun: null };
   test("small patches reproduce the next snapshot", () => {
-    const next = { windowId: 1, tabs: [tab(2, 0, "renamed"), tab(3, 1)], groups: [], linklogTabs: 1 };
+    const next = { windowId: 1, tabs: [tab(2, 0, "renamed"), tab(3, 1)], groups: [], linklogTabs: 1, loadRun: null };
     const patch = diffSnapshots(snap, next, 6)!;
     expect(patch.upsertTabs.map((t) => t.tabId)).toEqual([2, 3]);
     expect(patch.removeTabs).toEqual([1]);
     expect(applyPatch(snap, patch)).toEqual({ ...next, revision: 6 });
     expect(diffSnapshots(snap, snap, 7)).toBeNull();
+  });
+  test("Load content progress travels in patches", () => {
+    const loadRun = { status: "running" as const, total: 2, queued: 1, awake: 1, done: 0, failed: 0, skipped: 0 };
+    const patch = diffSnapshots(snap, { ...snap, loadRun }, 6)!;
+    expect(patch.loadRun).toEqual(loadRun);
+    expect(applyPatch(snap, patch)!.loadRun).toEqual(loadRun);
   });
   test("a patch for another revision is rejected so the page asks for a snapshot", () => {
     const patch = diffSnapshots(snap, { ...snap, tabs: [tab(1, 0)] }, 6)!;

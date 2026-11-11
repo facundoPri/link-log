@@ -6,6 +6,7 @@ import { cn } from "../../lib/utils";
 import { relativeTime } from "../../lib/time";
 import { MarkdownView } from "../MarkdownView";
 import { ACCESS_LABEL } from "./BrowserLensStatus";
+import { LOAD_IN_PROGRESS, LOAD_LABEL, LOAD_NOTE, SLEEP_DETAIL } from "../../browser/sleeping";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -28,31 +29,45 @@ function readMode(): "preview" | "markdown" {
 }
 
 /** Why the page can't be read, and the one thing that helps. */
-function Unreadable({ tab, onAllowAccess, onFocus }: { tab: BrowserTab; onAllowAccess: () => void; onFocus: () => void }) {
+function Unreadable({ tab, onAllowAccess, onFocus, onLoad }: { tab: BrowserTab; onAllowAccess: () => void; onFocus: () => void; onLoad: () => void }) {
   const access = ACCESS_LABEL[tab.content as Exclude<BrowserTab["content"], "available">];
+  const loading = !!tab.load && LOAD_IN_PROGRESS.includes(tab.load.state);
   return (
     <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed p-5 text-center">
       <span className="flex size-8 items-center justify-center rounded-md bg-muted text-muted-foreground">
         {tab.content === "no-permission" ? (
           <Lock className="size-4" />
-        ) : tab.content === "discarded" || tab.content === "frozen" ? (
+        ) : loading || tab.content === "loading" ? (
+          <Loader2 className="size-4 animate-spin" />
+        ) : tab.content === "sleeping" ? (
           <Moon className="size-4" />
-        ) : tab.content === "loading" ? (
+        ) : tab.content === "stalled" ? (
           <Loader2 className="size-4 animate-spin" />
         ) : (
           <FileWarning className="size-4" />
         )}
       </span>
-      <p className="text-xs font-medium">{access.label}</p>
-      <p className="max-w-64 text-xs text-muted-foreground">{access.hint}</p>
+      <p className="text-xs font-medium">{loading ? LOAD_LABEL[tab.load!.state] : access.label}</p>
+      <p className="max-w-64 text-xs text-muted-foreground">
+        {tab.sleep ? `${SLEEP_DETAIL[tab.sleep]} ${access.hint}` : access.hint}
+      </p>
+      {tab.load?.state === "failed" && <p className="max-w-64 text-xs text-destructive">Couldn't load: {tab.load.error}</p>}
       {tab.content === "no-permission" ? (
         <Button size="sm" variant="outline" onClick={onAllowAccess}>
           Allow access
         </Button>
-      ) : tab.content === "discarded" || tab.content === "frozen" ? (
-        <Button size="sm" variant="outline" onClick={onFocus}>
-          Go to tab
-        </Button>
+      ) : (tab.content === "sleeping" || tab.content === "stalled") && !loading ? (
+        <>
+          <div className="flex gap-1.5">
+            <Button size="sm" variant="outline" onClick={onLoad}>
+              Load content
+            </Button>
+            <Button size="sm" variant="ghost" onClick={onFocus}>
+              Go to tab
+            </Button>
+          </div>
+          <p className="max-w-64 text-2xs text-muted-foreground">{LOAD_NOTE}</p>
+        </>
       ) : null}
     </div>
   );
@@ -65,16 +80,19 @@ export function ContentPanel({
   onReload,
   onAllowAccess,
   onFocus,
+  onLoad,
 }: {
   tab: BrowserTab;
   state: Read;
   onReload: () => void;
   onAllowAccess: () => void;
   onFocus: () => void;
+  onLoad: () => void;
 }) {
   const [mode, setMode] = useState(readMode);
   const [expanded, setExpanded] = useState(false);
-  if (tab.content !== "available") return <Unreadable tab={tab} onAllowAccess={onAllowAccess} onFocus={onFocus} />;
+  const captured = tab.content === "sleeping" && !!tab.capturedAt;
+  if (tab.content !== "available" && !captured) return <Unreadable tab={tab} onAllowAccess={onAllowAccess} onFocus={onFocus} onLoad={onLoad} />;
   if (state.status === "loading" || state.status === "idle")
     return (
       <div className="space-y-2" aria-label="Reading page">
@@ -97,6 +115,12 @@ export function ContentPanel({
   const markdown = capture.markdown;
   return (
     <div>
+      {captured && (
+        <div role="status" className="mb-3 flex items-center gap-1.5 rounded-md bg-muted/50 p-2 text-xs text-muted-foreground">
+          <Moon className="size-3.5 shrink-0" />
+          The tab is sleeping. This is the content captured {relativeTime(capture.capturedAt)}.
+        </div>
+      )}
       {capture.completeness === "partial" && (
         <div role="status" className="mb-3 flex flex-col gap-1 rounded-md bg-muted/50 p-2 text-xs">
           <span className="font-medium">Read partially</span>

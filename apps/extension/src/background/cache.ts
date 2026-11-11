@@ -35,6 +35,7 @@ const CAP_INDEX = "capIndex";
 /** Captures are evicted separately from results so results are never silently re-bought. */
 export const CAPTURE_BUDGET = 3 * 1024 * 1024;
 const CAPTURE_MAX = 1024 * 1024;
+type CaptureIndex = Record<string, { bytes: number; at: number; documentRevision?: number; source?: "dom" | "metadata"; capturedAt?: string }>;
 const FINAL = new Set(["done", "failed", "unavailable", "expired"]);
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
@@ -455,7 +456,7 @@ export class ResultCache {
     return this.mutex.run(async () => {
       const bytes = JSON.stringify(capture).length * 2;
       if (bytes > CAPTURE_MAX) return;
-      const index = (await this.kv.get<Record<string, { bytes: number; at: number }>>(CAP_INDEX)) ?? {};
+      const index = (await this.kv.get<CaptureIndex>(CAP_INDEX)) ?? {};
       // The previous capture of this tab is replaced (or dropped if the new one doesn't fit).
       const evict = [tabInstanceId];
       delete index[tabInstanceId];
@@ -475,7 +476,7 @@ export class ResultCache {
         if (!(error instanceof QuotaError)) throw error;
         return; // A capture that doesn't fit is simply not cached.
       }
-      index[tabInstanceId] = { bytes, at: this.now() };
+      index[tabInstanceId] = { bytes, at: this.now(), documentRevision, source, capturedAt: capture.capturedAt };
       await this.kv.set({ [CAP_INDEX]: index }).catch(async (error) => {
         if (!(error instanceof QuotaError)) throw error;
         await this.kv.remove([CAP + tabInstanceId]); // unindexed data would never be evicted
@@ -499,6 +500,16 @@ export class ResultCache {
       await this.kv.remove([...Object.keys(index).map((id) => CAP + id), CAP_INDEX]);
     }
     await this.kv.set(writes);
+  }
+
+  /** Page content captured per tab opening (DOM only), without reading the captures themselves. */
+  async captured(): Promise<Map<string, { documentRevision: number; capturedAt: string }>> {
+    const index = (await this.kv.get<CaptureIndex>(CAP_INDEX)) ?? {};
+    const out = new Map<string, { documentRevision: number; capturedAt: string }>();
+    for (const [id, e] of Object.entries(index))
+      if (e.source === "dom" && e.documentRevision !== undefined && e.capturedAt)
+        out.set(id, { documentRevision: e.documentRevision, capturedAt: e.capturedAt });
+    return out;
   }
 
   async usage() {

@@ -6,6 +6,7 @@ import { handle, type Services } from "../src/background/commands";
 import { GroupMetaStore } from "../src/background/groups";
 import { Hub, type Connection } from "../src/background/hub";
 import { memoryKV, Mutex } from "../src/background/kv";
+import { LoadQueue } from "../src/background/loader";
 import { OpenLedger } from "../src/background/opens";
 import { TabRegistry } from "../src/background/registry";
 
@@ -23,7 +24,8 @@ async function setup(count: number, markdown?: (i: number) => string) {
   const groups = new GroupMetaStore(kv, mutex);
   const hub = new Hub(kv, registry, groups);
   hub.grants = ["http://*/*", "https://*/*"];
-  s = { registry, cache: new ResultCache(kv, mutex), groups, hub, opens: new OpenLedger(kv), ids: { installationId: "inst", browserSessionId: "sess" } };
+  const cache = new ResultCache(kv, mutex);
+  s = { registry, cache, groups, hub, opens: new OpenLedger(kv), loader: new LoadQueue(kv, mutex, registry, cache, hub), ids: { installationId: "inst", browserSessionId: "sess" } };
   chromeFake.addTab(LINKLOG_TAB, "http://localhost:4321/");
   for (let i = 1; i <= count; i++) {
     chromeFake.addTab(i, `https://site.dev/${i}`);

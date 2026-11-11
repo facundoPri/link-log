@@ -2,7 +2,7 @@ import type { Answer } from "./lens.ts";
 
 // Bump whenever a message or snapshot shape changes, so a stale extension build is
 // reported as outdated instead of feeding the page fields it doesn't have.
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 /** window.postMessage channel between the Linklog page and the bridge content script. */
 export const BRIDGE_CHANNEL = "linklog-bridge";
 /** chrome.runtime.connect port name used only by the bridge content script. */
@@ -35,11 +35,50 @@ export const GROUP_COLORS: GroupColor[] = [
 /** Why a tab's content can or cannot be read right now. Never a lens answer. */
 export type ContentAccess =
   | "available"
-  | "loading"
+  | "loading" // a navigation in progress, for at most LOADING_BOUND_MS
+  | "stalled" // still loading after LOADING_BOUND_MS
   | "restricted" // chrome://, extension pages, web store, file:, …
   | "no-permission" // host access not granted yet
-  | "discarded" // Chrome unloaded it to save memory
-  | "frozen";
+  | "sleeping"; // see SleepReason
+
+/** Loading longer than this is shown as stalled, not as a spinner. */
+export const LOADING_BOUND_MS = 30_000;
+
+/** Why a Sleeping tab's page isn't loaded: a detail, never a separate state. */
+export type SleepReason =
+  | "unloaded" // Chrome discarded it to save memory
+  | "frozen" // Chrome froze it in the background
+  | "not-loaded"; // restored at startup and never loaded
+
+/** Where one tab stands in a Load content run. */
+export type LoadState =
+  | "queued"
+  | "loading"
+  | "capturing"
+  | "putting-to-sleep"
+  | "done"
+  | "failed"
+  | "skipped";
+export type LoadItemView = {
+  state: LoadState;
+  /** Why it failed or was skipped. */
+  error?: string;
+  /** What changed for the user, e.g. a frozen tab that is now asleep or a tab left awake. */
+  note?: string;
+};
+export type LoadRunStatus = "running" | "paused" | "cancelled" | "done";
+/** One Load content run, counted for the window that sees it. */
+export type LoadRunView = {
+  status: LoadRunStatus;
+  /** Set when the run paused itself (e.g. a tab could not be put back to sleep). */
+  pauseReason?: string;
+  total: number;
+  queued: number;
+  awake: number;
+  done: number;
+  failed: number;
+  skipped: number;
+};
 
 export type BrowserTab = {
   tabId: number;
@@ -60,6 +99,12 @@ export type BrowserTab = {
   discarded: boolean;
   frozen: boolean;
   content: ContentAccess;
+  /** Set exactly when `content` is "sleeping". */
+  sleep: SleepReason | null;
+  /** This document's content captured earlier (readable while the tab sleeps). */
+  capturedAt: string | null;
+  /** This tab's place in the current Load content run. */
+  load: LoadItemView | null;
   /** When the extension first saw this opening (install, restart or reload reset it). */
   firstSeenAt: number;
 };
@@ -83,6 +128,8 @@ export type WindowSnapshot = {
   groups: BrowserGroup[];
   /** Linklog pages in this window; they are never listed or closed. */
   linklogTabs: number;
+  /** The shared Load content run, if it has tabs in this window. */
+  loadRun: LoadRunView | null;
 };
 
 export type WindowPatch = {
@@ -95,6 +142,7 @@ export type WindowPatch = {
   upsertGroups: BrowserGroup[];
   removeGroups: number[];
   linklogTabs: number;
+  loadRun: LoadRunView | null;
 };
 
 export type ResultState =
@@ -180,6 +228,8 @@ export type HelloAck = {
 };
 
 export type ItemResult = { tabId: number; ok: boolean; error?: string };
+
+export type LoadAction = "pause" | "resume" | "cancel" | "retry";
 
 /** How one requested URL ended up. */
 export type OpenOutcome =
@@ -307,6 +357,14 @@ export type Commands = {
     result: { items: OpenOutcome[] };
   };
   openPermissions: { args: {}; result: {} };
+  /**
+   * Wake these Sleeping tabs in the background, capture them and put them back to sleep.
+   * Joins the running run; `items` says which tabs were added or why not.
+   */
+  loadContent: { args: { tabs: TabRef[] }; result: { items: ItemResult[]; loadRun: LoadRunView | null } };
+  loadControl: { args: { action: LoadAction }; result: { loadRun: LoadRunView | null } };
+  /** Put to sleep: one outcome per tab, skipped ones with the reason. */
+  sleepTabs: { args: { tabs: TabRef[] }; result: { items: ItemResult[] } };
   /**
    * Sign-out: drop this connection's library-scope results and pending requests, then end the
    * handshake. Only offered when hello lists the "forget" capability.

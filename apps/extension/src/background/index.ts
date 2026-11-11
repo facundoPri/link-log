@@ -5,6 +5,7 @@ import { handle, type Services } from "./commands";
 import { GroupMetaStore } from "./groups";
 import { Hub, type Connection } from "./hub";
 import { chromeKV, Mutex } from "./kv";
+import { LoadQueue } from "./loader";
 import { OpenLedger } from "./opens";
 import { TabRegistry, type Change } from "./registry";
 import { isBridgeSender, isExtensionPage } from "./sender";
@@ -21,6 +22,9 @@ const cache = new ResultCache(session, mutex);
 const groups = new GroupMetaStore(session, mutex, local);
 const hub = new Hub(session, registry, groups);
 const opens = new OpenLedger(session);
+const loader = new LoadQueue(session, mutex, registry, cache, hub);
+hub.cache = cache;
+hub.loader = loader;
 let services: Services | null = null;
 
 // Bridge content-script matches show up as granted origins; they are for the bridge
@@ -70,7 +74,9 @@ async function init(): Promise<Services> {
   await groups.restoreBindings(alive);
   await groups.syncHints(alive);
   groups.onChange = () => syncGroups();
-  return { registry, cache, groups, hub, opens, ids: { installationId, browserSessionId } };
+  // A run the previous worker left continues, including the tabs it had woken.
+  await loader.resume();
+  return { registry, cache, groups, hub, opens, loader, ids: { installationId, browserSessionId } };
 }
 const ready = init().then((s) => (services = s));
 
@@ -114,6 +120,7 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) =>
 );
 chrome.tabs.onRemoved.addListener((tabId) =>
   run(async () => {
+    hub.forgetTab(tabId);
     const change = await registry.remove(tabId);
     if (change) await applyChanges([change]);
     hub.schedule();
@@ -121,6 +128,7 @@ chrome.tabs.onRemoved.addListener((tabId) =>
 );
 chrome.tabs.onReplaced.addListener((addedTabId, removedTabId) =>
   run(async () => {
+    hub.forgetTab(removedTabId);
     const tab = await chrome.tabs.get(addedTabId).catch(() => null);
     await applyChanges(await registry.replace(addedTabId, removedTabId, tab?.url));
     hub.schedule();
