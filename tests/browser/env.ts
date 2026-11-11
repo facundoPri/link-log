@@ -78,7 +78,7 @@ export async function startApi() {
       producers: [{ binding: "JOBS", queue: "linklog-jobs" }, { binding: "JEV_JOBS", queue: "linklog-jev" }],
       consumers: [
         { queue: "linklog-jobs", max_batch_size: 10, max_batch_timeout: 1, max_retries: 3, max_concurrency: 10 },
-        { queue: "linklog-jev", max_batch_size: 4, max_batch_timeout: 1, max_retries: 3, max_concurrency: 12 },
+        { queue: "linklog-jev", max_batch_size: 2, max_batch_timeout: 1, max_retries: 3, max_concurrency: 4 },
       ],
     },
     workflows: [{ binding: "PROCESS_LINK", name: "linklog-process-link", class_name: "LinkWorkflow" }],

@@ -254,7 +254,7 @@ test("preview queues mirror the top-level wrangler.jsonc: same bindings and cons
   expect(cfg.queues.consumers.map(c => c.queue)).toEqual(cfg.queues.producers.map(p => p.queue));
   expect(cfg.queues.producers.map(p => p.queue)).toEqual(["jobs", "jev"].map(key => n.queues[key]!));
   expect(n.queues.jev).toBe(`${n.worker}-jev`);
-  expect(cfg.queues.consumers.find(c => c.queue === n.queues.jev)).toMatchObject({ max_batch_size: 4, max_concurrency: 12 });
+  expect(cfg.queues.consumers.find(c => c.queue === n.queues.jev)).toMatchObject(strip(prod.consumers.find(c => c.queue === "linklog-jev")!));
 });
 
 test("workflow keeps PR execution out of the secret-bearing job and serializes mutations", async () => {
