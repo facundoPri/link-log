@@ -9,7 +9,7 @@ import {
   type LensRecord,
   type LensRef,
 } from "@linklog/browser-protocol";
-import { call, cancelTargets, evaluationStatusQuery, evaluationTargets, OfflineError, postEvaluation } from "./api";
+import { ackTargets, call, cancelTargets, evaluationStatusQuery, evaluationTargets, OfflineError, postEvaluation } from "./api";
 import type { BrowserState } from "./useBrowser";
 import { claimRounds } from "./claimRounds";
 import { useInvalidateLibrary } from "../library";
@@ -242,7 +242,7 @@ export function useLensRunner(browser: BrowserState, active: Lens[], allLenses: 
         await request("deposit", { requestId: req.requestId, batchId: status.batchId, items });
         // Stored locally (or no longer wanted): the backend may purge the payload.
         const done = items.filter((i) => i.state === "done").map((i) => i.targetKey);
-        if (done.length) await call(`/browser/evaluations/${req.requestId}/ack`, "POST", { targetKeys: done }).catch(() => {});
+        if (done.length) await ackTargets(req.requestId, done);
       }
     }
   }, [connected, request, submit, accepted]);

@@ -21,7 +21,7 @@ import type { Lens, Library } from "../types";
 import { useInvalidateLibrary, useWriteLibrary } from "../library";
 import type { StartRun } from "../sessionRuns";
 import { plural } from "../lib/format";
-import { call, evaluationStatusQuery, postEvaluation } from "./api";
+import { ackTargets, call, evaluationStatusQuery, postEvaluation } from "./api";
 import type { BrowserWorkspace, Destination } from "./useBrowserWorkspace";
 import type { GroupDraft } from "../components/browser/GroupDialog";
 import { groupTitle } from "../components/browser/groups";
@@ -169,7 +169,7 @@ export function useBrowserActions(ws: BrowserWorkspace, startRun: StartRun, clea
             suggestions.set(tab.tabId, { key: t.answer.choice === "none" ? null : t.answer.choice, confidence: t.answer.confidence });
           else suggestions.set(tab.tabId, { key: null, confidence: null, error: t.error ?? "No suggestion." });
         }
-        await call(`/browser/evaluations/${requestId}/ack`, "POST", { targetKeys: res.data.targets.map((t) => t.targetKey) }).catch(() => {});
+        await ackTargets(requestId, res.data.targets.map((t) => t.targetKey));
         open.delete(requestId);
       }
       if (open.size) await new Promise((r) => setTimeout(r, 1000));

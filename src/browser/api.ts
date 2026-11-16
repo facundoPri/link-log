@@ -67,6 +67,10 @@ export async function postEvaluation(body: EvaluationRequest) {
   return call<EvaluationStatus>("/browser/evaluations", "POST", body);
 }
 
+/** Confirms to the backend that these targets' results reached the extension. A failed ack is ignored. */
+export const ackTargets = (requestId: string, targetKeys: string[]) =>
+  call(`/browser/evaluations/${requestId}/ack`, "POST", { targetKeys }).catch(() => {});
+
 /** Cancels queued work for exactly these targets (never the rest of the request). */
 export async function cancelTargets(requestId: string, targetKeys: string[]) {
   for (let i = 0; i < targetKeys.length; i += 100)
