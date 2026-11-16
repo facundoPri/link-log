@@ -1,3 +1,4 @@
+import { queryOptions } from "@tanstack/react-query";
 import {
   toEvaluationTarget,
   type BrowserCatalog,
@@ -6,16 +7,20 @@ import {
   type EvaluationStatus,
 } from "@linklog/browser-protocol";
 
+import type { WriteMethod } from "../api";
 import { announceUnauthorized } from "../auth-client";
 
 export class OfflineError extends Error {}
 
-/** Same-origin call that keeps the HTTP status (idempotent flows branch on 404/409). */
-export async function call<T>(path: string, method = "GET", body?: unknown): Promise<{ status: number; data: T & { error?: string; code?: string } }> {
+type Answer<T> = Promise<{ status: number; data: T & { error?: string; code?: string } }>;
+
+/** Same-origin request that keeps the HTTP status (idempotent flows branch on 404/409). */
+async function request<T>(path: string, method: string, body?: unknown, signal?: AbortSignal): Answer<T> {
   let response: Response;
   try {
     response = await fetch(`/api${path}`, {
       method,
+      signal,
       headers: { "Content-Type": "application/json" },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
@@ -29,11 +34,30 @@ export async function call<T>(path: string, method = "GET", body?: unknown): Pro
   return { status: response.status, data };
 }
 
-export async function fetchCatalog(): Promise<BrowserCatalog> {
-  const { status, data } = await call<BrowserCatalog>("/browser/catalog");
-  if (status !== 200) throw new Error(data.error || "Could not load the browser catalog.");
-  return data;
-}
+/** A write. Reads are the query options below: the only way to read is through the query cache, with its signal. */
+export const call = <T>(path: string, method: WriteMethod, body?: unknown) => request<T>(path, method, body);
+
+/** The catalog. Read it with `queryClient.fetchQuery(catalogQuery)`. */
+export const catalogQuery = queryOptions({
+  queryKey: ["browser-catalog"],
+  queryFn: async ({ signal }): Promise<BrowserCatalog> => {
+    const { status, data } = await request<BrowserCatalog>("/browser/catalog", "GET", undefined, signal);
+    if (status !== 200) throw new Error(data.error || "Could not load the browser catalog.");
+    return data;
+  },
+});
+
+/**
+ * One evaluation request's status, as `{ status, data }` (the 404/409 branches need the status). Always
+ * fresh and not kept: the polls that read it own the result. Read it with `queryClient.fetchQuery`.
+ */
+export const evaluationStatusQuery = (requestId: string) =>
+  queryOptions({
+    queryKey: ["browser-evaluation", requestId],
+    queryFn: ({ signal }) => request<EvaluationStatus>(`/browser/evaluations/${requestId}`, "GET", undefined, signal),
+    staleTime: 0,
+    gcTime: 0,
+  });
 
 export function evaluationTargets(targets: ClaimTarget[]): EvaluationRequest["targets"] {
   return targets.map(toEvaluationTarget);
@@ -41,10 +65,6 @@ export function evaluationTargets(targets: ClaimTarget[]): EvaluationRequest["ta
 
 export async function postEvaluation(body: EvaluationRequest) {
   return call<EvaluationStatus>("/browser/evaluations", "POST", body);
-}
-
-export async function evaluationStatus(requestId: string) {
-  return call<EvaluationStatus>(`/browser/evaluations/${requestId}`);
 }
 
 /** Cancels queued work for exactly these targets (never the rest of the request). */

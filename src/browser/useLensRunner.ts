@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   BROWSER_LIMITS,
   lensFingerprint,
@@ -8,7 +9,7 @@ import {
   type LensRecord,
   type LensRef,
 } from "@linklog/browser-protocol";
-import { call, cancelTargets, evaluationStatus, evaluationTargets, OfflineError, postEvaluation } from "./api";
+import { call, cancelTargets, evaluationStatusQuery, evaluationTargets, OfflineError, postEvaluation } from "./api";
 import type { BrowserState } from "./useBrowser";
 import { claimRounds } from "./claimRounds";
 import { useInvalidateLibrary } from "../library";
@@ -30,6 +31,7 @@ const POLL_IDLE_MS = 5000;
 export function useLensRunner(browser: BrowserState, active: Lens[], allLenses: Lens[], enabled: boolean, startRun: StartRun) {
   const { request, connection, snapshot, catalog, hello, resultsVersion } = browser;
   const invalidateLibrary = useInvalidateLibrary();
+  const queryClient = useQueryClient();
   const [results, setResults] = useState<Record<string, Record<string, LensRecord>>>({});
   const [pendingCount, setPendingCount] = useState(0);
   const [offline, setOffline] = useState<string | null>(null);
@@ -100,7 +102,7 @@ export function useLensRunner(browser: BrowserState, active: Lens[], allLenses: 
         return; // still "submitting": recovery reconciles by request id, never re-buys blindly
       }
       if (res.status === 409 && res.data.code === "conflict") {
-        const existing = await evaluationStatus(claim.requestId).catch(() => null);
+        const existing = await queryClient.fetchQuery(evaluationStatusQuery(claim.requestId)).catch(() => null);
         if (existing?.status === 200) await accepted(claim.requestId, existing.data, run);
         return;
       }
@@ -201,7 +203,7 @@ export function useLensRunner(browser: BrowserState, active: Lens[], allLenses: 
       for (const req of pending) {
         let res;
         try {
-          res = await evaluationStatus(req.requestId);
+          res = await queryClient.fetchQuery(evaluationStatusQuery(req.requestId));
           setOffline(null);
         } catch (error) {
           if (error instanceof OfflineError) setOffline(error.message);
