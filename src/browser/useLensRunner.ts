@@ -9,7 +9,7 @@ import {
   type LensRecord,
   type LensRef,
 } from "@linklog/browser-protocol";
-import { ackTargets, call, cancelTargets, evaluationStatusQuery, evaluationTargets, OfflineError, postEvaluation } from "./api";
+import { ackTargets, cancelTargets, evaluationStatusQuery, evaluationTargets, OfflineError, postEvaluation } from "./api";
 import type { BrowserState } from "./useBrowser";
 import { claimRounds } from "./claimRounds";
 import { useInvalidateLibrary } from "../library";
