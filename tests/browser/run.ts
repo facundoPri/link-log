@@ -1,15 +1,17 @@
 /// <reference types="chrome" />
 // Real-extension integration run: `bun run test:browser`.
 // Isolated ports, D1/R2 state and Chromium profiles; fixture Jev provider (no paid calls).
-// Writes evidence to docs/browser-validation/ (run.json, run.md, screenshots).
+// Writes evidence (run.json, run.md, screenshots) to .cache/browser-validation/, which is not tracked.
+// To refresh the committed evidence, opt in: LINKLOG_BROWSER_EVIDENCE=docs/browser-validation bun run test:browser
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { BrowserContext, Page, Worker } from "playwright-core";
 import { PROTOCOL_VERSION } from "@linklog/browser-protocol";
 import { api, API, API_PORT, buildAll, createAccount, EXTENSION, launch, OTHER_APP_PORT, OUT, ROOT, SITE, startApi, startMarkedApp, startSite, UI, UI_PORT, waitFor } from "./env";
 
-// LINKLOG_BROWSER_EVIDENCE writes the run elsewhere (e.g. .cache/...) instead of the committed evidence.
-const EVIDENCE = resolve(ROOT, process.env.LINKLOG_BROWSER_EVIDENCE ?? "docs/browser-validation");
+// A run never rewrites tracked files by default. LINKLOG_BROWSER_EVIDENCE picks another directory;
+// docs/browser-validation is the committed evidence and only an explicit value writes there.
+const EVIDENCE = resolve(ROOT, process.env.LINKLOG_BROWSER_EVIDENCE ?? ".cache/browser-validation");
 type Check = { area: string; name: string; ok: boolean; detail: string; ms: number };
 const checks: Check[] = [];
 const meta: Record<string, unknown> = { startedAt: new Date().toISOString() };

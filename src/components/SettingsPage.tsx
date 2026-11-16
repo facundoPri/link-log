@@ -2,6 +2,7 @@ import { useState, type FormEvent, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ChevronRight, Copy, KeyRound, Loader2, LogOut } from "lucide-react";
 import { toast } from "sonner";
+import { apiKeysRead } from "../api";
 import { announceUnauthorized, authClient } from "../auth-client";
 import { useInvalidateUsage, useUsageSummary } from "../entities";
 import { relativeTime } from "../lib/time";
@@ -42,8 +43,8 @@ async function unwrap<T>(answer: Promise<{ data: T | null; error: { message?: st
   if (error || !data) throw new Error(error?.message || "Something went wrong.");
   return data;
 }
-const listKeys = async () =>
-  (await unwrap(authClient.apiKey.list())).apiKeys.map(keyView).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+const listKeys = async ({ signal }: { signal: AbortSignal }) =>
+  (await unwrap(apiKeysRead(signal))).apiKeys.map(keyView).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
 
 const apiKeysKey = ["api-keys"] as const;
 const useApiKeys = () => useQuery({ queryKey: apiKeysKey, queryFn: listKeys });
