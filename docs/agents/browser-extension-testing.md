@@ -118,7 +118,8 @@ the Linklog page does not update the extension background worker.
 ## Verify the behavior
 
 Run `bun run test:browser` from the worktree for the existing isolated Chromium
-extension integration checks. Use the `verify-linklog` skill for isolated web
+extension integration checks. It writes its evidence to `.cache/browser-validation/`;
+only `LINKLOG_BROWSER_EVIDENCE=docs/browser-validation` rewrites the committed evidence. Use the `verify-linklog` skill for isolated web
 UI/API proof; that harness does not install or verify the Ego Lite extension.
 For an Ego Lite check, connect the actual extension to the owning worktree's
 isolated app and drive the feature through its UI.
