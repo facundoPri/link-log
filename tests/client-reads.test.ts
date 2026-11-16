@@ -11,10 +11,20 @@ const TRANSPORTS = ["src/api.ts", "src/browser/api.ts"];
 const SERVER_ONLY = ["src/proxy.ts"];
 
 const files = [...new Glob("src/**/*.{ts,tsx}").scanSync(".")].filter((f) => !SERVER_ONLY.includes(f));
-const read = (file: string) => readFileSync(file, "utf8");
+// Comments are dropped so a word in one cannot satisfy or trip a rule. (A URL's `//` inside a string is
+// cut too, which only shortens the line.)
+const read = (file: string) => readFileSync(file, "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
 
-/** Each `fetch(...)` call's text, up to its closing `});`. */
-const fetchCalls = (source: string) => [...source.matchAll(/\bfetch\(/g)].map((m) => source.slice(m.index, source.indexOf("});", m.index) + 3));
+/** Each `fetch(...)` call's text, through its matching closing parenthesis. */
+const fetchCalls = (source: string) =>
+  [...source.matchAll(/\bfetch\(/g)].map((m) => {
+    let depth = 0;
+    for (let i = m.index + m[0].length - 1; i < source.length; i++) {
+      if (source[i] === "(") depth++;
+      else if (source[i] === ")" && --depth === 0) return source.slice(m.index, i + 1);
+    }
+    return source.slice(m.index);
+  });
 
 describe("client reads", () => {
   test("only the two transports call fetch", () => {
@@ -26,7 +36,7 @@ describe("client reads", () => {
     for (const file of TRANSPORTS) {
       const calls = fetchCalls(read(file));
       expect(calls.length).toBeGreaterThan(0);
-      for (const call of calls) expect({ file, passesSignal: /\bsignal\b/.test(call) }).toEqual({ file, passesSignal: true });
+      for (const call of calls) expect({ file, passesSignal: /\bsignal,/.test(call) }).toEqual({ file, passesSignal: true });
     }
   });
 

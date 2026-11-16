@@ -45,6 +45,7 @@ export const catalogQuery = queryOptions({
     if (status !== 200) throw new Error(data.error || "Could not load the browser catalog.");
     return data;
   },
+  gcTime: 0, // useBrowser keeps the catalog in its own state; the cache holds no second copy
 });
 
 /**
