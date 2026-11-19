@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useState, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useImperativeHandle, useState, type ReactNode, type Ref } from "react";
 import type { LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { routeKey, type ActionMeta, type ActionState, type BulkProgress } from "../bulkActions";
@@ -7,6 +7,7 @@ import { BulkDrawer, BulkMobileBar } from "./BulkMobile";
 import { BulkPalette } from "./BulkPalette";
 import type { BulkResult } from "./BulkResults";
 import { isInput, overlayOpen } from "../lib/overlay";
+import { clipboardUrls } from "../url";
 
 export type PickerChoice = { id: string; label: string; description?: string; icon: ReactNode };
 
@@ -36,6 +37,40 @@ export type PaletteCommand = {
 
 export type SelectionNoun = "link" | "tab";
 
+/** A tag or group picked for pasted links; `created` when it doesn't exist yet and is named by `label`. */
+export type EntryPick = { id: string; label: string; icon?: ReactNode; created?: boolean };
+
+/**
+ * What pasted links do in a view: All links saves them with tags, Browser opens them as tabs, optionally in a
+ * group. The palette's links page shows them, the choice and one primary row.
+ */
+export type LinkEntry = {
+  /** The palette command that opens the links page, e.g. "Add links…". */
+  command: Pick<PaletteCommand, "label" | "description" | "icon" | "disabled">;
+  /** The primary row: "Save 2 links", "Open 2 tabs". */
+  submitLabel: (count: number) => string;
+  /** What happens to the links, said under them. */
+  note: string;
+  /** Why these links can't go through now, or null. */
+  problem: (urls: string[], picks: EntryPick[]) => string | null;
+  /** Tags (several) or a group (one); null when the view can't offer one right now. */
+  choice: {
+    heading: string;
+    multiple: boolean;
+    placeholder: string;
+    choices: PickerChoice[];
+    newLabel: (name: string) => string;
+  } | null;
+  /** Said instead of the choice, e.g. why grouping isn't available. */
+  hint?: string | null;
+  onSubmit: (urls: string[], picks: EntryPick[]) => void;
+};
+
+/** Opens the palette's links page from outside the surface: a toolbar button, a drop. */
+export type SurfaceHandle = { enterLinks: (urls?: string[]) => void };
+
+export const LINKS_PAGE = "links";
+
 const NO_RESULTS: BulkResult[] = [];
 
 /**
@@ -60,6 +95,8 @@ export function SelectionSurface({
   onClear,
   onSelectFailed = () => {},
   onDismissResult = () => {},
+  entry,
+  ref,
 }: {
   noun: SelectionNoun;
   narrow: boolean;
@@ -78,10 +115,18 @@ export function SelectionSurface({
   onClear: () => void;
   onSelectFailed?: (result: BulkResult) => void;
   onDismissResult?: (result: BulkResult) => void;
+  entry: LinkEntry;
+  ref?: Ref<SurfaceHandle>;
 }) {
-  const [palette, setPalette] = useState<{ page: string | null } | null>(null);
+  const [palette, setPalette] = useState<{ page: string | null; links?: string[] } | null>(null);
   const page = states.find((s) => s.action.id === palette?.page)?.action ?? null;
-  const drawer = mobile && selected > 0;
+  const links = palette?.page === LINKS_PAGE ? (palette.links ?? []) : null;
+  // The links page needs the palette's input, so it replaces the drawer on phones too.
+  const drawer = mobile && selected > 0 && !links;
+
+  const enterLinks = (urls: string[] = []) =>
+    setPalette((p) => ({ page: LINKS_PAGE, links: [...new Set([...(p?.page === LINKS_PAGE ? (p.links ?? []) : []), ...urls])] }));
+  useImperativeHandle(ref, () => ({ enterLinks }));
 
   // The drawer only exists with a selection; the palette opened without one stays open when rows get picked.
   useEffect(() => {
@@ -102,6 +147,8 @@ export function SelectionSurface({
     setPalette(null);
     onRun(action.id, detail);
   };
+  const entryCommand: PaletteCommand = { id: LINKS_PAGE, ...entry.command, keepOpen: true, onSelect: () => enterLinks() };
+  const allCommands = [entryCommand, ...commands];
   const runCommand = (c: PaletteCommand) => {
     if (!c.keepOpen) setPalette(null);
     c.onSelect();
@@ -120,10 +167,26 @@ export function SelectionSurface({
     if (route.kind === "palette") setPalette((p) => (p ? null : { page: null }));
     else if (route.kind === "action") invoke(route.action);
   });
+  // Links pasted outside a field open the links page with them; inside the palette its input takes the paste.
+  const onPaste = useEffectEvent((e: ClipboardEvent) => {
+    if (isInput(e.target) || overlayOpen() || !e.clipboardData) return;
+    const urls = clipboardUrls(e.clipboardData);
+    if (urls.length) {
+      e.preventDefault();
+      enterLinks(urls);
+    } else if (/https?:\/\//i.test(e.clipboardData.getData("text/plain"))) {
+      toast.error("Couldn't read this link list", { description: "Use one URL per line, or copy links with their titles." });
+    }
+  });
   useEffect(() => {
     const key = (e: KeyboardEvent) => onKey(e);
+    const paste = (e: ClipboardEvent) => onPaste(e);
     window.addEventListener("keydown", key);
-    return () => window.removeEventListener("keydown", key);
+    window.addEventListener("paste", paste);
+    return () => {
+      window.removeEventListener("keydown", key);
+      window.removeEventListener("paste", paste);
+    };
   }, []);
 
   const openPalette = () => setPalette({ page: null });
@@ -197,7 +260,7 @@ export function SelectionSurface({
           allVisibleSelected={allVisibleSelected}
           states={states}
           // The drawer's header has its own Select all.
-          commands={commands.filter((c) => c.id !== "select-all")}
+          commands={allCommands.filter((c) => c.id !== "select-all")}
           onInvoke={invoke}
           onCommand={runCommand}
           onSelectAll={onSelectAll}
@@ -210,9 +273,16 @@ export function SelectionSurface({
           noun={noun}
           selected={selected}
           states={states}
-          commands={commands}
+          commands={allCommands}
           onInvoke={invoke}
           onCommand={runCommand}
+          entry={entry}
+          links={links}
+          onLinks={enterLinks}
+          onSubmitLinks={(urls, picks) => {
+            setPalette(null);
+            entry.onSubmit(urls, picks);
+          }}
         />
       )}
     </>

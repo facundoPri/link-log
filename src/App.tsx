@@ -4,16 +4,17 @@ import { toast } from "sonner";
 import { api } from "./api";
 import type { Batch, Lens, LensResult, LensScope, Library, Link, Tag } from "./types";
 import { jevUnavailable, needsAttention } from "./attention";
-import { clipboardUrls, pastedUrls } from "./url";
+import { clipboardUrls } from "./url";
 import { lensIcon, Sidebar, type View } from "./components/Sidebar";
 import { Toolbar, type ContextFilter } from "./components/Toolbar";
 import { LinkList } from "./components/LinkList";
 import { PendingLinks } from "./components/PendingLinks";
-import { SelectionSurface, type Picker } from "./components/SelectionSurface";
+import { SelectionSurface, type LinkEntry, type Picker, type SurfaceHandle } from "./components/SelectionSurface";
+import { TagDot } from "./components/TagChip";
+import { plural } from "./lib/format";
 import type { BulkResult } from "./components/BulkResults";
 import { Inspector } from "./components/Inspector";
 import { TagDialog } from "./components/TagDialog";
-import { AddLinkDialog } from "./components/AddLinkDialog";
 import { LensDialog, type LensDraft } from "./components/LensDialog";
 import { lensBucket, lensSelectedKeys } from "./components/LensVerdict";
 import { LensHeader } from "./components/LensHeader";
@@ -94,7 +95,6 @@ export function App({
   const [context, setContext] = useState<ContextFilter>("any");
   const [ascending, setAscending] = useState(false);
   const [dialog, setDialog] = useState<
-    | "add"
     | { tag: Tag | "new" }
     | { lens: Lens | "new"; scope?: LensScope }
     | null
@@ -173,8 +173,8 @@ export function App({
       ),
   );
   const browserActions = browserController.actions;
-  const requestOpenRef = useRef(browserActions.requestOpen);
-  requestOpenRef.current = browserActions.requestOpen;
+  // The view's selection surface: its palette's links page is where pasted, dropped and added links go.
+  const surface = useRef<SurfaceHandle>(null);
   const libraryLenses = useMemo(
     () => library.lenses.filter((l) => l.scope !== "browser"),
     [library.lenses],
@@ -240,12 +240,8 @@ export function App({
     else toast.success("Link saved");
   }, [showRecentLinks, setLibrary]);
 
-  const capture = useCallback((text: string) => {
-    const parsed = pastedUrls(text);
-    if (!parsed.length) {
-      toast.error("Paste http or https links, separated by spaces or new lines.");
-      return;
-    }
+  /** Saves pasted links, with tags when picked. Every chunk carries the same tags. */
+  const capture = useCallback((parsed: string[], tags: string[] = []) => {
     // A second paste while the first request is pending must not send the same URLs again.
     const urls = parsed.filter((url) => !pendingSaves.current.has(url));
     if (!urls.length) {
@@ -272,7 +268,7 @@ export function App({
         for (let offset = 0; offset < urls.length; offset += 100) {
           if (!captureActive.current) return;
           const chunk = urls.slice(offset, offset + 100);
-          const data = await api<Library & { imported: number; duplicates: number }>("/import", "POST", { urls: chunk });
+          const data = await api<Library & { imported: number; duplicates: number }>("/import", "POST", { urls: chunk, ...(tags.length ? { tags } : {}) });
           if (!captureActive.current) return;
           setLibrary(data);
           added += data.imported;
@@ -284,7 +280,10 @@ export function App({
         }
         toast.success(summary(added, existing), {
           id,
-          description: added ? "New links will be processed in the background." : "Already in your library.",
+          description: [
+            tags.length ? `Tagged ${tags.join(", ")}.` : "",
+            added ? "New links will be processed in the background." : "Already in your library.",
+          ].filter(Boolean).join(" "),
         });
       } catch (e) {
         if (!captureActive.current) return;
@@ -390,27 +389,9 @@ export function App({
         }
       }
     };
-    const paste = (e: ClipboardEvent) => {
-      if (isInput(e.target) || dialog || activityOpen) return;
-      const urls = e.clipboardData ? clipboardUrls(e.clipboardData) : [];
-      // Browser's own dialogs (Autogroup review, Open links, confirms) keep what the user is doing.
-      if (view === "browser" && overlayOpen()) return;
-      if (urls.length) {
-        e.preventDefault();
-        // Browser opens tabs; only Library saves. Opening asks first, with the URLs filled in.
-        if (view === "browser") requestOpenRef.current(urls.join("\n"));
-        else capture(urls.join("\n"));
-      } else if (/https?:\/\//i.test(e.clipboardData?.getData("text/plain") || "")) {
-        toast.error("Couldn't read this link list", { description: "Use one URL per line, or copy links with their titles." });
-      }
-    };
     window.addEventListener("keydown", key);
-    window.addEventListener("paste", paste);
-    return () => {
-      window.removeEventListener("keydown", key);
-      window.removeEventListener("paste", paste);
-    };
-  }, [dialog, activeId, activityOpen, capture, view]);
+    return () => window.removeEventListener("keydown", key);
+  }, [dialog, activeId, activityOpen, view]);
 
   useEffect(() => {
     setTagIds((current) => current.filter((id) => library.tags.some((t) => t.id === id)));
@@ -663,6 +644,20 @@ export function App({
     openReason: openUnavailable(ws.browser),
     opening: openLinks.opening,
   });
+  const linkEntry: LinkEntry = {
+    command: { label: "Add links…", description: "Save to your Library, with optional tags", icon: Plus },
+    submitLabel: (n) => `Save ${plural(n, "link")} to Library`,
+    note: "Saved to your Library and extracted in the background.",
+    problem: (_urls, picks) => (picks.length > 20 ? "Use up to 20 tags." : null),
+    choice: {
+      heading: "Tags",
+      multiple: true,
+      placeholder: "Add tags (optional)…",
+      choices: library.tags.map((t) => ({ id: t.name, label: t.name, icon: <TagDot name={t.name} /> })),
+      newLabel: (name) => `Create tag “${name}”`,
+    },
+    onSubmit: (urls, picks) => capture(urls, picks.map((p) => p.label)),
+  };
   const lensPicker: Picker = {
     placeholder: "Pick a lens…",
     empty: libraryLenses.length ? "No matching lens" : "No lenses yet",
@@ -872,21 +867,15 @@ export function App({
       onDrop={(e) => {
         dragDepth.current = 0;
         setDragging(false);
-        if (view === "browser" && overlayOpen()) {
-          // A drop into a field (the Open links textarea) inserts natively; anywhere else it must not navigate away.
+        if (overlayOpen()) {
+          // An open dialog keeps what the user is doing: a drop into a field inserts natively, anywhere else it
+          // must not navigate away.
           if (!isInput(e.target)) e.preventDefault();
           return;
         }
         e.preventDefault();
-        const text =
-          e.dataTransfer
-            .getData("text/uri-list")
-            .split("\n")
-            .find((l) => l && !l.startsWith("#")) ||
-          e.dataTransfer.getData("text/plain");
-        if (!text) return;
-        if (view === "browser") browserActions.requestOpen(text);
-        else capture(text);
+        const urls = clipboardUrls(e.dataTransfer);
+        if (urls.length) surface.current?.enterLinks(urls);
       }}
     >
       {!mobile && sidebarOpen && (
@@ -908,6 +897,7 @@ export function App({
             ws={ws}
             library={library}
             actions={browserActions}
+            surfaceRef={surface}
             picked={browserPicked}
             setPicked={setBrowserPicked}
             narrow={narrow}
@@ -954,7 +944,7 @@ export function App({
           onRemoveTag={toggleTagFilter}
           onClear={clearFilters}
           onToggleSort={() => setAscending(!ascending)}
-          onAdd={() => setDialog("add")}
+          onAdd={() => surface.current?.enterLinks()}
           onToggleSidebar={() =>
             mobile ? setMenuOpen(true) : setSidebarOpen((o) => !o)
           }
@@ -1008,7 +998,7 @@ export function App({
               }}
               onPicked={(id, c) => pickMany([id], c)}
               onPickedMany={pickMany}
-              onAdd={() => setDialog("add")}
+              onAdd={() => surface.current?.enterLinks()}
               onClearFilters={clearFilters}
               rowActions={{
                 onToggleTagFilter: toggleTagFilter,
@@ -1111,14 +1101,9 @@ export function App({
           visibleCount={filtered.length}
           allVisibleSelected={allVisibleSelected}
           states={bulkStates}
+          ref={surface}
+          entry={linkEntry}
           commands={[
-            {
-              id: "add",
-              label: "Add links…",
-              description: "Save to your Library, with optional tags",
-              icon: Plus,
-              onSelect: () => setDialog("add"),
-            },
             {
               id: "select-all",
               label: `Select all ${filtered.length} visible`,
@@ -1138,14 +1123,6 @@ export function App({
           onClear={() => setPicked([])}
           onSelectFailed={selectFailed}
           onDismissResult={dismissResult}
-        />
-      )}
-      {dialog === "add" && (
-        <AddLinkDialog
-          tags={library.tags}
-          onClose={() => setDialog(null)}
-          onSave={save}
-          onImport={capture}
         />
       )}
       {dialog && typeof dialog === "object" && "lens" in dialog && (

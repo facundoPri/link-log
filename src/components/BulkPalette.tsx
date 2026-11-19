@@ -12,7 +12,9 @@ import {
 } from "@/components/ui/command";
 import { cn } from "@/lib/utils";
 import { plural } from "../lib/format";
-import type { PaletteCommand, Picker, SelectionNoun } from "./SelectionSurface";
+import { clipboardUrls } from "../url";
+import { LinkEntryRows, LinkEntrySummary, togglePick } from "./LinkEntryPage";
+import type { EntryPick, LinkEntry, PaletteCommand, Picker, SelectionNoun } from "./SelectionSurface";
 
 const gutter = (group: string) =>
   cn(
@@ -35,7 +37,8 @@ function byGroup(states: ActionState[]) {
 
 // ⌘K in every view. One row per action with its skip reason trailing the label and groups in a left gutter, so
 // today's actions fit without a scrollbar, then the view's commands (Add links, Open links). With nothing
-// selected only the commands are listed.
+// selected only the commands are listed. Links pasted into the input, or anywhere outside a field, open the links
+// page: the links, the view's tags or groups, and one row that saves or opens them.
 export function BulkPalette({
   open,
   onOpenChange,
@@ -48,6 +51,10 @@ export function BulkPalette({
   commands,
   onInvoke,
   onCommand,
+  entry,
+  links,
+  onLinks,
+  onSubmitLinks,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -61,25 +68,57 @@ export function BulkPalette({
   commands: PaletteCommand[];
   onInvoke: (action: ActionMeta, detail?: string) => void;
   onCommand: (command: PaletteCommand) => void;
+  entry: LinkEntry;
+  /** The links page's links, or null on any other page. */
+  links: string[] | null;
+  onLinks: (urls: string[]) => void;
+  onSubmitLinks: (urls: string[], picks: EntryPick[]) => void;
 }) {
   const [search, setSearch] = useState("");
+  const [picks, setPicks] = useState<EntryPick[]>([]);
   const input = useRef<HTMLInputElement>(null);
-  useEffect(() => setSearch(""), [page, open]);
-  // Reopened while still animating out, the dialog keeps its content mounted and skips its autofocus.
+  const onLinksPage = links !== null;
+  useEffect(() => {
+    setSearch("");
+    setPicks([]);
+  }, [page, open, onLinksPage]);
+  const addLinks = (urls: string[]) => {
+    setSearch("");
+    onLinks(urls);
+  };
+  const pick = (p: EntryPick) => {
+    setSearch("");
+    setPicks((cur) => togglePick(cur, p, !!entry.choice?.multiple));
+  };
+  const submitLinks = () => {
+    if (links?.length && !entry.problem(links, picks)) onSubmitLinks(links, picks);
+  };
+  // Reopened while still animating out, the dialog keeps its content mounted and skips its autofocus; a new page
+  // remounts the input.
   useEffect(() => {
     if (open) input.current?.focus();
-  }, [open]);
+  }, [open, onLinksPage]);
   return (
     <CommandDialog
       open={open}
       onOpenChange={onOpenChange}
       title="Commands"
+      commandKey={onLinksPage ? "links" : "commands"}
+      shouldFilter={!onLinksPage}
       description={selected ? `Act on ${plural(selected, noun)}` : "Commands for this view"}
       showCloseButton={false}
       className="top-[18%] translate-y-0 sm:max-w-[600px]"
     >
       <div className="flex items-center gap-2 border-b px-3 py-2 text-[12px] text-muted-foreground">
-        {page ? (
+        {onLinksPage ? (
+          <>
+            {/* Out of the tab order so the dialog's autofocus lands in the input, where the tags are typed. */}
+            <button type="button" tabIndex={-1} className="flex-1 text-left hover:text-foreground" onClick={() => onPage(null)}>
+              ← {entry.command.label.replace("…", "")}
+            </button>
+            {links.length > 0 && <span>{plural(links.length, "link")}</span>}
+          </>
+        ) : page ? (
           <button type="button" className="hover:text-foreground" onClick={() => onPage(null)}>
             ← {page.label} on {plural(selected, noun)}
           </button>
@@ -98,14 +137,44 @@ export function BulkPalette({
         ref={input}
         value={search}
         onValueChange={setSearch}
-        placeholder={picker ? picker.placeholder : "Type a command…"}
+        placeholder={
+          onLinksPage
+            ? links.length
+              ? (entry.choice?.placeholder ?? "Paste more links…")
+              : "Paste or type links…"
+            : picker
+              ? picker.placeholder
+              : "Type a command or paste links…"
+        }
+        onPaste={(e) => {
+          const urls = clipboardUrls(e.clipboardData);
+          if (!urls.length) return;
+          e.preventDefault();
+          addLinks(urls);
+        }}
         onKeyDown={(e) => {
-          if (page && e.key === "Backspace" && !search) onPage(null);
+          if (onLinksPage) {
+            if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+              e.preventDefault();
+              submitLinks();
+            } else if (e.key === "Backspace" && !search && picks.length) setPicks(picks.slice(0, -1));
+          } else if (page && e.key === "Backspace" && !search) onPage(null);
         }}
       />
+      {onLinksPage && <LinkEntrySummary entry={entry} links={links} picks={picks} onUnpick={pick} />}
       <CommandList className="max-h-[60vh]">
-        <CommandEmpty>{picker ? picker.empty : "No matching command"}</CommandEmpty>
-        {page && picker ? (
+        {!onLinksPage && <CommandEmpty>{picker ? picker.empty : "No matching command"}</CommandEmpty>}
+        {onLinksPage ? (
+          <LinkEntryRows
+            entry={entry}
+            links={links}
+            search={search}
+            picks={picks}
+            onPick={pick}
+            onLinks={addLinks}
+            onSubmit={submitLinks}
+          />
+        ) : page && picker ? (
           <>
             <CommandGroup>
               {picker.choices.map((c) => (

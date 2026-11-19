@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   CircleAlert,
   ExternalLink,
@@ -25,10 +25,12 @@ import { Banner, Connect } from "./BrowserConnect";
 import { DomainChip, DomainFilter } from "../DomainFilter";
 import { TabRow } from "./TabRow";
 import { LensFilterBar } from "./LensFilterBar";
-import { SelectionSurface, type Picker } from "../SelectionSurface";
+import { SelectionSurface, type LinkEntry, type Picker, type SurfaceHandle } from "../SelectionSurface";
 import { actionStates, runAction } from "../../bulkActions";
 import { TAB_ACTIONS, type TabRunners } from "../../browser/tabActions";
-import { openUnavailable } from "../../browser/openLinks";
+import { openLimitReason, openUnavailable } from "../../browser/openLinks";
+import { plural } from "../../lib/format";
+import type { MoveTarget } from "@linklog/browser-protocol";
 import { isInput } from "../../lib/overlay";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -48,6 +50,7 @@ export function BrowserView({
   mobile,
   onToggleSidebar,
   onEditLens,
+  surfaceRef,
 }: {
   ws: BrowserWorkspace;
   library: Library;
@@ -58,6 +61,7 @@ export function BrowserView({
   mobile: boolean;
   onToggleSidebar: () => void;
   onEditLens: (lens: Lens) => void;
+  surfaceRef: RefObject<SurfaceHandle | null>;
 }) {
   const { browser, runner, tabs, groups, activeLenses } = ws;
   const [query, setQuery] = useState("");
@@ -165,6 +169,36 @@ export function BrowserView({
     onNew: () => actions.newGroup(pickedTabs),
   };
   const openReason = openUnavailable(browser);
+  const canGroup = !!browser.hello?.capabilities.includes("open-group");
+  const linkEntry: LinkEntry = {
+    command: { label: "Open links…", description: "Open tabs in this window, optionally in a group", icon: ExternalLink, disabled: openReason },
+    submitLabel: (n) => `Open ${plural(n, "tab")}`,
+    note: "Opens them as background tabs in this Chrome window. Nothing is saved to your Library.",
+    problem: (urls, [pick]) =>
+      openReason ??
+      openLimitReason(urls.length) ??
+      (pick && !pick.created && !ws.destinations.some((d) => d.key === pick.id) ? "That group is gone. Pick another one." : null),
+    choice:
+      canGroup && !openReason
+        ? {
+            heading: "Group",
+            multiple: false,
+            placeholder: "Put them in a group (optional)…",
+            choices: groupPicker.choices,
+            newLabel: (name) => `New group “${name}”`,
+          }
+        : null,
+    hint: openReason ? null : canGroup ? "Only tabs opened now join the group; pages already open stay where they are." : "Update the Linklog extension to open links into a group.",
+    onSubmit: (urls, [pick]) => {
+      const destination = pick && !pick.created ? ws.destinations.find((d) => d.key === pick.id) : undefined;
+      const target: MoveTarget | null = pick?.created
+        ? { kind: "new", title: pick.label, color: "blue", description: "" }
+        : destination
+          ? actions.moveTarget(destination)
+          : null;
+      void actions.openUrls(urls, target, pick?.label ?? null);
+    },
+  };
 
   // One listener for the view's lifetime; it reads the latest state through a ref.
   const onKey = useRef<(e: KeyboardEvent) => void>(() => {});
@@ -291,7 +325,7 @@ export function BrowserView({
             />
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button size="sm" aria-label="Open links" onClick={() => actions.requestOpen()}>
+                <Button size="sm" aria-label="Open links" onClick={() => surfaceRef.current?.enterLinks()}>
                   <ExternalLink className="size-3.5" />
                   <span className="hidden @2xl:inline">Open links</span>
                 </Button>
@@ -423,15 +457,9 @@ export function BrowserView({
         visibleCount={visible.length}
         allVisibleSelected={allPicked}
         states={tabStates}
+        ref={surfaceRef}
+        entry={linkEntry}
         commands={[
-          {
-            id: "open",
-            label: "Open links…",
-            description: "Open tabs in this window, optionally in a group",
-            icon: ExternalLink,
-            disabled: openReason,
-            onSelect: () => actions.requestOpen(),
-          },
           {
             id: "select-all",
             label: `Select all ${visible.length} visible`,
