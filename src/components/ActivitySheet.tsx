@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import {
   Check,
   ChevronRight,
@@ -15,8 +15,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { api } from "../api";
+import { useBatchJobs, useCancelBatches, useInvalidateBatches, useInvalidateUsage, useUsageTotals } from "../entities";
+import { useLibrary, useWriteLibrary } from "../library";
 import type { Library } from "../types";
-import type { Batch, Job, Lens, OcrUsage, UsageTotals } from "../types";
+import type { Batch, Job, Lens, OcrUsage } from "../types";
 import { LensVerdict } from "./LensVerdict";
 import { jobProgress } from "../failures";
 import { relativeTime } from "../lib/time";
@@ -99,53 +101,45 @@ function label(b: Batch) {
 
 // Jev is never retried automatically once called; failed auto-tag and lens jobs are retried from here.
 const retriable = (b: Batch) => b.kind === "autotag" || b.kind === "lens";
-async function retryFailed(id: string, ids: string[] | undefined, onLibrary: (l: Library) => void) {
-  try {
-    const data = await api<Library & { skipped?: string[] }>(`/batches/${id}/retry`, "POST", ids ? { ids } : {});
-    onLibrary(data);
-    toast(data.skipped?.length ? `Retrying; ${data.skipped.length} without content were skipped` : "Retrying");
-  } catch (e) {
-    toast.error((e as Error).message);
-  }
+/**
+ * Cancel and retry from the sheet. Each answers with the library, which goes into the cache; the jobs
+ * of every batch may have changed too, so their queries revalidate.
+ */
+function useActivityActions() {
+  const writeLibrary = useWriteLibrary();
+  const invalidateBatches = useInvalidateBatches();
+  const cancelBatches = useCancelBatches();
+  const apply = async <T extends Library>(request: Promise<T>, message: (data: T) => string) => {
+    try {
+      const data = await request;
+      writeLibrary(data);
+      void invalidateBatches();
+      toast(message(data));
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
+  return {
+    retryFailed: (id: string, ids?: string[]) =>
+      apply(api<Library & { skipped?: string[] }>(`/batches/${id}/retry`, "POST", ids ? { ids } : {}), (data) =>
+        data.skipped?.length ? `Retrying; ${data.skipped.length} without content were skipped` : "Retrying",
+      ),
+    // One job, whether queued, waiting or running. Cancelling an extraction also cancels the jobs waiting for it.
+    cancelJob: (job: Job) =>
+      apply(api<Library & { dependents?: number }>(`/jobs/${job.id}`, "DELETE"), (data) =>
+        data.dependents ? `Cancelled, and ${data.dependents} waiting for that extraction` : "Cancelled",
+      ),
+    cancelBatch: (id: string) => cancelBatches([id]),
+  };
 }
 
-// One job, whether queued, waiting or running. Cancelling an extraction also cancels the jobs waiting for it.
-async function cancelJob(job: Job, onLibrary: (l: Library) => void) {
-  try {
-    const data = await api<Library & { dependents?: number }>(`/jobs/${job.id}`, "DELETE");
-    onLibrary(data);
-    toast(data.dependents ? `Cancelled, and ${data.dependents} waiting for that extraction` : "Cancelled");
-  } catch (e) {
-    toast.error((e as Error).message);
-  }
-}
-
-function BatchJobs({ batch, onLibrary }: { batch: Batch; onLibrary: (l: Library) => void }) {
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [error, setError] = useState("");
-  const [reload, setReload] = useState(0);
-  useEffect(() => {
-    let alive = true;
-    const load = () =>
-      api<{ jobs: Job[] }>(`/batches/${batch.id}`)
-        .then((r) => {
-          if (alive) {
-            setJobs(r.jobs);
-            setError("");
-          }
-        })
-        .catch((e) => alive && setError(e.message));
-    void load();
-    const timer = batch.active ? setInterval(load, 1600) : undefined;
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, [batch.id, batch.active, reload]);
+function BatchJobs({ batch }: { batch: Batch }) {
+  const { data: jobs = [], error } = useBatchJobs(batch.id);
+  const { cancelJob, retryFailed } = useActivityActions();
   const lens = configLens(batch);
   return (
     <div className="space-y-1 px-2 pb-2">
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      {error && <p className="text-xs text-destructive">{error.message}</p>}
       {jobs.map((j) => {
         const result = j.result ? JSON.parse(j.result) : null;
         const answer = result?.answer ?? result?.answers?.lens;
@@ -219,7 +213,7 @@ function BatchJobs({ batch, onLibrary }: { batch: Batch; onLibrary: (l: Library)
                       size="icon-xs"
                       className="-my-0.5 shrink-0"
                       aria-label="Cancel"
-                      onClick={() => void cancelJob(j, (l) => (onLibrary(l), setReload((n) => n + 1)))}
+                      onClick={() => void cancelJob(j)}
                     >
                       <X className="size-3" />
                     </Button>
@@ -259,7 +253,7 @@ function BatchJobs({ batch, onLibrary }: { batch: Batch; onLibrary: (l: Library)
                   {j.error}
                 </p>
                 {retriable(batch) && j.status === "failed" && j.step !== "Cancelled" && j.link_id && (
-                  <Button variant="ghost" size="xs" className="-my-0.5 shrink-0" onClick={() => void retryFailed(batch.id, [j.link_id!], onLibrary)}>
+                  <Button variant="ghost" size="xs" className="-my-0.5 shrink-0" onClick={() => void retryFailed(batch.id, [j.link_id!])}>
                     Retry
                   </Button>
                 )}
@@ -284,51 +278,23 @@ function BatchJobs({ batch, onLibrary }: { batch: Batch; onLibrary: (l: Library)
   );
 }
 
-async function cancelBatch(id: string, onLibrary: (l: Library) => void) {
-  try {
-    const data = await api<Library & { cancelled?: number; dependents?: number }>(
-      `/batches/${id}`,
-      "DELETE",
-    );
-    onLibrary(data);
-    toast(
-      data.cancelled
-        ? `Cancelled ${data.cancelled} queued ${data.cancelled === 1 ? "job" : "jobs"}${data.dependents ? `, and ${data.dependents} waiting for that extraction` : ""}`
-        : "Nothing left to cancel",
-    );
-  } catch (e) {
-    toast.error((e as Error).message);
-  }
-}
-
-export function ActivitySheet({
-  open,
-  batches,
-  onOpenChange,
-  onLibrary,
-}: {
-  open: boolean;
-  batches: Batch[];
-  onOpenChange: (open: boolean) => void;
-  onLibrary: (library: Library) => void;
-}) {
-  const [totals, setTotals] = useState<UsageTotals | null>(null);
+export function ActivitySheet({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const { data, refetch } = useLibrary();
+  const batches = data?.batches ?? [];
+  // Shows the cached batches right away and fetches the latest each time it opens.
+  useEffect(() => {
+    if (open) void refetch();
+  }, [open, refetch]);
+  const { cancelBatch, retryFailed } = useActivityActions();
+  const { data: totals } = useUsageTotals(open);
+  const invalidateUsage = useInvalidateUsage();
   const hadActive = useRef(false);
   const activeCount = batches.filter((b) => b.active).length;
+  // A batch settling adds to the totals, whether or not the sheet is open.
   useEffect(() => {
-    if (!open) {
-      hadActive.current = false;
-      return;
-    }
-    const justFinished = hadActive.current && !activeCount;
+    if (hadActive.current && !activeCount) invalidateUsage();
     hadActive.current = !!activeCount;
-    if (!justFinished && totals) return;
-    api<{ totals: UsageTotals }>("/usage")
-      .then((r) => {
-        setTotals(r.totals);
-      })
-      .catch(() => {});
-  }, [open, activeCount]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeCount, invalidateUsage]);
   const sorted = [...batches].sort((a, b) =>
     b.created_at.localeCompare(a.created_at),
   );
@@ -383,7 +349,7 @@ export function ActivitySheet({
                         aria-label="Cancel batch"
                         onClick={(e) => {
                           e.stopPropagation();
-                          void cancelBatch(b.id, onLibrary);
+                          void cancelBatch(b.id);
                         }}
                       >
                         <X className="size-3.5" />
@@ -404,7 +370,7 @@ export function ActivitySheet({
                               aria-label="Retry failed"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                void retryFailed(b.id, undefined, onLibrary);
+                                void retryFailed(b.id);
                               }}
                             >
                               <RotateCw className="size-3.5" />
@@ -446,7 +412,7 @@ export function ActivitySheet({
                   />
                 )}
                 <CollapsibleContent>
-                  <BatchJobs batch={b} onLibrary={onLibrary} />
+                  <BatchJobs batch={b} />
                 </CollapsibleContent>
               </div>
             </Collapsible>

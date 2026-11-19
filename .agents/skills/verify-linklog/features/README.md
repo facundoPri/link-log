@@ -37,7 +37,7 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 
 - [Add links](./add-link.md) covers the Add link dialog, ⌘K, paste and drop, multi-URL import, tags at save, and duplicates. Proven by `journeys/add-link.ts`.
 - [Search and filter](./search-filter.md) covers search, the Filter menu (context, tags, domains), Untagged, and clearing.
-- [Tags and auto-tag](./tags-autotag.md) covers creating and editing tags, manual tags, selection-bar Auto-tag with fixture Jev, and lenses.
+- [Tags and auto-tag](./tags-autotag.md) covers creating and editing tags, manual tags, selection-bar Auto-tag with fixture Jev, and lenses. A lens on a page far over the Jev text cap is proven by `journeys/long-page-lens.ts`.
 - [Needs attention and Activity](./needs-attention.md) covers failed previews and content, Retry, Use preview, Dismiss, the Activity sheet and cancelling.
 - [Accounts and privacy](./accounts.md) covers sign-in, sign-out, sign-up with emailed verification, magic link, password reset, and library isolation between accounts.
 - [Bulk open](./bulk-open.md) covers the bulk `Open` action (toolbar, palette, drawer and `O` key): gating on the extension's connection and capability, opening background tabs, partial failure, and retry safety. Only its missing-extension state is proven live here; the rest uses a scripted stand-in for the extension bridge (see the file's own caveats).

@@ -111,6 +111,11 @@ se abre la página **Connect**, donde se concede (o no) el acceso a contenido.
 4. Respuesta perdida: el request sigue `submitting`; el sondeo lo encuentra por request ID. Si el
    backend nunca lo recibió (404 tras 15 s), se re-captura y se reenvía **con el mismo ID**.
 5. API caído: banner, resultados guardados visibles, nada se vacía; al volver se reconcilia.
+6. Cada request aceptado invalida la biblioteca, así que su batch aparece en Activity y en el
+   indicador de la sidebar sin recargar. Las corridas explícitas (activar un lens, Retry,
+   Re-evaluate) registran una corrida de sesión: todos sus batches comparten un solo toast de
+   progreso y de cierre. El auto-completado de pestañas nuevas no registra nada, así que corre sin
+   toast.
 
 ### Backend
 - `jobs.link_id` pasa a ser nullable con `target_id → browser_targets` y
@@ -164,7 +169,8 @@ se abre la página **Connect**, donde se concede (o no) el acceso a contenido.
   catálogo y se avisa si cambió. La corrida arranca en el clic (no en un efecto del diálogo), así
   que corre una sola vez por acción aun con StrictMode; con más de 100 pestañas o más de 1,8 MB se
   parte en varios requests (una entrada de Activity por request) y las sugerencias se unen en la
-  misma revisión.
+  misma revisión. Como las corridas explícitas de lenses, registra una corrida de sesión con un solo
+  toast para todos sus requests, y cada request aceptado invalida la biblioteca.
 
 ### Selección, ⌘K y Open links (FAC-184)
 - Browser usa la misma `SelectionSurface` que All links con su propio registro (`TAB_ACTIONS`):

@@ -1,4 +1,5 @@
 import type { JobConfig, Pool } from "./handlers";
+import { sendJobs, type BatchKind } from "./job-routing";
 import { badRequest } from "./http/context";
 import { capabilities, parseLensDefinition } from "./store";
 import { jevUnavailable } from "../src/attention";
@@ -55,11 +56,11 @@ export const promoteWaiting = (db: D1Database, linkId?: string, guard?: { sql: s
 export async function startNext(env: Env, linkIds: (string | null)[]) {
   const ids = [...new Set(linkIds.filter((id): id is string => !!id))];
   if (!ids.length) return;
-  const rows = await env.DB.prepare(`SELECT id FROM jobs WHERE status='queued' AND link_id IN (SELECT value FROM json_each(?))`)
-    .bind(JSON.stringify(ids)).all<{ id: string }>();
+  const rows = await env.DB.prepare(`SELECT j.id,b.kind FROM jobs j JOIN batches b ON b.id=j.batch_id WHERE j.status='queued' AND j.link_id IN (SELECT value FROM json_each(?))`)
+    .bind(JSON.stringify(ids)).all<{ id: string; kind: BatchKind }>();
   if (!rows.results.length) return;
   try {
-    await env.JOBS.sendBatch(rows.results.map((body) => ({ body })));
+    await sendJobs(env, rows.results);
   } catch {
     console.error("Queue dispatch deferred to outbox recovery");
   }
@@ -124,7 +125,7 @@ export async function enqueue(
   env: Env,
   userId: string,
   ids: string[],
-  kind: "extract" | "preview" | "autotag" | "lens",
+  kind: Extract<BatchKind, "extract" | "preview" | "autotag" | "lens">,
   lensId?: string,
   extract: Pick<Config, "track" | "step"> = {},
   retryOf?: string,
@@ -216,7 +217,7 @@ export async function enqueue(
   // D1 is the durable outbox. If dispatch fails, scheduled recovery resends these IDs.
   const queued = await env.DB.prepare("SELECT id FROM jobs WHERE batch_id=? AND status='queued'").bind(id).all<{ id: string }>();
   try {
-    if (queued.results.length) await env.JOBS.sendBatch(queued.results.map((body) => ({ body })));
+    if (queued.results.length) await sendJobs(env, queued.results.map(({ id }) => ({ id, kind })));
   } catch {
     console.error("Queue dispatch deferred to outbox recovery");
   }
@@ -238,10 +239,9 @@ export async function recover(env: Env) {
   await promoteWaiting(env.DB).run();
   const rows = await env.DB.prepare(
     // Unassigned legacy batches stay untouched until adjudicated; they have no owner to run as.
-    "SELECT j.id FROM jobs j JOIN batches b ON b.id=j.batch_id WHERE b.user_id IS NOT NULL AND j.status IN ('queued','running') ORDER BY j.created_at LIMIT 100",
-  ).all<{ id: string }>();
-  if (rows.results.length)
-    await env.JOBS.sendBatch(rows.results.map((body) => ({ body })));
+    "SELECT j.id,b.kind FROM jobs j JOIN batches b ON b.id=j.batch_id WHERE b.user_id IS NOT NULL AND j.status IN ('queued','running') ORDER BY j.created_at LIMIT 100",
+  ).all<{ id: string; kind: BatchKind }>();
+  if (rows.results.length) await sendJobs(env, rows.results);
 }
 export async function dispatch(batch: MessageBatch<{ id: string }>, env: Env) {
   for (const m of batch.messages) {

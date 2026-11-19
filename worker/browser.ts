@@ -14,6 +14,7 @@ import {
 } from "@linklog/browser-protocol";
 import type { Lens } from "../src/types";
 import { addLinks } from "./links";
+import { sendJobs } from "./job-routing";
 import { capabilities, json, parseLensDefinition, text } from "./store";
 import { jevUnavailable } from "../src/attention";
 import { badRequest } from "./http/context";
@@ -217,7 +218,7 @@ export async function createEvaluation(env: Env, userId: string, body: Obj): Pro
   if (existing) return replay(existing);
   const unavailable = jevUnavailable(capabilities(env));
   if (unavailable) return json({ error: unavailable, code: "jev-unavailable" }, 400);
-  let lens: Lens, config: Record<string, unknown>, kind: string;
+  let lens: Lens, config: Record<string, unknown>, kind: "browser-lens" | "browser-autogroup";
   if (req.kind === "lens") {
     const row = await env.DB.prepare("SELECT id,name,type,question,options,threshold,version,created_at,scope FROM lenses WHERE id=? AND user_id=?")
       .bind(req.lens.id, userId)
@@ -293,7 +294,7 @@ export async function createEvaluation(env: Env, userId: string, body: Obj): Pro
   const ready = targets.filter((t) => !lost.includes(t));
   // D1 is the durable outbox; cron recovery resends if this dispatch fails.
   try {
-    if (ready.length) await env.JOBS.sendBatch(ready.map((t) => ({ body: { id: t.jobId } })));
+    if (ready.length) await sendJobs(env, ready.map((t) => ({ id: t.jobId, kind })));
   } catch {
     console.error("Queue dispatch deferred to outbox recovery");
   }
