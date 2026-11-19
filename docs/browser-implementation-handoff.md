@@ -17,7 +17,7 @@ qué límites conocidos quedan. Evidencia en [browser-validation.md](browser-val
 | `migrations/0011_jobs_target_index.sql` | Índice `jobs(target_id)`. |
 | `src/browser/*` | Cliente del bridge, hooks de conexión/snapshot, driver de evaluación (`useLensRunner`, `claimRounds`), acciones (`useBrowserActions`, sin JSX) y el registro de acciones sobre pestañas seleccionadas (`tabActions.ts`). |
 | `src/components/SelectionSurface.tsx` | Superficie de selección compartida con All links: barra, chip, paleta `⌘K`, drawer de teléfono y teclas, leídos del registro de cada vista. |
-| `src/components/browser/*` | Sidebar de grupos/lenses, filas de pestaña, estado de lens compartido (`BrowserLensStatus`), barra de filtros, diálogo **Open links** (`OpenLinksDialog`), inspector (`BrowserInspector` + `BrowserTabContent`), pantalla de conexión (`BrowserConnect`) y diálogos (`BrowserDialogs`). |
+| `src/components/browser/*` | Sidebar de grupos/lenses, filas de pestaña, estado de lens compartido (`BrowserLensStatus`), barra de filtros, inspector (`BrowserInspector` + `BrowserTabContent`), pantalla de conexión (`BrowserConnect`) y diálogos (`BrowserDialogs`). |
 | `src/components/DomainFilter.tsx`, `MarkdownView.tsx` | Filtro de dominios y render de Markdown compartidos por All links y Browser. |
 | `scripts/ports.ts`, `scripts/dev.ts`, `scripts/chrome.ts` | Puertos configurables, dev sin matar procesos ajenos, launcher con perfil aislado. |
 | `tests/browser/` | Entorno aislado + runner de integración con Chromium real. |
@@ -184,7 +184,10 @@ se abre la página **Connect**, donde se concede (o no) el acceso a contenido.
   grupo creado, así que un reintento con el mismo `operationId` lo reutiliza. La página sólo
   manda `target` si `hello` anuncia `open-group`; con una extensión anterior el selector de grupo
   queda deshabilitado con el motivo.
-- Pegar o soltar URLs en Browser abre **Open links** con las URLs cargadas, en lugar de guardarlas.
+- No hay diálogos Add link ni Open links: pegar URLs fuera de un campo, pegarlas en el input de la
+  paleta, soltarlas en la página, el botón del header o el comando abren la página de links de la
+  paleta (`LinkEntryPage`). Cada vista le pasa su `LinkEntry`: All links guarda con tags (los tags
+  van a todo el lote por `/import`), Browser abre pestañas con un grupo opcional y nunca guarda.
 
 ### Permisos
 - Obligatorios: `tabs`, `tabGroups`, `storage`, `scripting` y los orígenes de Linklog (bridge).

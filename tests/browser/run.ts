@@ -1204,13 +1204,23 @@ try {
     L.on("request", spy);
     const before = await api<{ links: unknown[]; batches: unknown[] }>("/library");
     const w2Before = await inSw(ctx, async (w: number) => (await chrome.tabs.query({ windowId: w })).length, W2);
+    // The header button opens the palette's links page; links pasted into its input are listed there.
     await L.getByRole("button", { name: "Open links" }).click();
-    const dialog = L.getByRole("dialog", { name: "Open links" });
-    await dialog.getByRole("textbox", { name: "Links to open" }).fill([...urls, already].join("\n"));
-    await dialog.getByLabel("Group").selectOption({ label: "New group…" });
-    await dialog.getByRole("textbox", { name: "New group name" }).fill("Later");
-    await shot(L, "fac184-open-links-dialog");
-    await dialog.getByRole("button", { name: "Open 3 tabs" }).click();
+    const palette = L.getByRole("dialog", { name: "Commands" });
+    const input = palette.getByRole("combobox");
+    await waitFor("links page", () => input.isVisible());
+    await input.evaluate((el, list) => {
+      const dt = new DataTransfer();
+      dt.setData("text/plain", list.join("\n"));
+      el.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+    }, [...urls, already]);
+    await waitFor("Open 3 tabs row", () => palette.getByRole("option", { name: /^Open 3 tabs/ }).isVisible());
+    await input.fill("Later");
+    await waitFor("New group row", () => palette.getByRole("option", { name: /^New group “Later”/ }).isVisible());
+    await L.keyboard.press("Enter");
+    await waitFor("Later picked", async () => /Later/.test((await palette.getByRole("option", { name: /^Open 3 tabs/ }).textContent()) ?? ""));
+    await shot(L, "fac184-open-links-page");
+    await L.keyboard.press("Enter");
     const group = await waitFor("tabs grouped in Later", async () => {
       const groups = await inSw(ctx, async (w: number) => chrome.tabGroups.query({ windowId: w, title: "Later" }), W1);
       if (groups.length !== 1) return null;
@@ -1234,7 +1244,7 @@ try {
     }, [...urls, already]);
     return `2 tabs in new group “Later” (${group.id}) in window ${W1}; the already-open one kept its place; window ${W2} unchanged; 0 library writes`;
   });
-  await check("pasting URLs in Browser opens Open links prefilled; nothing is saved", async () => {
+  await check("pasting URLs in Browser opens the links page with them; nothing is saved", async () => {
     const url = `${SITE}/fac184/pasted`;
     const before = (await api<{ links: unknown[] }>("/library")).links.length;
     await L.locator("main").click({ position: { x: 5, y: 5 } }).catch(() => {});
@@ -1243,15 +1253,16 @@ try {
       dt.setData("text/plain", u);
       window.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true }));
     }, url);
-    const dialog = L.getByRole("dialog", { name: "Open links" });
-    await waitFor("prefilled dialog", async () => (await dialog.isVisible()) && (await dialog.getByRole("textbox", { name: "Links to open" }).inputValue()) === url);
+    const palette = L.getByRole("dialog", { name: "Commands" });
+    await waitFor("links page with the URL", async () =>
+      (await palette.getByRole("option", { name: /^Open 1 tab/ }).isVisible()) && ((await palette.textContent()) ?? "").includes(url));
     await shot(L, "fac184-paste-open-links");
     await L.keyboard.press("Escape");
     await Bun.sleep(1500);
     const after = (await api<{ links: unknown[] }>("/library")).links.length;
     const opened = await inSw(ctx, async (u: string) => (await chrome.tabs.query({})).filter((t) => (t.url || t.pendingUrl) === u).length, url);
     assert(after === before && opened === 0, `links ${before} → ${after}; tabs ${opened}`);
-    return "dialog prefilled; Escape: 0 tabs opened, library unchanged";
+    return "links page lists it; Escape: 0 tabs opened, library unchanged";
   });
 
   section("Activity");

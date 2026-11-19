@@ -248,11 +248,11 @@ export default (async ({ page, api, fixture, step, check, shot, note }) => {
   await bar.getByRole("button", { name: "Clear selection" }).click();
   await check("Bar is gone", async () => !(await bar.isVisible()));
   await page.keyboard.press("ControlOrMeta+k");
-  await check("Palette opened, not the Add link dialog", async () => (await palette.isVisible()) && !(await page.getByRole("dialog", { name: "Add link" }).isVisible()));
+  await check("Palette opened, and only the palette", async () => (await palette.isVisible()) && (await page.getByRole("dialog").count()) === 1);
   await check("Without a selection it lists only the view's commands", async () => (await palette.getByRole("option", { name: /^Auto-tag/ }).count()) === 0 && (await palette.getByRole("option", { name: /^Add links…/ }).isVisible()));
   await snap("09-palette-with-no-selection");
   await page.keyboard.press("Enter");
-  await check("Enter on Add links opens the Add link dialog", async () => (await page.getByRole("dialog", { name: "Add link" }).isVisible()) && !(await palette.isVisible()));
+  await check("Enter on Add links opens the palette's links page", () => palette.getByPlaceholder("Paste or type links…").isVisible());
   await page.keyboard.press("Escape");
 
   await snap("10-done");

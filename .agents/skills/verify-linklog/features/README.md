@@ -35,7 +35,7 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 
 ## Features
 
-- [Add links](./add-link.md) covers the Add link dialog, ⌘K, paste and drop, multi-URL import, tags at save, and duplicates. Proven by `journeys/add-link.ts`.
+- [Add links](./add-link.md) covers the ⌘K palette's links page (Add link button, paste and drop), multi-URL import, tags at save, and duplicates. Proven by `journeys/add-link.ts`.
 - [Search and filter](./search-filter.md) covers search, the Filter menu (context, tags, domains), Untagged, and clearing.
 - [Tags and auto-tag](./tags-autotag.md) covers creating and editing tags, manual tags, selection-bar Auto-tag with fixture Jev, and lenses. A lens on a page far over the Jev text cap is proven by `journeys/long-page-lens.ts`.
 - [Needs attention and Activity](./needs-attention.md) covers failed previews and content, Retry, Use preview, Dismiss, the Activity sheet and cancelling.
