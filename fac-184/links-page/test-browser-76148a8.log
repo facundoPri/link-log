@@ -1,0 +1,88 @@
+$ bun tests/browser/run.ts
+
+Setup
+  ✓ 0010 applies on a real local D1 with existing rows — links 1, jobs 2, usage_events.job_id kept (j1), leases 1
+  Chromium 153.0.8010.12 · extension ooljkkippbfiehnhmfkgbogjmlggbkhn v0.1.1
+
+Connection
+  ✓ without the extension Browser shows connect/install steps
+  ✓ lists only the tabs of Linklog's window (20 here, 3 in the other window) — window 1660453821: 20 rows; window 1660453827 tabs hidden
+
+Lenses and cache
+  ✓ activating lens A evaluates all 20 tabs once — 20 Jev calls (fixture provider)
+  ✓ activating lens A shows its run live: sidebar indicator, one progress toast, Activity row (no reload) — sidebar Applying lens0/20 → Applying lens19/20…; toast Applying lens to 20 tabs…0 of 20 doneCancel → Applying lens to 20 tabs…19 of 20 doneCancel → Lens applied to 20 tabsActivity; Activity row while running: 19/20
+  ✓ toggling lens A off and on reuses results (0 new calls)
+  ✓ 3 new tabs with A active: only the 3 missing are evaluated; inactive B waits — 20 reused + 3 new = 23 calls
+  ✓ automatic evaluation of new tabs shows no toast, but its batch appears in Activity — 0 toasts; Activity lists the automatic batch
+  ✓ filters narrow the list, never the evaluation scope — Yes → 12 rows; new No tab still evaluated (24 done); inverse No filter → 12
+  ✓ two active lenses: AND across lenses, OR within a lens — Yes∧Article = 4; Yes∧(Article∨Reference) = 8; Yes∧(any option) = 12
+  ✓ classifying tabs never creates saved links — 0 links before and after 48 evaluations
+
+Lifecycle and recovery
+  ✓ closing and reopening Linklog keeps done results (0 new calls)
+  ✓ real service-worker suspension keeps session and results — worker stopped and restarted; session 6462b75a… unchanged; 0 new calls
+  ✓ API outage: stored answers stay visible, nothing is emptied — banner shown; recovered by request id; 2 new calls (A, B) for the new tab
+  ✓ response lost after the POST was accepted: same job, no duplicate — 2 responses dropped; reconciled by GET; 2 batches, 2 calls
+  ✓ queue redelivery / recovery sweeps don't repeat evaluations; polling stays calm — 4 recovery sweeps during running jobs; 4 calls for 2 tabs × 2 lenses; 6 status polls in 6.2 s
+
+Identity and invalidation
+  ✓ closing and reopening the same URL is a new tab instance — new tabInstanceId; re-evaluated (2 calls)
+  ✓ navigation invalidates; hash change doesn't; SPA pushState does — hash: 0 calls; pushState: 2; full navigation: 2
+  ✓ editing a lens: threshold reuses answers, a new question re-evaluates — threshold: 0 calls; question: 28 calls (one per tab)
+  ✓ Re-evaluate this window runs every readable tab exactly once — 28 tabs → 28 calls, even across claim rounds of 20; one toast: Applying lens to 28 tabs…0 of 28 doneCancel → Lens applied to 28 tabsActivity
+  ✓ Clean drops results, turns the lens off and doesn't re-evaluate — 0 results for A, A off, lens definition kept
+  ✓ activating a lens while another lens's run is in flight runs it at once with its toast; the next automatic run stays quiet — lens A ran over 29 tabs right after lens B's run, one toast (Lens applied to 29 tabsActivity); the next automatic run: 0 toasts
+
+States that are not answers
+  ✓ provider failure is Failed with explicit retry, never No — no automatic retry; explicit retry = 1 call
+  ✓ an explicit run that fails ends in an error toast that points to Activity — error toast “Lens applied to 1 tab · 1 failed — see Activity”; its Activity action opens Activity
+  ✓ an explicit run with some tabs failed ends in a toast that counts the failures and points to Activity — 1 of 31 tabs failed: Lens applied to 31 tabs 1 failed — see Activity Activity
+  ✓ Cancel on a run's progress toast cancels every batch of the run — 2 batches, all cancelled from one toast (“Cancelled 19 queued jobs”)
+  ✓ no permission and internal pages stay manageable with honest states — No access / Can't read shown; neither evaluated nor activated
+  ✓ application pages keep deterministic evidence (GitHub PR state) — facts: state Merged, 2 comments; sent to Jev as evidence and shown as a badge
+  ✓ page capture excludes form values and passwords
+
+Content, previews and domains
+  ✓ rows show the page's own preview (description and image), read locally — description and og:image from the page's metadata; nothing sent to the API
+  ✓ clicking a tab opens the inspector with the page as Markdown and its links — Markdown with GFM table, fenced code and absolute links (399 chars)
+  ✓ domain filter: pick several (OR), remove one, clear — 34 tabs → 1 (github.com) → 32 (+127.0.0.1) → cleared
+
+Bridge security
+  ✓ non-Linklog pages get no bridge and can't reach the extension — {"bridge":null,"connect":"no chrome.runtime on the page","reply":"no answer"}
+  ✓ bridge finds Linklog on a non-default port (3610) with no configured origin — content script matches http://localhost/*, http://127.0.0.1/*; Linklog connected on :3610
+  ✓ a local page with the marker gets the bridge, but nothing before a handshake — bridge attached; snapshot before hello → “Connect first.”
+  ✓ bridge rejects malformed commands and ids from another window — unknown command dropped by the bridge; other-window tab refused and still open
+
+Save and Close
+  ✓ Save adds links through the normal library pipeline (extraction queued) — 2 links from URLs only; 1 normal extract batch queued; re-save = duplicate, tags kept
+  ✓ Close closes only the selected tabs, after revalidation — 2 closed; 2 saved links untouched
+  ✓ Open creates background tabs once per operation, even when the request is repeated — 2 background tabs in window 1660453821; repeating the operation opened none
+
+Groups
+  ✓ create a pinned group from the selection — native group 1403642879 bound to pinned c1a948dd…
+  ✓ pinned group appears in another window without tabs and materializes on use — created group 1803727751 in window 1660453827 bound to the same definition
+  ✓ same name never merges groups — two native 'Research' groups in window 1, one pinned definition
+  ✓ Autogroup keeps tabs grouped meanwhile and moves the rest after review — 1 Activity batch, 2 calls; tab kept in “Manual”; other moved to pinned Research (1403642879 = 1403642879); live in the sidebar and Activity, one toast, then “Suggested groups for 2 tabsActivity”
+  ✓ Move to group changes a grouped tab; Ungroup keeps it open — tab 1660453838 open and ungrouped
+  ✓ group filters: one group, several groups (union), ungrouped — Ungrouped = 31 rows; Ungrouped ∪ Manual shown together
+
+Two pages, moves and a second profile
+  ✓ two Linklog pages in one window share results without duplicate jobs — 33 tabs, 33 calls from two concurrent activations
+  ✓ moving a tab to another window keeps its cached result — row left window 1, appeared in window 2, cache unchanged
+  ✓ moving the Linklog page switches its scope to the new window — patch stream re-scoped after onAttached
+  ✓ second profile shares pinned definitions, not tabs — installation b8ce949c… vs 5497c6cb…
+  ✓ Unpin keeps real groups and their metadata — 3 native “Research” groups still open; definition removed
+
+Commands and Open links
+  ✓ ⌘K opens one Commands palette with 0, 1 and 2 tabs selected; G and C run tab actions — 0: 2 rows · 1: 9 rows · 2: 9 rows; G → group picker; C → 2 copied, library unchanged
+  ✓ narrow chip and phone drawer are the same surface as All links — 900 px: Actions chip; 390 px: phone bar, drawer tiles with Close 2 tabs and the group picker in place
+  ✓ Open links opens tabs in Linklog's window into a new group, and saves nothing — 2 tabs in new group “Later” (574167977) in window 1660453821; the already-open one kept its place; window 1660453827 unchanged; 0 library writes
+  ✓ pasting URLs in Browser opens the links page with them; nothing is saved — links page lists it; Escape: 0 tabs opened, library unchanged
+
+Activity
+  ✓ browser evaluations appear in Activity with their usage
+
+Accounts
+  ✓ sign-out makes the extension forget this account; the next account sees none of it — refused sign-out (503) kept 105 cached entries, metadata {"meta":2,"hints":2} and the bridge; retry: forgotten, old cookie 401; second account: new library id, 0 groups, 0 lens cells, none of 3 lenses
+
+56/56 checks passed. Evidence: /Users/facundopri/orca/workspaces/link-log/fac-184-unified-command-palette/.cache/fac184/native-after2
