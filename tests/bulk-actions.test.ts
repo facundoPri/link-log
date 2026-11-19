@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { actionForKey, actionState, actionStates, BULK_ACTIONS, bulkProgress, type BulkContext } from "../src/bulkActions";
+import type { BrowserTab } from "@linklog/browser-protocol";
+import { actionForKey, actionState, actionStates, BULK_ACTIONS, bulkProgress, routeKey, type ActionMeta, type BulkContext, type KeyScene } from "../src/bulkActions";
+import { TAB_ACTIONS, type TabContext } from "../src/browser/tabActions";
 import type { Batch, Link, Tag } from "../src/types";
 
 const link = (id: string, over: Partial<Link> = {}) =>
@@ -13,7 +15,7 @@ const ready: BulkContext = { tags: [tag], jevReason: null, running: false, openR
 const state = (id: string, selected: Link[], ctx = ready) =>
   actionState(BULK_ACTIONS.find((a) => a.id === id)!, selected, ctx);
 const key = (k: string, mods: Partial<Parameters<typeof actionForKey>[0]> = {}) =>
-  actionForKey({ key: k, shiftKey: false, metaKey: false, ctrlKey: false, altKey: false, ...mods });
+  actionForKey({ key: k, shiftKey: false, metaKey: false, ctrlKey: false, altKey: false, ...mods }, BULK_ACTIONS);
 
 // 4 with content (one still extracting), 3 without: the mixed selection a library usually has.
 const mixed = [withContent("a"), withContent("b"), withContent("c"), extracting("d"), bare("x"), bare("y"), bare("z")];
@@ -23,7 +25,7 @@ describe("mixed selection", () => {
     for (const id of ["autotag", "lens"]) {
       const s = state(id, mixed);
       expect(s.availability.eligible.map((l) => l.id)).toEqual(["a", "b", "c", "d"]);
-      expect(s.availability.skipped.map((x) => x.link.id)).toEqual(["x", "y", "z"]);
+      expect(s.availability.skipped.map((x) => x.item.id)).toEqual(["x", "y", "z"]);
       expect(s.badge).toBe("4/7");
       expect(s.disabled).toBe(false);
     }
@@ -101,7 +103,7 @@ describe("blocked actions", () => {
   });
 
   test("nothing is runnable with nothing selected", () => {
-    for (const s of actionStates([], ready)) expect(s.disabled).toBe(true);
+    for (const s of actionStates(BULK_ACTIONS, [], ready)) expect(s.disabled).toBe(true);
   });
 });
 
@@ -199,5 +201,97 @@ describe("progress of a run started from the selection", () => {
 
   test("the drawer shortens only the label that would not fit", () => {
     expect(BULK_ACTIONS.filter((a) => a.tileLabel).map((a) => [a.id, a.tileLabel])).toEqual([["extract", "Extract"]]);
+  });
+});
+
+const press = (k: string, mods: Partial<KeyboardEvent> = {}) => ({ key: k, shiftKey: false, metaKey: false, ctrlKey: false, altKey: false, repeat: false, ...mods });
+const scene = (over: Partial<KeyScene> = {}): KeyScene => ({ selected: 0, paletteOpen: false, typing: false, overlay: false, ...over });
+const cmdK = press("k", { metaKey: true });
+
+describe("one ⌘K: the command palette in every view and selection", () => {
+  test("⌘K opens the palette with nothing, one or several selected, in Library and in Browser", () => {
+    for (const actions of [BULK_ACTIONS, TAB_ACTIONS] as ActionMeta[][])
+      for (const selected of [0, 1, 3]) expect(routeKey(cmdK, actions, scene({ selected }))).toEqual({ kind: "palette" });
+    expect(routeKey(press("K", { ctrlKey: true }), TAB_ACTIONS, scene())).toEqual({ kind: "palette" });
+  });
+
+  test("⌘K toggles the open palette closed, also while its filter has focus", () => {
+    expect(routeKey(cmdK, BULK_ACTIONS, scene({ paletteOpen: true, overlay: true, typing: true }))).toEqual({ kind: "palette" });
+  });
+
+  test("holding ⌘K toggles the palette once: repeats are swallowed", () => {
+    const held = press("k", { metaKey: true, repeat: true });
+    expect(routeKey(held, BULK_ACTIONS, scene())).toEqual({ kind: "ignore" });
+    expect(routeKey(held, TAB_ACTIONS, scene({ selected: 2, paletteOpen: true, overlay: true }))).toEqual({ kind: "ignore" });
+  });
+
+  test("⌘K from a text field still opens the palette; another dialog or menu swallows it", () => {
+    expect(routeKey(cmdK, BULK_ACTIONS, scene({ typing: true }))).toEqual({ kind: "palette" });
+    expect(routeKey(cmdK, BULK_ACTIONS, scene({ overlay: true }))).toEqual({ kind: "ignore" });
+    expect(routeKey(cmdK, TAB_ACTIONS, scene({ selected: 2, overlay: true }))).toEqual({ kind: "ignore" });
+  });
+
+  test("letters run the view's own actions, only with a selection and nothing in the way", () => {
+    expect(routeKey(press("t"), BULK_ACTIONS, scene({ selected: 1 }))).toMatchObject({ kind: "action", action: { id: "autotag" } });
+    expect(routeKey(press("s"), TAB_ACTIONS, scene({ selected: 1 }))).toMatchObject({ kind: "action", action: { id: "save" } });
+    expect(routeKey(press("g"), TAB_ACTIONS, scene({ selected: 2 }))).toMatchObject({ kind: "action", action: { id: "group" } });
+    expect(routeKey(press("C", { shiftKey: true }), TAB_ACTIONS, scene({ selected: 2 }))).toMatchObject({ action: { id: "copy-titles" } });
+    expect(routeKey(press("t"), TAB_ACTIONS, scene({ selected: 2 }))).toBeNull();
+    expect(routeKey(press("s"), TAB_ACTIONS, scene())).toBeNull();
+    expect(routeKey(press("s"), TAB_ACTIONS, scene({ selected: 1, typing: true }))).toBeNull();
+    expect(routeKey(press("s"), TAB_ACTIONS, scene({ selected: 1, overlay: true }))).toBeNull();
+    expect(routeKey(press("s", { repeat: true }), TAB_ACTIONS, scene({ selected: 1 }))).toBeNull();
+    expect(routeKey(press("a", { metaKey: true }), TAB_ACTIONS, scene({ selected: 1 }))).toBeNull();
+  });
+
+  test("closing tabs has no key: it is destructive and runs from the palette or the drawer", () => {
+    const close = TAB_ACTIONS.find((a) => a.id === "close")!;
+    expect(close.group).toBe("Danger");
+    expect(close.shortcut).toBeUndefined();
+  });
+
+  test("every shortcut is unique within its registry", () => {
+    for (const actions of [BULK_ACTIONS, TAB_ACTIONS] as ActionMeta[][]) {
+      const keys = actions.flatMap((a) => (a.shortcut ? [a.shortcut.toLowerCase()] : []));
+      expect(new Set(keys).size).toBe(keys.length);
+    }
+  });
+});
+
+const tab = (tabId: number, groupId: number | null = null) =>
+  ({ tabId, tabInstanceId: `i${tabId}`, documentRevision: 0, url: `https://t${tabId}.dev/`, title: `Tab ${tabId}`, groupId }) as unknown as BrowserTab;
+const tabCtx: TabContext = { busy: false, jevReason: null, destinations: 2 };
+const tabState = (id: string, tabs: BrowserTab[], ctx = tabCtx) => actionState(TAB_ACTIONS.find((a) => a.id === id)!, tabs, ctx);
+
+describe("tab actions", () => {
+  const mixed = [tab(1), tab(2, 7), tab(3)];
+
+  test("autogroup places only ungrouped tabs and says how many keep their group", () => {
+    const s = tabState("autogroup", mixed);
+    expect(s.availability.eligible.map((t) => t.tabId)).toEqual([1, 3]);
+    expect(s.availability.skipped.map((x) => [x.item.tabId, x.reason])).toEqual([[2, "Already in a group"]]);
+    expect(s.badge).toBe("2/3");
+    expect(s.reason).toBe("1 of 3 already have a group and stay there");
+  });
+
+  test("autogroup is blocked with the reason the old bar showed", () => {
+    expect(tabState("autogroup", mixed, { ...tabCtx, jevReason: "Jev is not configured." }).reason).toBe("Jev is not configured.");
+    expect(tabState("autogroup", mixed, { ...tabCtx, destinations: 0 }).reason).toBe("Create or pin a group with a description first");
+    expect(tabState("autogroup", [tab(2, 7)]).reason).toBe("Autogroup only places tabs that have no group");
+  });
+
+  test("remove from group skips ungrouped tabs and is blocked when none is grouped", () => {
+    expect(tabState("ungroup", mixed).availability.eligible.map((t) => t.tabId)).toEqual([2]);
+    expect(tabState("ungroup", [tab(1)]).disabled).toBe(true);
+  });
+
+  test("a running tab action blocks the others that change tabs, not copying", () => {
+    const busy = { ...tabCtx, busy: true };
+    for (const id of ["save", "group", "autogroup", "ungroup", "close"]) expect(tabState(id, mixed, busy).disabled).toBe(true);
+    for (const id of ["copy", "copy-titles"]) expect(tabState(id, mixed, busy).disabled).toBe(false);
+  });
+
+  test("the bar promotes Save, Move to group and Autogroup, like Library promotes three", () => {
+    expect(TAB_ACTIONS.filter((a) => a.promoted).map((a) => a.id)).toEqual(["save", "group", "autogroup"]);
   });
 });

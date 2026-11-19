@@ -21,6 +21,7 @@ import { useInvalidateLibrary, useWriteLibrary } from "../library";
 import type { StartRun } from "../sessionRuns";
 import { plural } from "../lib/format";
 import { call, evaluationStatus, postEvaluation } from "./api";
+import { summarizeOpen } from "./openLinks";
 import type { BrowserWorkspace, Destination } from "./useBrowserWorkspace";
 import type { GroupDraft } from "../components/browser/GroupDialog";
 import { groupTitle } from "../components/browser/groups";
@@ -176,10 +177,49 @@ export function useBrowserActions(ws: BrowserWorkspace, startRun: StartRun, clea
     return { suggestions, catalogVersion: version };
   };
 
+  /**
+   * Opens the URLs as background tabs in this window, optionally into a group. Only tabs: nothing reaches the
+   * Library. Retry replays the same operation, so tabs and the group it made are never duplicated.
+   */
+  const openUrls = async (urls: string[], target: MoveTarget | null, groupName: string | null) => {
+    const operationId = crypto.randomUUID();
+    const attempt = async () => {
+      const retry = { label: "Retry", onClick: () => void attempt() };
+      try {
+        const { items, group } = await request("openTabs", { operationId, urls, ...(target ? { target } : {}) }, 30_000);
+        const summary = summarizeOpen(items, urls.map((url) => ({ url, title: "" })));
+        // With every page already open there is nothing to group: no failure, and Retry wouldn't change it.
+        const openedAny = items.some((i) => i.outcome === "opened");
+        const groupFailed = group && !group.ok && openedAny ? `Not grouped: ${group.error}` : null;
+        const message = group?.ok ? `${summary.message} · ${plural(group.grouped, "tab")} in “${groupName}”` : summary.message;
+        if (summary.kind === "success" && !groupFailed) toast.success(message);
+        else
+          toast.error(message, {
+            description: [summary.description, groupFailed].filter(Boolean).join(" · "),
+            action: retry,
+            duration: 10_000,
+          });
+      } catch (error) {
+        toast.error("Couldn't confirm which links opened", { description: (error as Error).message, action: retry, duration: 10_000 });
+      }
+    };
+    await attempt();
+  };
+
   const actions = {
+    openUrls,
+    moveTarget,
     busy,
     focus: (tab: BrowserTab) => void request("focusTab", { tab: ref(tab) }).catch((e) => toast.error(e.message)),
     copy: (tab: BrowserTab) => void navigator.clipboard.writeText(tab.url).then(() => toast("URL copied")),
+    copyMany: async (tabs: BrowserTab[], withTitles: boolean) => {
+      try {
+        await navigator.clipboard.writeText(tabs.map((t) => (withTitles && t.title ? `${t.url} — ${t.title}` : t.url)).join("\n"));
+        toast.success(`${plural(tabs.length, "link")} copied`);
+      } catch {
+        toast.error("Could not copy links");
+      }
+    },
     /** Same as adding the links in All links: the library fetches and extracts them. */
     save: (tabs: BrowserTab[]) =>
       guard(async () => {
@@ -263,6 +303,7 @@ export function useBrowserActions(ws: BrowserWorkspace, startRun: StartRun, clea
 
   /** What the dialogs do once confirmed. */
   const ops = {
+    moveTarget,
     close: () => setDialog(null),
     guard,
     move: actions.move,

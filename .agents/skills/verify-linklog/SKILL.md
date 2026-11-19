@@ -73,7 +73,7 @@ Write a new journey next to `add-link.ts` and copy its shape. The context it rec
 
 Driving rules:
 
-- Locate by role and accessible name, such as `getByRole("button", { name: "Add link" })`, `getByRole("dialog", { name: "Add link" })` or `getByRole("tab", { name: "Content" })`. Use visible text only for link titles. Never use CSS classes or coordinates.
+- Locate by role and accessible name, such as `getByRole("button", { name: "Add link" })`, `getByRole("dialog", { name: "Commands" })` or `getByRole("tab", { name: "Content" })`. Use visible text only for link titles. Never use CSS classes or coordinates.
 - Make every claim a `check`, and assert both the UI and the API. The UI polls the library, so it can trail the API by a second or two. Check the API first, then check the UI with a polling `check`.
 - Extraction is asynchronous. Wait for `!link.processing` plus the end state you expect (`status`, `content_state`, `attention_kind`), not for a fixed delay.
 - Pick fixtures by behavior. `README.md` in `qa/video/` has the catalog, and `about` on each entry in `qa/video/fixtures.ts` says what it does. Examples: `article` (preview and content right away), `gone` (404), `down` (503 every time), `flaky` (503 once, then OK), `login-wall`, `pdf`, `blocked`, `nowhere` (DNS miss) and `article-yes` (content with a `jev:yes` marker, so fixture Jev applies tags).

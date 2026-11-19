@@ -9,15 +9,19 @@ export default (async ({ page, api, fixture, step, check, shot }) => {
   const third = [fixture("article", "c1"), fixture("article", "c2")];
   const all = [...first, ...second, ...third];
 
-  await step("Paste four lists outside any field without waiting, the third repeating the first");
+  await step("Paste four lists outside any field, each saved with Enter without waiting, the third repeating the first");
   await check("The library has loaded", () => page.getByRole("button", { name: "Add link" }).first().isVisible());
-  await page.evaluate((lists) => {
-    for (const list of lists) {
+  // A paste opens the palette's links page (FAC-184) and Enter saves; the next paste doesn't wait for that save.
+  for (const list of [first, second, first, third]) {
+    await page.evaluate((urls) => {
       const data = new DataTransfer();
-      data.setData("text/plain", list.join("\n"));
+      data.setData("text/plain", urls.join("\n"));
       document.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true }));
-    }
-  }, [first, second, first, third]);
+    }, list);
+    await page.getByRole("option", { name: /^Save \d+ links? to Library/ }).waitFor();
+    await page.keyboard.press("Enter");
+    await page.getByRole("dialog", { name: "Commands" }).waitFor({ state: "hidden" });
+  }
 
   await step("Every link is saved once");
   const links = await check("API: the library holds each pasted URL exactly once", async () => {
