@@ -89,6 +89,25 @@ export default (async ({ page, api, fixture, step, check, shot, note }) => {
     { timeout: 15_000 },
   );
 
+  await step("Links page: a typed URL joins the links; a tag the server would refuse blocks Save instead of losing them");
+  await page.keyboard.press("ControlOrMeta+k");
+  await palette.getByRole("combobox").evaluate((el, u) => {
+    const dt = new DataTransfer();
+    dt.setData("text/plain", u);
+    el.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+  }, fixture("article", "typed-1"));
+  await check("One link listed", () => option(/^Save 1 link to Library/).isVisible());
+  await page.keyboard.type(fixture("article", "typed-2"));
+  await check("A typed URL offers Add 1 link, not Create tag", async () => (await option(/^Add 1 link/).isVisible()) && (await option(/^Create tag/).count()) === 0);
+  await page.keyboard.press("Enter");
+  await check("Now two links, the filter cleared", async () => (await option(/^Save 2 links to Library/).isVisible()) && (await palette.getByRole("combobox").inputValue()) === "");
+  await page.keyboard.type("x".repeat(41));
+  await page.keyboard.press("Enter");
+  await check("A 41-character tag: Save disabled with the reason, palette still open", async () =>
+    (await option(/^Save 2 links to Library/).getAttribute("aria-disabled")) === "true" && /40 characters/.test((await palette.getByRole("alert").textContent()) ?? ""));
+  await page.keyboard.press("Escape");
+  await check("Escape closes it; nothing was saved", async () => (await dialogNames()).length === 0 && !(await api.link(fixture("article", "typed-2"))));
+
   await step("Select all from the palette keeps it open on the new selection");
   await page.keyboard.press("Escape");
   await check("Selection cleared", async () => !(await box(links[0].title).isChecked()));

@@ -100,6 +100,18 @@ export function LinkEntryRows({
       </CommandGroup>
     );
   }
+  // A URL typed after the first links joins them; it is never a tag or a group name.
+  const typedLinks = /^https?:\/\//i.test(typed) ? pastedUrls(typed) : [];
+  if (typedLinks.length)
+    return (
+      <CommandGroup>
+        <CommandItem value="__more" onSelect={() => onLinks(typedLinks)}>
+          <Plus className="size-4" />
+          {`Add ${plural(typedLinks.length, "link")}`}
+          <Kbd className="ml-auto">↵</Kbd>
+        </CommandItem>
+      </CommandGroup>
+    );
   const choice = entry.choice;
   const problem = entry.problem(links, picks);
   const submit = (

@@ -648,7 +648,9 @@ export function App({
     command: { label: "Add links…", description: "Save to your Library, with optional tags", icon: Plus },
     submitLabel: (n) => `Save ${plural(n, "link")} to Library`,
     note: "Saved to your Library and extracted in the background.",
-    problem: (_urls, picks) => (picks.length > 20 ? "Use up to 20 tags." : null),
+    // The same limits /import checks, so the palette never closes on links the server refuses.
+    problem: (_urls, picks) =>
+      picks.length > 20 ? "Use up to 20 tags." : picks.some((p) => p.label.trim().length > 40) ? "Use tags of up to 40 characters." : null,
     choice: {
       heading: "Tags",
       multiple: true,

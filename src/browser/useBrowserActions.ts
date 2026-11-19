@@ -41,7 +41,6 @@ export type BrowserDialog =
   | { kind: "close"; tabs: BrowserTab[] }
   | { kind: "unpin"; destination: Destination }
   | { kind: "clean"; lens: Lens }
-  /** Open links typed or pasted in Browser: tabs in this window, never saved. `text` prefills the URLs. */
   /** `run` starts on the click that opens the dialog, so it runs exactly once per action. */
   | { kind: "autogroup"; tabs: BrowserTab[]; run: Promise<AutogroupResult> };
 

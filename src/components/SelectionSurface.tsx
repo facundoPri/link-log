@@ -128,9 +128,10 @@ export function SelectionSurface({
     setPalette((p) => ({ page: LINKS_PAGE, links: [...new Set([...(p?.page === LINKS_PAGE ? (p.links ?? []) : []), ...urls])] }));
   useImperativeHandle(ref, () => ({ enterLinks }));
 
-  // The drawer only exists with a selection; the palette opened without one stays open when rows get picked.
+  // The drawer only exists with a selection; the palette opened without one stays open when rows get picked. The
+  // links page doesn't depend on the selection, so a tab closing in Chrome doesn't take the pasted links with it.
   useEffect(() => {
-    if (!selected) setPalette(null);
+    if (!selected) setPalette((p) => (p?.page === LINKS_PAGE ? p : null));
   }, [selected]);
 
   const invoke = (action: ActionMeta, detail?: string) => {
