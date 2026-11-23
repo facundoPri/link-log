@@ -1,0 +1,48 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit PR review config. Reference: https://docs.coderabbit.ai/reference/configuration
+language: en-US
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: true
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - main
+  path_filters:
+    - "!bun.lock"
+    - "!worker-configuration.d.ts"
+    - "!**/dist/**"
+    - "!qa/out/**"
+    - "!**/*.tldraw"
+  path_instructions:
+    - path: "worker/**"
+      instructions: >-
+        Cloudflare Worker code (Hono, D1, R2, Queues, Workflows). Flag unbounded
+        D1 queries, missing auth checks on routes, and work that should be queued
+        instead of done inline in a request.
+    - path: "migrations/**"
+      instructions: >-
+        D1 migrations are applied in order and never edited after merge. Flag
+        edits to existing migrations and destructive changes without a backfill.
+    - path: "apps/extension/**"
+      instructions: >-
+        Chrome extension. Check against docs/browser-implementation-handoff.md;
+        flag permission changes in the manifest and messages that bypass
+        packages/browser-protocol.
+    - path: "src/**/*.tsx"
+      instructions: >-
+        React 19 UI. Focus on correctness, accessibility and needless re-renders.
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "AGENTS.md"
+      - "GLOSSARY.md"
+      - "docs/agents/domain.md"
+chat:
+  auto_reply: true
