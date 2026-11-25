@@ -1,5 +1,6 @@
 import { CircleAlert, Globe, PlugZap, RefreshCw } from "lucide-react";
 import type { BrowserWorkspace } from "../../browser/useBrowserWorkspace";
+import { EXPECTED_EXTENSION_VERSION, LATEST_EXTENSION_URL } from "../../browser/extensionVersion";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -14,8 +15,14 @@ export function Banner({ icon, children, action }: { icon: React.ReactNode; chil
   );
 }
 
+const download = (
+  <a className="font-medium underline underline-offset-2" href={LATEST_EXTENSION_URL} target="_blank" rel="noreferrer">
+    Download the latest release
+  </a>
+);
+
 export function Connect({ ws }: { ws: BrowserWorkspace }) {
-  const { connection, backendError, retry } = ws.browser;
+  const { connection, backendError, retry, installedVersion } = ws.browser;
   // Connected (or reconnecting) without a snapshot yet — e.g. right after the page moved
   // to another window — is loading, not a missing extension.
   if ((connection === "checking" || connection === "connected" || connection === "reconnecting") && !backendError)
@@ -57,26 +64,31 @@ export function Connect({ ws }: { ws: BrowserWorkspace }) {
           : connection === "outdated"
             ? {
                 icon: <CircleAlert className="size-5" />,
-                title: "The extension is out of date",
-                body: "Rebuild it with bun run extension:build, then reload it in chrome://extensions.",
-                steps: null,
+                title: "Update the Linklog extension",
+                body: `${installedVersion ? `The installed extension (${installedVersion})` : "The installed extension"} can't talk to this version of Linklog. Browser view needs extension ${EXPECTED_EXTENSION_VERSION}.`,
+                steps: [
+                  <>{download} (the .zip under Assets).</>,
+                  <>Unzip it over the folder you loaded the extension from.</>,
+                  <>
+                    Open <Kbd>chrome://extensions</Kbd> and click ↻ on the Linklog card.
+                  </>,
+                  <>Reload this page.</>,
+                ],
+                dev: "rebuild it with",
               }
             : {
                 icon: <PlugZap className="size-5" />,
                 title: "Connect the Linklog extension",
                 body: "Browser view shows the tabs and groups of this Chrome window. It needs the Linklog extension.",
                 steps: [
-                  <>
-                    Build it: <Kbd>bun run extension:build</Kbd>
-                  </>,
+                  <>{download} and unzip it into a folder you'll keep.</>,
                   <>
                     Open <Kbd>chrome://extensions</Kbd> and turn on Developer mode.
                   </>,
-                  <>
-                    Click Load unpacked and choose <Kbd>apps/extension/dist</Kbd>.
-                  </>,
+                  <>Click Load unpacked and choose the unzipped folder.</>,
                   <>Come back here — Linklog connects on its own.</>,
                 ],
+                dev: "build it with",
               };
   return (
     <div className="flex flex-1 items-center justify-center p-8">
@@ -93,6 +105,11 @@ export function Connect({ ws }: { ws: BrowserWorkspace }) {
               </li>
             ))}
           </ol>
+        )}
+        {"dev" in content && (
+          <p className="text-xs text-muted-foreground">
+            Working on Linklog? Instead, {content.dev} <Kbd>bun run extension:build</Kbd> and load <Kbd>apps/extension/dist</Kbd>.
+          </p>
         )}
         {connection === "reload" ? (
           <Button size="sm" onClick={() => location.reload()}>
