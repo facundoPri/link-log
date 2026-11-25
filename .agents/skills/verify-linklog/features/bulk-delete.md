@@ -6,7 +6,7 @@ A user selects saved links and deletes them, with everything they own: extracted
 
 - `delete-confirm` the confirmation reads "Delete N links?" with a `Cancel` and a destructive `Delete N links` button. `Cancel` keeps the links and the selection.
 - `delete-cleanup` the links, their content (`GET /links/:id/content` answers 404) and their tag assignments go. A tag left with no links stays in the sidebar with 0.
-- `delete-running-cancel` a link with a running job is deleted too. The toast reads "Deleted N links" with "Cancelled M jobs still processing them", and the selection empties. In Activity the job's batch reads `Cancelled`, and the job keeps the link's title with "Cancelled: link deleted".
+- `delete-running-cancel` a link with a running job is deleted too. The toast reads "Deleted N links" with "Cancelled M jobs still processing them", and the selection empties. In Activity the job's batch reads `Cancelled`, and the job keeps the link's title with "Cancelled: link deleted" until the next cron sweep (every 5 minutes) after its batch finishes; from then it reads "Deleted link", still with "Cancelled: link deleted" (FAC-264).
 - `delete-chunks` the UI sends 100 ids per `POST /api/links/delete`. A failed request stops the run, the toast reads "Deleted X of N links", and the links not deleted stay selected.
 - `delete-isolation` another account's ids are ignored, like missing ones: the reply lists nothing deleted.
 

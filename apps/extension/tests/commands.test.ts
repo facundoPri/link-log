@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { BROWSER_LIMITS, jsonBytes, toEvaluationTarget, type PageRequest } from "@linklog/browser-protocol";
 import { fakeChrome } from "./fake-chrome";
 import { ResultCache } from "../src/background/cache";
@@ -56,6 +56,17 @@ const hello = async () => {
 };
 const lens = { id: "lens", fingerprint: "fp" };
 
+/** Holds the next window read until `release`, so a request can be caught before its binding check. */
+function holdNextTabQuery() {
+  const gate = Promise.withResolvers<void>();
+  const query = chrome.tabs.query.bind(chrome.tabs);
+  spyOn(chrome.tabs, "query").mockImplementationOnce(async (info: chrome.tabs.QueryInfo) => {
+    await gate.promise;
+    return query(info);
+  });
+  return gate.resolve;
+}
+
 beforeEach(() => {
   seq = 0;
 });
@@ -103,6 +114,18 @@ describe("bridge commands", () => {
     await hello();
     const claim = run("claim", { lens, limit: 20 }).catch((e: Error) => e);
     await run("forget", {});
+    await claim;
+    expect(await kept("local:lib")).toBe(0);
+  });
+
+  test("a claim already past its scope check leaves nothing in the forgotten scope, even if the account connects again", async () => {
+    await setup(3);
+    await hello();
+    const release = holdNextTabQuery();
+    const claim = run("claim", { lens, limit: 20 }).catch((e: Error) => e);
+    await run("forget", {});
+    await hello();
+    release();
     await claim;
     expect(await kept("local:lib")).toBe(0);
   });
