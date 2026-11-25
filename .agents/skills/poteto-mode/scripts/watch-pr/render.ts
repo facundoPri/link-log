@@ -1,5 +1,5 @@
 import type * as T from "./types.ts";
-export const renderJson = (verdict: T.WatcherVerdict | T.WatchResult): string =>
+export const renderJson = (verdict: T.WatcherVerdict): string =>
   `${JSON.stringify(verdict)}\n`;
 function ciCell(row: T.PrSnapshot): string {
   if (row.kind !== "open") return "\u2014";
@@ -130,23 +130,7 @@ function renderBlocker(blocker: T.MergeBlocker | StatusQueryBlocker): string {
     }
   }
 }
-const REVIEW_BOT_ANSWERS = {
-  reviewed: "yes",
-  "not-reviewed": "no",
-  "rate-limited": "no quota",
-  unknown: "unknown (could not read reviews)",
-} as const satisfies Record<T.ReviewBotHeadState, string>;
-export function renderPretty(verdict: T.WatcherVerdict | T.WatchResult): string {
-  const text = renderVerdict(verdict);
-  if (!("reviewBot" in verdict)) return text;
-  return `${text}${verdict.reviewBot
-    .map(
-      (row) =>
-        `reviewBot: #${row.pr} ${row.bot} reviewed head ${row.head ?? "unknown"}: ${REVIEW_BOT_ANSWERS[row.state]}\n`
-    )
-    .join("")}`;
-}
-function renderVerdict(verdict: T.WatcherVerdict): string {
+export function renderPretty(verdict: T.WatcherVerdict): string {
   switch (verdict.kind) {
     case "QUEUE":
       return `QUEUE: captured ${verdict.queue.length} PR${verdict.queue.length === 1 ? "" : "s"} bottom-to-top: ${verdict.queue.map((pr) => `#${pr.number}`).join(",")}\n`;

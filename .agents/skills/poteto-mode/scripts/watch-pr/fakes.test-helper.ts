@@ -9,7 +9,6 @@ import type {
   Repository,
   RawReviewThread,
   ReviewThread,
-  ReviewBotActivity,
   ReviewThreadPage,
   RollupPage,
 } from "./types.ts";
@@ -25,7 +24,6 @@ export interface FakeReaderOptions {
   readonly openPullRequests?: readonly OpenPullRequest[];
   readonly origin?: Repository | null;
   readonly current?: PrContext;
-  readonly reviewBotActivity?: ReviewBotActivity;
 }
 
 function toRawThread(thread: ReviewThread): RawReviewThread {
@@ -126,17 +124,6 @@ export function fakeReader(
     async commitRollups() {
       calls.push("commitRollups");
       return options.commitRollups ?? [{ oid: "head", state: "SUCCESS" }];
-    },
-    async reviewBotActivity() {
-      calls.push("reviewBotActivity");
-      return (
-        options.reviewBotActivity ?? {
-          headOid: "head",
-          headCommittedAt: null,
-          reviews: [],
-          comments: [],
-        }
-      );
     },
   };
 }
