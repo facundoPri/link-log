@@ -7,9 +7,11 @@ import {
 } from "commander";
 import {
   GhGitHubReader,
+  REVIEW_BOT_LOGIN,
   WatcherQueryError,
   discoverStack,
   resolveContext,
+  reviewBotHeadState,
 } from "./github.ts";
 import {
   runQueued,
@@ -150,6 +152,26 @@ export function parseArgs(
     },
   };
 }
+async function reviewBotHeads(
+  reader: T.GitHubReader,
+  contexts: readonly T.PrContext[]
+): Promise<T.ReviewBotHead[]> {
+  const heads: T.ReviewBotHead[] = [];
+  for (const context of contexts) {
+    let head: string | null = null;
+    let state: T.ReviewBotHeadState = "unknown";
+    try {
+      const activity = await reader.reviewBotActivity(context);
+      head = activity.headOid;
+      state = reviewBotHeadState(activity);
+    } catch {
+      // Any failed read, a gh that never started included, reports unknown so
+      // the terminal verdict and its exit code still reach the caller.
+    }
+    heads.push({ pr: context.number, bot: REVIEW_BOT_LOGIN, head, state });
+  }
+  return heads;
+}
 export interface CliRuntime {
   readonly reader: T.GitHubReader;
   readonly clock: WatchClock;
@@ -204,7 +226,7 @@ export async function main(
       1,
       error.failure
     );
-    runtime.stdout(render(verdict));
+    runtime.stdout(render({ ...verdict, reviewBot: [] }));
     return verdict.exitCode;
   }
   const dependencies = { reader: runtime.reader, clock: runtime.clock, emit };
@@ -218,6 +240,11 @@ export async function main(
           statusOnly: options.statusOnly,
           options: options.polling,
         });
-  runtime.stdout(render(verdict));
+  runtime.stdout(
+    render({
+      ...verdict,
+      reviewBot: await reviewBotHeads(runtime.reader, contexts),
+    })
+  );
   return verdict.exitCode;
 }

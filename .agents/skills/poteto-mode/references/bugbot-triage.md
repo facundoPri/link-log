@@ -18,6 +18,17 @@ gh api --paginate "repos/<owner>/<repo>/pulls/<pr>/reviews" \
   --jq '.[] | select(.user.login == "coderabbitai[bot]") | {id, commit_id, body: (.body | gsub("(?s)<picture>.*?</picture>|<!--.*?-->"; ""))}'
 ```
 
+## Did the bot review the head?
+
+A bot reviewed the head only when one of its reviews has a `commit_id` equal to the PR's current head and a body with findings or a summary. `scripts/watch-pr/watch-pr` reports this on exit as `reviewBot`. These do not count:
+
+- A reply in a thread. GitHub stores it as a review with an empty body, often on the head.
+- A "No files to review" pass, or a path filter that left nothing to read.
+- A SKIPPED bot check.
+- A review on an earlier commit.
+
+When the bot ran out of quota (a "Rate limit exceeded" comment after the head commit), the head is unreviewed. Say so in the report instead of treating the PR as reviewed.
+
 ## Decision rubric
 
 Classify each review-bot thread before acting:
