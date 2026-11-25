@@ -43,3 +43,28 @@ export const BATCH_WORDS: Record<Batch["kind"], { running: string; verb: string;
   "browser-lens": { running: "Applying lens", verb: "Applying lens to", done: "Lens applied to", noun: "tab" },
   "browser-autogroup": { running: "Autogrouping", verb: "Autogrouping", done: "Suggested groups for", noun: "tab" },
 };
+
+export type DeleteReply = { deleted: string[]; running: string[] };
+/**
+ * Sends a selection to POST /api/links/delete in chunks of 100 (FAC-46). The first failed request stops the run:
+ * its ids and the ones after it are `untouched`, so the caller can say exactly what was and wasn't deleted.
+ */
+export async function deleteInChunks<T extends DeleteReply>(
+  ids: string[],
+  send: (chunk: string[]) => Promise<T>,
+  onChunk: (reply: T) => void = () => {},
+) {
+  const deleted: string[] = [],
+    running: string[] = [];
+  for (let offset = 0; offset < ids.length; offset += 100) {
+    try {
+      const reply = await send(ids.slice(offset, offset + 100));
+      onChunk(reply);
+      deleted.push(...reply.deleted);
+      running.push(...reply.running);
+    } catch (e) {
+      return { deleted, running, untouched: ids.slice(offset), error: e as Error };
+    }
+  }
+  return { deleted, running, untouched: [] as string[], error: null };
+}

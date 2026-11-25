@@ -27,7 +27,7 @@ import { openUnavailable, useOpenLinks } from "./browser/openLinks";
 import { BrowserInspector } from "./components/browser/BrowserInspector";
 import { BrowserDialogs } from "./components/browser/BrowserDialogs";
 import { useBrowserActions } from "./browser/useBrowserActions";
-import { BATCH_WORDS, submitInChunks, type BatchReply } from "./batches";
+import { BATCH_WORDS, deleteInChunks, submitInChunks, type BatchReply, type DeleteReply } from "./batches";
 import { actionStates, BULK_ACTIONS, bulkProgress, lacksContent, runAction, type BulkRunners } from "./bulkActions";
 import { copyLinks } from "./lib/copy-links";
 import { isInput, overlayOpen } from "./lib/overlay";
@@ -115,6 +115,8 @@ export function App({
   const [confirmNoContent, setConfirmNoContent] = useState(false);
   const [extractFirst, setExtractFirst] = useState(false);
   const [confirmExtract, setConfirmExtract] = useState<string[] | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<string[] | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [running, setRunning] = useState(false);
   const [results, setResults] = useState<BulkResult[]>([]);
   const [dragging, setDragging] = useState(false);
@@ -615,6 +617,37 @@ export function App({
     setConfirmExtract(ids);
   };
 
+  const doDelete = async (ids: string[]) => {
+    setConfirmDelete(null);
+    setDeleting(true);
+    let out;
+    try {
+      out = await deleteInChunks<Library & DeleteReply>(
+        ids,
+        (chunk) => api<Library & DeleteReply>("/links/delete", "POST", { ids: chunk }),
+        setLibrary,
+      );
+    } finally {
+      setDeleting(false);
+    }
+    const sent = new Set(ids);
+    const left = new Set([...out.running, ...out.untouched]);
+    setPicked((cur) => cur.filter((id) => left.has(id) || !sent.has(id)));
+    if (activeId && out.deleted.includes(activeId)) setActiveId(null);
+    const skipped = out.running.length ? `${out.running.length} still processing, skipped.` : "";
+    if (out.error)
+      toast.error(`Deleted ${out.deleted.length} of ${plural(ids.length, "link")}`, {
+        description: [out.error.message, skipped, "The rest stay selected."].filter(Boolean).join(" "),
+      });
+    else if (!out.deleted.length)
+      toast("No links deleted", { description: skipped ? `${skipped} Try again when they finish.` : "They were already deleted." });
+    else if (skipped)
+      toast(`Deleted ${plural(out.deleted.length, "link")}`, {
+        description: `${skipped} ${out.running.length === 1 ? "It stays" : "They stay"} selected.`,
+      });
+    else toast.success(`Deleted ${plural(out.deleted.length, "link")}`);
+  };
+
   const manualTagged = pickedLinks.filter((l) =>
     l.tags.some((t) => t.origin === "manual"),
   ).length;
@@ -636,6 +669,7 @@ export function App({
     extract: () => requestExtract(picked, true),
     copy: (links, withTitles) => void copyLinks(links, withTitles),
     open: (links) => void openLinks.open(links),
+    delete: (links) => setConfirmDelete(links.map((l) => l.id)),
   };
   const bulkStates = actionStates(BULK_ACTIONS, pickedLinks, {
     tags: library.tags,
@@ -643,6 +677,7 @@ export function App({
     running,
     openReason: openUnavailable(ws.browser),
     opening: openLinks.opening,
+    deleting,
   });
   const linkEntry: LinkEntry = {
     command: { label: "Add links…", description: "Save to your Library, with optional tags", icon: Plus },
@@ -1345,6 +1380,23 @@ export function App({
               onClick={() => confirmExtract && void doExtract(confirmExtract)}
             >
               Extract
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={!!confirmDelete} onOpenChange={(o) => !o && setConfirmDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {plural(confirmDelete?.length ?? 0, "link")}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Their extracted content, previews, tag assignments and lens results are deleted with them. Your tags and
+              lenses stay. Links still processing are skipped. This can't be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" onClick={() => confirmDelete && void doDelete(confirmDelete)}>
+              Delete {plural(confirmDelete?.length ?? 0, "link")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
