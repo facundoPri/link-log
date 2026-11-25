@@ -1,8 +1,8 @@
 import { useCallback, useMemo } from "react";
-import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueries, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "./api";
-import { POLL_MS, useWriteLibrary } from "./library";
+import { libraryKey, POLL_MS, useWriteLibrary } from "./library";
 import type { Batch, Job, Library, Usage, UsageTotals } from "./types";
 
 export const batchJobsKey = (batchId: string) => ["batch", batchId] as const;
@@ -11,8 +11,16 @@ const isLive = (job: Job) => ["queued", "running", "waiting"].includes(job.statu
 
 export const batchJobsOptions = (batchId: string) => ({
   queryKey: batchJobsKey(batchId),
-  queryFn: async ({ signal }: { signal: AbortSignal }) =>
-    (await api<{ jobs: Job[] }>(`/batches/${batchId}`, "GET", undefined, signal)).jobs,
+  queryFn: async ({ signal, client }: { signal: AbortSignal; client: QueryClient }) => {
+    const jobs = (await api<{ jobs: Job[] }>(`/batches/${batchId}`, "GET", undefined, signal)).jobs;
+    // A job settles with its result (tags, verdict) in one transaction, but rows read the result from the library,
+    // which polls on its own clock. Load it before publishing the finished job, so a row goes from "In progress…"
+    // straight to its result and never shows neither.
+    const before = client.getQueryData<Job[]>(batchJobsKey(batchId));
+    if (before?.some((p) => isLive(p) && jobs.some((j) => j.id === p.id && !isLive(j))))
+      await client.refetchQueries({ queryKey: libraryKey });
+    return jobs;
+  },
 });
 
 /** The jobs of one batch. The cache is the only copy, so every reader of a batch shares one request. */
