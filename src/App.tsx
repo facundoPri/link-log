@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link2, ListChecks, Plus } from "lucide-react";
 import { toast } from "sonner";
-import { api } from "./api";
+import { api, type WriteMethod } from "./api";
 import type { Batch, Lens, LensResult, LensScope, Library, Link, Tag } from "./types";
 import { jevUnavailable, needsAttention } from "./attention";
 import { clipboardUrls } from "./url";
@@ -298,7 +298,7 @@ export function App({
     });
   }, [showRecentLinks, setLibrary]);
 
-  const mutate = useCallback(async (path: string, method: string, body: unknown = {}) => {
+  const mutate = useCallback(async (path: string, method: WriteMethod, body: unknown = {}) => {
     setLibrary(await api(path, method, body));
   }, [setLibrary]);
 

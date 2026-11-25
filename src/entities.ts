@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from "react";
 import { useQueries, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { api } from "./api";
+import { api, apiRead } from "./api";
 import { libraryKey, POLL_MS, useWriteLibrary } from "./library";
 import type { Batch, Job, Library, Usage, UsageTotals } from "./types";
 
@@ -12,13 +12,18 @@ const isLive = (job: Job) => ["queued", "running", "waiting"].includes(job.statu
 export const batchJobsOptions = (batchId: string) => ({
   queryKey: batchJobsKey(batchId),
   queryFn: async ({ signal, client }: { signal: AbortSignal; client: QueryClient }) => {
-    const jobs = (await api<{ jobs: Job[] }>(`/batches/${batchId}`, "GET", undefined, signal)).jobs;
+    const jobs = (await apiRead<{ jobs: Job[] }>(`/batches/${batchId}`, signal)).jobs;
     // A job settles with its result (tags, verdict) in one transaction, but rows read the result from the library,
     // which polls on its own clock. Load it before publishing the finished job, so a row goes from "In progress…"
     // straight to its result and never shows neither.
     const before = client.getQueryData<Job[]>(batchJobsKey(batchId));
     if (before?.some((p) => isLive(p) && jobs.some((j) => j.id === p.id && !isLive(j))))
-      await client.refetchQueries({ queryKey: libraryKey });
+      try {
+        await client.refetchQueries({ queryKey: libraryKey }, { throwOnError: true });
+      } catch {
+        // Without the result, keep the jobs as they were (still in progress); the next poll tries again.
+        return before;
+      }
     return jobs;
   },
 });
@@ -66,7 +71,7 @@ export function useRunningJobs(batches: Batch[]) {
     });
     return running;
     // `watched` is rebuilt every render; its ids and the jobs are what the result depends on.
-  }, [jobs, watchedIds]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [jobs, watchedIds]);
 }
 
 /** After a job or batch is cancelled or retried, every batch's jobs may have changed. */
@@ -107,7 +112,7 @@ export function useCancelBatches() {
 export function useLinkContent(linkId: string, version: number) {
   return useQuery({
     queryKey: ["link-content", linkId, version],
-    queryFn: async () => (await api<{ markdown: string }>(`/links/${linkId}/content`)).markdown,
+    queryFn: async ({ signal }) => (await apiRead<{ markdown: string }>(`/links/${linkId}/content`, signal)).markdown,
     placeholderData: (previous, previousQuery) =>
       previousQuery?.queryKey[1] === linkId ? previous : undefined,
   });
@@ -120,14 +125,14 @@ export const usageSummaryKey = ["usage-summary"] as const;
 export function useUsageTotals(enabled: boolean) {
   return useQuery({
     queryKey: usageTotalsKey,
-    queryFn: async () => (await api<{ totals: UsageTotals }>("/usage")).totals,
+    queryFn: async ({ signal }) => (await apiRead<{ totals: UsageTotals }>("/usage", signal)).totals,
     enabled,
   });
 }
 
 /** Settings' usage summary: this hour's quota and this month's links and cost. */
 export function useUsageSummary() {
-  return useQuery({ queryKey: usageSummaryKey, queryFn: () => api<Usage>("/usage/summary") });
+  return useQuery({ queryKey: usageSummaryKey, queryFn: ({ signal }) => apiRead<Usage>("/usage/summary", signal) });
 }
 
 /** Cost totals and the usage summary follow the work: call this once a batch has settled. */

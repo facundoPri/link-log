@@ -4,6 +4,10 @@ Linklog saves the links a user collects, extracts what each one says, and organi
 
 ## Library
 
+**Library**:
+Everything one user has saved: links, tags, lenses and results, and the 30 newest batches. It lists only those 30 batches, so a client waiting for a batch must settle without it once the batch is no longer listed.
+_Avoid_: Collection, workspace
+
 **Link**:
 A URL saved once in one user's library, with its preview and content.
 _Avoid_: Bookmark, entry, item

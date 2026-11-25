@@ -1,0 +1,24 @@
+---
+// Inlines a Phosphor icon at build time, so the page ships no icon font or runtime.
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+
+interface Props {
+  name: string;
+  weight?: "regular" | "bold" | "fill";
+  class?: string;
+  label?: string;
+}
+
+const { name, weight = "regular", class: className = "size-4", label } = Astro.props;
+const require = createRequire(import.meta.url);
+const suffix = weight === "regular" ? "" : `-${weight}`;
+const raw = readFileSync(
+  require.resolve(`@phosphor-icons/core/assets/${weight}/${name}${suffix}.svg`),
+  "utf8",
+);
+const a11y = label ? `role="img" aria-label="${label}"` : `aria-hidden="true" focusable="false"`;
+const svg = raw.replace("<svg ", `<svg class="${className}" ${a11y} `);
+---
+
+<Fragment set:html={svg} />
