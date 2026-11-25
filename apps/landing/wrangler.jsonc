@@ -14,4 +14,6 @@
   },
   "workers_dev": true,
   "preview_urls": true,
+  // Settings for Workers Previews (wrangler preview); the static files need none.
+  "previews": {},
 }
