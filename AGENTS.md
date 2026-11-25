@@ -31,6 +31,10 @@ Use the five default triage labels. Before triaging or changing triage labels, r
 
 Use a single-context layout. Before exploring domain concepts, proposing architectural changes, or acting on a policy the owner settles during ticket work, read `docs/agents/domain.md`.
 
+### D1 migrations
+
+Before writing a migration in `migrations/` or its rollback script, read `docs/agents/d1-migrations.md`.
+
 ### Model roles
 
 For multi-step agent work, the coordinator reads [the model profile](.agents/pstack-models.md): the shared sections, then the section for its harness (Codex or Claude Code). These choices override the user-level `~/.agents/pstack-models.md` and bundled pstack defaults.

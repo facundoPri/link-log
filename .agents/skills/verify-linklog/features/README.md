@@ -13,7 +13,6 @@ This directory is the maintained source for verifying Linklog's user-facing web 
 
 - One journey file per proof, run with `V run <file>`. Start from `journeys/add-link.ts`.
 - Use roles and accessible names. The handles quoted in each feature file come from `src/components/`.
-- Libraries persist across journeys on one instance. Build URLs with `fixture()`, and assert on your own links, not on counts, unless you need an empty library. In that case, `down` and `up` first.
 - Wait on state with `check`, never with a fixed sleep.
 - Shortcuts use `ControlOrMeta`, as in `page.keyboard.press("ControlOrMeta+K")`. The app accepts either modifier.
 
@@ -41,7 +40,7 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 - [Needs attention and Activity](./needs-attention.md) covers failed previews and content, Retry, Use preview, Dismiss, the Activity sheet and cancelling.
 - [Accounts and privacy](./accounts.md) covers sign-in, sign-out, sign-up with emailed verification, magic link, password reset, and library isolation between accounts.
 - [Bulk open](./bulk-open.md) covers the bulk `Open` action (toolbar, palette, drawer and `O` key): gating on the extension's connection and capability, opening background tabs, partial failure, and retry safety. Only its missing-extension state is proven live here; the rest uses a scripted stand-in for the extension bridge (see the file's own caveats).
-- [Bulk delete](./bulk-delete.md) covers deleting selected links from the `⌘K` palette and the mobile drawer: the confirmation, cleanup of content and tag assignments with tags kept, links with a running job skipped and left selected, and cross-account ids ignored. Proven by `journeys/bulk-delete.ts`.
+- [Bulk delete](./bulk-delete.md) covers deleting selected links from the `⌘K` palette and the mobile drawer: the confirmation, cleanup of content and tag assignments with tags kept, jobs still processing a deleted link cancelled and kept in Activity as "Cancelled: link deleted", and cross-account ids ignored. Proven by `journeys/bulk-delete.ts`.
 - [Settings and API keys](./settings-api-keys.md) covers opening Settings from the user menu, the Account section, and creating, listing, revoking, enabling and deleting API keys. Proven by `journeys/api-keys-settings.ts`, `journeys/api-keys-revoked-section.ts` and `journeys/api-keys-gate-fixes.ts` (the lk_ prefix, a renamed key in Usage, the shared writes budget on key routes).
 - Public API submit (`POST /api/v1/links` with a Bearer API key): 202 results, Duplicates, 401s, a key refused on private routes, the Activity label `Extract context · API · <key name>` and cancelling the batch. Proven by `journeys/api-submit-activity.ts` (launch with `--var BROWSER_CONCURRENCY=1`).
 
