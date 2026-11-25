@@ -166,7 +166,7 @@ export default (async ({ page, api, fixture, step, check, shot, note }) => {
   await check("Drawer closed", async () => !(await drawer.isVisible()));
   await check("Selection kept", async () => new RegExp(`All ${visible} selected`).test((await bar.textContent()) ?? ""));
 
-  await step("Extract from the drawer: progress shows in the bar");
+  await step("Extract from the drawer: progress shows in the toast, not the bar");
   await bar.getByRole("button", { name: /^Actions/ }).click();
   await drawer.getByRole("button", { name: /^Extract/ }).click();
   const confirm = page.getByRole("alertdialog", { name: `Extract context for ${visible} links?` });
@@ -174,7 +174,9 @@ export default (async ({ page, api, fixture, step, check, shot, note }) => {
   await snap("08-mobile-extract-confirm");
   await confirm.getByRole("button", { name: "Extract", exact: true }).click();
   const batch = await check("API: an extract batch started", async () => (await api.library()).batches.find((b) => b.kind === "extract" && b.total === visible));
-  await check("The bar reports Extracting n/N", () => bar.getByText(new RegExp(`Extracting \\d+/${visible}`)).isVisible(), { timeout: 5_000 }).catch(() => note("progress-missed", "the batch settled before the bar was polled"));
+  const toast = page.locator("[data-sonner-toast]").filter({ hasText: new RegExp(`Extracting context for ${visible} links`) });
+  await check("The toast reports n of N and the bar shows no count", async () =>
+    (await toast.getByText(new RegExp(`^\\d+ of ${visible}$`)).isVisible()) && !new RegExp(`\\d+/${visible}`).test((await bar.textContent()) ?? ""), { timeout: 5_000 }).catch(() => note("progress-missed", "the batch settled before the toast was polled"));
   await shot("09-mobile-running");
   await check("API: the batch settles with every link that can never be extracted failed", async () => {
     const b = (await api.library()).batches.find((x) => x.id === batch.id);
