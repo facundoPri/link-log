@@ -1,0 +1,256 @@
+@import "tailwindcss";
+@import "@fontsource-variable/geist";
+
+/* Same neutral ramp (hue 260, low chroma) and green brand as the app in src/index.css. */
+@theme {
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+
+  --color-page: oklch(1 0 0);
+  --color-surface: oklch(0.982 0.002 260);
+  --color-subtle: oklch(0.965 0.003 260);
+  --color-ink: oklch(0.2 0.01 260);
+  --color-ink-2: oklch(0.3 0.01 260);
+  --color-muted: oklch(0.5 0.012 260);
+  --color-faint: oklch(0.68 0.01 260);
+  --color-line: oklch(0.915 0.005 260);
+  --color-line-strong: oklch(0.86 0.006 260);
+  --color-brand: oklch(0.52 0.12 160);
+  --color-brand-strong: oklch(0.45 0.11 160);
+  --color-brand-soft: oklch(0.95 0.03 160);
+  --color-warning: oklch(0.62 0.14 70);
+  --color-warning-soft: oklch(0.96 0.04 85);
+
+  --ease-base: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Tag palette from the app: 8 hues at constant lightness. */
+:root {
+  --tag-0-bg: oklch(0.95 0.03 25);  --tag-0-fg: oklch(0.42 0.11 25);  --tag-0-dot: oklch(0.68 0.16 25);
+  --tag-1-bg: oklch(0.95 0.035 60); --tag-1-fg: oklch(0.42 0.1 60);   --tag-1-dot: oklch(0.7 0.15 60);
+  --tag-2-bg: oklch(0.95 0.04 95);  --tag-2-fg: oklch(0.42 0.09 95);  --tag-2-dot: oklch(0.75 0.14 95);
+  --tag-3-bg: oklch(0.95 0.03 150); --tag-3-fg: oklch(0.4 0.1 150);   --tag-3-dot: oklch(0.68 0.14 150);
+  --tag-4-bg: oklch(0.95 0.03 200); --tag-4-fg: oklch(0.4 0.09 200);  --tag-4-dot: oklch(0.68 0.12 200);
+  --tag-5-bg: oklch(0.95 0.03 250); --tag-5-fg: oklch(0.42 0.11 250); --tag-5-dot: oklch(0.66 0.14 250);
+  --tag-6-bg: oklch(0.95 0.035 300);--tag-6-fg: oklch(0.42 0.12 300); --tag-6-dot: oklch(0.66 0.15 300);
+  --tag-7-bg: oklch(0.95 0.03 350); --tag-7-fg: oklch(0.42 0.12 350); --tag-7-dot: oklch(0.68 0.16 350);
+  color-scheme: light;
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    scroll-behavior: smooth;
+    scroll-padding-top: 96px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+  }
+  body {
+    background: var(--color-page);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    margin: 0;
+  }
+  ::selection { background: var(--color-brand-soft); }
+  h1, h2, h3, h4, h5, h6 { text-wrap: balance; }
+  p, li, dd { text-wrap: pretty; }
+  :focus-visible {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  button { cursor: pointer; }
+}
+
+/* Named text styles. Sizes come from the Tailwind type scale. */
+@utility heading-1 { font-size: 3.75rem; line-height: 1; font-weight: 600; letter-spacing: -0.03em; }
+@utility heading-2 { font-size: 3rem; line-height: 1; font-weight: 600; letter-spacing: -0.03em; }
+@utility heading-3 { font-size: 2.25rem; line-height: 2.5rem; font-weight: 600; letter-spacing: -0.02em; }
+@utility heading-4 { font-size: 1.875rem; line-height: 2.25rem; font-weight: 600; letter-spacing: -0.02em; }
+@utility heading-5 { font-size: 1.5rem; line-height: 2rem; font-weight: 600; letter-spacing: -0.01em; }
+@utility heading-6 { font-size: 1.25rem; line-height: 1.75rem; font-weight: 600; }
+@utility title-1 { font-size: 1.25rem; line-height: 1.75rem; font-weight: 500; }
+@utility title-2 { font-size: 1.125rem; line-height: 1.75rem; font-weight: 500; }
+@utility title-3 { font-size: 1rem; line-height: 1.5rem; font-weight: 500; }
+@utility title-4 { font-size: 0.875rem; line-height: 1.25rem; font-weight: 500; }
+@utility title-5 { font-size: 0.75rem; line-height: 1rem; font-weight: 500; }
+@utility body-1 { font-size: 1rem; line-height: 1.5rem; font-weight: 600; }
+@utility body-2 { font-size: 1rem; line-height: 1.5rem; font-weight: 500; }
+@utility body-3 { font-size: 1rem; line-height: 1.5rem; font-weight: 400; }
+@utility body-4 { font-size: 0.875rem; line-height: 1.25rem; font-weight: 600; }
+@utility body-5 { font-size: 0.875rem; line-height: 1.25rem; font-weight: 500; }
+@utility body-6 { font-size: 0.875rem; line-height: 1.25rem; font-weight: 400; }
+@utility button-lg { font-size: 1.125rem; line-height: 1.75rem; font-weight: 600; }
+@utility button-md { font-size: 1rem; line-height: 1.5rem; font-weight: 600; }
+@utility button-sm { font-size: 0.875rem; line-height: 1.25rem; font-weight: 600; }
+@utility button-xsm { font-size: 0.75rem; line-height: 1rem; font-weight: 600; }
+@utility caption-1 { font-size: 0.875rem; line-height: 1.25rem; font-weight: 500; }
+@utility caption-2 { font-size: 0.875rem; line-height: 1.25rem; font-weight: 400; }
+@utility caption-3 { font-size: 0.75rem; line-height: 1rem; font-weight: 600; }
+@utility caption-4 { font-size: 0.75rem; line-height: 1rem; font-weight: 500; }
+@utility caption-5 { font-size: 0.75rem; line-height: 1rem; font-weight: 400; }
+
+@utility tabular { font-variant-numeric: tabular-nums; }
+
+/* Hero heading: the only gradient on the page, and only on text. */
+@utility hero-ink {
+  background: linear-gradient(90deg, #000000, #666666);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@layer components {
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: 10px;
+    white-space: nowrap;
+    transition: background-color 300ms var(--ease-base), color 300ms var(--ease-base),
+      transform 300ms var(--ease-base), box-shadow 300ms var(--ease-base);
+  }
+  .btn:active { transform: scale(0.98); }
+  .btn-primary {
+    background: var(--color-ink);
+    color: oklch(0.985 0 0);
+    box-shadow: 0 1px 2px oklch(0.2 0.01 260 / 0.2), inset 0 1px 0 oklch(1 0 0 / 0.12);
+  }
+  .btn-primary:hover { background: var(--color-ink-2); transform: translateY(-1px); }
+  .btn-primary:active { transform: translateY(1px); }
+  .btn-ghost {
+    background: var(--color-page);
+    color: var(--color-ink);
+    box-shadow: inset 0 0 0 1px var(--color-line);
+  }
+  .btn-ghost:hover { background: var(--color-subtle); }
+  .btn[aria-disabled="true"], .btn:disabled { opacity: 0.4; pointer-events: none; }
+
+  .kbd {
+    display: inline-flex;
+    min-width: 20px;
+    height: 20px;
+    align-items: center;
+    justify-content: center;
+    padding: 0 4px;
+    border-radius: 4px;
+    border: 1px solid var(--color-line);
+    background: var(--color-page);
+    color: var(--color-muted);
+    font-size: 0.75rem;
+    line-height: 1rem;
+    font-weight: 500;
+  }
+
+  /* Tag chip, as in src/components/TagChip.tsx */
+  .chip {
+    display: inline-flex;
+    height: 20px;
+    align-items: center;
+    gap: 4px;
+    padding: 0 8px 0 4px;
+    border-radius: 6px;
+    background: var(--tag-bg);
+    color: var(--tag-fg);
+    font-size: 0.75rem;
+    line-height: 1rem;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .chip .dot { width: 6px; height: 6px; border-radius: 9999px; background: var(--tag-dot); flex-shrink: 0; margin-left: 4px; }
+  .dot { width: 6px; height: 6px; border-radius: 9999px; background: var(--tag-dot); flex-shrink: 0; }
+
+  .t0 { --tag-bg: var(--tag-0-bg); --tag-fg: var(--tag-0-fg); --tag-dot: var(--tag-0-dot); }
+  .t1 { --tag-bg: var(--tag-1-bg); --tag-fg: var(--tag-1-fg); --tag-dot: var(--tag-1-dot); }
+  .t2 { --tag-bg: var(--tag-2-bg); --tag-fg: var(--tag-2-fg); --tag-dot: var(--tag-2-dot); }
+  .t3 { --tag-bg: var(--tag-3-bg); --tag-fg: var(--tag-3-fg); --tag-dot: var(--tag-3-dot); }
+  .t4 { --tag-bg: var(--tag-4-bg); --tag-fg: var(--tag-4-fg); --tag-dot: var(--tag-4-dot); }
+  .t5 { --tag-bg: var(--tag-5-bg); --tag-fg: var(--tag-5-fg); --tag-dot: var(--tag-5-dot); }
+  .t6 { --tag-bg: var(--tag-6-bg); --tag-fg: var(--tag-6-fg); --tag-dot: var(--tag-6-dot); }
+  .t7 { --tag-bg: var(--tag-7-bg); --tag-fg: var(--tag-7-fg); --tag-dot: var(--tag-7-dot); }
+
+  /* Site icon placeholder used in the mock rows: a tinted square with a letter. */
+  .favicon {
+    display: inline-flex;
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    background: var(--tag-bg);
+    color: var(--tag-fg);
+    font-size: 0.75rem;
+    line-height: 1rem;
+    font-weight: 600;
+  }
+
+  /* A product window: app or Chrome. */
+  .window {
+    border-radius: 16px;
+    background: var(--color-page);
+    box-shadow:
+      0 0 0 1px oklch(0.2 0.01 260 / 0.08),
+      0 2px 4px oklch(0.2 0.01 260 / 0.04),
+      0 24px 48px oklch(0.2 0.01 260 / 0.1);
+    overflow: hidden;
+  }
+  .window-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 40px;
+    padding: 0 12px;
+    background: var(--color-surface);
+    box-shadow: inset 0 -1px 0 var(--color-line);
+  }
+  .traffic { display: flex; gap: 8px; }
+  .traffic span { width: 12px; height: 12px; border-radius: 9999px; background: var(--color-line-strong); }
+
+  .skeleton {
+    border-radius: 4px;
+    background: var(--color-subtle);
+    position: relative;
+    overflow: hidden;
+  }
+  .skeleton::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: oklch(1 0 0 / 0.7);
+    transform: translateX(-100%);
+    animation: shimmer 1.4s var(--ease-base) infinite;
+  }
+  @keyframes shimmer { to { transform: translateX(100%); } }
+
+  .pulse-dot { animation: pulse-dot 1.2s var(--ease-base) infinite; }
+  @keyframes pulse-dot { 50% { opacity: 0.3; } }
+}
+
+/* Scroll reveal: once per element. */
+[data-reveal] {
+  opacity: 0;
+  transform: translateY(32px);
+  transition: opacity 700ms var(--ease-base), transform 700ms var(--ease-base);
+  transition-delay: var(--reveal-delay, 0ms);
+}
+[data-reveal].is-visible { opacity: 1; transform: none; }
+.no-js [data-reveal] { opacity: 1; transform: none; }
+
+/* Pop in for chips and verdicts that appear inside demos. */
+.pop-enter { opacity: 0; transform: translateY(4px) scale(0.92); }
+.pop {
+  transition: opacity 500ms var(--ease-base), transform 500ms var(--ease-base);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-reveal] { transform: none; transition: opacity 300ms var(--ease-base); }
+  .skeleton::after, .pulse-dot { animation: none; }
+  *, *::before, *::after {
+    transition-property: opacity, color, background-color !important;
+    animation-duration: 0.01ms !important;
+  }
+}

@@ -1,0 +1,19 @@
+{
+  // The landing page as its own assets-only Worker, separate from the app (../../wrangler.jsonc).
+  // .github/workflows/deploy-landing.yml deploys it on every push to main that changes
+  // apps/landing; .github/workflows/landing-preview.yml publishes a Preview per pull request.
+  // No route: it is served at https://linklog-landing.<account subdomain>.workers.dev. To serve
+  // it from your own domain, add `"routes": [{ "pattern": "<host>", "custom_domain": true }]`
+  // (the zone must be on this Cloudflare account) and set the LANDING_SITE repository variable.
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "linklog-landing",
+  "compatibility_date": "2026-09-21",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "404-page",
+  },
+  "workers_dev": true,
+  "preview_urls": true,
+  // Settings for Workers Previews (wrangler preview); the static files need none.
+  "previews": {},
+}

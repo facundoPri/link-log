@@ -1,0 +1,134 @@
+name: Landing preview
+
+# A pull request that changes the landing page gets a Workers Preview of it (named pr-<number>)
+# on the linklog-landing Worker, linked from a sticky PR comment. Closing the PR deletes it.
+# Production is untouched: deploy-landing.yml deploys main.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    paths:
+      - apps/landing/**
+      - bun.lock
+      - .github/workflows/landing-preview.yml
+
+concurrency:
+  group: landing-preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  PR_NUMBER: ${{ github.event.pull_request.number }}
+  WRANGLER_SEND_METRICS: 'false'
+  CI: 'true'
+
+jobs:
+  # Runs the PR's dependencies and build with no Cloudflare credentials.
+  build:
+    # Forks get no secrets; never run their code next to the deploy token.
+    if: github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - run: bun run landing:build
+        env:
+          LANDING_SITE: ${{ vars.LANDING_SITE || 'https://linklog-landing.facundo-prieto321.workers.dev' }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: landing-${{ github.run_id }}-${{ github.run_attempt }}
+          path: apps/landing/dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  # Holds the token: runs no PR code, only pinned Wrangler (no lifecycle scripts) uploading the
+  # built files with the config below.
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: pr-preview
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PREVIEW_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_PREVIEW_ACCOUNT_ID }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      # Never load the PR's wrangler config here: it could add a build command or a script.
+      # Keep in step with apps/landing/wrangler.jsonc (name, compatibility date, 404 page).
+      - name: Write assets-only config
+        run: |
+          mkdir -p "$RUNNER_TEMP/landing"
+          cat > "$RUNNER_TEMP/landing/wrangler.json" <<'JSON'
+          {"name": "linklog-landing", "compatibility_date": "2026-09-21",
+           "assets": {"directory": "./dist", "not_found_handling": "404-page"},
+           "workers_dev": true, "preview_urls": true, "previews": {}}
+          JSON
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: landing-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/landing/dist
+      - name: Install pinned Wrangler (no lifecycle scripts)
+        run: npm install --prefix "$RUNNER_TEMP/tools" --ignore-scripts --no-audit --no-fund wrangler@4.136.1
+      - name: Publish preview
+        id: preview
+        env:
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          "$RUNNER_TEMP/tools/node_modules/.bin/wrangler" preview --config "$RUNNER_TEMP/landing/wrangler.json" \
+            --name "pr-$PR_NUMBER" --tag "${SHA::7}" --message "PR #$PR_NUMBER" --json > preview.json || { cat preview.json; exit 1; }
+          cat preview.json
+          # Wrangler prints upload logs before the JSON, so match the alias URL in the text.
+          url=$(grep -oE "https://pr-$PR_NUMBER-[a-z0-9.-]+\.workers\.dev" preview.json | head -n 1 || true)
+          if [ -z "$url" ]; then echo "No preview URL in Wrangler output" >&2; exit 1; fi
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Landing preview: $url" >> "$GITHUB_STEP_SUMMARY"
+      - name: Comment the URL on the PR
+        env:
+          URL: ${{ steps.preview.outputs.url }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          marker='<!-- linklog-landing-preview -->'
+          body=$(printf '%s\n### Landing preview\n\n**Preview:** %s\n\nCommit: `%s`. Updates on every push; deleted when the PR closes.' "$marker" "$URL" "${SHA::7}")
+          id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id" | head -n 1)
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -f body="$body" > /dev/null
+          else
+            gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" -f body="$body" > /dev/null
+          fi
+
+  cleanup:
+    if: github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: pr-preview
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PREVIEW_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_PREVIEW_ACCOUNT_ID }}
+    steps:
+      # Never load the PR's wrangler config here: it could add a build command or a script.
+      # Keep in step with apps/landing/wrangler.jsonc (name, compatibility date, 404 page).
+      - name: Write assets-only config
+        run: |
+          mkdir -p "$RUNNER_TEMP/landing"
+          cat > "$RUNNER_TEMP/landing/wrangler.json" <<'JSON'
+          {"name": "linklog-landing", "compatibility_date": "2026-09-21",
+           "assets": {"directory": "./dist", "not_found_handling": "404-page"},
+           "workers_dev": true, "preview_urls": true, "previews": {}}
+          JSON
+      - name: Install pinned Wrangler (no lifecycle scripts)
+        run: npm install --prefix "$RUNNER_TEMP/tools" --ignore-scripts --no-audit --no-fund wrangler@4.136.1
+      - name: Delete preview
+        run: |
+          "$RUNNER_TEMP/tools/node_modules/.bin/wrangler" preview delete --config "$RUNNER_TEMP/landing/wrangler.json" \
+            --name "pr-$PR_NUMBER" --skip-confirmation
