@@ -84,9 +84,9 @@ The feature map in `features/README.md` lists every user-facing feature with its
 
 The Browser view needs the extension, which this harness doesn't load. A journey drives it through a scripted stand-in for the extension bridge, injected with `page.addInitScript` (see `journeys/bulk-open.ts` and `journeys/extension-version.ts`):
 
-- Answer `hello` with `PROTOCOL_VERSION` imported from `@linklog/browser-protocol`, never a literal. A stale number puts the page in the update screen and every connected check fails.
-- Answer every command the connected view sends (`snapshot`, `pending`, `results`, `previews`, …) with its typed empty result from `packages/browser-protocol`. A bare `{}` crashes the page as soon as a tab is listed.
-- To prove something never renders, record `[data-tab-id]` rows with a `MutationObserver` from page load; sampling misses a one-frame flash.
+- A fake of the current extension answers `hello` with `PROTOCOL_VERSION` imported from `@linklog/browser-protocol`, never a literal: a stale number puts the page on the update screen and every connected check fails. The init script runs in the page and can't import, so the journey hands the number over through `sessionStorage` before reloading. A fake of an old release takes its protocol and payload shapes from that release's tag (`git show extension-v<version>:packages/browser-protocol/src/browser.ts`).
+- Answer each command the connected view sends with the result shape its type in `packages/browser-protocol` declares (`previews` needs `{ previews: [] }`, `pending` needs `{ requests: [] }`). A bare `{}` where a list is expected crashes the page once a tab is listed.
+- To prove something never renders, record `[data-tab-id]` rows with a `MutationObserver` started at `DOMContentLoaded`; sampling misses a one-frame flash. Also check that the fake sent its stimulus, so the negative check can't pass without it.
 
 ## Evidence
 

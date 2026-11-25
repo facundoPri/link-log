@@ -9,7 +9,7 @@ import extensionPackage from "../../../../apps/extension/package.json" with { ty
 
 const expected = extensionPackage.version;
 
-type FakeMode = { protocol: number; version: string; pushOldSnapshot: boolean; reloadToOld?: boolean };
+type FakeMode = { protocol: number; version: string; pushOldSnapshot: boolean; reloadToOld?: boolean; oldProtocol?: number };
 // The protocol extension 0.1.1 speaks; the "current" one always comes from the package, never a literal.
 const OLD_PROTOCOL = 2;
 
@@ -66,11 +66,11 @@ function fakeBridge() {
           return;
         }
         setTimeout(() => {
-          protocol = mode.protocol - 1;
+          protocol = mode.oldProtocol!;
           post({ disconnected: true });
           setTimeout(() => push(old), 300);
           setTimeout(() => document.dispatchEvent(new Event("visibilitychange")), 600);
-          setTimeout(() => post({ ready: { version: "0.1.1", protocol: mode.protocol - 1 } }), 1200);
+          setTimeout(() => post({ ready: { version: "0.1.1", protocol: mode.oldProtocol! } }), 1200);
         }, 2500);
       }, 1000);
       return;
@@ -127,7 +127,7 @@ export default (async ({ page, step, check, shot, aria, note }) => {
   await aria("02-outdated-protocol");
 
   await step("Gate edges: push before the first hello, reload as protocol 2 with a push and a foreground refresh before its hello");
-  await openBrowser({ protocol: PROTOCOL_VERSION, version: expected, pushOldSnapshot: false, reloadToOld: true });
+  await openBrowser({ protocol: PROTOCOL_VERSION, version: expected, pushOldSnapshot: false, reloadToOld: true, oldProtocol: OLD_PROTOCOL });
   const seenRows = async () => (await page.evaluate(() => (window as unknown as { __seenRows: string[] }).__seenRows)).map((t) => t.replace(/\s+/g, " "));
   await check("Snapshots were pushed before the first handshake completed", async () => Number(await page.evaluate(() => document.documentElement.dataset.earlyPushes ?? 0)) > 1);
   await check("The current extension's tab shows after its handshake", async () => (await seenRows()).some((t) => t.includes("Current extension tab")), { timeout: 10_000 });
