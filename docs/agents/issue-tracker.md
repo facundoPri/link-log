@@ -10,6 +10,7 @@ Issues and specs live in the existing [Linklog project](https://linear.app/facun
 
 Use the connected Linear tools. If using Orca's CLI, first load the `orca-linear` skill and its version-matched guide.
 
+- Before reading code for a ticket, `git fetch origin` and check `git rev-list --count HEAD..origin/main`. When it is not 0, rebase onto `origin/main` first: a worktree can start far behind and miss the standards the ticket assumes.
 - Fetch a ticket by its `FAC-<number>` identifier, UUID, or Linear URL, with its comments. A later comment that records an owner decision overrides the description.
 - When the owner decides something in conversation that changes a ticket's scope or behaviour, record it as a ticket comment, quoting their words, before implementing it. A review's spec is the description plus those comments.
 - List issues scoped to the Linklog project. Project-search results alone do not establish whether it has tickets.

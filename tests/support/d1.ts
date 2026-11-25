@@ -13,6 +13,40 @@ const toSqlite = (v: unknown): Value => {
 };
 const returnsRows = (sql: string) => /^\s*(select|with|pragma)\b/i.test(sql) || /\breturning\b/i.test(sql);
 
+/**
+ * Splits a script into statements. bun:sqlite's exec() on a multi-statement string reports a runtime error
+ * (a failed constraint) only when the last statement fails; an earlier one fails silently and the rest still run,
+ * where D1 rejects the script. A `;` ends a statement outside quotes, brackets and comments, and a CREATE TRIGGER
+ * only at the `END;` that closes its body, not one that closes a CASE inside it.
+ */
+// Comments become a space, so `CREATE/**/TRIGGER` keeps its token boundary. Used only to classify a statement.
+const withoutComments = (sql: string) => sql.replace(/--[^\n]*|\/\*[\s\S]*?\*\//g, " ");
+
+export function statements(sql: string) {
+  const out: string[] = [];
+  let start = 0;
+  for (let i = 0; i < sql.length; i++) {
+    const c = sql[i]!;
+    if (c === "'" || c === '"' || c === "`" || c === "[") {
+      const close = sql.indexOf(c === "[" ? "]" : c, i + 1);
+      i = close < 0 ? sql.length : close;
+    }
+    else if (c === "-" && sql[i + 1] === "-") i = sql.indexOf("\n", i) < 0 ? sql.length : sql.indexOf("\n", i);
+    else if (c === "/" && sql[i + 1] === "*") i = sql.indexOf("*/", i + 2) < 0 ? sql.length : sql.indexOf("*/", i + 2) + 1;
+    else if (c === ";") {
+      const stmt = sql.slice(start, i + 1);
+      const code = withoutComments(stmt);
+      const words = (re: RegExp) => code.replace(/'[^']*'|"[^"]*"|`[^`]*`|\[[^\]]*\]/g, " ").match(re)?.length ?? 0;
+      const trigger = /^\s*CREATE\s+(TEMP\w*\s+)?TRIGGER\b/i.test(code);
+      if (trigger && !(/\bEND\s*;$/i.test(code.trimEnd()) && words(/\bEND\b/gi) > words(/\bCASE\b/gi))) continue;
+      if (code.trim() !== ";") out.push(stmt);
+      start = i + 1;
+    }
+  }
+  if (withoutComments(sql.slice(start)).trim()) out.push(sql.slice(start));
+  return out;
+}
+
 export const MAX_BOUND_PARAMETERS = 100;
 // Remote D1 caps a LIKE or GLOB pattern at 50 bytes; SQLite's default, used by bun:sqlite and miniflare, is
 // 50,000. Measured on remote D1: 50 bytes runs, 51 fails, and multibyte characters count per byte.
@@ -51,6 +85,14 @@ export class TestD1 {
   readonly sqlite: Database;
   constructor(sqlite = new Database(":memory:")) {
     this.sqlite = sqlite;
+    // Seeds call db.sqlite.exec(...) directly too; every script runs statement by statement (see statements()).
+    const exec = sqlite.exec.bind(sqlite);
+    sqlite.exec = ((sql: string, ...params: never[]) => {
+      if (params.length) return exec(sql, ...params);
+      let last = { changes: 0, lastInsertRowid: 0 } as ReturnType<typeof exec>;
+      for (const stmt of statements(sql)) last = exec(stmt);
+      return last;
+    }) as typeof sqlite.exec;
     this.sqlite.exec("PRAGMA foreign_keys=ON");
   }
   static async migrated(upTo?: string) {
