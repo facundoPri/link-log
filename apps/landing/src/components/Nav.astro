@@ -94,7 +94,9 @@ const href = (h: string) => (isHome ? h : `/${h}`);
   const toggle = document.querySelector<HTMLButtonElement>("[data-menu-toggle]");
   const menu = document.getElementById("mobile-menu");
   if (toggle && menu) {
+    let closeTimer: ReturnType<typeof setTimeout> | undefined;
     const setOpen = (open: boolean) => {
+      clearTimeout(closeTimer);
       toggle.setAttribute("aria-expanded", String(open));
       toggle.setAttribute("aria-label", open ? "Close menu" : "Open menu");
       document.body.style.overflow = open ? "hidden" : "";
@@ -110,7 +112,7 @@ const href = (h: string) => (isHome ? h : `/${h}`);
         );
       } else {
         menu.classList.remove("is-open");
-        setTimeout(() => {
+        closeTimer = setTimeout(() => {
           if (!menu.classList.contains("is-open")) menu.hidden = true;
         }, 300);
       }
