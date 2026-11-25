@@ -191,6 +191,9 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
     c.scope = null;
     const result = await s.cache.forget(scope);
     await s.groups.forget(scope);
+    // The run belongs to the browser, not the account; signing out ends it like Cancel, and its captures stay
+    // (owner's decision on FAC-265).
+    await s.loader.control("cancel");
     return result;
   },
   async snapshot(_args, { c, s }) {

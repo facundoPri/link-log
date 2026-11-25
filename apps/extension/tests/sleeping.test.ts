@@ -294,6 +294,24 @@ describe("Load content", () => {
     expect(snap.loadRun!.status).toBe("cancelled");
   });
 
+  // FAC-265 (owner's decision): signing out cancels a running Load content run like Cancel does; captures stay.
+  test("sign-out cancels a running Load content run, keeping what it captured", async () => {
+    await setup();
+    const ids = sleepingTabs(8);
+    fake.loadMs = 30;
+    await run("loadContent", { tabs: await refs(ids) });
+    await until("one done", async () => ((await snapshot()).loadRun?.done ?? 0) >= 1);
+    await run("forget", {});
+    await run("hello", { libraryScope: "local:lib" });
+    const snap = await settled(["cancelled"]);
+    await until("everything asleep", () => ids.every((id) => fake.tabs.get(id)!.discarded));
+    expect(snap.loadRun!.status).toBe("cancelled");
+    const final = await snapshot();
+    expect(final.loadRun!.skipped).toBeGreaterThan(0);
+    expect(final.tabs.filter((t) => t.load?.state === "done").every((t) => !!t.capturedAt)).toBe(true);
+    expect(ids.reduce((n, id) => n + fake.count("reload", id), 0)).toBeLessThan(8);
+  });
+
   test("retry requeues only the failed tabs", async () => {
     await setup();
     sleepingTabs(3);
