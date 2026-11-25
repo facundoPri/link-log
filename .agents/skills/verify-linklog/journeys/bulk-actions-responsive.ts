@@ -175,8 +175,18 @@ export default (async ({ page, api, fixture, step, check, shot, note }) => {
   await confirm.getByRole("button", { name: "Extract", exact: true }).click();
   const batch = await check("API: an extract batch started", async () => (await api.library()).batches.find((b) => b.kind === "extract" && b.total === visible));
   const toast = page.locator("[data-sonner-toast]").filter({ hasText: new RegExp(`Extracting context for ${visible} links`) });
-  // A fast batch can settle before the running toast is polled; only that miss is tolerated.
-  await check("The toast reports n of N", () => toast.getByText(new RegExp(`^\\d+ of ${visible}$`)).isVisible(), { timeout: 5_000 }).catch(() => note("progress-missed", "the batch settled before the toast was polled"));
+  // Read the API first, then the toast: the toast's n can't be below what the API had already settled.
+  const read = await check("The running toast is read, or the API shows the batch settled first", async () => {
+    const before = (await api.library()).batches.find((x) => x.id === batch.id);
+    const text = await toast.getByText(/^\d+ of \d+$/).textContent({ timeout: 300 }).catch(() => null);
+    if (text) return { before, text };
+    return before?.active === 0 && { before, text: null };
+  }, { timeout: 10_000 });
+  if (read.text) {
+    const [n, total] = /^(\d+) of (\d+)$/.exec(read.text)!.slice(1).map(Number);
+    await check(`The toast's "${read.text}" counts the batch: N is ${visible}, n is between the jobs settled before it and N`, () =>
+      total === visible && !!read.before && n! >= read.before.total - read.before.active && n! <= visible);
+  } else await note("progress-missed", "the batch settled before the toast was polled");
   await check("The bar shows no run count", async () => !new RegExp(`\\d+/${visible}`).test((await bar.textContent()) ?? ""));
   await shot("09-mobile-running");
   await check("API: the batch settles with every link that can never be extracted failed", async () => {
