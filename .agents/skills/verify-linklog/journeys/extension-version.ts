@@ -1,5 +1,5 @@
 // extension-version: Browser view against a faked extension bridge (FAC-266). No extension links the
-// latest release; one on another protocol is blocked with both versions named, and the old-shape
+// expected version's release (the latest one when GitHub has none for it); one on another protocol is blocked with both versions named, and the old-shape
 // snapshot it keeps pushing never reaches the tab list; one on this protocol but older gets a banner.
 // The reload scenario covers the gate's edges: a push before the first handshake, the extension
 // reloading as an older build (disconnect, push, protocol-2 hello) and a foreground refresh meanwhile.
@@ -104,21 +104,32 @@ export default (async ({ page, step, check, shot, aria, note }) => {
     await page.getByRole("button", { name: /^Browser/ }).click();
   };
   const latest = "https://github.com/facundoPri/link-log/releases/latest";
-  const download = page.getByRole("link", { name: "Download the latest release" });
+  const tagged = `https://github.com/facundoPri/link-log/releases/tag/extension-v${expected}`;
+  const download = page.getByRole("link", { name: `Download extension ${expected}` });
+  // GitHub's answer to "does the expected version have a release?", without leaving the machine.
+  let release = { status: 200, asked: 0 };
+  await page.route("https://api.github.com/**", (route) => {
+    release.asked++;
+    return route.fulfill({ status: release.status, contentType: "application/json", body: "{}" });
+  });
 
-  await step("No extension: Connect links the latest release, with a note for source builds");
+  await step("No extension: Connect links the expected version's release, with a note for source builds");
+  release = { status: 200, asked: 0 };
   await openBrowser(null);
   await check("Connect screen asks for the extension", () => page.getByRole("heading", { name: "Connect the Linklog extension" }).isVisible(), { timeout: 10_000 });
-  await check("Download link points at the latest release", async () => (await download.getAttribute("href")) === latest);
+  await check("Linklog asked GitHub for the expected release", () => release.asked > 0);
+  await check("Download link points at the expected version's release", async () => (await download.getAttribute("href")) === tagged);
   await check("Source-build note is there", () => page.getByText("Working on Linklog?").isVisible());
   await shot("01-missing");
   await aria("01-missing");
 
-  await step("Extension 0.1.1 on protocol 2, pushing an old-shape snapshot: blocked, versions named, no crash");
+  await step("Extension 0.1.1 on protocol 2, pushing an old-shape snapshot: blocked, versions named, no crash; the expected release is missing");
+  release = { status: 404, asked: 0 };
   await openBrowser({ protocol: OLD_PROTOCOL, version: "0.1.1", pushOldSnapshot: true });
   await check("Update screen shows", () => page.getByRole("heading", { name: "Update the Linklog extension" }).isVisible(), { timeout: 10_000 });
   await check("Names installed 0.1.1 and needed version", () => page.getByText(`The installed extension (0.1.1) can't talk to this version of Linklog. Browser view needs extension ${expected}.`).isVisible());
-  await check("Download link points at the latest release", async () => (await download.getAttribute("href")) === latest);
+  await check("Linklog asked GitHub for the expected release", () => release.asked > 0);
+  await check("Without that release, the download link falls back to the latest release", async () => (await download.getAttribute("href")) === latest);
   await check("The fake bridge delivered the old snapshot", async () => (await page.evaluate(() => document.documentElement.dataset.fakePushed)) === "1");
   await check("The pushed old tab never renders", async () => !(await page.getByText("Discarded by Chrome").isVisible()));
   await check("Still on the update screen after the push", () => page.getByRole("heading", { name: "Update the Linklog extension" }).isVisible());
@@ -141,10 +152,18 @@ export default (async ({ page, step, check, shot, aria, note }) => {
   await shot("02b-reloaded-as-old");
 
   await step("Extension 0.1.1 on this protocol: tabs show, with a non-blocking update banner");
+  release = { status: 200, asked: 0 };
   await openBrowser({ protocol: PROTOCOL_VERSION, version: "0.1.1", pushOldSnapshot: false });
   const get = page.getByRole("link", { name: "Download update" });
   await check("Update banner names both versions", () => page.getByText(`Linklog extension 0.1.1 is older than this Linklog expects (${expected}).`).isVisible(), { timeout: 10_000 });
-  await check("Banner links the latest release", async () => (await get.getAttribute("href")) === latest);
+  await check("Banner links the expected version's release", async () => (await get.getAttribute("href")) === tagged);
+
+  await step("Same banner when GitHub has no release for the expected version: it links the latest release");
+  release = { status: 404, asked: 0 };
+  await openBrowser({ protocol: PROTOCOL_VERSION, version: "0.1.1", pushOldSnapshot: false });
+  await check("Update banner shows", () => get.isVisible(), { timeout: 10_000 });
+  await check("Linklog asked GitHub for the expected release", () => release.asked > 0);
+  await check("Banner falls back to the latest release", async () => (await get.getAttribute("href")) === latest);
   await check("Browser view shows the connected window (its empty state)", () => page.getByRole("heading", { name: "No other tabs in this window" }).isVisible());
   await shot("03-older-same-protocol");
 

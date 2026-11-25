@@ -3,7 +3,22 @@ import extensionPackage from "../../apps/extension/package.json" with { type: "j
 /** The extension version built from the same commit as this page; CI publishes it as a release. */
 export const EXPECTED_EXTENSION_VERSION: string = extensionPackage.version;
 
-export const LATEST_EXTENSION_URL = "https://github.com/facundoPri/link-log/releases/latest";
+const RELEASES = "https://github.com/facundoPri/link-log/releases";
+export const LATEST_EXTENSION_URL = `${RELEASES}/latest`;
+
+/**
+ * The release page of the version this page expects. Web deploys and extension releases run
+ * separately, so /latest can be another version (a failed release, a rolled-back web): it is the
+ * fallback only when GitHub answers that the expected release doesn't exist.
+ */
+export async function extensionDownloadUrl(expected: string, fetchRelease: typeof fetch = fetch): Promise<string> {
+  const tag = `extension-v${expected}`;
+  try {
+    const res = await fetchRelease(`https://api.github.com/repos/facundoPri/link-log/releases/tags/${tag}`);
+    if (res.status === 404) return LATEST_EXTENSION_URL;
+  } catch {}
+  return `${RELEASES}/tag/${tag}`;
+}
 
 export type ExtensionUpdate = { installed: string; expected: string };
 
