@@ -21,7 +21,7 @@ export function versionBumpProblem(changed: string[], base: string, head: string
 if (import.meta.main) {
   const baseRef = process.argv[2];
   if (!baseRef) throw new Error("Usage: bun scripts/extension-version.ts <base-ref>");
-  const changed = (await $`git diff --name-only --no-renames ${baseRef}...HEAD`.text()).split("\n").filter(Boolean);
+  const changed = (await $`git diff --name-only --no-renames -z ${baseRef}...HEAD`.text()).split("\0").filter(Boolean);
   const base = JSON.parse(await $`git show ${baseRef}:${PACKAGE}`.text()).version;
   const head = (await Bun.file(PACKAGE).json()).version;
   const problem = versionBumpProblem(changed, base, head);

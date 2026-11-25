@@ -51,18 +51,32 @@ jobs:
         run: |
           version=$(bun -e 'console.log((await Bun.file("apps/extension/package.json").json()).version)')
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          if out=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/extension-v$version" 2>&1); then
+          # 200 or 404 for a GitHub API path; anything else (rate limit, outage) fails the run.
+          status() {
+            if out=$(gh api "$1" 2>&1); then echo 200
+            elif grep -q "HTTP 404" <<<"$out"; then echo 404
+            else echo "GitHub API $1: $out" >&2; return 1
+            fi
+          }
+          repo="repos/$GITHUB_REPOSITORY"
+          release=$(status "$repo/releases/tags/extension-v$version")
+          tag=$(status "$repo/git/ref/tags/extension-v$version")
+          latest_status=$(status "$repo/releases/latest")
+          latest=""
+          if [ "$latest_status" = 200 ]; then latest=$(gh api "$repo/releases/latest" --jq '.tag_name | ltrimstr("extension-v")'); fi
+          publish=false
+          if [ "$release" = 200 ]; then
             echo "extension-v$version is already released; nothing to publish."
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-          elif ! grep -q "HTTP 404" <<<"$out"; then
-            echo "Could not look up release extension-v$version: $out" >&2
-            exit 1
-          elif gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/extension-v$version" >/dev/null 2>&1; then
+          elif [ "$tag" = 200 ]; then
             echo "Tag extension-v$version exists without a release; its commit may differ from this one. Publish or delete it by hand." >&2
             exit 1
+          elif [ -n "$latest" ] && [ "$(printf '%s\n' "$latest" "$version" | sort -V | tail -1)" != "$version" ]; then
+            # A rerun of an old commit, or runs out of order: never move "latest" back to an older extension.
+            echo "extension-v$version is older than the latest release ($latest); not publishing it."
           else
-            echo "publish=${{ github.ref == 'refs/heads/main' }}" >> "$GITHUB_OUTPUT"
+            publish=${{ github.ref == 'refs/heads/main' }}
           fi
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
       - run: bun run extension:package
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

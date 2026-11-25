@@ -81,12 +81,12 @@ export default (async ({ page, step, check, shot, aria, note }) => {
   const get = page.getByRole("link", { name: "Download update" });
   await check("Update banner names both versions", () => page.getByText(`Linklog extension 0.1.1 is older than this Linklog expects (${expected}).`).isVisible(), { timeout: 10_000 });
   await check("Banner links the latest release", async () => (await get.getAttribute("href")) === latest);
-  await check("Browser view is usable (no Connect/Update screen)", async () => !(await page.getByRole("heading", { name: /Update the Linklog extension|Connect the Linklog extension/ }).isVisible()));
+  await check("Browser view shows the connected window (its empty state)", () => page.getByRole("heading", { name: "No other tabs in this window" }).isVisible());
   await shot("03-older-same-protocol");
 
   await step(`Extension ${expected}: no banner`);
   await openBrowser({ protocol: 3, version: expected, pushOldSnapshot: false });
-  await check("Open links button shows (connected)", () => page.getByRole("button", { name: "Open links" }).isVisible(), { timeout: 10_000 });
+  await check("Connected: the window's empty state shows", () => page.getByRole("heading", { name: "No other tabs in this window" }).isVisible(), { timeout: 10_000 });
   await check("No update banner", async () => !(await page.getByText(/is older than this Linklog expects/).isVisible()));
   await shot("04-current");
   await note("page-errors", errors);
