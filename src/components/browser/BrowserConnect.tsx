@@ -15,20 +15,14 @@ export function Banner({ icon, children, action }: { icon: React.ReactNode; chil
   );
 }
 
-/** A local checkout builds the extension from source; a deployed Linklog installs the published release. */
-const fromSource = () => ["localhost", "127.0.0.1"].includes(location.hostname);
-
-const updateSteps = [
-  <>Unzip it over the folder you loaded the extension from.</>,
-  <>
-    Open <Kbd>chrome://extensions</Kbd> and click ↻ on the Linklog card.
-  </>,
-  <>Reload this page.</>,
-];
+const download = (
+  <a className="font-medium underline underline-offset-2" href={LATEST_EXTENSION_URL} target="_blank" rel="noreferrer">
+    Download the latest release
+  </a>
+);
 
 export function Connect({ ws }: { ws: BrowserWorkspace }) {
   const { connection, backendError, retry, installedVersion } = ws.browser;
-  const local = fromSource();
   // Connected (or reconnecting) without a snapshot yet — e.g. right after the page moved
   // to another window — is loading, not a missing extension.
   if ((connection === "checking" || connection === "connected" || connection === "reconnecting") && !backendError)
@@ -72,53 +66,29 @@ export function Connect({ ws }: { ws: BrowserWorkspace }) {
                 icon: <CircleAlert className="size-5" />,
                 title: "Update the Linklog extension",
                 body: `${installedVersion ? `The installed extension (${installedVersion})` : "The installed extension"} can't talk to this version of Linklog. Browser view needs extension ${EXPECTED_EXTENSION_VERSION}.`,
-                steps: local
-                  ? [
-                      <>
-                        Rebuild it: <Kbd>bun run extension:build</Kbd>
-                      </>,
-                      ...updateSteps.slice(1),
-                    ]
-                  : [
-                      <>
-                        <a className="font-medium underline underline-offset-2" href={LATEST_EXTENSION_URL} target="_blank" rel="noreferrer">
-                          Download the latest release
-                        </a>{" "}
-                        (the <Kbd>.zip</Kbd> under Assets).
-                      </>,
-                      ...updateSteps,
-                    ],
+                steps: [
+                  <>{download} (the .zip under Assets).</>,
+                  <>Unzip it over the folder you loaded the extension from.</>,
+                  <>
+                    Open <Kbd>chrome://extensions</Kbd> and click ↻ on the Linklog card.
+                  </>,
+                  <>Reload this page.</>,
+                ],
+                dev: "rebuild it with",
               }
             : {
                 icon: <PlugZap className="size-5" />,
                 title: "Connect the Linklog extension",
                 body: "Browser view shows the tabs and groups of this Chrome window. It needs the Linklog extension.",
-                steps: local
-                  ? [
-                      <>
-                        Build it: <Kbd>bun run extension:build</Kbd>
-                      </>,
-                      <>
-                        Open <Kbd>chrome://extensions</Kbd> and turn on Developer mode.
-                      </>,
-                      <>
-                        Click Load unpacked and choose <Kbd>apps/extension/dist</Kbd>.
-                      </>,
-                      <>Come back here — Linklog connects on its own.</>,
-                    ]
-                  : [
-                      <>
-                        <a className="font-medium underline underline-offset-2" href={LATEST_EXTENSION_URL} target="_blank" rel="noreferrer">
-                          Download the latest release
-                        </a>{" "}
-                        and unzip it into a folder you'll keep.
-                      </>,
-                      <>
-                        Open <Kbd>chrome://extensions</Kbd> and turn on Developer mode.
-                      </>,
-                      <>Click Load unpacked and choose the unzipped folder.</>,
-                      <>Come back here — Linklog connects on its own.</>,
-                    ],
+                steps: [
+                  <>{download} and unzip it into a folder you'll keep.</>,
+                  <>
+                    Open <Kbd>chrome://extensions</Kbd> and turn on Developer mode.
+                  </>,
+                  <>Click Load unpacked and choose the unzipped folder.</>,
+                  <>Come back here — Linklog connects on its own.</>,
+                ],
+                dev: "build it with",
               };
   return (
     <div className="flex flex-1 items-center justify-center p-8">
@@ -135,6 +105,11 @@ export function Connect({ ws }: { ws: BrowserWorkspace }) {
               </li>
             ))}
           </ol>
+        )}
+        {"dev" in content && (
+          <p className="text-xs text-muted-foreground">
+            Working on Linklog? Instead, {content.dev} <Kbd>bun run extension:build</Kbd> and load <Kbd>apps/extension/dist</Kbd>.
+          </p>
         )}
         {connection === "reload" ? (
           <Button size="sm" onClick={() => location.reload()}>
