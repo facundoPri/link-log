@@ -6,7 +6,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { BrowserContext, Page, Worker } from "playwright-core";
 import { PROTOCOL_VERSION } from "@linklog/browser-protocol";
-import { api, API, API_PORT, buildAll, createAccount, EXTENSION, launch, OTHER_APP_PORT, OUT, ROOT, SITE, SITE_PORT, startApi, startMarkedApp, startSite, UI, UI_PORT, waitFor } from "./env";
+import { api, API, API_PORT, buildAll, createAccount, EXTENSION, launch, OTHER_APP_PORT, OUT, ROOT, signInRunAccount, SITE, SITE_PORT, startApi, startMarkedApp, startSite, UI, UI_PORT, waitFor } from "./env";
 import { sleepingChecks } from "./sleeping";
 
 // LINKLOG_BROWSER_EVIDENCE writes the run elsewhere (e.g. .cache/...) instead of the committed evidence.
@@ -268,9 +268,26 @@ async function finish(name: string, close: () => Promise<unknown>) {
 const QUEUE_LABEL = "Load content queue";
 meta.build = (await Bun.$`git -C ${ROOT} rev-parse --short HEAD`.text()).trim() + ((await Bun.$`git -C ${ROOT} status --porcelain -- apps packages`.text()).trim() ? " + uncommitted changes" : "");
 
+/** An error thrown outside `check()` is a failed check: `finish()` must not report the run as passed. */
+function crashed(what: string, error: unknown) {
+  const detail = ((error as Error)?.message ?? String(error)).slice(0, 400);
+  checks.push({ area, name: `${what} ran to the end`, ok: false, detail, ms: 0 });
+  console.log(`  ✗ ${what} crashed — ${detail}`);
+}
+
+/** The native Sleeping-tab lane, with a live session for the run account (the full run signs it out). */
+async function sleepingLane() {
+  try {
+    await signInRunAccount();
+    await sleepingChecks({ check, assert, section, evidence: EVIDENCE, meta });
+  } catch (error) {
+    crashed("native Sleeping-tab lane", error);
+  }
+}
+
 if (ONLY === "sleeping") {
   try {
-    await sleepingChecks({ check, assert, section, evidence: EVIDENCE, meta });
+    await sleepingLane();
   } finally {
     await finish("sleeping-run", async () => {});
   }
@@ -1407,7 +1424,9 @@ try {
     await shot(L, "16-second-account");
     return `refused sign-out (503) kept ${before} cached entries, metadata ${JSON.stringify(metaBefore)} and the bridge; retry: forgotten, old cookie 401; second account: new library id, 0 groups, 0 lens cells, none of ${lensNamesA.length} lenses`;
   });
-  await sleepingChecks({ check, assert, section, evidence: EVIDENCE, meta });
+  await sleepingLane();
+} catch (error) {
+  crashed("browser run", error);
 } finally {
   await finish("run", () => ctx.close());
 }

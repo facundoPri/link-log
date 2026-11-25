@@ -5,7 +5,7 @@ import { ResultCache } from "../src/background/cache";
 import { handle, type Services } from "../src/background/commands";
 import { GroupMetaStore } from "../src/background/groups";
 import { Hub, type Connection } from "../src/background/hub";
-import { memoryKV, Mutex } from "../src/background/kv";
+import { memoryKV, Mutex, QuotaError } from "../src/background/kv";
 import { LoadQueue } from "../src/background/loader";
 import { OpenLedger } from "../src/background/opens";
 import { TabRegistry } from "../src/background/registry";
@@ -255,6 +255,53 @@ describe("Load content", () => {
     expect(fake.count("reload", 1)).toBe(1);
   });
 
+  test("a tab a cancelled run couldn't put back to sleep goes back to sleep in the next run, keeping its failure", async () => {
+    await setup();
+    sleepingTabs(2);
+    fake.discardErrors.set(1, "Cannot discard tab");
+    await run("loadContent", { tabs: await refs([1]) });
+    await settled(["paused"]);
+    await run("loadControl", { action: "cancel" });
+    fake.discardErrors.delete(1);
+    await run("loadContent", { tabs: await refs([2]) });
+    const snap = await settled();
+    expect([1, 2].map((id) => fake.tabs.get(id)!.discarded)).toEqual([true, true]);
+    expect(fake.count("reload", 1)).toBe(1);
+    expect(snap.tabs.find((t) => t.tabId === 1)!.load?.state).toBe("failed");
+    expect(snap.tabs.find((t) => t.tabId === 2)!.load?.state).toBe("done");
+  });
+
+  test("a tab is not woken when the run can't save that it woke it", async () => {
+    await setup();
+    sleepingTabs(1);
+    const set = kv.set.bind(kv);
+    kv.set = async (items) => {
+      const pending = (items as { loadRun?: { items: { woke: boolean }[] } }).loadRun;
+      if (pending?.items.some((i) => i.woke)) throw new Error("storage unavailable");
+      return set(items);
+    };
+    await run("loadContent", { tabs: await refs([1]) });
+    const snap = await settled();
+    expect(fake.count("reload", 1)).toBe(0);
+    expect(snap.tabs.find((t) => t.tabId === 1)!.load).toMatchObject({ state: "failed", error: expect.stringMatching(/couldn't save/) });
+  });
+
+  test("a page too large to keep (storage full) fails instead of reporting a capture, and goes back to sleep", async () => {
+    await setup();
+    sleepingTabs(1);
+    const set = kv.set.bind(kv);
+    kv.set = async (items) => {
+      if (Object.keys(items).some((k) => k.startsWith("cap:"))) throw new QuotaError();
+      return set(items);
+    };
+    await run("loadContent", { tabs: await refs([1]) });
+    const snap = await settled();
+    const tab = snap.tabs.find((t) => t.tabId === 1)!;
+    expect(tab.load).toMatchObject({ state: "failed", error: expect.stringMatching(/no room to keep/) });
+    expect(tab.capturedAt ?? null).toBeNull();
+    expect(fake.tabs.get(1)!.discarded).toBe(true);
+  });
+
   for (const restart of [false, true])
     test(`Load content right after cancel wakes no tab twice and every woken tab ends asleep${restart ? ", across a worker restart" : ""}`, async () => {
       await setup();
@@ -416,6 +463,22 @@ describe("Put to sleep", () => {
     expect([2, 4, 6].map((id) => fake.count("discard", id))).toEqual([0, 0, 0]);
     expect(fake.tabs.get(5)!.pinned).toBe(true);
     expect((await tabOf(1)).content).toBe("sleeping");
+  });
+
+  test("a tab moved to another window after it was checked is not put to sleep", async () => {
+    await setup();
+    fake.addTab(1, site(1));
+    const r = await refs([1]);
+    // The tab moves between the selection check and the read right before the discard.
+    const get = chrome.tabs.get;
+    let reads = 0;
+    (chrome.tabs as { get: unknown }).get = async (id: number) => {
+      if (id === 1 && ++reads === 2) fake.tabs.get(1)!.windowId = 2;
+      return get(id);
+    };
+    const result = await run("sleepTabs", { tabs: r });
+    expect(result.items[0]).toMatchObject({ ok: false, error: "The tab is no longer in this window." });
+    expect(fake.count("discard", 1)).toBe(0);
   });
 
   test("a tab Chrome refuses to put to sleep is reported, not hidden", async () => {

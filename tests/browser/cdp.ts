@@ -10,14 +10,14 @@ export type Target = { targetId: string; type: string; url: string };
 type Listener = (method: string, params: any) => void;
 
 export class Cdp {
-  private ws!: WebSocket;
+  private ws?: WebSocket;
   private seq = 0;
   private pending = new Map<number, (m: any) => void>();
   private listeners = new Set<Listener>();
   async open(url: string) {
-    this.ws = new WebSocket(url);
-    await new Promise((r, j) => ((this.ws.onopen = r), (this.ws.onerror = j)));
-    this.ws.onmessage = (e) => {
+    const ws = (this.ws = new WebSocket(url));
+    await new Promise((r, j) => ((ws.onopen = r), (ws.onerror = j)));
+    ws.onmessage = (e) => {
       const m = JSON.parse(String(e.data));
       if (m.id !== undefined) {
         this.pending.get(m.id)?.(m);
@@ -27,6 +27,7 @@ export class Cdp {
   }
   send(method: string, params: object = {}, sessionId?: string, timeout = 120_000): Promise<any> {
     const id = ++this.seq;
+    if (!this.ws) return Promise.reject(new Error(`${method}: not connected`));
     this.ws.send(JSON.stringify({ id, method, params, sessionId }));
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => (this.pending.delete(id), reject(new Error(`${method}: no answer in ${timeout / 1000}s`))), timeout);
@@ -38,7 +39,7 @@ export class Cdp {
     return () => void this.listeners.delete(fn);
   }
   close() {
-    this.ws.close();
+    this.ws?.close();
   }
 }
 
@@ -60,29 +61,54 @@ export type RawBrowser = {
 export async function launchRaw(opts: {
   profile: string;
   extension: string;
-  port: number;
   fresh?: boolean;
   args?: string[];
   cookie?: { name: string; value: string; domain: string } | null;
 }): Promise<RawBrowser> {
   if (opts.fresh) await rm(opts.profile, { recursive: true, force: true });
+  // Port 0: Chromium picks a free port and writes it to DevToolsActivePort, so this attaches to the browser it
+  // spawned, never to another one that happens to listen on a fixed port.
+  const portFile = resolve(opts.profile, "DevToolsActivePort");
+  await rm(portFile, { force: true });
   const exe = process.env.CHROME_PATH ?? chromium.executablePath();
   const proc = Bun.spawn(
-    [exe, `--user-data-dir=${opts.profile}`, `--remote-debugging-port=${opts.port}`, `--disable-extensions-except=${opts.extension}`, `--load-extension=${opts.extension}`,
+    [exe, `--user-data-dir=${opts.profile}`, "--remote-debugging-port=0", `--disable-extensions-except=${opts.extension}`, `--load-extension=${opts.extension}`,
       "--no-first-run", "--no-default-browser-check", "--use-mock-keychain", "--password-store=basic", "--window-size=1280,820",
       ...(process.env.HEADED ? [] : ["--headless=new"]), ...(opts.args ?? []), "about:blank"],
     { stdout: "ignore", stderr: Bun.file(resolve(opts.profile + ".log")) },
   );
-  let version: any = null;
-  for (let i = 0; i < 150 && !version; i++) {
-    version = await fetch(`http://127.0.0.1:${opts.port}/json/version`).then((r) => r.json()).catch(() => null);
-    if (!version) await Bun.sleep(100);
-  }
-  if (!version) throw new Error("Chromium did not start");
   const cdp = new Cdp();
-  await cdp.open(version.webSocketDebuggerUrl);
-  if (opts.cookie)
-    await cdp.send("Storage.setCookies", { cookies: [{ ...opts.cookie, path: "/", httpOnly: true, sameSite: "Lax", secure: false }] });
+  try {
+    return await connect(proc, cdp, portFile, opts.cookie);
+  } catch (error) {
+    // Startup failed after Chromium started: nobody else holds it, so close it here.
+    cdp.close();
+    await stopProcess(proc);
+    throw error;
+  }
+}
+
+/** Ends the spawned Chromium, killing it if it hasn't exited after `graceMs`. */
+async function stopProcess(proc: RawBrowser["proc"], graceMs = 0) {
+  const exited = await Promise.race([proc.exited.then(() => true), Bun.sleep(graceMs).then(() => false)]);
+  if (exited) return;
+  proc.kill("SIGKILL");
+  await proc.exited;
+}
+
+async function connect(proc: RawBrowser["proc"], cdp: Cdp, portFile: string, cookie?: { name: string; value: string; domain: string } | null): Promise<RawBrowser> {
+  let endpoint = "";
+  for (let i = 0; i < 150 && !endpoint; i++) {
+    if (proc.exitCode !== null) throw new Error(`Chromium exited during startup (${proc.exitCode})`);
+    const [port, path] = (await Bun.file(portFile).text().catch(() => "")).trim().split("\n");
+    if (port && path) endpoint = `ws://127.0.0.1:${port}${path}`;
+    else await Bun.sleep(100);
+  }
+  if (!endpoint) throw new Error("Chromium did not publish its DevTools endpoint");
+  await cdp.open(endpoint);
+  const version = await cdp.send("Browser.getVersion");
+  if (cookie)
+    await cdp.send("Storage.setCookies", { cookies: [{ ...cookie, path: "/", httpOnly: true, sameSite: "Lax", secure: false }] });
   let swSession = "";
   let swTarget = "";
   const attachWorker = async () => {
@@ -119,7 +145,7 @@ export async function launchRaw(opts: {
   };
   const browser: RawBrowser = {
     cdp,
-    version: version.Browser,
+    version: version.product,
     proc,
     async sw(fn, arg) {
       const expression = `(${fn.toString()})(${JSON.stringify(arg)})`;
@@ -146,7 +172,8 @@ export async function launchRaw(opts: {
     async close() {
       await cdp.send("Browser.close").catch(() => {});
       cdp.close();
-      await proc.exited;
+      // A close that failed or hangs must not hang the run: kill Chromium after a grace period.
+      await stopProcess(proc, 10_000);
     },
   };
   return browser;

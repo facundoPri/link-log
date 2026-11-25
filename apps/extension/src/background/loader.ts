@@ -116,8 +116,15 @@ export class LoadQueue {
     return this.mutex.run(async () => {
       // A new run keeps the tabs a cancelled run's slots still hold: they finish (and go
       // back to sleep) in it, stay persisted, and are not woken a second time.
-      if (!this.run || this.run.status === "done" || this.run.status === "cancelled")
-        this.run = { status: "running", items: this.run?.items.filter((i) => this.slots.has(i.tabInstanceId)) ?? [] };
+      // A tab an earlier run woke and couldn't put back (`woke`, e.g. failed) stays too: this run owes it only
+      // the put-back-to-sleep (slots take it first), keeps its outcome, and never drops it from storage.
+      if (!this.run || this.run.status === "done" || this.run.status === "cancelled") {
+        const held = this.run?.items.filter((i) => this.slots.has(i.tabInstanceId)) ?? [];
+        const owed = (this.run?.items ?? [])
+          .filter((i) => i.woke && !this.slots.has(i.tabInstanceId))
+          .map((i): Item => ({ ...i, state: "putting-to-sleep" }));
+        this.run = { status: "running", items: [...held, ...owed] };
+      }
       this.run.status = "running";
       delete this.run.pauseReason;
       for (const t of tabs) {
@@ -161,12 +168,14 @@ export class LoadQueue {
     });
   }
 
-  private save() {
+  /** Persists the run; failures are logged, or thrown with `strict` (a step that must not run unsaved). */
+  private save(strict = false) {
     if (this.stopped) return Promise.resolve();
     const snapshot = this.run;
-    this.saving = this.saving.then(() => this.kv.set({ [KEY]: snapshot })).catch((e) => console.warn("Linklog: could not save the load run", e));
+    const attempt = this.saving.then(() => this.kv.set({ [KEY]: snapshot }));
+    this.saving = attempt.catch((e) => console.warn("Linklog: could not save the load run", e));
     this.hub.schedule(0);
-    return this.saving;
+    return strict ? attempt : this.saving;
   }
 
   private alive() {
@@ -257,7 +266,7 @@ export class LoadQueue {
     }
     if (item.state === "putting-to-sleep" && asleep) {
       // A previous worker put it back to sleep but didn't record it.
-      Object.assign(item, { state: "done", woke: false });
+      Object.assign(item, { state: item.error ? "failed" : "done", woke: false });
       return;
     }
     if (!item.woke || asleep) {
@@ -268,7 +277,12 @@ export class LoadQueue {
         tab = await this.current(item);
       }
       Object.assign(item, { state: "loading", woke: true });
-      await this.save();
+      // `woke` must be on disk before the reload: a restarted worker would otherwise leave the tab awake.
+      await this.save(true).catch((error) => {
+        if (error instanceof Stopped) throw error;
+        item.woke = false;
+        throw new Fail("Linklog couldn't save its progress, so it didn't wake this tab.");
+      });
       this.alive();
       await chrome.tabs.reload(tab.id!);
     } else if (item.state === "queued") {
@@ -293,7 +307,8 @@ export class LoadQueue {
       await this.save();
     }
     await this.putBack(item);
-    item.state = "done";
+    // An earlier run's failure that this run only put back to sleep stays a failure.
+    item.state = item.error ? "failed" : "done";
   }
 
   /** Waits for the woken tab to load, bounded; null if the run was cancelled meanwhile. */
@@ -334,7 +349,8 @@ export class LoadQueue {
     const now = await this.current(item);
     if (!this.sameDocument(item, now) || (capture.url && documentKey(capture.url) !== item.docKey))
       throw new Fail("The page went to another address (maybe a sign-in page), so it wasn't captured. It stays awake.", true);
-    await this.cache.putCapture(item.tabInstanceId, item.documentRevision, "dom", capture);
+    if (!(await this.cache.putCapture(item.tabInstanceId, item.documentRevision, "dom", capture)))
+      throw new Fail("There is no room to keep this page, so nothing was captured.");
   }
 
   /** Cancelled mid-way: whatever the run woke goes back to sleep; the tab is skipped. */

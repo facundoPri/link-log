@@ -31,9 +31,10 @@ Baseline antes de empezar: `typecheck` OK, `bun test` 45/45, `build` OK.
 
 ## Integración con Chromium real (`bun run test:browser`)
 
-Última corrida: **44/44 checks pasan** en ~4 minutos —
-[`browser-validation/run.md`](browser-validation/run.md) (detalle en `run.json`, 160 llamadas
-del proveedor fixture en total). Cada fila es un check automatizado contra la extensión cargada; los
+Última corrida: **67/67 checks pasan** en ~9 minutos —
+[`browser-validation/run.md`](browser-validation/run.md) (detalle en `run.json`, 332 llamadas
+del proveedor fixture en total). Incluye al final los 11 checks nativos de pestañas dormidas (FAC-163),
+con una sesión nueva de la cuenta de la corrida porque un check anterior la cierra. Cada fila es un check automatizado contra la extensión cargada; los
 contadores de llamadas son del proveedor **fixture** (prueban la deduplicación del flujo, no
 facturación real).
 
@@ -112,7 +113,7 @@ Corrida nativa: **11/11 checks pasan** —
 | | |
 | --- | --- |
 | Navegador | Chrome for Testing 153.0.8010.12 (Playwright chromium-1243), headless nuevo, perfil aislado |
-| Extensión | Linklog 0.1.1, ID `ohpalbbmodgclkjoknohidbcnnnaadic`, build de `7fd7b6e` |
+| Extensión | Linklog 0.1.1, ID `ohpalbbmodgclkjoknohidbcnnnaadic`, build de `bfbf6f2` (merge con `main`) más los arreglos de la revisión |
 | Comando | `LINKLOG_BROWSER_ONLY=sleeping bun run test:browser` (sólo esta sección; sin la corrida Playwright) |
 | Driver | CDP crudo (`tests/browser/cdp.ts`): Playwright se adjunta a todas las páginas y un `discard` bajo Playwright cerraba Chromium 153. Este cliente se adjunta sólo al worker y a la página de Linklog |
 | Despertares | contados por hits al servidor de fixtures, que sobreviven al reinicio del worker |
@@ -122,22 +123,23 @@ Corrida nativa: **11/11 checks pasan** —
 | Pestañas restauradas y nunca cargadas | 26 de 30 con `status: "unloaded"`, `discarded: false`; las 26 dicen Sleeping y 0 dicen Loading tras 20 s | 20 |
 | Filtro Sleeping | 26 filas, todas Sleeping; contador en el header | 21 |
 | Sin despertares implícitos | entrar a Browser, filtrar y seleccionar: 0 cargas | — |
-| Load content desde el banner | 26/26, cada página cargada una vez, máximo 3 cargando, pestaña activa intacta, las 26 descartadas de nuevo | 22, 23 |
+| Load content desde el banner | 26/26 hechas y cada una con captura, cada página cargada una vez, máximo 3 despiertas (cargando, capturando o esperando el descarte), pestaña activa intacta, las 26 descartadas de nuevo | 22, 23 |
 | Contenido capturado en el inspector | se muestra sin despertar la pestaña | 24 |
 | Pestaña congelada | `frozen: true` → `discarded: true`; la UI avisa que quedó dormida | 25 |
-| Put to sleep con selección mixta | orden de la barra Save · Group · Autogroup · Load content · Put to sleep · Close · Copy; 2 de 3, 1 omitida con motivo, advertencia de estado no guardado | 26, 27 |
+| Put to sleep con selección mixta | desde More `⌘K` (barra: Save · Move to group · Autogroup · More): la fila dice "1 of 3 are asleep, …" y 2/3 antes de correr; duerme las 2 elegibles con la advertencia de estado no guardado | 26, 26b, 27 |
 | Pestañas fijadas | pin, índice, grupo y ventana sin cambios tras Put to sleep y Load content; marcador visible | 28 |
 | Move to group con fijadas | agrupa sólo la no fijada; una pestaña fijada después de seleccionarla queda en su lugar ("Pinned — kept in place.") | — |
 | Barra de lente | "0/46 · 34 waiting · 8 sleeping · 4 unreadable" → tras Load content "40/46 · 2 waiting · 4 unreadable", sin otro clic | 29, 30 |
-| Cola de 450 pestañas | 450/450 en 201 s (2.24 pestañas/s), máximo 3 despiertas (muestreo cada 100 ms), worker detenido tras 100 y reanudado, cada página cargada exactamente una vez, 0 despiertas al final | 31 |
+| Cola de 450 pestañas | 450/450 en 199 s (2.26 pestañas/s), máximo 3 despiertas (muestreo cada 100 ms), worker detenido tras 101 con trabajo pendiente y otra instancia del worker siguió la misma corrida, cada página cargada exactamente una vez, 0 despiertas al final | 31 |
 
 Límites medidos:
 
-- **Memoria**: la suma de RSS del árbol de procesos del navegador quedó plana durante la cola
-  (56405 → pico 56410 MB). El valor absoluto cuenta las páginas compartidas una vez por proceso, así
-  que no es un tamaño de RAM; sólo muestra que la cola no sumó memoria medible. No hay un techo de
-  RAM garantizado para sitios arbitrarios.
-- **Tiempo**: las páginas sintéticas locales cargan en ~70 ms; 2.24 pestañas/s es un techo, no una
+- **Memoria**: la suma de RSS del árbol de procesos del navegador subió ~2,5 % durante la
+  cola (57608 → pico 59037 MB; en la corrida anterior, 56405 → 56410). El valor absoluto cuenta las
+  páginas compartidas una vez por proceso, así que no es un tamaño de RAM; sólo muestra que la cola
+  no hace crecer la memoria con las 450 pestañas. No hay un techo de RAM garantizado para sitios
+  arbitrarios.
+- **Tiempo**: las páginas sintéticas locales cargan en ~70 ms; 2.26 pestañas/s es un techo, no una
   predicción para sitios reales (que tienen el límite de 30 s por pestaña).
 - **Captura de pantalla, cámara o micrófono**: `chrome.tabs` no la expone; se detecta sólo cuando
   Chrome rechaza el descarte, y se informa por pestaña. No verificado de forma nativa.

@@ -523,9 +523,10 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
     const { ok, items } = await each(args.tabs, windowId, s, sleepProblem);
     for (const tab of ok) {
       const item = items.find((i) => i.tabId === tab.id)!;
-      // Re-read right before the mutation: the user may have just started using it.
-      const now = await chrome.tabs.get(tab.id!).catch(() => null);
-      const problem = now ? sleepProblem(now) : "The tab is already closed.";
+      const ref = args.tabs.find((r) => r.tabId === tab.id)!;
+      // Re-read right before the mutation: the user may have just started using it, moved it to another
+      // window or navigated it; Chrome discards by tab id whatever it holds now.
+      const problem = await ownTab(ref, windowId, s).then(sleepProblem, (error: Error) => error.message);
       if (problem) {
         Object.assign(item, { ok: false, error: problem });
         continue;

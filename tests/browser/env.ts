@@ -107,14 +107,7 @@ export async function startApi() {
       // The library is private: 401 means the stack is up with a valid auth config.
       if ((await fetch(`${UI}/api/library`)).status === 401) {
         process.env.LINKLOG_MAIL_DIR = resolve(OUT, ".wrangler/tmp/email");
-        const { ensureFixture } = await import("../../scripts/seed-dev-users");
-        const { cookie } = await ensureFixture(`http://127.0.0.1:${API_PORT}`, UI, {
-          label: "Browser test",
-          email: "browser-test@linklog.test",
-          password: "browser-test-password",
-        });
-        const pair = cookie.split("; ").find((c) => c.startsWith("linklog.session_token="))!;
-        session = { name: pair.slice(0, pair.indexOf("=")), value: pair.slice(pair.indexOf("=") + 1) };
+        await signInRunAccount();
         return proc;
       }
     } catch (error) {
@@ -124,6 +117,21 @@ export async function startApi() {
     await Bun.sleep(200);
   }
   throw new Error("API did not start");
+}
+
+/**
+ * Signs the run's account in (creating and verifying it the first time) and keeps its session for `api()` and
+ * `sessionCookie()`. Call it again after a check signs that account out: the old session is revoked.
+ */
+export async function signInRunAccount() {
+  const { ensureFixture } = await import("../../scripts/seed-dev-users");
+  const { cookie } = await ensureFixture(`http://127.0.0.1:${API_PORT}`, UI, {
+    label: "Browser test",
+    email: "browser-test@linklog.test",
+    password: "browser-test-password",
+  });
+  const pair = cookie.split("; ").find((c) => c.startsWith("linklog.session_token="))!;
+  session = { name: pair.slice(0, pair.indexOf("=")), value: pair.slice(pair.indexOf("=") + 1) };
 }
 
 /** The run account's session cookie, for browsers this module doesn't launch. */

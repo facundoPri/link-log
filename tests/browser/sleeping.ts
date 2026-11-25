@@ -43,7 +43,7 @@ export async function sleepingChecks(ctx: Ctx) {
   const profile = resolve(OUT, "profile-sleeping");
   const cookie = sessionCookie();
   const launch = (fresh: boolean, args: string[] = []) =>
-    launchRaw({ profile, extension: EXTENSION, port: 9351, fresh, args, cookie: cookie && { ...cookie, domain: "127.0.0.1" } });
+    launchRaw({ profile, extension: EXTENSION, fresh, args, cookie: cookie && { ...cookie, domain: "127.0.0.1" } });
   let b: RawBrowser = await launch(true);
 
   const dom = <R = unknown>(js: string) => b.page<R>(LINKLOG, `(async () => { ${js} })()`);
@@ -153,15 +153,20 @@ export async function sleepingChecks(ctx: Ctx) {
 
     await check("banner Load content wakes in the background, captures, and puts every tab back to sleep", async () => {
       const before = await b.sw(async () => (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0]?.id ?? 0, null);
-      await b.sw(async (prefix: string) => {
-        const g = globalThis as { __maxAwake?: number; __sampler?: ReturnType<typeof setInterval> };
+      // Awake = loaded in any way (loading, capturing, waiting to be discarded), among the tabs the run loads.
+      await b.sw(async (ids: number[]) => {
+        const g = globalThis as { __maxAwake?: number; __samples?: number; __sampler?: ReturnType<typeof setInterval> };
         g.__maxAwake = 0;
+        g.__samples = 0;
         clearInterval(g.__sampler);
         g.__sampler = setInterval(async () => {
-          const awake = (await chrome.tabs.query({})).filter((t) => (t.url || "").startsWith(prefix) && !t.discarded && t.status !== "unloaded");
-          g.__maxAwake = Math.max(g.__maxAwake!, awake.filter((t) => t.status === "loading").length);
+          const awake = (await chrome.tabs.query({})).filter(
+            (t) => ids.includes(t.id!) && !t.discarded && t.status !== "unloaded" && !(t as { frozen?: boolean }).frozen,
+          );
+          g.__maxAwake = Math.max(g.__maxAwake!, awake.length);
+          g.__samples!++;
         }, 20);
-      }, `${SITE}/restore/`);
+      }, neverLoaded.map((t) => t.id));
       await click(button("Load content", `document.querySelector("[data-sleeping-count]").closest("div").parentElement`));
       await waitFor("progress banner", () => dom<boolean>(`return !!document.querySelector("[data-load-run]")`), 10000);
       await shot("22-load-progress");
@@ -171,16 +176,29 @@ export async function sleepingChecks(ctx: Ctx) {
       const ids = new Set(neverLoaded.map((t) => t.id));
       const mine = native.filter((t) => ids.has(t.id));
       const loads = hits("/restore/");
-      const maxLoading = await b.sw(async () => (globalThis as { __maxAwake?: number }).__maxAwake ?? -1, null);
+      const { maxAwake: maxLoading, samples } = await b.sw(async () => {
+        const g = globalThis as { __maxAwake?: number; __samples?: number; __sampler?: ReturnType<typeof setInterval> };
+        clearInterval(g.__sampler);
+        return { maxAwake: g.__maxAwake ?? -1, samples: g.__samples ?? 0 };
+      }, null);
+      // Every tab the run loaded has its own done item and a capture it can show while asleep.
+      const snap = await dom<{ tabs: { tabId: number; capturedAt: string | null; load: { state: string } | null }[] }>(`${BRIDGE_CALL}
+        return call("snapshot", {});`);
+      const uncaptured = neverLoaded.filter((t) => {
+        const tab = snap.tabs.find((x) => x.tabId === t.id);
+        return tab?.load?.state !== "done" || !tab.capturedAt;
+      });
       assert(after === before, `active tab changed from ${before} to ${after}`);
+      assert(!uncaptured.length, `not done with a capture: ${JSON.stringify(uncaptured.map((t) => [t.id, snap.tabs.find((x) => x.tabId === t.id)?.load]))}`);
+      assert(samples > 0 && maxLoading >= 1, `the awake sampler saw nothing (${samples} samples, max ${maxLoading})`);
       assert(mine.every((t) => t.discarded), `awake after the run: ${mine.filter((t) => !t.discarded).map((t) => t.id)}`);
       assert(loads.length === neverLoaded.length && loads.every(([, n]) => n === 1), `page loads: ${JSON.stringify(loads)}`);
-      assert(maxLoading <= 3, `${maxLoading} loading at once`);
+      assert(maxLoading <= 3, `${maxLoading} awake at once`);
       const done = r.items.filter((i: { state: string }) => i.state === "done").length;
       await Bun.sleep(800);
       const captured = await dom<number>(`return document.querySelectorAll('[data-content="sleeping"]').length`);
       await shot("23-load-done");
-      return `${done}/${r.items.length} done; ${loads.length} pages loaded once each; at most ${maxLoading} loading at once; active tab ${after} unchanged; all ${mine.length} discarded again (${captured} Sleeping rows with captured content)`;
+      return `${done}/${r.items.length} done; ${loads.length} pages loaded once each; every one done with a capture; at most ${maxLoading} awake at once (${samples} samples); active tab ${after} unchanged; all ${mine.length} discarded again (${captured} Sleeping rows with captured content)`;
     });
 
     await check("a Sleeping tab with captured content shows it in the inspector", async () => {
@@ -341,9 +359,18 @@ export async function sleepingChecks(ctx: Ctx) {
       })();
       const t0 = performance.now();
       await click(button("Load content", `document.querySelector("[data-sleeping-count]").closest("div").parentElement`));
-      await waitFor("100 done", async () => ((await run())?.items ?? []).filter((i: { state: string }) => i.state === "done").length >= 100, 300_000);
+      // Stop the worker mid-run: work must remain, and a different worker instance must finish it.
+      const workerId = () => b.sw(async () => ((globalThis as { __workerId?: string }).__workerId ??= crypto.randomUUID()), null);
+      const doneOf = (r: any) => ((r?.items ?? []) as { state: string; docKey: string }[]).filter((i) => i.docKey.includes("/q/") && i.state === "done").length;
+      await waitFor("100 done", async () => doneOf(await run()) >= 100, 300_000);
+      const before = await workerId();
+      const atStop = await run();
       await b.stopWorker();
-      const restartedAt = (await run().catch(() => null))?.items.filter((i: { state: string }) => i.state === "done").length ?? "?";
+      const restartedAt = doneOf(atStop);
+      assert(atStop?.status === "running" && restartedAt < QUEUE, `nothing left to resume at the stop: ${atStop?.status}, ${restartedAt}/${QUEUE} done`);
+      await waitFor("progress after the restart", async () => doneOf(await run()) > restartedAt, 120_000);
+      const after = await workerId();
+      assert(before !== after, "the worker was not replaced");
       const r = await awaitRun("queue done", "/q/", 900_000);
       const ms = performance.now() - t0;
       sampling = false;
@@ -360,7 +387,7 @@ export async function sleepingChecks(ctx: Ctx) {
       assert(native.every((t) => t.discarded), `${native.filter((t) => !t.discarded).length} left awake`);
       assert(done === QUEUE, `${done} of ${QUEUE} done (${JSON.stringify(qItems.filter((i: { state: string }) => i.state !== "done").slice(0, 3))})`);
       await shot("31-queue-done");
-      return `${done}/${QUEUE} done in ${Math.round(ms / 1000)} s (${meta.queue && (meta.queue as { tabsPerSec: number }).tabsPerSec} tabs/s); max ${maxAwake} awake (sampled every 100 ms); worker stopped after ${restartedAt} done and resumed; each page loaded exactly once; 0 left awake; browser process tree RSS ${rssBefore} → peak ${rssPeak} MB (sampled every 100 ms)`;
+      return `${done}/${QUEUE} done in ${Math.round(ms / 1000)} s (${meta.queue && (meta.queue as { tabsPerSec: number }).tabsPerSec} tabs/s); max ${maxAwake} awake (sampled every 100 ms); worker stopped after ${restartedAt} done and a new worker instance resumed the same run; each page loaded exactly once; 0 left awake; browser process tree RSS ${rssBefore} → peak ${rssPeak} MB (sampled every 100 ms)`;
     });
   } finally {
     await b.close().catch(() => {});
