@@ -20,10 +20,10 @@ export default (async ({ page, api, fixture, step, check, shot, note }) => {
     },
     { timeout: 120_000 },
   );
-  for (const [i, l] of links.entries())
-    await api.send("PUT", `/links/${l.id}/content`, { markdown: `# ${l.title}\n\nA page Jev tags. jev:yes jev:slow=${300 + i * 700}` });
-  await check("API: the edited content is stored", async () =>
-    (await Promise.all(links.map((l) => api.link(l.url)))).every((l) => l && !l.processing && l.content_state === "ready"));
+  const markdown = links.map((l, i) => `# ${l.title}\n\nA page Jev tags. jev:yes jev:slow=${300 + i * 700}`);
+  for (const [i, l] of links.entries()) await api.send("PUT", `/links/${l.id}/content`, { markdown: markdown[i] });
+  await check("API: each link stores its edited content, with its own jev:slow delay", async () =>
+    (await Promise.all(links.map((l) => api.get(`/links/${l.id}/content`)))).every((c, i) => c.markdown === markdown[i]));
   await page.reload();
   for (const l of links) {
     const box = page.getByRole("checkbox", { name: `Select ${l.title}` }).first();
