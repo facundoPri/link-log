@@ -1,0 +1,36 @@
+// PROTOTYPE (FAC-170 arena B, Sonnet). Own-route Slack install: helpers. Never commit.
+import { symmetricDecrypt, symmetricEncrypt } from "better-auth/crypto";
+import type { AppConfig } from "../config";
+
+export type SlackEnv = Env & {
+  SLACK_CLIENT_ID?: string;
+  SLACK_CLIENT_SECRET?: string;
+  SLACK_SIGNING_SECRET?: string;
+  /** Base of Slack's Web API; the QA Worker answers it with a fake. */
+  SLACK_API_BASE?: string;
+};
+export const slackConfigured = (env: SlackEnv) => !!(env.SLACK_CLIENT_ID && env.SLACK_CLIENT_SECRET && env.SLACK_SIGNING_SECRET);
+export const SLACK_API = (env: SlackEnv) => env.SLACK_API_BASE ?? "https://slack.com/api";
+// history: receive message.channels / message.groups. read: the Settings channel picker (users.conversations).
+// Scopes are a one-way door (adding one later means every workspace re-installs), so ask for them up front.
+export const BOT_SCOPES = "channels:history,groups:history,channels:read,groups:read";
+
+export const sealToken = (config: AppConfig, token: string) => symmetricEncrypt({ key: config.secret, data: token });
+export const openToken = (config: AppConfig, sealed: string) => symmetricDecrypt({ key: config.secret, data: sealed });
+
+export type SlackAccess = {
+  ok: boolean; error?: string; access_token?: string; bot_user_id?: string;
+  team?: { id: string; name: string }; authed_user?: { id: string }; is_enterprise_install?: boolean;
+};
+export async function exchangeCode(env: SlackEnv, code: string, redirectUri: string): Promise<SlackAccess> {
+  const res = await fetch(`${SLACK_API(env)}/oauth.v2.access`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ client_id: env.SLACK_CLIENT_ID!, client_secret: env.SLACK_CLIENT_SECRET!, code, redirect_uri: redirectUri }),
+  });
+  return (await res.json()) as SlackAccess;
+}
+export async function slackCall<T>(env: SlackEnv, method: string, token: string, params: Record<string, string> = {}) {
+  const res = await fetch(`${SLACK_API(env)}/${method}?${new URLSearchParams(params)}`, { headers: { authorization: `Bearer ${token}` } });
+  return (await res.json()) as T;
+}

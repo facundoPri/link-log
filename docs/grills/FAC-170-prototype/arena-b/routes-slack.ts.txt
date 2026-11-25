@@ -1,0 +1,155 @@
+// PROTOTYPE (FAC-170 arena B, Sonnet). Never commit. Rewrite test-first.
+// Private half (session): install, callback, list, channels, disconnect.
+// Public half (signed by Slack): POST /api/slack/events.
+import { Hono } from "hono";
+import { deleteCookie, getSignedCookie, setSignedCookie } from "hono/cookie";
+import { scanUrls } from "../../src/url";
+import { isLocalEnv } from "../config";
+import { HttpError, ownerOf, badRequest, type AppEnv } from "../http/context";
+import { readBounded } from "../http/middleware";
+import { addLinks } from "../links";
+import { LIMITS, LimitError, chargeOrThrow } from "../limits";
+import { json } from "../store";
+import { BOT_SCOPES, exchangeCode, openToken, sealToken, slackCall, slackConfigured, SLACK_API, type SlackEnv } from "../slack/slack";
+
+const STATE_COOKIE = "linklog_slack_state";
+const AUTHORIZE = "https://slack.com/oauth/v2/authorize";
+const INSTALLS_PER_HOUR = { window: 3600, max: 20 };
+const log = (event: string, extra: object = {}) => console.warn(JSON.stringify({ event, ...extra }));
+const slackEnv = (c: { env: Env }) => c.env as SlackEnv;
+const back = (c: { redirect: (u: string) => Response }, result: string) => c.redirect(`/?slack=${result}`);
+
+export const slackConnectRoutes = new Hono<AppEnv>()
+  // The "Add to Slack" button is a link to this route: the session user is bound to the state.
+  .get("/slack/install", async (c) => {
+    const env = slackEnv(c);
+    if (!slackConfigured(env)) throw new HttpError(404, "Not found.");
+    const config = c.get("config");
+    await chargeOrThrow(env.DB, [{ key: `slack-install:${ownerOf(c)}`, limit: INSTALLS_PER_HOUR, cost: 1 }]);
+    const state = crypto.randomUUID();
+    // The signed cookie says who started and with which nonce (PROTOTYPE M-B4).
+    await setSignedCookie(c, STATE_COOKIE, `${ownerOf(c)}.${state}`, config.secret, { httpOnly: true, sameSite: "Lax", secure: !isLocalEnv(config.appEnv), path: "/api/slack", maxAge: 600 });
+    const url = new URL(AUTHORIZE);
+    url.search = new URLSearchParams({ client_id: env.SLACK_CLIENT_ID!, scope: BOT_SCOPES, redirect_uri: `${config.baseURL}/api/slack/callback`, state }).toString();
+    return c.redirect(url.toString());
+  })
+  .get("/slack/callback", async (c) => {
+    const env = slackEnv(c);
+    if (!slackConfigured(env)) throw new HttpError(404, "Not found.");
+    const config = c.get("config"), userId = ownerOf(c);
+    const state = c.req.query("state") ?? "", code = c.req.query("code");
+    const cookie = await getSignedCookie(c, config.secret, STATE_COOKIE);
+    deleteCookie(c, STATE_COOKIE, { path: "/api/slack" }); // one use: a replayed callback finds no cookie
+    if (!state || cookie !== `${userId}.${state}`) return log("slack_state_rejected"), back(c, "invalid");
+    if (c.req.query("error") || !code) return back(c, "denied");
+    const access = await exchangeCode(env, code, `${config.baseURL}/api/slack/callback`);
+    if (!access.ok || !access.access_token || !access.team?.id || !access.authed_user?.id || access.is_enterprise_install)
+      return log("slack_exchange_failed", { error: access.error ?? "incomplete" }), back(c, "failed");
+    const sealed = await sealToken(config, access.access_token);
+    const now = new Date().toISOString();
+    // A Slack identity belongs to one Linklog user: another user's attempt changes nothing.
+    const upsert = await env.DB.prepare(
+        `INSERT INTO slack_connections(team_id,slack_user_id,user_id,team_name,bot_token,bot_user_id,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7)
+         ON CONFLICT(team_id,slack_user_id) DO UPDATE SET team_name=excluded.team_name,bot_token=excluded.bot_token,bot_user_id=excluded.bot_user_id WHERE user_id=excluded.user_id`,
+      ).bind(access.team.id, access.authed_user.id, userId, access.team.name, sealed, access.bot_user_id ?? "", now).run();
+    if (!upsert.meta.changes) return log("slack_identity_taken", { team: access.team.id }), back(c, "taken");
+    // One workspace has one bot token: a re-install refreshes it for everyone linked there.
+    await env.DB.prepare("UPDATE slack_connections SET bot_token=?1,bot_user_id=?2 WHERE team_id=?3").bind(sealed, access.bot_user_id ?? "", access.team.id).run();
+    return back(c, "connected");
+  })
+  .get("/slack/connections", async (c) => {
+    const rows = await c.env.DB.prepare("SELECT team_id,slack_user_id,team_name,channels FROM slack_connections WHERE user_id=? ORDER BY created_at").bind(ownerOf(c)).all<{ team_id: string; slack_user_id: string; team_name: string; channels: string }>();
+    return json({ connections: rows.results.map((r) => ({ teamId: r.team_id, slackUserId: r.slack_user_id, teamName: r.team_name, channels: JSON.parse(r.channels) as string[] })) });
+  })
+  // The picker: public channels this person is in, and private ones the bot shares with them.
+  .get("/slack/connections/:team/:user/channel-options", async (c) => {
+    const env = slackEnv(c), { team, user } = c.req.param();
+    const row = await env.DB.prepare("SELECT bot_token FROM slack_connections WHERE team_id=? AND slack_user_id=? AND user_id=?").bind(team, user, ownerOf(c)).first<{ bot_token: string }>();
+    if (!row) throw new HttpError(404, "Not found.");
+    // A token sealed under another BETTER_AUTH_SECRET cannot be read: ask the user to add Linklog to Slack again.
+    const token = await openToken(c.get("config"), row.bot_token).catch(() => null);
+    if (!token) throw new HttpError(409, "Linklog can no longer read this workspace's connection. Add it to Slack again.", "slack-reconnect");
+    const res = await slackCall<{ ok: boolean; channels?: { id: string; name: string; is_private: boolean; bot_is_member: boolean }[] }>(env, "users.conversations", token, { user, types: "public_channel,private_channel" });
+    return json({ channels: res.channels ?? [] });
+  })
+  .put("/slack/connections/:team/:user/channels", async (c) => {
+    const { team, user } = c.req.param();
+    const channels = c.get("body").channels;
+    if (!Array.isArray(channels) || channels.length > 50 || channels.some((x) => typeof x !== "string" || !/^[CG][A-Z0-9]{2,20}$/.test(x))) throw badRequest("Send `channels`: up to 50 Slack channel ids.");
+    const done = await c.env.DB.prepare("UPDATE slack_connections SET channels=? WHERE team_id=? AND slack_user_id=? AND user_id=?").bind(JSON.stringify([...new Set(channels)]), team, user, ownerOf(c)).run();
+    if (!done.meta.changes) throw new HttpError(404, "Not found.");
+    return json({ channels: [...new Set(channels)] });
+  })
+  // Disconnect forgets the link and its token. The last link of a workspace also uninstalls the bot, so
+  // Linklog stops receiving that workspace's messages.
+  .delete("/slack/connections/:team/:user", async (c) => {
+    const env = slackEnv(c), { team, user } = c.req.param();
+    const row = await env.DB.prepare("SELECT bot_token FROM slack_connections WHERE team_id=? AND slack_user_id=? AND user_id=?").bind(team, user, ownerOf(c)).first<{ bot_token: string }>();
+    if (!row) throw new HttpError(404, "Not found.");
+    await env.DB.prepare("DELETE FROM slack_connections WHERE team_id=? AND slack_user_id=? AND user_id=?").bind(team, user, ownerOf(c)).run();
+    const left = await env.DB.prepare("SELECT count(*) n FROM slack_connections WHERE team_id=?").bind(team).first<{ n: number }>();
+    if (!left?.n) {
+      try {
+        await fetch(`${SLACK_API(env)}/apps.uninstall`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_id: env.SLACK_CLIENT_ID!, client_secret: env.SLACK_CLIENT_SECRET!, token: await openToken(c.get("config"), row.bot_token) }) });
+      } catch { log("slack_uninstall_failed"); }
+    }
+    return json({ ok: true });
+  });
+
+// ---- Events (signed by Slack; no session, no Bearer key) -----------------------------------------
+const enc = new TextEncoder();
+const MAX_URLS = 100;
+const COUNTED = new Set<string | undefined>([undefined, "thread_broadcast", "file_share"]);
+
+async function signed(secret: string, ts: string, body: string, signature: string) {
+  const hex = /^v0=([0-9a-f]{64})$/.exec(signature)?.[1];
+  if (!hex || !/^\d+$/.test(ts) || Math.abs(Date.now() / 1000 - Number(ts)) > 300) return false;
+  const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
+  return crypto.subtle.verify("HMAC", key, new Uint8Array(hex.match(/../g)!.map((b) => parseInt(b, 16))), enc.encode(`v0:${ts}:${body}`));
+}
+export const slackText = (text: string) =>
+  text.replace(/<([^<>|]*)(?:\|[^<>]*)?>/g, " $1 ").replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
+const ok = () => new Response(null, { status: 200 });
+
+type Payload = {
+  type?: string; challenge?: string; team_id?: string;
+  event?: { type?: string; subtype?: string; bot_id?: string; text?: string; user?: string; channel?: string; tokens?: { oauth?: string[]; bot?: string[] } };
+};
+
+export const slackEventRoutes = new Hono<AppEnv>().post("/events", async (c) => {
+  const env = slackEnv(c);
+  if (!slackConfigured(env)) return json({ error: "Not found." }, 404);
+  const raw = await readBounded(c.req.raw, 64_000);
+  if (!(await signed(env.SLACK_SIGNING_SECRET!, c.req.header("x-slack-request-timestamp") ?? "", raw, c.req.header("x-slack-signature") ?? ""))) return json({ error: "Invalid signature." }, 401);
+  const body = JSON.parse(raw) as Payload;
+  if (body.type === "url_verification") return json({ challenge: body.challenge });
+  const ev = body.event, team = body.team_id;
+  if (body.type !== "event_callback" || !ev || !team) return ok();
+  // Revocation: both events say the workspace's bot is gone, in either order. Deleting is idempotent.
+  if (ev.type === "app_uninstalled" || (ev.type === "tokens_revoked" && ev.tokens?.bot?.length)) {
+    const gone = await env.DB.prepare("DELETE FROM slack_connections WHERE team_id=?").bind(team).run();
+    return log("slack_workspace_removed", { event: ev.type, rows: gone.meta.changes }), ok();
+  }
+  if (ev.type === "tokens_revoked") {
+    for (const slackUser of ev.tokens?.oauth ?? []) await env.DB.prepare("DELETE FROM slack_connections WHERE team_id=? AND slack_user_id=?").bind(team, slackUser).run();
+    return ok();
+  }
+  if (ev.type !== "message" || ev.bot_id || !COUNTED.has(ev.subtype) || !ev.user || !ev.channel) return ok();
+  const { urls, overBudget } = scanUrls(slackText(ev.text ?? ""), { left: 1000 });
+  if (!urls.length) return ok();
+  // The author decides the library: the Linklog user linked to this (workspace, Slack user), if that
+  // user allowed this channel. Never the channel alone.
+  const conn = await env.DB.prepare("SELECT user_id,team_name,channels FROM slack_connections WHERE team_id=? AND slack_user_id=?").bind(team, ev.user).first<{ user_id: string; team_name: string; channels: string }>();
+  if (!conn) return log("slack_dropped", { reason: "unlinked" }), ok();
+  if (!(JSON.parse(conn.channels) as string[]).includes(ev.channel)) return log("slack_dropped", { reason: "channel" }), ok();
+  if (urls.length > MAX_URLS || overBudget) log("slack_truncated", { found: urls.length });
+  await chargeOrThrow(env.DB, [{ key: `writes:${conn.user_id}`, limit: LIMITS.writesPerUser, cost: 1, code: "writes" }]);
+  try {
+    const saved = await addLinks(env, conn.user_id, urls.slice(0, MAX_URLS), { source: { source: "slack", workspace: conn.team_name, teamId: team } });
+    log("slack_saved", { created: saved.filter((r) => "created" in r && r.created).length, total: saved.length });
+  } catch (error) {
+    if (error instanceof LimitError && error.code === "links") return log("slack_links_limited"), ok();
+    throw error;
+  }
+  return ok();
+});

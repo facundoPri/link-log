@@ -1,0 +1,186 @@
+diff --git a/qa/video/worker-entry.ts b/qa/video/worker-entry.ts
+index 78b629d..73a00fe 100644
+--- a/qa/video/worker-entry.ts
++++ b/qa/video/worker-entry.ts
+@@ -10,7 +10,7 @@ import { exceedsFixtureWindow, fixtureJev } from "../../worker/ai/fixture";
+ import { FIXTURE_IP, fixtureFor, type BrowserSpec, type PreviewSpec } from "./fixtures";
+ import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
+ 
+-type QaEnv = Env & { QA_ALLOW_NET?: string; QA_FAST_RETRIES?: string };
++type QaEnv = Env & { QA_ALLOW_NET?: string; QA_FAST_RETRIES?: string; SLACK_CLIENT_ID?: string; SLACK_CLIENT_SECRET?: string };
+ 
+ const realFetch = globalThis.fetch.bind(globalThis);
+ /** The latest env seen, for the retry counters (R2). Bindings are the same for every request. */
+@@ -99,6 +99,34 @@ async function fakeTypesafe(request: Request): Promise<Response> {
+   return Response.json(await fixtureJev(body));
+ }
+ 
++/** PROTOTYPE (FAC-170 arena B): fake slack.com. oauth.v2.access takes `FAKE.<team>.<teamName>.<slackUser>.<nonce>` codes, once each. */
++const FAKE_CHANNELS = [
++  { id: "C0READ1", name: "read-later", is_private: false, bot_is_member: true, members: ["*"] },
++  { id: "C0RANDOM", name: "random", is_private: false, bot_is_member: false, members: ["*"] },
++  { id: "C0PRIV01", name: "a-private", is_private: true, bot_is_member: true, members: ["U_A1", "U_A2"] },
++  { id: "C0SECRET", name: "execs", is_private: true, bot_is_member: true, members: ["U_Z"] },
++];
++async function fakeSlack(request: Request, url: URL): Promise<Response> {
++  const method = url.pathname.replace(/^\/api\//, "");
++  const form = request.method === "POST" ? new URLSearchParams(await request.text()) : url.searchParams;
++  console.warn(JSON.stringify({ event: "qa_fake_slack", method }));
++  if (method === "oauth.v2.access") {
++    if (form.get("client_id") !== current?.SLACK_CLIENT_ID || form.get("client_secret") !== current?.SLACK_CLIENT_SECRET) return Response.json({ ok: false, error: "invalid_client_id" });
++    const [, team, teamName, user] = (form.get("code") ?? "").split(".");
++    if (!team || !user || (await hit(`slack code ${form.get("code")}`)) > 1) return Response.json({ ok: false, error: "invalid_code" });
++    return Response.json({ ok: true, is_enterprise_install: team.startsWith("TENT"), access_token: `xoxb-fake-${team}`, bot_user_id: `UBOT_${team}`, app_id: "A_LINKLOG", team: { id: team, name: teamName }, authed_user: { id: user }, scope: "channels:history,groups:history,channels:read,groups:read" });
++  }
++  if (method === "users.conversations") {
++    if (!request.headers.get("authorization")?.startsWith("Bearer xoxb-fake-")) return Response.json({ ok: false, error: "invalid_auth" });
++    const user = form.get("user") ?? "";
++    // Slack: public channels the user is in; private ones only when the caller (the bot) shares them.
++    const channels = FAKE_CHANNELS.filter((c) => (c.members.includes("*") || c.members.includes(user)) && (!c.is_private || c.bot_is_member)).map(({ members: _m, ...c }) => c);
++    return Response.json({ ok: true, channels });
++  }
++  if (method === "apps.uninstall") return Response.json(form.get("token")?.includes("T6") ? { ok: false, error: "invalid_auth" } : { ok: true });
++  return Response.json({ ok: false, error: "unknown_method" });
++}
++
+ globalThis.fetch = async function qaFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+   const request = new Request(input as RequestInfo, init);
+   const url = new URL(request.url);
+@@ -110,6 +138,7 @@ globalThis.fetch = async function qaFetch(input: RequestInfo | URL, init?: Reque
+     const answer = fixture && fixture.dns !== "nxdomain" && url.searchParams.get("type") === "A" ? [{ name, type: 1, TTL: 60, data: FIXTURE_IP }] : [];
+     return Response.json({ Status: !fixture || fixture.dns === "nxdomain" ? 3 : 0, Answer: answer }, { headers: { "content-type": "application/dns-json" } });
+   }
++  if (url.hostname === "slack.com") return fakeSlack(request, url);
+   const fixture = fixtureFor(url.hostname);
+   if (fixture) return previewResponse(fixture.preview, url, init?.signal ?? request.signal);
+   if (url.hostname === "api.typesafe.ai" && current?.TYPESAFE_API_KEY?.startsWith("qa-fake")) return fakeTypesafe(request);
+diff --git a/src/components/ActivitySheet.tsx b/src/components/ActivitySheet.tsx
+index ff11897..dc89206 100644
+--- a/src/components/ActivitySheet.tsx
++++ b/src/components/ActivitySheet.tsx
+@@ -73,7 +73,7 @@ function kindIcon(kind: Batch["kind"] | "query") {
+   );
+ }
+ 
+-type BatchConfig = { lens?: Lens; source?: "api"; apiKeyName?: string };
++type BatchConfig = { lens?: Lens; source?: "api" | "slack"; apiKeyName?: string; workspace?: string };
+ function config(b: Batch): BatchConfig {
+   try {
+     return JSON.parse(b.config) as BatchConfig;
+@@ -86,7 +86,8 @@ const configLens = (b: Batch) => config(b).lens;
+ function label(b: Batch) {
+   // Links sent with an API key name the key; batches without a source are Web.
+   if (b.kind === "extract") {
+-    const { source, apiKeyName } = config(b);
++    const { source, apiKeyName, workspace } = config(b);
++    if (source === "slack") return `Extract context · Slack · ${workspace ?? ""}`;
+     return source === "api" ? `Extract context · API · ${apiKeyName ?? ""}` : "Extract context";
+   }
+   if (b.kind === "preview") return "Fetch preview";
+diff --git a/src/components/SettingsPage.tsx b/src/components/SettingsPage.tsx
+index 2b9c41f..2da305e 100644
+--- a/src/components/SettingsPage.tsx
++++ b/src/components/SettingsPage.tsx
+@@ -206,6 +206,12 @@ function UsageSection({ usage, error, keys }: { usage: Usage | null; error: stri
+                   </li>
+                 );
+               })}
++              {usage.month.slack.map((w) => (
++                <li key={w.teamId} className="flex items-center justify-between gap-3">
++                  <span className="truncate">Slack: {w.name}</span>
++                  <span className="tabular-nums">{w.links}</span>
++                </li>
++              ))}
+             </ul>
+             <h4 className="mt-5 text-sm">By feature</h4>
+             <FeatureTable month={usage.month} />
+diff --git a/src/types.ts b/src/types.ts
+index a8f5ed9..327e68b 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -225,6 +225,8 @@ export type Usage = {
+     links: number;
+     web: number;
+     apiKeys: { id: string; name: string; links: number; status: "active" | "revoked" | "deleted" }[];
++    /** Links saved from Slack, per workspace (PROTOTYPE FAC-170). */
++    slack: { teamId: string; name: string; links: number }[];
+     features: FeatureUsage[];
+     total: { usd: number; unknownCostCalls: number };
+   };
+diff --git a/worker/http/app.ts b/worker/http/app.ts
+index 0822fab..caf01fe 100644
+--- a/worker/http/app.ts
++++ b/worker/http/app.ts
+@@ -7,6 +7,7 @@ import { activityRoutes } from "../routes/activity";
+ import { browserRoutes } from "../routes/browser";
+ import { linkRoutes } from "../routes/links";
+ import { publicApiRoutes } from "../routes/public-api";
++import { slackConnectRoutes, slackEventRoutes } from "../routes/slack";
+ import { taxonomyRoutes } from "../routes/taxonomy";
+ import { usageSummaryRoutes } from "../routes/usage-summary";
+ import { HttpError, type AppEnv } from "./context";
+@@ -48,6 +49,9 @@ export function createApp() {
+   publicApi.all("*", () => json({ error: "Not found." }, 404));
+   app.route(PUBLIC_API_BASE_PATH, publicApi);
+ 
++  // PROTOTYPE (FAC-170): Slack signs its events; no session, no Bearer key. Before the private group.
++  app.route("/api/slack", slackEventRoutes);
++
+   const privateApi = new Hono<AppEnv>();
+   privateApi.use("*", sameOriginWrites, requireSession, writeQuotaAndBody);
+   privateApi.route("/", linkRoutes);
+@@ -55,6 +59,7 @@ export function createApp() {
+   privateApi.route("/", activityRoutes);
+   privateApi.route("/", browserRoutes);
+   privateApi.route("/", usageSummaryRoutes);
++  privateApi.route("/", slackConnectRoutes);
+   privateApi.notFound(() => json({ error: "Not found." }, 404));
+   app.route("/api", privateApi);
+ 
+diff --git a/worker/links.ts b/worker/links.ts
+index fb7340f..d1e50ec 100644
+--- a/worker/links.ts
++++ b/worker/links.ts
+@@ -3,7 +3,7 @@ import { LIMITS, chargeOrThrow } from "./limits";
+ import { sendJobs } from "./job-routing";
+ 
+ /** Where a batch of added links came from, kept in the batch's config. Web calls pass none. */
+-export type BatchSource = { source: "api"; apiKeyId: string; apiKeyName: string };
++export type BatchSource = { source: "api"; apiKeyId: string; apiKeyName: string } | { source: "slack"; workspace: string; teamId: string };
+ 
+ /** `batchId` is set when this call queued the link's Extraction (in the one batch it created). */
+ export type AddResult = { input: string; id: string; created: boolean; batchId?: string } | { input: string; error: string };
+diff --git a/worker/routes/usage-summary.ts b/worker/routes/usage-summary.ts
+index 10a44df..e22e219 100644
+--- a/worker/routes/usage-summary.ts
++++ b/worker/routes/usage-summary.ts
+@@ -29,11 +29,11 @@ export const usageSummaryRoutes = new Hono<AppEnv>().get("/usage/summary", async
+     db
+       .prepare(
+         `SELECT s.key_id,count(*) n,max(k.id) listed,max(k.enabled) enabled,
+-                coalesce(max(k.name),(SELECT json_extract(b2.config,'$.apiKeyName') FROM batches b2
+-                  WHERE b2.user_id=?1 AND b2.kind='extract' AND json_extract(b2.config,'$.apiKeyId')=s.key_id
++                coalesce(max(k.name),(SELECT coalesce(json_extract(b2.config,'$.apiKeyName'),json_extract(b2.config,'$.workspace')) FROM batches b2
++                  WHERE b2.user_id=?1 AND b2.kind='extract' AND coalesce(json_extract(b2.config,'$.apiKeyId'),'slack:'||json_extract(b2.config,'$.teamId'))=s.key_id
+                   ORDER BY b2.created_at DESC,b2.id DESC LIMIT 1)) name
+          FROM (
+-           SELECT (SELECT json_extract(b.config,'$.apiKeyId') FROM jobs j JOIN batches b ON b.id=j.batch_id
++           SELECT (SELECT coalesce(json_extract(b.config,'$.apiKeyId'),'slack:'||json_extract(b.config,'$.teamId')) FROM jobs j JOIN batches b ON b.id=j.batch_id
+                    WHERE j.link_id=l.id AND b.user_id=l.user_id AND b.kind='extract' AND b.created_at=l.created_at
+                    ORDER BY b.id LIMIT 1) key_id
+            FROM links l WHERE l.user_id=?1 AND l.created_at>=?2 AND l.created_at<?3
+@@ -43,11 +43,12 @@ export const usageSummaryRoutes = new Hono<AppEnv>().get("/usage/summary", async
+       .bind(userId, start, end)
+       .all<{ key_id: string | null; name: string | null; n: number; listed: string | null; enabled: number | null }>(),
+   ]);
+-  const apiKeys = groups.results.filter((r) => r.key_id !== null).map((r) => ({ id: r.key_id!, name: r.name ?? "", links: r.n, status: !r.listed ? ("deleted" as const) : r.enabled === 1 ? ("active" as const) : ("revoked" as const) }));
++  const slack = groups.results.filter((r) => r.key_id?.startsWith("slack:")).map((r) => ({ teamId: r.key_id!.slice(6), name: r.name ?? "", links: r.n }));
++  const apiKeys = groups.results.filter((r) => r.key_id !== null && !r.key_id.startsWith("slack:")).map((r) => ({ id: r.key_id!, name: r.name ?? "", links: r.n, status: !r.listed ? ("deleted" as const) : r.enabled === 1 ? ("active" as const) : ("revoked" as const) }));
+   const web = groups.results.find((r) => r.key_id === null)?.n ?? 0;
+   const body: Usage = {
+     quotas: { links },
+-    month: { start, links: web + apiKeys.reduce((sum, k) => sum + k.links, 0), web, apiKeys, ...features },
++    month: { start, links: web + apiKeys.reduce((sum, k) => sum + k.links, 0) + slack.reduce((sum, k) => sum + k.links, 0), web, apiKeys, slack, ...features },
+   };
+   return json(body);
+ });

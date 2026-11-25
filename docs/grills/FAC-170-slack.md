@@ -1,125 +1,270 @@
 # FAC-170: Slack channel → Linklog (grilling decisions)
 
-**Status: pending owner review.** Nothing here is in Linear yet. Arena run on 2026-11-25; the process is in [FAC-170-slack-process.md](FAC-170-slack-process.md).
+**Status: pending owner review.** Nothing is in Linear yet. Two arenas ran on 2026-11-25. Arena A designed a personal app. After the owner's feedback on PR #50, arena B reopened the design as an app any Linklog user can install. This document records arena B's decisions, plus the parts of arena A that still hold. The process is in [FAC-170-slack-process.md](FAC-170-slack-process.md). The prototypes are in [FAC-170-prototype/](FAC-170-prototype/) (`arena-b/` is current).
 
-Owner's words (2026-11-25): "uso mucho mandar a Slack links que me interesan. Tengo un canal en Slack en mi servidor privado que se llama Read Later... idealmente todos estos links deberían caer en la aplicación... ya tenemos la API lista... no debería ser tan complicado armar un bot de Slack que se conecte a esto... no debería comprometer ninguno de los otros tickets que están avanzando."
+## Owner's words
+
+The original request (2026-11-25): "uso mucho mandar a Slack links que me interesan. Tengo un canal en Slack en mi servidor privado que se llama Read Later... idealmente todos estos links deberían caer en la aplicación... ya tenemos la API lista... no debería comprometer ninguno de los otros tickets que están avanzando."
+
+The feedback on PR #50 (2026-11-25), which overrides the original Q1: "no tiene que ser algo solo personal mío... lo que más me gustaría es que sea una app de Slack que cualquier persona que sea cliente o tenga una cuenta acá pueda agregar a su servidor, y que cuando la agrega de forma muy sencilla ya pueda empezar a usarla. Capaz tenga un proceso de configuración, o que por lo menos tengas que decir cuáles son los canales que vas a permitir... habría que ver qué tan viable es y también el tema de seguridad... Capaz [Better Auth] ya tiene alguna cosa con Slack que puede estar interesante." He also wants backfill, in a separate PR, later.
 
 Criteria: (1) the domain model stays simple, (2) respect the module system, (3) don't grow the scope, (4) works and fits, proven by running it.
 
 ## The design in one picture
 
 ```text
-Slack (#read-later) ──signed POST──▶ /api/slack/events           (new route module, ~55 lines)
-   verify signature (5 min window)            ── bad ─▶ 401
-   url_verification                           ──────▶ {challenge}
-   human message? (no subtype | thread_broadcast | file_share, no bot_id)  ── no ─▶ 200
-   decode Slack mrkdwn → scanUrls             ── no URL ─▶ 200
-   apiKeyPrincipal(SLACK_LINKLOG_API_KEY)     ── invalid/revoked ─▶ 200 + warn
-                                              ── lookup failed ─▶ 503 (Slack retries)
-   charge 1 write (same quota as every API path) ── spent ─▶ 429 (Slack retries)
-   addLinks(source: "api", key id + name)     ── links quota spent ─▶ 200 + warn
-                                              ── D1/queue error ─▶ 5xx (Slack retries)
-   ──▶ 200
+Linklog Settings › Slack  [Add to Slack]
+  GET /api/slack/install    (signed-in) → signed cookie {userId.nonce}, redirect to slack.com/oauth/v2/authorize
+                              bot scopes: channels:history groups:history channels:read groups:read
+  Slack consent page        [Allow]
+  GET /api/slack/callback   state == cookie nonce AND session user == cookie user, else ?slack=invalid
+                              oauth.v2.access → team.id, authed_user.id, bot token, bot_user_id
+                              enterprise install → refused
+                              upsert slack_connections(team_id, slack_user_id → user_id, token sealed)
+                              a Slack identity already linked to another Linklog user → ?slack=taken
+  Settings › Slack          pick channels: users.conversations(user) ∩ channels the bot is in
+                              (in Slack: /invite @Linklog to the channel)
+
+Slack ──signed POST──▶ /api/slack/events
+  signature (v0 HMAC, 5 min) ─ bad ─▶ 401           url_verification ─▶ {challenge}
+  app_uninstalled | tokens_revoked(bot) ─▶ delete every connection of team_id ─▶ 200
+  message: counted kind? (none | thread_broadcast | file_share, no bot_id) ─ no ─▶ 200
+  connection = (team_id, event.user) ─ none ─▶ 200, dropped, nothing stored
+  event.channel in connection.channels? ─ no ─▶ 200, dropped
+  decode mrkdwn → scanUrls → charge 1 write to connection.user_id → addLinks(source: slack)
 ```
 
-Activity shows `Extract context · API · Slack`, and Settings > Usage counts the Links under the key "Slack". No new source, table, migration, UI or glossary term.
+Activity shows `Extract context · Slack · <workspace>`. Settings › Usage gets a Slack row per workspace.
 
 ## Decisions
 
-Each line: decision, then why against the criteria. "Suggested" was the ticket's recommendation.
+Each item gives the decision, then the reason against the criteria. "Suggested" means the ticket's recommendation. "Arena A" means it was decided in the first arena and still holds.
 
-**Q1 Shape: a personal Slack app, not an installable OAuth integration.** It matches the suggestion. There is one owner and one workspace. OAuth would add install state, a token table and a Settings screen nobody needs (1, 3). The endpoint is not hard-wired to a user: the user comes from the key (Q1b).
+### Shape and install
 
-**Q1b Mapping and credentials: the Linklog user is the owner of an `lk_` API key, stored as the Worker secret `SLACK_LINKLOG_API_KEY`. The second secret is `SLACK_SIGNING_SECRET`, and there is no bot token.** An API key is already "a user-owned secret that only submits URLs" (GLOSSARY). It is revocable in Settings, and it brings Activity and Usage attribution with it (ground truth GT3). No table and no migration (1, 3). Cost: the key lives in two places (Settings and the Worker secret), so rotating it needs a `wrangler secret put`. The route answers 404 when either secret is unset (run in round 3).
+**Q1 Shape: an installable Slack app for any Linklog user, using Slack OAuth v2 "Add to Slack" started from Linklog Settings.** The owner decided this on PR #50. The owner's own #read-later goes through the same install. Arena A's personal Worker-secret path is dropped, because keeping two paths to the same thing breaks criterion 1.
 
-**Q2 Channel: `#read-later` directly, chosen in Slack by inviting the app. No `SLACK_CHANNEL_ID` guard.** This rejects the suggested "new channel". The ticket wanted a new channel to avoid touching Hermes, but nothing in Linklog can collide with Hermes. Linklog dedupes, and bot posts are ignored. Slack only sends `message.channels` events for channels the app is a member of, so the invite already selects the channel. A Worker-side guard would be a third config value that drops messages silently when it disagrees with Slack (1). This is not a product question: the owner's own words name #read-later. Caveat (M4, checked): if Hermes posts **with a user token** (no `bot_id`), its replies are saved too. The owner checks this by hand (see Manual steps).
+**B1 Install flow: two clicks, then choose channels.**
+1. In Settings › Slack, click **Add to Slack**.
+2. Click **Allow** on Slack's consent page. This lands back on Settings with `?slack=connected`.
+3. Tick the channels whose messages count. If a channel is missing, run `/invite @Linklog` in it.
 
-**Q3 Messages: human messages with no subtype, `thread_broadcast` and `file_share` count, thread replies included. Ignore `bot_id`, edits (`message_changed`), deletes, joins and every other subtype. There is no owner-user filter.** This partly rejects the suggestion "only the owner's Slack user". The workspace is private, and the invited channel is the boundary. A user filter is a third secret for a case that doesn't exist, and adding one later is one line (1, 3). `thread_broadcast` counts so that a reply saves the same with or without "Also send to channel". `file_share` (a link pasted with a screenshot) counts because the owner said "todos estos links". Each costs one string in the allowlist.
+The install only works when it starts from Linklog: a callback without its cookie is refused, which was tested.
 
-**Q3b Decoding (found by running, not in the ticket):** Slack sends `text` as mrkdwn: `<url|label>`, and `&amp; &lt; &gt;`. Fed raw to `/api/v1/links`, `<https://…/a?x=1&amp;y=2|…/a?x=1&amp;y=2>` was **saved as a wrong Link**, `https://…/a?x=1&amp;y=2|…` (GT1, 202 created). The route decodes first: `<url|label>` becomes the url, then `&lt; &gt;` are unescaped, with `&amp;` last. That is why a pure relay (Slack Workflow Builder or a webhook straight into `/api/v1/links`) is not enough, and why a small route is needed (4).
+**B2 Linking: a Slack connection is one Slack identity (`team_id`, Slack user id) linked to one Linklog user.** It is created by the install itself: `authed_user.id` and `team.id` from `oauth.v2.access` are linked to the signed-in user.
+- One Linklog user can link several workspaces.
+- Several Linklog users can share a workspace. Each one clicks **Add to Slack**; Slack re-authorizes and returns the same bot token.
+- A Slack identity belongs to at most one Linklog user. A second Linklog user claiming it gets `?slack=taken` (tested).
+- There is no separate "Sign in with Slack" step.
 
-**Q4 Feedback in Slack: none in v1. No reactions and no threaded reply.** This rejects the suggested reactions. Reactions need a bot token (a third secret), the `reactions:write` scope, and an outbound call with its own failure policy (3). Activity already shows every Slack batch. The cost is that failures are silent in Slack (a revoked key, the links quota, a message with more than 100 URLs). They show only as warnings in Workers Logs. If the owner wants a ✅, it is a follow-up and does not block this.
+**B6 Better Auth: Better Auth is not used to install the bot.** Its Slack support is Sign in with Slack (`openid/connect/authorize`, scopes `openid profile email`), which gives an identity token, not a workspace bot install. That applies both to `@better-auth/core`'s social provider and to the `slack()` helper of `genericOAuth` in 1.7.7.
 
-**Q5 Attribution: reuse `source: "api"` with the key's name. No new `slack` source.** This rejects the suggestion. Run on both prototypes, the result was Activity `Extract context · API · Slack` and Usage `apiKeys: [{ name: "Slack", links: 3 }]`, with zero code changed in `BatchSource`, `ActivitySheet.label()` or `usage-summary.ts`. A new source would touch all three, plus the docs, only to change a label (1, 2). Readers of the reused shape (`source === "api"`, `BatchSource`, `apiKeyName`) are `ActivitySheet.tsx`, `worker/links.ts`, `usage-summary.ts`, `public-api.ts` and two tests. All of them read it unchanged.
+The `genericOAuth` plugin *can* carry the install as a linked account. Opus built it, and 43 of 43 scenarios passed. Arena B rejected it anyway, as a values call decided by the moderator after the debaters swapped positions. The reason is that it makes Better Auth treat a workspace install as a sign-in identity, which needs:
+- global `accountLinking.allowDifferentEmails` and `trustedProviders`, because Slack returns no email;
+- `/link-social` turned on, with a hook that pins the scopes, because the client can otherwise ask for its own scopes (tested);
+- `/unlink-account` and `/sign-in/social` disabled for good. With unlink turned on, a user deleted their own password account (tested).
+- raw SQL against Better Auth's camelCase schema;
+- an index migration anyway, because `account(accountId)` is unindexed and a per-message lookup ran as `SCAN` (tested);
+- an `auth.test` call to get the workspace name.
 
-**Q6 Retries and idempotency: process inline, before answering.** Slack redelivers only when it does not get a 2xx within 3 s. Inline processing took 6–215 ms locally, so a transient failure becomes a 5xx through the existing `onError`, and Slack's own retries (immediately, after 1 min, after 5 min) are the retry mechanism. A redelivery is a Duplicate: no new batch and no charge (GT2; 5 parallel identical deliveries produced exactly 1 Link). This rejects "ack first, work in `waitUntil`": a failure after the 200 is lost for good, because Slack never redelivers after a 2xx. There is no event-id store (1). The key lookup goes through a helper extracted from `requireApiKey` (`apiKeyPrincipal`), so a D1 outage is a retryable 503, not "key revoked". Without the helper, both prototypes would have dropped the message.
+One table of our own is simpler (criterion 1). Better Auth keeps owning sign-in and Linklog owns its integrations (criterion 2).
 
-**Q6b Quotas.** Each Slack message with a URL charges **1 write** to the account's shared budget of 120 writes per minute, like every API path (2). When that budget is spent the route answers 429. Slack's immediate retry lands in the same window, but its 1-minute retry gets through (run: 429 `Retry-After: 44`, then 200 and saved 61 s later). **The 500 links per hour quota answers 200 and logs a warning.** Slack's retries (5 minutes at most) cannot outlast an hour window, and repeated non-2xx answers count toward Slack disabling the subscription. A message with **more than 100 URLs** saves the first 100 and logs a warning; the public API refuses the same input with a 400, but Slack can't show an error.
+What we do take from Better Auth: `symmetricEncrypt`/`symmetricDecrypt` from `better-auth/crypto`, keyed by `BETTER_AUTH_SECRET`. This is the same function Better Auth uses to encrypt its own OAuth tokens, so Linklog writes no crypto of its own.
 
-**Q6c Known edge: a Link deleted within 5 minutes can come back.** If the first delivery timed out after saving and the owner deletes the Link before Slack's retry, the retry creates it again and charges it again (run in round 3). This is documented, not coded around. A deliberate repost also re-adds it, which is expected.
+### Channels and ownership
 
-**Q7 Backfill: only new messages in the main PR. Importing history is the one product question for the owner.** "Todos estos links" could mean history. If yes, it is a separate, optional small PR: a local one-off script (`scripts/slack-backfill.ts`). It reads `conversations.history` with a bot token from the shell environment, oldest first. It decodes with the same function and posts to `/api/v1/links` with the same key in chunks of at most 100 URLs, honouring 429 and `Retry-After` (500 links per hour). The script adds no Worker code. Free Slack plans only expose the last 90 days.
+**B3 Allowed channels: opt-in per connection, chosen in Linklog Settings › Slack, and stored as a JSON column on the connection row.**
+- The picker lists `users.conversations?user=<slack user>` intersected with the channels the bot is in. A user never sees the name of a private channel they aren't in. Opus's `conversations.list` would have shown them, as Sonnet's run demonstrated.
+- The bot must be invited to a channel for that channel to deliver messages. That is Slack's rule: message events only arrive for conversations the bot is a member of.
+- **Rejected: "inviting the bot is the opt-in", with no picker.** In a shared workspace, it would save every linked member's posts from every channel the bot sits in, and the owner asked to say which channels count.
 
-**Q8 Manual steps for the owner:** see the section below.
+**B4 Ownership: a message lands only in the library of the author's connection, looked up by (`team_id`, `event.user`), and only if `event.channel` is in that connection's channels.** This rule makes it impossible for a message to land in the wrong account. A channel alone never decides. These cases were all tested:
+- A message by B in A's channel saves nothing for A.
+- After B allows that channel, B's message lands only in B's library.
+- A's Slack id arriving from another team is dropped.
+- Messages from unlinked users and from bots are dropped and never stored.
 
-**Size: 1 PR** for the feature: a route of about 55 lines, `apiKeyPrincipal` extracted (+25/−14 in `middleware.ts`), 3 lines in `app.ts`, 2 optional `Env` fields, one Worker test file and `docs/slack.md`. A second PR only if the owner wants backfill. No migration, no extension or `browser-protocol` change (so no extension version bump), and no UI change, so it doesn't collide with in-flight tickets.
+**Q3 Messages that count (arena A):** no subtype, `thread_broadcast` and `file_share`, with thread replies included. Messages with `bot_id`, edits, deletes and joins are ignored. There is no separate user filter: authorship is now the filter.
 
-## Alternatives rejected
+**Q3b Decoding (arena A):** Slack sends mrkdwn. `<url|label>` becomes the url, then `&lt;` and `&gt;` are unescaped, `&amp;` last. Without decoding, a URL like `https://…/a?x=1&amp;y=2|label` was saved as a broken Link (GT1).
 
-- **Slack Workflow Builder or a webhook relay straight into `/api/v1/links`, with zero code.** It saves wrong URLs (GT1). Its web-request step is also paid-plan only (not verified against live Slack).
-- **An installable OAuth integration for any user.** Adds install state, a token table and Settings UI. No user other than the owner exists.
-- **A new `slack` batch source.** It changes a label at the cost of touching `BatchSource`, Activity, Usage and the docs.
-- **Ack first, then `waitUntil`.** It loses failures after the 200.
-- **An event-id dedupe table.** `addLinks` is already idempotent per URL.
-- **A `SLACK_CHANNEL_ID` guard and a Slack user-id filter.** Config that duplicates what the Slack invite already decides.
-- **Reactions or a threaded reply.** Needs a bot token, a scope and an outbound failure policy; this is a follow-up if wanted.
+### Security
 
-## Questions for the owner (exceptions)
+**B5a Request signature (arena A):** v0 HMAC-SHA256 over `v0:{ts}:{raw body}` with the app's signing secret, a 5-minute window, constant-time compare. Bad, missing and stale signatures get 401.
 
-1. **Backfill:** do you want the existing #read-later history in Linklog, or only what you post from now on? Recommendation: only new messages, plus the optional script PR if you want history (free Slack: last 90 days).
+**B5b OAuth state:** `GET /api/slack/install` sets a signed, HttpOnly, Lax cookie holding `${userId}.${nonce}` (Hono `setSignedCookie`, 10 minutes, path `/api/slack`), and sends the nonce as `state`. The callback requires the nonce to match and the signed-in user to equal the cookie's user, and it clears the cookie.
 
-Questions the moderator answered for you, which you can overturn: no ✅ reaction in Slack (Q4); `file_share` counts (Q3); a message from someone else in #read-later is saved too (Q3); and when the links-per-hour quota is spent, the message is dropped with only a log line (Q6b).
+Round 3 refuted the moderator's first version, a bare nonce: it couldn't tell that the callback arrived on another user's session. With the user in the cookie, these were all refused (tested):
+- a callback on another user's session
+- a state from another start
+- a tampered cookie
+- a replayed `code`
 
-## Manual steps in Slack (owner)
+**B5c Token storage: the bot token is sealed in D1** (`slack_connections.bot_token`, `symmetricEncrypt`). It can't be a Worker secret, because each workspace has its own token.
+- The events path never reads the token. The picker, Disconnect and backfill do.
+- If `BETTER_AUTH_SECRET` rotates, stored tokens can't be decrypted. The picker then answers `409 {code: "slack-reconnect"}` and the UI asks the user to **Add to Slack** again. Before round 3, this case was an unhandled 500.
 
-1. Create an app at api.slack.com/apps, "From scratch", in your workspace. Name it, for example, "Linklog".
-2. Under **OAuth & Permissions**, add the bot token scope `channels:history`. If #read-later is a private channel, add `groups:history` instead.
-3. Wait to enable events until the PR is deployed and the secrets are set (step 6): Slack checks the URL right away.
-4. In Linklog, go to **Settings → API keys** and create a key named `Slack`. Copy the secret.
-5. In Slack's **Basic Information**, copy the **Signing Secret**.
-6. Run `wrangler secret put SLACK_SIGNING_SECRET --env production` and `wrangler secret put SLACK_LINKLOG_API_KEY --env production`.
-7. Under **Event Subscriptions**, turn events on with the Request URL `https://linklog.facundopri.com/api/slack/events` (it should show "Verified"). Subscribe to the bot event `message.channels`, or `message.groups` for a private channel. Save.
-8. **Install to Workspace**, then in #read-later run `/invite @Linklog`.
-9. Check Hermes: open one of its posts in #read-later. If it shows an **APP** badge, it is a bot and is ignored. If it posts as you, its replies with links will be saved too; turn Hermes off or tell us.
-10. Post a link in #read-later. It should appear in Linklog, and in Activity as `Extract context · API · Slack`.
+**B5d Minimal scopes (bot, no user scopes):**
 
-## Drafted implementation ticket (not created in Linear)
+| Scope | Why |
+| --- | --- |
+| `channels:history`, `groups:history` | message events from public and private channels |
+| `channels:read`, `groups:read` | the picker |
 
-**Title:** Save links posted to a Slack channel into Linklog
+All four are requested at install, because adding a scope later forces every workspace to reinstall, and backfill needs `*:history`. Events to subscribe to: `message.channels`, `message.groups`, `app_uninstalled`, `tokens_revoked` (the last two need no scope).
+
+**B5e Revocation and uninstall:**
+- `app_uninstalled`, or `tokens_revoked` with `bot[]`, deletes every connection of that team. Both handlers are idempotent, because Slack doesn't guarantee their order (tested, both orders).
+- **Disconnect** in Settings deletes that connection. When it was the workspace's last connection, it also calls `apps.uninstall` and ignores errors such as an already-revoked token. Linklog should not keep receiving message text from a workspace where nobody is linked. This was a swap in round 2, decided by the owner's word "seguridad" (tested: called exactly once, and late events afterwards are harmless).
+- Deleting a Linklog user cascades to their connections.
+
+**B5f Multi-tenant invariant:** the only route from a Slack event to a library is the connection row found by (`team_id`, `event.user`), plus its channel list. No code path takes a user id from the request.
+
+**B5g Rate limits:**
+- Each counted message charges 1 write to its author's Linklog account, as every API path does (arena A).
+- The `links` quota (500 per hour) answers 200 and logs a warning; the `writes` budget answers 429 and Slack retries (arena A).
+- Slack sends at most 30,000 events per workspace per app per hour.
+- Installs are limited per user through the existing `app_rate_limits` table (20 per hour in the prototype).
+
+**B5h Enterprise Grid org installs (`is_enterprise_install`) are refused in v1 (tested).**
+
+### Attribution, retries and distribution
+
+**Q5 / B7 Attribution: a new batch source, `{ source: "slack", teamId, teamName }`.** This reverses arena A, which reused `api` with the owner's key, because there is no longer a user-made API key to name. Auto-creating hidden API keys was rejected: they would be keys nobody can use, in Better Auth's `apikey` table, with revoke and delete meanings that don't apply.
+- Activity shows `Extract context · Slack · <workspace>`.
+- Usage gets a Slack row per workspace. Without the SQL change, Slack Links would be counted as Web.
+
+In round 3's run with existing data, Usage went from `{web:2, apiKeys:["Slack:2"], slack:[]}` to `{web:2, apiKeys:["Slack:2"], slack:["Acme:1"]}`. A URL already saved on the web and posted again in Slack stays under Web.
+
+**Q6 Retries and idempotency (arena A):** processing happens inline. A transient failure answers 5xx, and Slack retries immediately, after 1 minute and after 5 minutes. A redelivery is a Duplicate. Known edge: a Link deleted within the 5-minute retry window can come back.
+
+**Q4 Feedback in Slack (arena A):** none in v1.
+
+**B8 Distribution: start with unlisted distribution** ("Activate Public Distribution" in the app's settings). It needs no review, and anyone with the **Add to Slack** link can install the app in a workspace that allows it.
+- Some workspaces only allow admin-approved or Marketplace apps. There, a user's click becomes a request to the admin.
+- The Marketplace requires at least 10 active workspaces before an app can apply, then a preliminary review (about 10 business days) and a functional review (up to 10 weeks), plus a demo video. After that, the app's configuration is locked.
+- Slack's 2025 terms say commercial distribution belongs on the Marketplace, and that unlisted apps are for development, testing and pilots.
+
+The Marketplace is the owner's question below.
+
+### Size
+
+**B9 Size: 3 PRs.**
+1. **Server.** Migration `slack_connections` plus rollback; install, callback and disconnect; the events route with revocation; the channels API; the `slack` source in Activity and Usage; the QA fake of slack.com; Worker tests; `docs/slack.md`. About 190 lines of new server code, +53/−9 in existing files, and more with tests and docs. The owner can use it right away by setting channels from the browser.
+2. **Settings › Slack UI.** Add to Slack, connections, the channel picker, the Usage row and the reconnect state. Must ship before anyone else is invited.
+3. **Backfill**, later. See the separate drafted ticket: [FAC-170-backfill-ticket.md](FAC-170-backfill-ticket.md).
+
+None of the three touches the extension or `packages/browser-protocol`, so there is no version bump and no collision with tickets in progress. PR1 adds one migration.
+
+## Alternatives rejected (arena B)
+
+- **Better Auth `genericOAuth` as the install carrier.** It works, but it turns an install into a sign-in identity, loosens global linking and needs permanent route guards (B6).
+- **Sign in with Slack.** Gives identity only, no bot and no events.
+- **No channel picker ("invite = opt-in").** Unsafe in shared workspaces (B3).
+- **`conversations.list` for the picker.** Leaks the names of private channels (B3).
+- **Ownership by channel ("channel owner").** Needs a new concept and misroutes other members' posts (B4).
+- **Hidden auto-created API keys for attribution** (B7).
+- **Requesting scopes later, when backfill ships.** Every workspace would have to reinstall.
+- **Arena A's personal Worker-secret app.** Superseded by Q1.
+
+## Questions for the owner (product only)
+
+1. **Marketplace:** is "anyone with a Linklog account can add it" an unlisted pilot for now, or do you want to commit to the Marketplace review (about 10 weeks, after 10 active workspaces)? Recommendation: unlisted now, apply when the 10 workspaces exist. Until then, some workspaces will block the install and backfill runs slowly (1 request per minute, 15 messages each).
+2. **Privacy:** Linklog receives (and discards) the text of messages by unlinked members in channels the bot is in. That needs a line in the privacy policy before anyone else installs it. Is that acceptable, or do you prefer to only offer it to people whose whole channel is theirs?
+
+Answers the moderator gave for you, which you can overturn: no reaction in Slack (Q4); `file_share` counts (Q3); Disconnect of the last connection uninstalls the app from the workspace (B5e); Enterprise Grid isn't supported in v1 (B5h).
+
+## Manual steps for the owner in Slack
+
+These are one-time steps, for the Linklog app itself:
+1. Create the app at api.slack.com/apps, **From scratch**, in your workspace, named "Linklog". Using a manifest is fine.
+2. Under **OAuth & Permissions**:
+   - Add the Redirect URL `https://linklog.facundopri.com/api/slack/callback`.
+   - Add the bot scopes `channels:history`, `groups:history`, `channels:read` and `groups:read`.
+3. Under **Basic Information**, copy the Client ID, Client Secret and Signing Secret. Then run `wrangler secret put SLACK_CLIENT_SECRET --env production` and `wrangler secret put SLACK_SIGNING_SECRET --env production`. `SLACK_CLIENT_ID` is a plain var.
+4. After PR1 is deployed, open **Event Subscriptions**:
+   - Enable it with the Request URL `https://linklog.facundopri.com/api/slack/events`. It should show "Verified".
+   - Subscribe to the bot events `message.channels`, `message.groups`, `app_uninstalled` and `tokens_revoked`.
+5. Under **Manage Distribution**, complete the checklist and click **Activate Public Distribution**. This is unlisted: there is no review.
+6. Optional: under **App Home** / **Basic Information**, add an icon and a description, which Slack shows on its consent page.
+
+Then, as a user, like anyone else:
+
+7. In Linklog, go to **Settings › Slack** and click **Add to Slack**, then **Allow**.
+8. In #read-later, run `/invite @Linklog`, then tick #read-later in **Settings › Slack**. Until PR2 ships, set the channel from the browser.
+9. Hermes: arena A's note still holds. A Hermes that posts *as you* (no APP badge) has its links saved too; one that posts as a bot is ignored.
+
+## Drafted implementation tickets (not created in Linear)
+
+### Ticket 1: Slack app, server (install, connections, events)
+
 **Labels:** `Feature`. **Project:** Linklog. **Related:** FAC-170.
 
-### Goal
-Links the owner posts to `#read-later` in their Slack workspace land in their Linklog library, attributed to an API key named "Slack", with no LLM in between.
+**Goal.** Any Linklog user can add the Linklog Slack app to their workspace. Messages they post in the channels they choose land in their library, attributed to `Slack · <workspace>`.
 
-### Design
-See `docs/grills/FAC-170-slack.md`, decisions Q1–Q8. The prototype is in `docs/grills/FAC-170-prototype/` (`slack.ts.txt`, `app-middleware.diff.txt`). It is a prototype: rewrite it test-first, don't copy it.
-- `worker/routes/slack.ts`: `POST /api/slack/events`, mounted in `worker/http/app.ts` outside `/api/v1`. Answers 404 when `SLACK_SIGNING_SECRET` or `SLACK_LINKLOG_API_KEY` is unset.
-- `apiKeyPrincipal(c, key)` extracted from `requireApiKey` (`worker/http/middleware.ts`). `requireApiKey` uses it, with identical behaviour.
-- Body read with `readBounded`. Signature: HMAC-SHA256 of `v0:{ts}:{raw body}`, `v0=` hex, timestamp within 300 s, constant-time compare (`crypto.subtle.verify`).
-- An exported decode function: `<url|label>` becomes the url, other `<…>` tokens become their inside, then `&lt; &gt;` are unescaped, `&amp;` last.
-- Counted messages: `event.type === "message"`, no `bot_id`, and a subtype that is none, `thread_broadcast` or `file_share`.
-- Charges 1 write per message with a URL. `addLinks(…, { source: { source: "api", apiKeyId, apiKeyName } })` runs inline.
-- Logs use `console.warn` (the QA harness doesn't capture `console.log`): `slack_key_rejected`, `slack_links_limited`, `slack_truncated`.
+**Design.** Decisions B1–B9 above. The prototype is in `docs/grills/FAC-170-prototype/arena-b/`: a migration, routes, helpers, a diff of existing files, and scenarios. It is a prototype: rewrite it test-first, don't copy it. Read `docs/agents/d1-migrations.md` before writing the migration.
 
-### Acceptance criteria
-1. A signed `url_verification` answers `{ challenge }`.
-2. A signed message in the channel containing `<https://h/a?x=1&amp;y=2|label>` saves `https://h/a?x=1&y=2`. Activity shows `Extract context · API · Slack`, and Usage counts it under the key "Slack".
-3. A thread reply, a `thread_broadcast` and a `file_share` save. A bot message (with `bot_id` or `subtype: bot_message`), `message_changed` and `message_deleted` save nothing and answer 200.
-4. A bad signature, a missing header or a timestamp older than 5 minutes answers 401 and saves nothing.
-5. Redelivering the same message (`X-Slack-Retry-Num: 1`) creates no Link, batch or charge.
-6. A revoked "Slack" key answers 200, saves nothing and logs `slack_key_rejected`. A failed key lookup answers 503.
-7. A spent `writes` budget answers 429 with `Retry-After`. A spent `links` quota answers 200 and logs `slack_links_limited`. More than 100 URLs saves the first 100 and logs `slack_truncated`.
-8. Without the two secrets, the route answers 404.
-9. `tests/api-keys.test.ts` and `tests/public-api.test.ts` pass unchanged.
-10. `docs/slack.md` documents setup (the manual steps above), behaviour, and the known edges (silent failures, Hermes posting with a user token, a Link deleted within 5 minutes can come back). `docs/upload-api.md` links to it.
+**Acceptance criteria.**
+1. `GET /api/slack/install`:
+   - Signed out, it gives 401.
+   - Signed in, it sets the signed `{userId.nonce}` cookie and redirects to `oauth/v2/authorize` with exactly the four bot scopes and `state=nonce`.
+   - Without the Slack config, the Slack routes answer 404.
+2. Callback:
+   - A valid callback creates or updates a `slack_connections` row (`team_id`, `slack_user_id` → user, `team_name`, `bot_user_id`, sealed token). The token never appears in plaintext in D1.
+   - Refused with `?slack=invalid` and no row: a forged or foreign state, a missing or tampered cookie, a session user different from the cookie's user.
+   - A replayed `code` gives `?slack=failed`, and so does `is_enterprise_install`.
+   - An identity already linked to another user gives `?slack=taken`.
+3. Several Linklog users in one team, and one user in two teams, each get their own row (tested).
+4. Events:
+   - Signature and `url_verification` work as in arena A.
+   - A counted message by a linked author, in an allowed channel, saves its decoded URLs to that author's library with `source: "slack"`.
+   - Each of these saves nothing and answers 200: an unlinked author, a non-allowed channel, a bot, an edit or a delete, a mismatched team.
+   - A redelivery creates nothing.
+5. `app_uninstalled` and `tokens_revoked{bot}` delete every row of the team, in either order, idempotently.
+6. Channels API:
+   - It lists `users.conversations(user)` intersected with the channels the bot is in.
+   - It stores only ids from that list.
+   - An undecryptable token answers `409 {code: "slack-reconnect"}`.
+7. `DELETE` connection:
+   - Only the owner can delete it.
+   - On the workspace's last connection, it calls `apps.uninstall` once and ignores errors.
+8. Activity shows `Extract context · Slack · <workspace>`. `GET /api/usage/summary` returns `month.slack[]` per workspace, and the Web count and API key rows are unchanged (tested with existing data).
+9. Quotas and limits as in arena A: 1 write per message, links-quota 429 gives 200 plus `console.warn`, more than 100 URLs saves the first 100 plus a warning. Installs are rate-limited per user.
+10. A QA fake of `slack.com` in `qa/video/worker-entry.ts` covers `oauth.v2.access` (single-use codes), `users.conversations`, `conversations.list` and `apps.uninstall`. `docs/slack.md` covers setup, behaviour and the known edges. `docs/upload-api.md`'s Usage paragraph mentions Slack workspaces. GLOSSARY gains "Slack connection".
 
-### Verification
-- A Worker test file covering criteria 1–9 with signed requests.
-- `verify-linklog`: a journey or script that signs Slack requests against the instance (see `docs/grills/FAC-170-prototype/scenarios.ts.txt`). It checks the Link, the Activity label in the UI and Usage. Pass the secrets with `up --var`, and create the key with a known secret.
-- After deploy, the owner's step 10 in Slack.
+**Verification.** Worker tests for criteria 1–9. The `verify-linklog` scenarios script (prototype: `arena-b/scenarios-r3.ts.txt`) runs on an instance with existing web and API key data. Then a manual install in the owner's real workspace after deploy (manual steps 1–8).
 
 +++ Agent notes
-- Worker vars are fixed at `up`. The prototype created the key through `/api/auth/api-key/create` and then pointed its hash at the `--var` value in local D1. A journey can do the same, or create the key first and restart.
-- Changes neither `apps/extension/` nor `packages/browser-protocol/`: no version bump.
-- Opus round 3: the inline time measured 19–215 ms locally.
+- The prototype's migration comment still says "AES-GCM derived from BETTER_AUTH_SECRET". The decision is `symmetricEncrypt` from `better-auth/crypto`.
+- Readers of changed shapes: `BatchSource` (`worker/links.ts`, `public-api.ts`), `ActivitySheet.label()` and its `BatchConfig`, the `usage-summary.ts` SQL, the `Usage` type in `src/types.ts` and the Settings Usage UI. The `apiKeys` tests and journeys are unchanged and pass in the prototype.
+- Not verified against real Slack: comma-joined scopes, a second non-admin user re-authorizing, `authed_user.id` on a bot-only install (taken from the docs' sample), admin-approval workspaces, `users.conversations` on private channels.
 +++
+
+### Ticket 2: Settings › Slack UI
+
+**Goal.** Users connect, choose channels and disconnect without the console.
+
+**Acceptance.**
+- An **Add to Slack** button.
+- A list of connections, each showing its workspace.
+- A channel picker with checkboxes and a hint: "Missing a channel? `/invite @Linklog` in Slack".
+- **Disconnect** with confirmation.
+- The `?slack=connected|invalid|taken|failed` outcomes shown as toasts.
+- The reconnect state on 409.
+- A Slack row in the Usage section.
+- Verified with a `verify-linklog` journey and the `react-doctor` skill.
+
+### Ticket 3: backfill
+
+See [FAC-170-backfill-ticket.md](FAC-170-backfill-ticket.md).
+
+## Arena A decisions superseded by arena B
+
+| Arena A | Arena B |
+| --- | --- |
+| Q1 personal app with Worker secrets | installable app (owner) |
+| Q1b user = owner of an `lk_` key in `SLACK_LINKLOG_API_KEY` | a Slack connection per identity |
+| Q2 the channel is whatever the bot was invited to | opt-in channel list per connection |
+| Q3 no user filter | the author's connection decides |
+| Q5 reuse `source: "api"` | new `slack` source |
+| Q7 backfill as a local script | resumable job, separate ticket |

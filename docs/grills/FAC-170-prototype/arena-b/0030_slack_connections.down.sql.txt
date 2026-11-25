@@ -1,0 +1,2 @@
+-- PROTOTYPE. Rollback of 0030_slack_connections.sql: the table and its Slack tokens are dropped.
+DROP TABLE slack_connections;

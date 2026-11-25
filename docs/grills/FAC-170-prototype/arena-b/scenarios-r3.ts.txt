@@ -1,0 +1,107 @@
+// PROTOTYPE (FAC-170 arena B round 3, Sonnet): existing data first (web links + API key "Slack" via /api/v1), then Slack.
+// usage (from the worktree root): bun scenarios-r3.ts <runDir>
+import { createHmac } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { $ } from "bun";
+import { symmetricEncrypt } from "better-auth/crypto";
+
+const runDir = resolve(process.argv[2]!);
+const session = JSON.parse(readFileSync(`${runDir}/session.json`, "utf8"));
+const UI = session.ui as string;
+const SIGNING = "fake-signing-secret";
+const COOKIE = [session.accounts[0].cookie as string, session.accounts[1].cookie as string];
+const F = `https://article.qa.example/r3-${Date.now().toString(36)}`;
+let failures = 0;
+const expect = (name: string, ok: boolean, detail = "") => { if (!ok) failures++; console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? "  " + detail : ""}`); };
+const web = async (who: 0 | 1, method: string, path: string, body?: object) => {
+  const r = await fetch(`${UI}/api${path}`, { method, headers: { Cookie: COOKIE[who]!, Origin: UI, "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
+  return { status: r.status, j: (await r.json().catch(() => ({}))) as any };
+};
+const d1 = async (sql: string) => JSON.parse(await $`bunx wrangler d1 execute linklog --local -c ${runDir}/wrangler.qa.generated.jsonc --persist-to ${runDir}/state/qa-video --command ${sql} --json`.quiet().text())[0].results as any[];
+const rows = () => d1("SELECT team_id,slack_user_id,user_id FROM slack_connections ORDER BY 1,2");
+const logs = () => readFileSync(`${runDir}/logs/dev.err.log`, "utf8").replace(/\x1b\[[0-9;]*m/g, "");
+const count = (needle: string) => logs().split(needle).length - 1;
+const settle = () => Bun.sleep(2500);
+const usage = async (who: 0 | 1 = 0) => { const m = (await web(who, "GET", "/usage/summary")).j.month; return { links: m.links, web: m.web, apiKeys: m.apiKeys.map((k: any) => `${k.name}:${k.links}:${k.status}`), slack: m.slack.map((w: any) => `${w.name}:${w.links}`) }; };
+const mine = async (who: 0 | 1) => ((await web(who, "GET", "/library")).j.links as any[]).filter((l) => l.url.startsWith(F)).map((l) => l.url.slice(F.length));
+
+const code = (team: string, name: string, user: string) => `FAKE.${team}.${name}.${user}.${Math.random().toString(36).slice(2)}`;
+async function start(who: 0 | 1) {
+  const r = await fetch(`${UI}/api/slack/install`, { redirect: "manual", headers: { Cookie: COOKIE[who]! } });
+  const url = new URL(r.headers.get("location")!);
+  return { state: url.searchParams.get("state")!, cookie: /linklog_slack_state=([^;]+)/.exec(r.headers.get("set-cookie") ?? "")![1]! };
+}
+async function callback(session: 0 | 1, p: { code: string; state: string }, stateCookie?: string) {
+  const r = await fetch(`${UI}/api/slack/callback?${new URLSearchParams(p)}`, { redirect: "manual", headers: { Cookie: stateCookie ? `${COOKIE[session]}; linklog_slack_state=${stateCookie}` : COOKIE[session]! } });
+  return r.headers.get("location") ?? "";
+}
+async function install(who: 0 | 1, team: string, name: string, user: string) { const s = await start(who); return callback(who, { code: code(team, name, user), state: s.state }, s.cookie); }
+async function slack(team: string, event: object) {
+  const body = JSON.stringify({ type: "event_callback", team_id: team, event });
+  const ts = Math.floor(Date.now() / 1000);
+  const r = await fetch(`${UI}/api/slack/events`, { method: "POST", headers: { "content-type": "application/json", "x-slack-request-timestamp": String(ts), "x-slack-signature": "v0=" + createHmac("sha256", SIGNING).update(`v0:${ts}:${body}`).digest("hex") }, body });
+  return r.status;
+}
+const msg = (user: string, channel: string, url: string) => ({ type: "message", channel, user, ts: "1764090000.000100", text: `<${url}|x>` });
+
+console.log("== R0 existing data, written the normal way (arena A path)");
+for (const p of ["/web-1", "/web-2"]) await web(0, "POST", "/links", { url: F + p });
+const key = await fetch(`${UI}/api/auth/api-key/create`, { method: "POST", headers: { Cookie: COOKIE[0]!, Origin: UI, "content-type": "application/json" }, body: JSON.stringify({ name: "Slack" }) }).then((r) => r.json() as any);
+const pub = await fetch(`${UI}/api/v1/links`, { method: "POST", headers: { authorization: `Bearer ${key.key}`, "content-type": "application/json" }, body: JSON.stringify({ urls: [F + "/api-1", F + "/api-2"] }) });
+console.log("   public API with key 'Slack' ->", pub.status);
+await settle();
+const before = await usage();
+console.log("   usage before Slack:", JSON.stringify(before));
+expect("before: web 2, API key Slack 2, no slack rows", before.web === 2 && before.apiKeys[0] === "Slack:2:active" && before.slack.length === 0 && before.links === 4);
+
+console.log("== R1 A (T1) and B (T1) install; A and B allow C0READ1");
+expect("A connects", (await install(0, "T1", "Acme", "U_A1")) === "/?slack=connected");
+expect("B connects", (await install(1, "T1", "Acme", "U_B")) === "/?slack=connected");
+await web(0, "PUT", "/slack/connections/T1/U_A1/channels", { channels: ["C0READ1"] });
+await web(1, "PUT", "/slack/connections/T1/U_B/channels", { channels: ["C0READ1"] });
+await slack("T1", msg("U_A1", "C0READ1", F + "/slack-1"));
+await slack("T1", msg("U_A1", "C0READ1", F + "/web-1")); // already saved on the web
+await slack("T1", msg("U_A1", "C0READ1", F + "/api-1")); // already saved by the API key
+await settle();
+const after = await usage();
+console.log("   usage after:", JSON.stringify(after));
+expect("web count unchanged (2); API key row kept (Slack:2 active); Slack row separate (Acme:1)", after.web === 2 && after.apiKeys.length === 1 && after.apiKeys[0] === "Slack:2:active" && after.slack.join() === "Acme:1" && after.links === 5);
+const batches = ((await web(0, "GET", "/library")).j.batches as any[]).map((b) => JSON.parse(b.config || "{}")).filter((c) => c.source);
+console.log("   batch sources:", JSON.stringify(batches.map((c) => c.source)));
+expect("reposting a web/API URL in Slack made no Slack batch for it (Duplicate)", batches.filter((c) => c.source === "slack").length === 1);
+
+console.log("== R2 callback security: session and cookie");
+{
+  const a = await start(0), a2 = await start(0), b = await start(1);
+  expect("A's cookie + A's state, but B's session -> refused", (await callback(1, { code: code("T8", "Evil", "U_E1"), state: a.state }, a.cookie)) === "/?slack=invalid");
+  expect("valid A cookie + state minted for another start (another browser's state) -> refused", (await callback(0, { code: code("T8", "Evil", "U_E2"), state: b.state }, a2.cookie)) === "/?slack=invalid");
+  expect("valid A cookie + state from a second start of A's -> refused", (await callback(0, { code: code("T8", "Evil", "U_E3"), state: a.state }, a2.cookie)) === "/?slack=invalid");
+  expect("cookie tampered -> refused", (await callback(0, { code: code("T8", "Evil", "U_E4"), state: a.state }, a.cookie.slice(0, -3) + "AAA")) === "/?slack=invalid");
+  expect("nothing linked for T8", (await rows()).filter((r) => r.team_id === "T8").length === 0);
+  expect("is_enterprise_install refused", (await install(0, "TENT1", "Grid", "U_G")) === "/?slack=failed" && (await rows()).filter((r) => r.team_id === "TENT1").length === 0);
+}
+
+console.log("== R3 Disconnect: A while B still linked, then B last, then late Slack events");
+const un0 = count('"method":"apps.uninstall"');
+expect("A disconnects (B still linked)", (await web(0, "DELETE", "/slack/connections/T1/U_A1")).status === 200);
+expect("no apps.uninstall yet", count('"method":"apps.uninstall"') === un0);
+expect("B disconnects as the last", (await web(1, "DELETE", "/slack/connections/T1/U_B")).status === 200);
+await Bun.sleep(300);
+expect("apps.uninstall called exactly once", count('"method":"apps.uninstall"') === un0 + 1, `${count('"method":"apps.uninstall"') - un0}`);
+const err0 = count("unhandled_error");
+expect("late app_uninstalled -> 200", (await slack("T1", { type: "app_uninstalled" })) === 200);
+expect("late tokens_revoked -> 200", (await slack("T1", { type: "tokens_revoked", tokens: { oauth: [], bot: ["UBOT_T1"] } })) === 200);
+expect("no unhandled_error logged", count("unhandled_error") === err0);
+expect("apps.uninstall failing (Slack says invalid_auth) is ignored: Disconnect still 200", (await install(1, "T6", "Dead", "U_B6")) === "/?slack=connected" && (await web(1, "DELETE", "/slack/connections/T6/U_B6")).status === 200 && (await rows()).filter((r) => r.team_id === "T6").length === 0);
+
+console.log("== R4 BETTER_AUTH_SECRET changed: token sealed with another secret");
+await install(0, "T9", "Rot", "U_R");
+const wrong = await symmetricEncrypt({ key: "a-different-secret-0123456789abcdefghij", data: "xoxb-fake-T9" });
+await d1(`UPDATE slack_connections SET bot_token='${wrong}' WHERE team_id='T9'`);
+const picker = await web(0, "GET", "/slack/connections/T9/U_R/channel-options");
+console.log("   picker ->", picker.status, JSON.stringify(picker.j));
+expect("picker with an unreadable token answers a specific 409 (reconnect)", picker.status === 409, `${picker.status}`);
+
+console.log(failures ? `\n${failures} FAILED` : "\nALL PASSED");
+process.exit(failures ? 1 : 0);

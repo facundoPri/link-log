@@ -1,0 +1,16 @@
+-- PROTOTYPE (FAC-170 arena B, Sonnet). Never commit.
+-- One row = one Slack identity (team + user) linked to one Linklog user, plus the workspace bot token
+-- (AES-GCM, key derived from BETTER_AUTH_SECRET) and the channels (a JSON array) whose messages by that
+-- Slack user count. Deleting the user cascades; Slack's app_uninstalled deletes every row of the team.
+CREATE TABLE slack_connections (
+  team_id TEXT NOT NULL,
+  slack_user_id TEXT NOT NULL,
+  user_id TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+  team_name TEXT NOT NULL,
+  bot_token TEXT NOT NULL,
+  bot_user_id TEXT NOT NULL,
+  channels TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (team_id, slack_user_id)
+);
+CREATE INDEX slack_connections_user_idx ON slack_connections(user_id);
