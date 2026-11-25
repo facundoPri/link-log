@@ -9,6 +9,7 @@ import type { FailureReason } from "../../src/failures";
 import type { JobContext, JobHandler } from "./index";
 import { displayMetadataStatement } from "../display-metadata";
 import { contentPrefix } from "../store";
+import { putLinkContent } from "../delete-links";
 import { jobRunning, settleAttention } from "../attention";
 
 const MAX_OCR_PREVIEWS = 20;
@@ -180,7 +181,7 @@ export const extractHandler: JobHandler = {
           // A per-attempt key: a step callback the engine abandoned can never overwrite the accepted content.
           async (result) => {
             const key = `${contentPrefix(job.user_id, link.id)}${job.id}-${ctx.attempt}.md`;
-            await env.CONTENT.put(key, result.markdown, { httpMetadata: { contentType: "text/markdown; charset=utf-8" } });
+            await putLinkContent(env, link.id, key, result.markdown);
             return { key, source: result.source, display: result.display };
           }));
       if ("failed" in content) throw new LinkFailure(content.failed);
@@ -256,7 +257,7 @@ export const extractHandler: JobHandler = {
     const key = `${contentPrefix(job.user_id, link.id)}${job.id}.md`;
     await step.do("store-composed-content", async () => {
       if (new TextEncoder().encode(content.markdown).length > 2_000_000) throw new Error("The extracted content exceeds 2 MB.");
-      await env.CONTENT.put(key, content.markdown, { httpMetadata: { contentType: "text/markdown; charset=utf-8" } });
+      await putLinkContent(env, link.id, key, content.markdown);
     });
     await step.do("save-composed-content", async () => {
       await env.DB.prepare(`UPDATE links SET content_key=?,content_version=content_version+1,content_source=?,content_state=?,content_error=?,content_reason=NULL,content_details=?,content_updated_at=? WHERE id=? AND ${running}`)

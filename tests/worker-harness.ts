@@ -147,7 +147,7 @@ export async function setup(options: { placeholder?: boolean } = {}) {
     CONTENT: {
       put: async (k: string, v: string) => void r2.set(k, v),
       get: async (k: string) => (r2.has(k) ? { text: async () => r2.get(k)! } : null),
-      list: async () => ({ objects: [], truncated: false }),
+      list: async ({ prefix = "" }: { prefix?: string } = {}) => ({ objects: [...r2.keys()].filter((key) => key.startsWith(prefix)).map((key) => ({ key })), truncated: false }),
       delete: async (keys: string | string[]) => void [keys].flat().forEach((k) => r2.delete(k)),
     },
     JOBS: { sendBatch: async (m: { body: { id: string } }[]) => void sent.push(...m) },

@@ -97,6 +97,10 @@ describe("foreign IDs are indistinguishable from missing ones", () => {
       const response = await pending;
       expect([name, response.status]).toEqual([name, 404]);
     }
+    // Bulk delete treats a foreign id like a missing one: nothing is deleted and nothing is revealed.
+    const bulk = await b.send("/api/links/delete", { ids: [a.linkId] });
+    expect(bulk.status).toBe(200);
+    expect(await bulk.json()).toMatchObject({ deleted: [], running: [] });
     // Batches over foreign links or with a foreign lens are rejected before anything is queued.
     const queuedBefore = queued.length;
     expect((await b.send("/api/batches", { ids: [a.linkId], kind: "extract" })).status).toBe(400);

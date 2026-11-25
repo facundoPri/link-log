@@ -4,6 +4,7 @@ import { enqueue, linkIdle } from "../jobs";
 import { settleAttention } from "../attention";
 import { canUsePreview, readPreview, storePreview, usePreviewStatement, dropUnusedPreview } from "../preview-content";
 import { addLinks } from "../links";
+import { deleteLinkContent, deleteLinks } from "../delete-links";
 import { badRequest, HttpError, notFound, ownerOf, type AppEnv } from "../http/context";
 import { assertNoActiveJob, enrich, setTags, tagLinks, tagNames, urlInput } from "./shared";
 
@@ -40,6 +41,14 @@ export const linkRoutes = new Hono<AppEnv>()
     const statements = setTags(env.DB, userId, id, names, false);
     if (statements.length) await env.DB.batch(statements);
     return json({ id, duplicate: !created, ...(await library(env, userId)) }, created ? 201 : 200);
+  })
+  .post("/links/delete", async (c) => {
+    const env = c.env, userId = ownerOf(c), ids = c.get("body").ids;
+    if (!Array.isArray(ids) || !ids.length || ids.length > 100 || ids.some((id) => typeof id !== "string"))
+      throw badRequest("Select between 1 and 100 links to delete.");
+    const result = await deleteLinks(env, userId, ids as string[]);
+    c.executionCtx.waitUntil(deleteLinkContent(env, userId, result.deleted));
+    return json({ ...(await library(env, userId)), ...result });
   })
   .post("/links/:id/transcript", async (c) => {
     const env = c.env, userId = ownerOf(c), body = c.get("body");
@@ -149,18 +158,6 @@ export const linkRoutes = new Hono<AppEnv>()
     if (!link) throw notFound();
     await assertNoActiveJob(env.DB, link.id);
     await env.DB.prepare("DELETE FROM links WHERE id=? AND user_id=?").bind(link.id, userId).run();
-    // Remove both the owner-scoped prefix and the legacy one used before FAC-41.
-    c.executionCtx.waitUntil(
-      (async () => {
-        for (const prefix of [contentPrefix(userId, link.id), `links/${link.id}/`]) {
-          let cursor: string | undefined;
-          do {
-            const page = await env.CONTENT.list({ prefix, cursor });
-            if (page.objects.length) await env.CONTENT.delete(page.objects.map((o) => o.key));
-            cursor = page.truncated ? page.cursor : undefined;
-          } while (cursor);
-        }
-      })(),
-    );
+    c.executionCtx.waitUntil(deleteLinkContent(env, userId, [link.id]));
     return json(await library(env, userId));
   });
