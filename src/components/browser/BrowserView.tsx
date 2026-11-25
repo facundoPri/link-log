@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import {
   CircleAlert,
   ExternalLink,
   Globe,
   ListChecks,
   Lock,
+  Moon,
   PanelLeft,
   Search,
   Unplug,
@@ -25,6 +26,9 @@ import { Banner, Connect } from "./BrowserConnect";
 import { DomainChip, DomainFilter } from "../DomainFilter";
 import { TabRow } from "./TabRow";
 import { LensFilterBar } from "./LensFilterBar";
+import { LoadContentBanner } from "./LoadContentBanner";
+import { isSleepingWait } from "./BrowserLensStatus";
+import { CONTENT_FILTER_IDS, CONTENT_FILTERS, LOAD_IN_PROGRESS, type ContentFilter } from "../../browser/sleeping";
 import { SelectionSurface, type LinkEntry, type Picker, type SurfaceHandle } from "../SelectionSurface";
 import { actionStates, runAction } from "../../bulkActions";
 import { TAB_ACTIONS, type TabRunners } from "../../browser/tabActions";
@@ -40,6 +44,11 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 
 type Actions = ReturnType<typeof useBrowserActions>["actions"];
 
+
+const CONTENT_FILTER_ICON: Record<ContentFilter, ReactNode> = {
+  sleeping: <Moon className="size-3.5" />,
+  failed: <CircleAlert className="size-3.5" />,
+};
 export function BrowserView({
   ws,
   library,
@@ -67,6 +76,8 @@ export function BrowserView({
   const [query, setQuery] = useState("");
   const [filters, setFilters] = useState<Record<string, LensFilter>>({});
   const [sortLensId, setSortLensId] = useState<string | null>(null);
+  const [contentFilter, setContentFilter] = useState<ContentFilter | null>(null);
+  const toggleContentFilter = (f: ContentFilter) => setContentFilter((v) => (v === f ? null : f));
   const search = useRef<HTMLInputElement>(null);
   const lastIndex = useRef<number | null>(null);
 
@@ -103,6 +114,7 @@ export function BrowserView({
     const words = query.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
     const groupsById = new Map(groups.map((g) => [g.groupId, g]));
     const list = tabs.filter((t) => {
+      if (contentFilter && !CONTENT_FILTERS[contentFilter].match(t)) return false;
       if (ws.groupFilter.length && !ws.groupFilter.includes(t.groupId ?? "none")) return false;
       if (ws.domainFilter.length && !ws.domainFilter.includes(tabDomain(t))) return false;
       const answers = (lensId: string) => {
@@ -122,7 +134,16 @@ export function BrowserView({
         return score(b) - score(a) || a.index - b.index;
       });
     return list;
-  }, [tabs, groups, query, ws.groupFilter, ws.domainFilter, ws.previews, filters, activeLenses, runner.results, sortLensId]);
+  }, [tabs, groups, query, contentFilter, ws.groupFilter, ws.domainFilter, ws.previews, filters, activeLenses, runner.results, sortLensId]);
+  // What the banner counts and Load content loads: this view, scope and filters included.
+  const sleepingInView = useMemo(
+    () => visible.filter((t) => t.content === "sleeping" && !t.capturedAt && !(t.load && LOAD_IN_PROGRESS.includes(t.load.state))),
+    [visible],
+  );
+  const contentCounts = useMemo(
+    () => Object.fromEntries(CONTENT_FILTER_IDS.map((f) => [f, tabs.filter(CONTENT_FILTERS[f].match).length])) as Record<ContentFilter, number>,
+    [tabs],
+  );
 
   const pickedTabs = tabs.filter((t) => picked.includes(t.tabInstanceId));
   const allPicked = visible.length > 0 && visible.every((t) => picked.includes(t.tabInstanceId));
@@ -145,6 +166,8 @@ export function BrowserView({
     },
     autogroup: actions.autogroup,
     ungroup: (ts) => void actions.ungroup(ts),
+    load: (ts) => actions.loadContent(ts),
+    sleep: (ts) => void actions.sleep(ts),
     copy: (ts, withTitles) => void actions.copyMany(ts, withTitles),
     close: actions.requestClose,
   };
@@ -231,7 +254,7 @@ export function BrowserView({
   }, []);
 
   const snapshot = browser.snapshot;
-  const filtered = !!(query || ws.groupFilter.length || ws.domainFilter.length || Object.values(filters).some((f) => f.keys.length || f.minLevel !== null));
+  const filtered = !!(query || contentFilter || ws.groupFilter.length || ws.domainFilter.length || Object.values(filters).some((f) => f.keys.length || f.minLevel !== null));
 
   return (
     <>
@@ -276,6 +299,15 @@ export function BrowserView({
                 </span>
               );
             })}
+            {contentFilter && (
+              <span className="inline-flex h-5 items-center gap-1 rounded-md bg-muted px-1.5 text-2xs font-medium">
+                {CONTENT_FILTER_ICON[contentFilter]}
+                {CONTENT_FILTERS[contentFilter].chip} · {contentCounts[contentFilter]}
+                <button aria-label={`Remove ${CONTENT_FILTERS[contentFilter].chip.toLowerCase()} filter`} onClick={() => setContentFilter(null)}>
+                  <X className="size-3" />
+                </button>
+              </span>
+            )}
             {ws.domainFilter.map((name) => (
               <DomainChip
                 key={name}
@@ -289,6 +321,7 @@ export function BrowserView({
                 size="sm"
                 onClick={() => {
                   setQuery("");
+                  setContentFilter(null);
                   ws.setGroupFilter([]);
                   ws.setDomainFilter([]);
                   setFilters({});
@@ -299,6 +332,23 @@ export function BrowserView({
             )}
           </div>
           <div className="ml-auto flex shrink-0 items-center gap-2">
+            {CONTENT_FILTER_IDS.filter((f) => contentCounts[f] > 0 || contentFilter === f).map((f) => (
+              <Tooltip key={f}>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant={contentFilter === f ? "secondary" : "ghost"}
+                    size="sm"
+                    aria-pressed={contentFilter === f}
+                    aria-label={CONTENT_FILTERS[f].toggle(contentCounts[f])}
+                    onClick={() => toggleContentFilter(f)}
+                  >
+                    {CONTENT_FILTER_ICON[f]}
+                    <span className="tabular">{contentCounts[f]}</span>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{CONTENT_FILTERS[f].tooltip}</TooltipContent>
+              </Tooltip>
+            ))}
             <div className="relative">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
@@ -368,6 +418,16 @@ export function BrowserView({
             {runner.notice}
           </Banner>
         )}
+        {snapshot && (
+          <LoadContentBanner
+            sleeping={sleepingInView}
+            run={snapshot.loadRun}
+            contentFilter={contentFilter}
+            onLoad={() => actions.loadContent(sleepingInView)}
+            onControl={actions.loadControl}
+            onToggleFilter={toggleContentFilter}
+          />
+        )}
         {snapshot && activeLenses.length > 0 && (
           <LensFilterBar
             lenses={activeLenses}
@@ -384,6 +444,7 @@ export function BrowserView({
                 tabs.filter((t) => ["failed", "expired"].includes(runner.results[t.tabInstanceId]?.[lens.id]?.state ?? "")),
               )
             }
+            onLoadSleeping={(lens) => actions.loadContent(tabs.filter((t) => isSleepingWait(t, runner.results[t.tabInstanceId]?.[lens.id])))}
             onReevaluate={(lens) => actions.reevaluate(lens)}
             onClean={actions.requestClean}
             onEdit={onEditLens}
@@ -443,6 +504,8 @@ export function BrowserView({
                 onMove={() => actions.chooseMove([tab])}
                 onUngroup={() => void actions.ungroup([tab])}
                 onCopy={() => actions.copy(tab)}
+                onLoad={() => actions.loadContent([tab])}
+                onSleep={() => void actions.sleep([tab])}
                 jevReason={ws.jevReason}
               />
             ))}

@@ -1,4 +1,4 @@
-import { Loader2, RotateCw } from "lucide-react";
+import { Loader2, Moon, RotateCw } from "lucide-react";
 import { IN_FLIGHT, type BrowserTab, type LensRecord } from "@linklog/browser-protocol";
 import type { Lens, LensResult } from "../../types";
 import { LensVerdict } from "../LensVerdict";
@@ -7,11 +7,15 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 /** Row badges and hints for tabs whose content can't be read right now. */
 export const ACCESS_LABEL: Record<Exclude<BrowserTab["content"], "available">, { label: string; hint: string }> = {
   loading: { label: "Loading", hint: "Lenses run once the page finishes loading." },
+  stalled: { label: "Not responding", hint: "The page has been loading for over 30 seconds. Load content to try again, or open the tab." },
   restricted: { label: "Can't read", hint: "Chrome doesn't let extensions read this page (browser, extension or store page)." },
   "no-permission": { label: "No access", hint: "Allow page content access so lenses can read this tab." },
-  discarded: { label: "Not loaded", hint: "Chrome unloaded this tab to save memory. Open it to load its content." },
-  frozen: { label: "Frozen", hint: "Chrome froze this background tab. Open it to read its content." },
+  sleeping: { label: "Sleeping", hint: "Chrome hasn't loaded this page, so Linklog can't read it. Use Load content, or open the tab." },
 };
+
+/** A Sleeping tab with nothing captured: lenses wait for Load content. */
+export const isSleepingWait = (tab: BrowserTab, record: LensRecord | undefined) =>
+  (!record || record.state === "missing") && tab.content === "sleeping" && !tab.capturedAt;
 
 /** The library verdict component takes a stored LensResult; a browser record carries the same answer. */
 function asResult(lens: Lens, record: LensRecord): LensResult {
@@ -32,6 +36,7 @@ function asResult(lens: Lens, record: LensRecord): LensResult {
  */
 export function isUnreadable(tab: BrowserTab, record: LensRecord | undefined) {
   if (record?.state === "unavailable") return true;
+  if (tab.content === "sleeping") return false;
   return (!record || record.state === "missing") && tab.content !== "available" && tab.content !== "loading";
 }
 
@@ -69,6 +74,7 @@ export function BrowserLensStatus({
   size = "sm",
   onRetry,
   onMetadata,
+  onLoad,
   blocked,
 }: {
   lens: Lens;
@@ -77,12 +83,33 @@ export function BrowserLensStatus({
   size?: "sm" | "md";
   onRetry: () => void;
   onMetadata: () => void;
+  /** Load content for this Sleeping tab. */
+  onLoad?: () => void;
   /** Why nothing can be evaluated now (Jev not configured), or null. */
   blocked?: string | null;
 }) {
+  if (isSleepingWait(tab, record))
+    return (
+      <>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className={quiet}>
+              <Moon className="size-3" />
+              Sleeping
+            </span>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-64 text-left">The lens runs once this tab's content is loaded.</TooltipContent>
+        </Tooltip>
+        {onLoad && !tab.load && (
+          <Action label={`Load content for ${tab.title || tab.url}`} onClick={onLoad}>
+            Load content
+          </Action>
+        )}
+      </>
+    );
   if (isUnreadable(tab, record)) {
     const reason =
-      record?.error ?? (tab.content !== "available" && tab.content !== "loading" ? ACCESS_LABEL[tab.content].hint : "The page could not be read.");
+      record?.error ?? (tab.content !== "available" ? ACCESS_LABEL[tab.content].hint : "The page could not be read.");
     return (
       <>
         <Tooltip>

@@ -1,6 +1,7 @@
 import { BROWSER_LIMITS } from "./api.ts";
 import {
   GROUP_COLORS,
+  LOAD_CONCURRENCY,
   type BridgeEnvelope,
   type CommandName,
   type DepositItem,
@@ -133,6 +134,12 @@ const validators: { [K in CommandName]: (a: Obj) => boolean } = {
     (a.target === undefined || moveTarget(a.target)),
   openPermissions: () => true,
   forget: () => true,
+  loadContent: (a) => tabRefs(a.tabs),
+  loadControl: (a) => typeof a.action === "string" && ["pause", "resume", "cancel", "retry"].includes(a.action),
+  sleepTabs: (a) => tabRefs(a.tabs),
+  loadSettings: (a) =>
+    a.concurrency === undefined ||
+    (Number.isInteger(a.concurrency) && (a.concurrency as number) >= LOAD_CONCURRENCY.min && (a.concurrency as number) <= LOAD_CONCURRENCY.max),
 };
 
 export function parsePageRequest(raw: unknown): PageRequest | null {

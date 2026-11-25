@@ -7,6 +7,8 @@ import { relatedLinks } from "../../lib/related-links";
 import { lensIcon } from "../Sidebar";
 import { TagChip } from "../TagChip";
 import { BrowserLensStatus } from "./BrowserLensStatus";
+import { PinnedMarker } from "./TabMarkers";
+import { LOAD_LABEL, loadBlocked, SLEEP_DETAIL, SLEEP_WARNING, sleepBlocked } from "../../browser/sleeping";
 import { ContentPanel, LinksPanel, type Read } from "./BrowserTabContent";
 import { GROUP_STYLE, groupTitle } from "./groups";
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +18,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -56,6 +59,8 @@ export function BrowserInspector({
   onRetry,
   onMetadata,
   onAllowAccess,
+  onLoad,
+  onSleep,
   onToggleGroup,
   onDomainFilter,
   onSaveRelated,
@@ -80,6 +85,8 @@ export function BrowserInspector({
   onRetry: (lens: Lens) => void;
   onMetadata: (lens: Lens) => void;
   onAllowAccess: () => void;
+  onLoad: () => void;
+  onSleep: () => void;
   onToggleGroup: (groupId: number) => void;
   onDomainFilter: (domain: string) => void;
   onSaveRelated: (url: string) => Promise<unknown>;
@@ -90,7 +97,10 @@ export function BrowserInspector({
   const [imgFailed, setImgFailed] = useState(false);
   const [faviconFailed, setFaviconFailed] = useState(false);
   const [activeTab, setActiveTab] = useState("content");
-  const readable = tab.content === "available";
+  // A Sleeping tab is readable through the content Load content captured.
+  const readable = tab.content === "available" || (tab.content === "sleeping" && !!tab.capturedAt);
+  const cantLoad = loadBlocked(tab);
+  const cantSleep = sleepBlocked(tab);
 
   // Only the latest read may land: an older one (previous document, earlier "Read
   // again") finishing late must not overwrite it.
@@ -114,7 +124,7 @@ export function BrowserInspector({
       return;
     }
     load(false);
-  }, [tab.tabInstanceId, tab.documentRevision, readable, load]);
+  }, [tab.tabInstanceId, tab.documentRevision, readable, tab.capturedAt, load]);
 
   const capture = state.status === "ready" ? state.capture : null;
   const markdown = capture?.markdown ?? "";
@@ -139,6 +149,7 @@ export function BrowserInspector({
               size="md"
               onRetry={() => onRetry(lens)}
               onMetadata={() => onMetadata(lens)}
+              onLoad={onLoad}
               blocked={jevReason}
             />
           </span>
@@ -166,6 +177,7 @@ export function BrowserInspector({
           <Globe className="size-3.5 text-muted-foreground" />
         )}
         <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{domain || tab.url}</span>
+        {tab.pinned && <PinnedMarker />}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button variant="ghost" size="icon-sm" aria-label="Go to tab" onClick={onFocus}>
@@ -187,9 +199,23 @@ export function BrowserInspector({
               {saved ? "Already saved" : "Save to library"}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={onMove}>Move to group…</DropdownMenuItem>
+            <DropdownMenuItem onClick={onLoad} disabled={!!cantLoad}>
+              Load content
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={onSleep} disabled={!!cantSleep} title={cantSleep ?? SLEEP_WARNING}>
+              Put to sleep
+            </DropdownMenuItem>
+            {(cantLoad || cantSleep) && (
+              <DropdownMenuLabel className="max-w-56 text-2xs font-normal text-muted-foreground">
+                {[cantLoad && `Load content: ${cantLoad}.`, cantSleep && `Put to sleep: ${cantSleep}.`].filter(Boolean).join(" ")}
+              </DropdownMenuLabel>
+            )}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={onMove} disabled={tab.pinned}>
+              {tab.pinned ? "Pinned tabs stay ungrouped" : "Move to group…"}
+            </DropdownMenuItem>
             {group && <DropdownMenuItem onClick={onUngroup}>Remove from group</DropdownMenuItem>}
-            {readable && <DropdownMenuItem onClick={() => load(true)}>Read page again</DropdownMenuItem>}
+            {tab.content === "available" && <DropdownMenuItem onClick={() => load(true)}>Read page again</DropdownMenuItem>}
             <DropdownMenuSeparator />
             <DropdownMenuItem variant="destructive" onClick={onCloseTab}>
               Close tab
@@ -287,6 +313,7 @@ export function BrowserInspector({
               onReload={() => load(true)}
               onAllowAccess={onAllowAccess}
               onFocus={onFocus}
+              onLoad={onLoad}
             />
           </TabsContent>
           <TabsContent value="links" className="mt-3">
@@ -302,10 +329,17 @@ export function BrowserInspector({
               {capture?.lang && <Row label="Language">{capture.lang}</Row>}
               <Row label="First seen">{firstSeen}</Row>
               <Row label="Status">
-                {tab.active ? "Active tab" : tab.discarded ? "Unloaded" : tab.status === "loading" ? "Loading" : "Loaded"}
-                {tab.pinned ? " · pinned" : ""}
+                {tab.active ? "Active tab" : tab.sleep ? `Sleeping. ${SLEEP_DETAIL[tab.sleep]}` : tab.status === "loading" ? "Loading" : "Loaded"}
+                {tab.pinned ? " · pinned in Chrome" : ""}
                 {tab.audible ? " · playing audio" : ""}
               </Row>
+              {tab.load && (
+                <Row label="Load content">
+                  {LOAD_LABEL[tab.load.state]}
+                  {tab.load.error ? `. ${tab.load.error}` : ""}
+                  {tab.load.note ? ` ${tab.load.note}` : ""}
+                </Row>
+              )}
               {capture && (
                 <>
                   <Row label="Read">{relativeTime(capture.capturedAt)}</Row>

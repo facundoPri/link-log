@@ -24,6 +24,9 @@ async function run(cmd: string[], env: Record<string, string> = {}) {
   return out;
 }
 
+/** Page requests the fixture site served, by path: each one is a page load, e.g. a woken tab. */
+export const siteHits = new Map<string, number>();
+
 /** Fixture pages. Markers steer the fixture Jev provider (see worker/ai/fixture.ts). */
 export function startSite() {
   return Bun.serve({
@@ -31,8 +34,19 @@ export function startSite() {
     hostname: "127.0.0.1",
     fetch(req) {
       const url = new URL(req.url);
+      if (!url.pathname.startsWith("/img/") && url.pathname !== "/favicon.ico") siteHits.set(url.pathname, (siteHits.get(url.pathname) ?? 0) + 1);
       if (url.pathname.startsWith("/img/"))
         return new Response(`<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><rect width="320" height="180" fill="#0f766e"/><text x="24" y="100" font-size="28" fill="#fff" font-family="sans-serif">${url.pathname.slice(5)}</text></svg>`, { headers: { "content-type": "image/svg+xml" } });
+      // An app shell that renders its text a while after load, as YouTube does in a background tab.
+      if (url.pathname.startsWith("/lazy/"))
+        return new Response(
+          `<!doctype html><html><head><title>Lazy ${url.pathname}</title></head><body><main id="app"></main><script>
+addEventListener("load", () => setTimeout(() => { document.getElementById("app").innerHTML = "<h1>Rendered late</h1><p>" + "This description appears only after the app renders, well after the load event. ".repeat(12) + "LAZY-RENDERED</p>"; }, ${Number(url.searchParams.get("delay") ?? 2500)}));
+</script></body></html>`,
+          { headers: { "content-type": "text/html; charset=utf-8" } },
+        );
+      // Loads normally once; woken again, it goes to a sign-in page, so Load content can't read it.
+      if (url.pathname.startsWith("/moved/") && siteHits.get(url.pathname)! > 1) return Response.redirect(`${url.origin}/signin${url.pathname}`, 302);
       const marker = url.searchParams.get("m") ?? "";
       const title = url.searchParams.get("t") ?? `Fixture ${url.pathname}`;
       const body = `<!doctype html><html><head><title>${title}</title><meta name="description" content="Fixture page ${url.pathname}"><meta property="og:image" content="/img/cover${url.pathname.replaceAll("/", "-")}.svg"><meta property="og:site_name" content="Fixture site"></head>
@@ -106,14 +120,7 @@ export async function startApi() {
       // The library is private: 401 means the stack is up with a valid auth config.
       if ((await fetch(`${UI}/api/library`)).status === 401) {
         process.env.LINKLOG_MAIL_DIR = resolve(OUT, ".wrangler/tmp/email");
-        const { ensureFixture } = await import("../../scripts/seed-dev-users");
-        const { cookie } = await ensureFixture(`http://127.0.0.1:${API_PORT}`, UI, {
-          label: "Browser test",
-          email: "browser-test@linklog.test",
-          password: "browser-test-password",
-        });
-        const pair = cookie.split("; ").find((c) => c.startsWith("linklog.session_token="))!;
-        session = { name: pair.slice(0, pair.indexOf("=")), value: pair.slice(pair.indexOf("=") + 1) };
+        await signInRunAccount();
         return proc;
       }
     } catch (error) {
@@ -124,6 +131,24 @@ export async function startApi() {
   }
   throw new Error("API did not start");
 }
+
+/**
+ * Signs the run's account in (creating and verifying it the first time) and keeps its session for `api()` and
+ * `sessionCookie()`. Call it again after a check signs that account out: the old session is revoked.
+ */
+export async function signInRunAccount() {
+  const { ensureFixture } = await import("../../scripts/seed-dev-users");
+  const { cookie } = await ensureFixture(`http://127.0.0.1:${API_PORT}`, UI, {
+    label: "Browser test",
+    email: "browser-test@linklog.test",
+    password: "browser-test-password",
+  });
+  const pair = cookie.split("; ").find((c) => c.startsWith("linklog.session_token="))!;
+  session = { name: pair.slice(0, pair.indexOf("=")), value: pair.slice(pair.indexOf("=") + 1) };
+}
+
+/** The run account's session cookie, for browsers this module doesn't launch. */
+export const sessionCookie = () => session;
 
 /** A second real account (sign-up + emailed verification), for account-switch checks. */
 export async function createAccount(email: string, password: string) {

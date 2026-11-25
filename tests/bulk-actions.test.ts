@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { BrowserTab } from "@linklog/browser-protocol";
 import { actionForKey, actionState, actionStates, BULK_ACTIONS, routeKey, type ActionMeta, type BulkContext, type KeyScene } from "../src/bulkActions";
 import { TAB_ACTIONS, type TabContext } from "../src/browser/tabActions";
+import { SLEEP_WARNING } from "../src/browser/sleeping";
 import type { Batch, Link, Tag } from "../src/types";
 
 const link = (id: string, over: Partial<Link> = {}) =>
@@ -282,13 +283,46 @@ describe("tab actions", () => {
     expect(s.availability.eligible.map((t) => t.tabId)).toEqual([1, 3]);
     expect(s.availability.skipped.map((x) => [x.item.tabId, x.reason])).toEqual([[2, "Already in a group"]]);
     expect(s.badge).toBe("2/3");
-    expect(s.reason).toBe("1 of 3 already have a group and stay there");
+    expect(s.reason).toBe("1 of 3 are pinned or already have a group, and stay there");
   });
 
   test("autogroup is blocked with the reason the old bar showed", () => {
     expect(tabState("autogroup", mixed, { ...tabCtx, jevReason: "Jev is not configured." }).reason).toBe("Jev is not configured.");
     expect(tabState("autogroup", mixed, { ...tabCtx, destinations: 0 }).reason).toBe("Create or pin a group with a description first");
     expect(tabState("autogroup", [tab(2, 7)]).reason).toBe("Autogroup only places tabs that have no group");
+  });
+
+  test("autogroup never places pinned tabs: skipped, or blocked when only pinned tabs are left", () => {
+    const pinned = { ...tab(4), pinned: true } as BrowserTab;
+    const s = tabState("autogroup", [...mixed, pinned]);
+    expect(s.availability.eligible.map((t) => t.tabId)).toEqual([1, 3]);
+    expect(s.availability.skipped.map((x) => [x.item.tabId, x.reason])).toEqual([
+      [2, "Already in a group"],
+      [4, "Pinned, stays in place"],
+    ]);
+    expect(tabState("autogroup", [pinned, tab(2, 7)]).reason).toBe("Pinned tabs are never grouped; they stay in place");
+  });
+
+  test("load content runs on sleeping or stalled tabs and skips the rest with the row's reason", () => {
+    const t = (id: number, content: BrowserTab["content"]) => ({ ...tab(id), content }) as BrowserTab;
+    const s = tabState("load", [t(1, "sleeping"), t(2, "stalled"), t(3, "available"), t(4, "restricted")]);
+    expect(s.availability.eligible.map((x) => x.tabId)).toEqual([1, 2]);
+    expect(s.availability.skipped.map((x) => x.reason)).toEqual(["Already loaded", "Chrome doesn't let extensions read this page"]);
+    expect(tabState("load", [t(3, "available")]).reason).toBe("Already loaded");
+    expect(tabState("load", [t(3, "available"), t(4, "restricted")]).reason).toBe("None of the selected tabs is sleeping");
+    expect(tabState("load", [t(5, "no-permission"), t(6, "no-permission")]).reason).toBe("Allow page content access first");
+    expect(tabState("load", [t(7, "loading")]).reason).toBe("Still loading");
+  });
+
+  test("put to sleep skips asleep, active and audible tabs and always warns about unsaved changes", () => {
+    const t = (id: number, over: Partial<BrowserTab>) => ({ ...tab(id), content: "available", ...over }) as BrowserTab;
+    const s = tabState("sleep", [t(1, {}), t(2, { content: "sleeping" }), t(3, { active: true }), t(4, { audible: true })]);
+    expect(s.availability.eligible.map((x) => x.tabId)).toEqual([1]);
+    // A mixed selection shows the skip count and still the warning.
+    expect(s.reason).toBe(`3 of 4 are asleep, active, playing audio or a browser page. ${SLEEP_WARNING}`);
+    expect(tabState("sleep", [t(5, { content: "no-permission", sleep: "unloaded" })]).reason).toBe("Already asleep");
+    expect(tabState("sleep", [t(1, {})]).reason).toBe(SLEEP_WARNING);
+    expect(tabState("sleep", [t(2, { content: "sleeping" })]).disabled).toBe(true);
   });
 
   test("remove from group skips ungrouped tabs and is blocked when none is grouped", () => {

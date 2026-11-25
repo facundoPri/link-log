@@ -35,6 +35,7 @@ const CAP_INDEX = "capIndex";
 /** Captures are evicted separately from results so results are never silently re-bought. */
 export const CAPTURE_BUDGET = 3 * 1024 * 1024;
 const CAPTURE_MAX = 1024 * 1024;
+type CaptureIndex = Record<string, { bytes: number; at: number; documentRevision?: number; source?: "dom" | "metadata"; capturedAt?: string }>;
 const FINAL = new Set(["done", "failed", "unavailable", "expired"]);
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
@@ -451,11 +452,12 @@ export class ResultCache {
   }
 
   /** Captures live in their own LRU budget; oversized ones are used once and not kept. */
+  /** Stores a tab's capture; false when it doesn't fit and nothing was kept. */
   putCapture(tabInstanceId: string, documentRevision: number, source: "dom" | "metadata", capture: Capture) {
-    return this.mutex.run(async () => {
+    return this.mutex.run(async (): Promise<boolean> => {
       const bytes = JSON.stringify(capture).length * 2;
-      if (bytes > CAPTURE_MAX) return;
-      const index = (await this.kv.get<Record<string, { bytes: number; at: number }>>(CAP_INDEX)) ?? {};
+      if (bytes > CAPTURE_MAX) return false;
+      const index = (await this.kv.get<CaptureIndex>(CAP_INDEX)) ?? {};
       // The previous capture of this tab is replaced (or dropped if the new one doesn't fit).
       const evict = [tabInstanceId];
       delete index[tabInstanceId];
@@ -473,13 +475,17 @@ export class ResultCache {
         await this.kv.set({ [CAP + tabInstanceId]: { documentRevision, source, capture, bytes, at: this.now() } });
       } catch (error) {
         if (!(error instanceof QuotaError)) throw error;
-        return; // A capture that doesn't fit is simply not cached.
+        return false; // A capture that doesn't fit is simply not cached.
       }
-      index[tabInstanceId] = { bytes, at: this.now() };
-      await this.kv.set({ [CAP_INDEX]: index }).catch(async (error) => {
-        if (!(error instanceof QuotaError)) throw error;
-        await this.kv.remove([CAP + tabInstanceId]); // unindexed data would never be evicted
-      });
+      index[tabInstanceId] = { bytes, at: this.now(), documentRevision, source, capturedAt: capture.capturedAt };
+      return this.kv.set({ [CAP_INDEX]: index }).then(
+        () => true,
+        async (error) => {
+          if (!(error instanceof QuotaError)) throw error;
+          await this.kv.remove([CAP + tabInstanceId]); // unindexed data would never be evicted
+          return false;
+        },
+      );
     });
   }
 
@@ -499,6 +505,16 @@ export class ResultCache {
       await this.kv.remove([...Object.keys(index).map((id) => CAP + id), CAP_INDEX]);
     }
     await this.kv.set(writes);
+  }
+
+  /** Page content captured per tab opening (DOM only), without reading the captures themselves. */
+  async captured(): Promise<Map<string, { documentRevision: number; capturedAt: string }>> {
+    const index = (await this.kv.get<CaptureIndex>(CAP_INDEX)) ?? {};
+    const out = new Map<string, { documentRevision: number; capturedAt: string }>();
+    for (const [id, e] of Object.entries(index))
+      if (e.source === "dom" && e.documentRevision !== undefined && e.capturedAt)
+        out.set(id, { documentRevision: e.documentRevision, capturedAt: e.capturedAt });
+    return out;
   }
 
   async usage() {

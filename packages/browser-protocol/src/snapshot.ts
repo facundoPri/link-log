@@ -36,7 +36,8 @@ export function diffSnapshots(
     !upsertGroups.length &&
     !removeGroups.length &&
     !orderChanged &&
-    prev.linklogTabs === next.linklogTabs
+    prev.linklogTabs === next.linklogTabs &&
+    same(prev.loadRun, next.loadRun)
   )
     return null;
   return {
@@ -49,6 +50,7 @@ export function diffSnapshots(
     upsertGroups,
     removeGroups,
     linklogTabs: next.linklogTabs,
+    loadRun: next.loadRun,
   };
 }
 
@@ -78,5 +80,6 @@ export function applyPatch(
     tabs: ordered,
     groups: [...groups.values()],
     linklogTabs: patch.linklogTabs,
+    loadRun: patch.loadRun,
   };
 }

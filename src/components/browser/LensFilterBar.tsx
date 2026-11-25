@@ -1,4 +1,4 @@
-import { ArrowDownWideNarrow, Ellipsis, Loader2, RotateCw } from "lucide-react";
+import { ArrowDownWideNarrow, Ellipsis, Loader2, Moon, RotateCw } from "lucide-react";
 import {
   IN_FLIGHT,
   lensBucket,
@@ -10,7 +10,7 @@ import {
 import type { Lens } from "../../types";
 import { cn } from "../../lib/utils";
 import { lensIcon } from "../Sidebar";
-import { isUnreadable } from "./BrowserLensStatus";
+import { isSleepingWait, isUnreadable } from "./BrowserLensStatus";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -38,15 +38,16 @@ function Chip({ label, count, active, onClick }: { label: string; count: number;
   );
 }
 
-export type LensProgress = { done: number; pending: number; failed: number; unreadable: number; total: number };
+export type LensProgress = { done: number; pending: number; failed: number; unreadable: number; sleeping: number; total: number };
 
 export function lensProgress(lens: Lens, tabs: BrowserTab[], results: Record<string, Record<string, LensRecord>>): LensProgress {
-  const p: LensProgress = { done: 0, pending: 0, failed: 0, unreadable: 0, total: tabs.length };
+  const p: LensProgress = { done: 0, pending: 0, failed: 0, unreadable: 0, sleeping: 0, total: tabs.length };
   for (const tab of tabs) {
     const r = results[tab.tabInstanceId]?.[lens.id];
     if (r?.state === "done") p.done++;
     else if (r && IN_FLIGHT.includes(r.state)) p.pending++;
     else if (r?.state === "failed" || r?.state === "expired") p.failed++;
+    else if (isSleepingWait(tab, r)) p.sleeping++; // waits for Load content, never on its own
     else if (isUnreadable(tab, r)) p.unreadable++; // shown as "Unreadable" in the rows too
     else p.pending++;
   }
@@ -66,6 +67,7 @@ export function LensFilterBar({
   onFilter,
   onSort,
   onRetryFailed,
+  onLoadSleeping,
   onReevaluate,
   onClean,
   onEdit,
@@ -80,6 +82,8 @@ export function LensFilterBar({
   onFilter: (filter: LensFilter) => void;
   onSort: (lensId: string | null) => void;
   onRetryFailed: (lens: Lens) => void;
+  /** Load content for the Sleeping tabs this lens waits on. */
+  onLoadSleeping: (lens: Lens) => void;
   onReevaluate: (lens: Lens) => void;
   onClean: (lens: Lens) => void;
   onEdit: (lens: Lens) => void;
@@ -125,8 +129,20 @@ export function LensFilterBar({
               <span className="inline-flex items-center gap-1 text-2xs tabular text-muted-foreground">
                 {progress.pending > 0 && !jevReason && <Loader2 className="size-3 animate-spin" />}
                 {progress.done}/{progress.total}
+                {progress.pending > 0 && <span className="opacity-80">· {progress.pending} waiting</span>}
+                {progress.sleeping > 0 && <span className="opacity-80">· {progress.sleeping} sleeping</span>}
                 {progress.unreadable > 0 && <span className="opacity-80">· {progress.unreadable} unreadable</span>}
               </span>
+              {progress.sleeping > 0 && (
+                <button
+                  type="button"
+                  onClick={() => onLoadSleeping(lens)}
+                  className="inline-flex h-5 items-center gap-1 rounded-md bg-muted px-1.5 text-2xs text-foreground hover:bg-accent"
+                >
+                  <Moon className="size-3" />
+                  Load content
+                </button>
+              )}
               {jevReason && <span className="text-2xs text-muted-foreground">{jevReason}</span>}
               {progress.failed > 0 && !jevReason && (
                 <button

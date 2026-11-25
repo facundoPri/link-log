@@ -7,11 +7,16 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { BrowserContext, Page, Worker } from "playwright-core";
 import { PROTOCOL_VERSION } from "@linklog/browser-protocol";
-import { api, API, API_PORT, buildAll, createAccount, EXTENSION, launch, OTHER_APP_PORT, OUT, ROOT, SITE, SITE_PORT, startApi, startMarkedApp, startSite, UI, UI_PORT, waitFor } from "./env";
+import { api, API, API_PORT, buildAll, createAccount, EXTENSION, launch, OTHER_APP_PORT, OUT, ROOT, signInRunAccount, SITE, SITE_PORT, startApi, startMarkedApp, startSite, UI, UI_PORT, waitFor } from "./env";
+import { sleepingChecks } from "./sleeping";
 
 // A run never rewrites tracked files by default. LINKLOG_BROWSER_EVIDENCE picks another directory;
 // docs/browser-validation is the committed evidence and only an explicit value writes there.
 const EVIDENCE = resolve(ROOT, process.env.LINKLOG_BROWSER_EVIDENCE ?? ".cache/browser-validation");
+// LINKLOG_BROWSER_ONLY=sleeping runs only the native Sleeping-tab checks (FAC-163).
+const ONLY = process.env.LINKLOG_BROWSER_ONLY || undefined;
+// Any other value would fall through to the full suite without its setup checks.
+if (ONLY !== undefined && ONLY !== "sleeping") throw new Error(`LINKLOG_BROWSER_ONLY must be "sleeping" or unset, not "${ONLY}".`);
 type Check = { area: string; name: string; ok: boolean; detail: string; ms: number };
 const checks: Check[] = [];
 const meta: Record<string, unknown> = { startedAt: new Date().toISOString() };
@@ -198,7 +203,7 @@ async function activeActivityRow(page: Page, label: RegExp) {
 }
 
 // ---------- run ----------
-await rm(EVIDENCE, { recursive: true, force: true });
+if (!ONLY) await rm(EVIDENCE, { recursive: true, force: true });
 await mkdir(EVIDENCE, { recursive: true });
 section("Setup");
 await buildAll();
@@ -206,7 +211,7 @@ const site = startSite();
 const markedApp = startMarkedApp();
 
 // D1 migration on existing data: apply 0001–0009, seed through the old schema, then 0010.
-await check("0010 applies on a real local D1 with existing rows", async () => {
+if (!ONLY) await check("0010 applies on a real local D1 with existing rows", async () => {
   const dir = resolve(OUT, "migration");
   await rm(dir, { recursive: true, force: true });
   await mkdir(resolve(dir, "old"), { recursive: true });
@@ -234,6 +239,64 @@ await check("0010 applies on a real local D1 with existing rows", async () => {
 });
 
 const dev = await startApi();
+
+/** Writes the evidence for the checks that ran and exits with their verdict. */
+async function finish(name: string, close: () => Promise<unknown>) {
+  meta.finishedAt = new Date().toISOString();
+  meta.providerCalls = await calls().catch(() => null);
+  await writeFile(resolve(EVIDENCE, `${name}.json`), JSON.stringify({ meta, checks }, null, 2));
+  const md = [
+    `# Browser integration run`,
+    ``,
+    `- Chromium: ${meta.browser ?? meta.sleepingBrowser}`,
+    `- Extension: ${meta.extensionId ?? (meta.sleepingExtension as { id: string } | undefined)?.id} v${meta.extensionVersion ?? (meta.sleepingExtension as { version: string } | undefined)?.version}`,
+    `- Build: ${meta.build}`,
+    `- Started: ${meta.startedAt} · finished: ${meta.finishedAt}`,
+    `- Fixture Jev calls (mock provider, not paid): ${meta.providerCalls}`,
+    ...(meta.queue ? [`- ${QUEUE_LABEL}: ${JSON.stringify(meta.queue)}`] : []),
+    ``,
+    `| Area | Check | Result | Detail |`,
+    `| --- | --- | --- | --- |`,
+    ...checks.map((c) => `| ${c.area} | ${c.name} | ${c.ok ? "pass" : "**FAIL**"} | ${c.detail.replaceAll("|", "\\|")} |`),
+    ``,
+  ].join("\n");
+  await writeFile(resolve(EVIDENCE, `${name}.md`), md);
+  await close().catch(() => {});
+  dev.kill();
+  site.stop();
+  markedApp.stop();
+  const failed = checks.filter((c) => !c.ok);
+  console.log(`\n${checks.length - failed.length}/${checks.length} checks passed. Evidence: ${EVIDENCE}`);
+  process.exit(failed.length ? 1 : 0);
+}
+const QUEUE_LABEL = "Load content queue";
+meta.build = (await Bun.$`git -C ${ROOT} rev-parse --short HEAD`.text()).trim() + ((await Bun.$`git -C ${ROOT} status --porcelain -- apps packages src`.text()).trim() ? " + uncommitted changes" : "");
+
+/** An error thrown outside `check()` is a failed check: `finish()` must not report the run as passed. */
+function crashed(what: string, error: unknown) {
+  const detail = ((error as Error)?.message ?? String(error)).slice(0, 400);
+  checks.push({ area, name: `${what} ran to the end`, ok: false, detail, ms: 0 });
+  console.log(`  ✗ ${what} crashed — ${detail}`);
+}
+
+/** The native Sleeping-tab lane, with a live session for the run account (the full run signs it out). */
+async function sleepingLane() {
+  try {
+    await signInRunAccount();
+    await sleepingChecks({ check, assert, section, evidence: EVIDENCE, meta });
+  } catch (error) {
+    crashed("native Sleeping-tab lane", error);
+  }
+}
+
+if (ONLY === "sleeping") {
+  try {
+    await sleepingLane();
+  } finally {
+    await finish("sleeping-run", async () => {});
+  }
+}
+
 const A = await launch("A");
 const ctx = A.context;
 const extensionId = new URL((await sw(ctx)).url()).host;
@@ -938,11 +1001,17 @@ try {
     await L.locator("#group-description").fill("Papers and articles for the thesis");
     await L.getByText("Pin to library").click();
     await L.getByRole("button", { name: "Create group" }).click();
-    const groups = await waitFor("native group", async () => {
+    // The group, its title and the pinned entry land in separate steps: wait for all three.
+    let catalog: { groups: any[] } = { groups: [] };
+    const groups = await waitFor("native group, titled and pinned", async () => {
       const g = await inSw(ctx, async (w: number) => chrome.tabGroups.query({ windowId: w }), W1);
-      return g.length === 1 ? g : null;
+      if (g.length !== 1 || g[0]!.title !== "Research") return null;
+      catalog = await api<{ groups: any[] }>("/browser/catalog");
+      return catalog.groups.length === 1 ? g : null;
+    }).catch(async (error: Error) => {
+      const g = await inSw(ctx, async (w: number) => chrome.tabGroups.query({ windowId: w }), W1).catch(() => null);
+      throw new Error(`${error.message}; groups ${JSON.stringify(g?.map((x: any) => x.title))}, catalog ${catalog.groups.length}`);
     });
-    const catalog = await api<{ groups: any[] }>("/browser/catalog");
     pinnedId = catalog.groups[0]?.id;
     assert(groups[0]!.title === "Research" && catalog.groups.length === 1, "group/pin missing");
     await shot(L, "09-groups");
@@ -1371,29 +1440,9 @@ try {
     await shot(L, "16-second-account");
     return `refused sign-out (503) kept ${before} cached entries, metadata ${JSON.stringify(metaBefore)} and the bridge; retry: forgotten, old cookie 401; second account: new library id, 0 groups, 0 lens cells, none of ${lensNamesA.length} lenses`;
   });
+  await sleepingLane();
+} catch (error) {
+  crashed("browser run", error);
 } finally {
-  meta.finishedAt = new Date().toISOString();
-  meta.providerCalls = await calls().catch(() => null);
-  await writeFile(resolve(EVIDENCE, "run.json"), JSON.stringify({ meta, checks }, null, 2));
-  const md = [
-    `# Browser integration run`,
-    ``,
-    `- Chromium: ${meta.browser}`,
-    `- Extension: ${meta.extensionId} v${meta.extensionVersion}`,
-    `- Started: ${meta.startedAt} · finished: ${meta.finishedAt}`,
-    `- Fixture Jev calls (mock provider, not paid): ${meta.providerCalls}`,
-    ``,
-    `| Area | Check | Result | Detail |`,
-    `| --- | --- | --- | --- |`,
-    ...checks.map((c) => `| ${c.area} | ${c.name} | ${c.ok ? "pass" : "**FAIL**"} | ${c.detail.replaceAll("|", "\\|")} |`),
-    ``,
-  ].join("\n");
-  await writeFile(resolve(EVIDENCE, "run.md"), md);
-  await ctx.close().catch(() => {});
-  dev.kill();
-  site.stop();
-  markedApp.stop();
-  const failed = checks.filter((c) => !c.ok);
-  console.log(`\n${checks.length - failed.length}/${checks.length} checks passed. Evidence: ${EVIDENCE}`);
-  process.exit(failed.length ? 1 : 0);
+  await finish("run", () => ctx.close());
 }

@@ -44,6 +44,8 @@ export type ActionMeta = {
   barLabel?: (eligible: number) => string;
   /** The mobile drawer tile's label when `label` is too long for a quarter of the row. */
   tileLabel?: string;
+  /** A warning worth reading before running it; shown as the reason when nothing else needs saying. */
+  hint?: string;
 };
 
 export type SelectionAction<T, R, C> = ActionMeta & {
@@ -185,7 +187,7 @@ export type ActionState<T = unknown> = {
   availability: Availability<T>;
   /** The action can't be started. */
   disabled: boolean;
-  /** Why it is disabled, or what the skipped links mean; null when everything qualifies. */
+  /** Why it is disabled, what the skipped links mean, or the action's hint; null when there's nothing to say. */
   reason: string | null;
   /** "eligible/total" when only some links qualify. */
   badge: string | null;
@@ -198,7 +200,7 @@ export function actionState<T, C>(action: SelectionAction<T, never, C>, selected
     action,
     availability,
     disabled: !!blocked || !selected.length,
-    reason: blocked ?? (skipped.length ? (action.partial?.(skipped.length, selected.length) ?? `${skipped.length} skipped`) : null),
+    reason: blocked ?? (skipped.length ? [action.partial?.(skipped.length, selected.length) ?? `${skipped.length} skipped`, action.hint].filter(Boolean).join(". ") : (action.hint ?? null)),
     badge: !blocked && eligible.length < selected.length ? `${eligible.length}/${selected.length}` : null,
   };
 }
