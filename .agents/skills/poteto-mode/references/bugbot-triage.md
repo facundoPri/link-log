@@ -4,11 +4,18 @@ Use this reference when the Babysit playbook (`../playbooks/babysit.md`) handles
 
 ## Reading CodeRabbit comments
 
-A CodeRabbit body is mostly `<details>` blocks (a fix prompt, suggestions) and HTML comments. The finding is the text before the first `<details>`: the severity line, the bold title, and the paragraph under it. Read just that:
+A CodeRabbit inline comment is mostly `<details>` blocks (a fix prompt, suggestions) and markup. The finding is the text before the first `<details>`: the severity line, the bold title, and the paragraph under it. Read just that, stripping only CodeRabbit's `<picture>` icons and HTML comments so code like `<T>` survives:
 
 ```bash
 gh api --paginate "repos/<owner>/<repo>/pulls/<pr>/comments" \
-  --jq '.[] | select(.user.login == "coderabbitai[bot]") | {id, path, line, finding: (.body | split("<details>")[0] | gsub("<[^>]*>"; ""))}'
+  --jq '.[] | select(.user.login == "coderabbitai[bot]") | {id, path, line, finding: (.body | split("<details>")[0] | gsub("(?s)<picture>.*?</picture>|<!--.*?-->"; ""))}'
+```
+
+Review bodies carry findings too: sections such as "Outside diff range comments", "Minor comments" and "Nitpick comments" sit inside `<details>` and have no thread, so the watcher never sees them. Read each review body whole, with the same strip, and triage those findings before reporting ready:
+
+```bash
+gh api --paginate "repos/<owner>/<repo>/pulls/<pr>/reviews" \
+  --jq '.[] | select(.user.login == "coderabbitai[bot]") | {id, commit_id, body: (.body | gsub("(?s)<picture>.*?</picture>|<!--.*?-->"; ""))}'
 ```
 
 ## Decision rubric
