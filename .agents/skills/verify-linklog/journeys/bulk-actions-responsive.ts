@@ -175,8 +175,9 @@ export default (async ({ page, api, fixture, step, check, shot, note }) => {
   await confirm.getByRole("button", { name: "Extract", exact: true }).click();
   const batch = await check("API: an extract batch started", async () => (await api.library()).batches.find((b) => b.kind === "extract" && b.total === visible));
   const toast = page.locator("[data-sonner-toast]").filter({ hasText: new RegExp(`Extracting context for ${visible} links`) });
-  await check("The toast reports n of N and the bar shows no count", async () =>
-    (await toast.getByText(new RegExp(`^\\d+ of ${visible}$`)).isVisible()) && !new RegExp(`\\d+/${visible}`).test((await bar.textContent()) ?? ""), { timeout: 5_000 }).catch(() => note("progress-missed", "the batch settled before the toast was polled"));
+  // A fast batch can settle before the running toast is polled; only that miss is tolerated.
+  await check("The toast reports n of N", () => toast.getByText(new RegExp(`^\\d+ of ${visible}$`)).isVisible(), { timeout: 5_000 }).catch(() => note("progress-missed", "the batch settled before the toast was polled"));
+  await check("The bar shows no run count", async () => !new RegExp(`\\d+/${visible}`).test((await bar.textContent()) ?? ""));
   await shot("09-mobile-running");
   await check("API: the batch settles with every link that can never be extracted failed", async () => {
     const b = (await api.library()).batches.find((x) => x.id === batch.id);
