@@ -8,6 +8,7 @@ import { useInvalidateUsage, useUsageSummary } from "../entities";
 import { relativeTime } from "../lib/time";
 import { featureCost, featureUnits, minutesUntil } from "../lib/usage-format";
 import { uploadCurl } from "../lib/upload-curl";
+import { LoadSettings } from "./browser/LoadSettings";
 import type { ApiKey, QuotaUsage, Usage } from "../types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -69,7 +70,7 @@ function Section({ title, description, children }: { title: string; description?
   );
 }
 
-/** Settings: the account basics, usage and the owner's API keys. */
+/** Settings: the account basics, this browser's extension settings, usage and the owner's API keys. */
 export function SettingsPage({ account, onSignOut, onBack }: { account: { email: string }; onSignOut: () => void; onBack: () => void }) {
   const usage = useUsageSummary();
   // Shared: the key list manages the keys and Usage names the same keys, so its rows can tell them apart.
@@ -94,6 +95,9 @@ export function SettingsPage({ account, onSignOut, onBack }: { account: { email:
               Sign out
             </Button>
           </div>
+        </Section>
+        <Section title="Browser" description="Settings for the Browser view and the Linklog extension in this browser.">
+          <LoadSettings />
         </Section>
         <UsageSection usage={usage.data ?? null} error={usage.data ? "" : (usage.error?.message ?? "")} keys={keys.data ?? null} />
         <ApiKeys keys={keys.data ?? null} loadError={keys.data ? "" : (keys.error?.message ?? "")} monthly={usage.data ? Object.fromEntries(usage.data.month.apiKeys.map((k) => [k.id, k.links])) : null} />
