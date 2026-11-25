@@ -1,0 +1,112 @@
+{
+  "journey": "/Users/facundopri/orca/workspaces/link-log/fac-266-extension-version/.agents/skills/verify-linklog/journeys/extension-version.ts",
+  "ui": "http://127.0.0.1:3400",
+  "commit": "f14aba8",
+  "startedAt": "2026-11-25T05:43:42.132Z",
+  "status": "passed",
+  "steps": [
+    {
+      "ms": 704,
+      "text": "No extension: Connect links the latest release, with a note for source builds"
+    },
+    {
+      "ms": 3511,
+      "text": "Extension 0.1.1 on protocol 2, pushing an old-shape snapshot: blocked, versions named, no crash"
+    },
+    {
+      "ms": 5343,
+      "text": "Extension 0.1.1 on this protocol: tabs show, with a non-blocking update banner"
+    },
+    {
+      "ms": 5648,
+      "text": "Extension 0.2.0: no banner"
+    }
+  ],
+  "checks": [
+    {
+      "name": "Connect screen asks for the extension",
+      "ok": true,
+      "ms": 2417
+    },
+    {
+      "name": "Download link points at the latest release",
+      "ok": true,
+      "ms": 1
+    },
+    {
+      "name": "Source-build note is there",
+      "ok": true,
+      "ms": 2
+    },
+    {
+      "name": "Update screen shows",
+      "ok": true,
+      "ms": 1
+    },
+    {
+      "name": "Names installed 0.1.1 and needed version",
+      "ok": true,
+      "ms": 1
+    },
+    {
+      "name": "Download link points at the latest release",
+      "ok": true,
+      "ms": 1
+    },
+    {
+      "name": "The pushed old tab never renders",
+      "ok": true,
+      "ms": 2
+    },
+    {
+      "name": "Still on the update screen after the push",
+      "ok": true,
+      "ms": 2
+    },
+    {
+      "name": "No page errors",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "Update banner names both versions",
+      "ok": true,
+      "ms": 1
+    },
+    {
+      "name": "Banner links the latest release",
+      "ok": true,
+      "ms": 1
+    },
+    {
+      "name": "Browser view is usable (no Connect/Update screen)",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "Open links button shows (connected)",
+      "ok": true,
+      "ms": 1
+    },
+    {
+      "name": "No update banner",
+      "ok": true,
+      "ms": 1
+    },
+    {
+      "name": "No page errors in the whole run",
+      "ok": true,
+      "ms": 0
+    }
+  ],
+  "artifacts": [
+    "01-missing.png",
+    "01-missing.aria.yml",
+    "02-outdated-protocol.png",
+    "02-outdated-protocol.aria.yml",
+    "03-older-same-protocol.png",
+    "04-current.png",
+    "page-errors.json",
+    "video.webm"
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "journey": "/Users/facundopri/orca/workspaces/link-log/fac-266-before/.agents/skills/verify-linklog/journeys/extension-version-before.ts",
+  "ui": "http://127.0.0.1:3600",
+  "commit": "bc93c27",
+  "startedAt": "2026-11-25T05:44:08.839Z",
+  "status": "failed",
+  "steps": [
+    {
+      "ms": 617,
+      "text": "Extension 0.1.1 on protocol 2 pushes an old-shape snapshot after hello"
+    }
+  ],
+  "checks": [
+    {
+      "name": "The pushed old tab never renders",
+      "ok": true,
+      "ms": 2
+    },
+    {
+      "name": "No page errors",
+      "ok": false,
+      "ms": 1204,
+      "error": "still false after 1 s"
+    }
+  ],
+  "artifacts": [
+    "before-outdated-protocol.png",
+    "page-errors.json",
+    "failed.png",
+    "video.webm"
+  ],
+  "error": "No page errors: still false after 1 s"
+}
