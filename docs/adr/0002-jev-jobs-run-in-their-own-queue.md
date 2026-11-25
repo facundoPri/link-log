@@ -15,4 +15,4 @@ Jev jobs (lens, auto-tag, query, and the Browser lens and autogroup evaluations)
 
 - No fair share between users: a small batch can wait behind a large one.
 - Queue delivery is at-least-once and there are no durable steps, so the D1 `jev_call` claim is what prevents a second, billed call for the same job.
-- A 429 from Jev is retried with `message.retry` honoring `Retry-After`. It is the one exception to FAC-54's rule that a sent call is never retried automatically.
+- A 429 from Jev still fails the job as `provider_error`; the consumer only logs it (`jev_rate_limited`). FAC-195 will retry it with `message.retry` honoring `Retry-After`, the one planned exception to FAC-54's rule that a sent call is never retried automatically.
