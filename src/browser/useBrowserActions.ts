@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   BROWSER_LIMITS,
@@ -21,7 +22,7 @@ import type { Lens, Library } from "../types";
 import { useInvalidateLibrary, useWriteLibrary } from "../library";
 import type { StartRun } from "../sessionRuns";
 import { plural } from "../lib/format";
-import { call, evaluationStatus, postEvaluation } from "./api";
+import { ackTargets, call, evaluationStatusQuery, postEvaluation } from "./api";
 import { summarizeOpen } from "./openLinks";
 import type { BrowserWorkspace, Destination } from "./useBrowserWorkspace";
 import type { GroupDraft } from "../components/browser/GroupDialog";
@@ -63,6 +64,7 @@ export function useBrowserActions(ws: BrowserWorkspace, startRun: StartRun, clea
   const { request, catalog, hello } = ws.browser;
   const setLibrary = useWriteLibrary();
   const invalidateLibrary = useInvalidateLibrary();
+  const queryClient = useQueryClient();
   const [dialog, setDialog] = useState<BrowserDialog | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -162,7 +164,7 @@ export function useBrowserActions(ws: BrowserWorkspace, startRun: StartRun, clea
     const open = new Set(requestIds);
     for (let i = 0; i < 180 && open.size; i++) {
       for (const requestId of [...open]) {
-        const res = await evaluationStatus(requestId);
+        const res = await queryClient.fetchQuery(evaluationStatusQuery(requestId));
         if (res.status !== 200 || !res.data.targets.every((t) => FINAL_STATES.includes(t.state))) continue;
         for (const t of res.data.targets) {
           const tab = byKey.get(t.targetKey)!;
@@ -170,7 +172,7 @@ export function useBrowserActions(ws: BrowserWorkspace, startRun: StartRun, clea
             suggestions.set(tab.tabId, { key: t.answer.choice === "none" ? null : t.answer.choice, confidence: t.answer.confidence });
           else suggestions.set(tab.tabId, { key: null, confidence: null, error: t.error ?? "No suggestion." });
         }
-        await call(`/browser/evaluations/${requestId}/ack`, "POST", { targetKeys: res.data.targets.map((t) => t.targetKey) }).catch(() => {});
+        await ackTargets(requestId, res.data.targets.map((t) => t.targetKey));
         open.delete(requestId);
       }
       if (open.size) await new Promise((r) => setTimeout(r, 1000));

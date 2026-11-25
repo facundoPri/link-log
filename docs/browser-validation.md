@@ -31,10 +31,13 @@ Baseline antes de empezar: `typecheck` OK, `bun test` 45/45, `build` OK.
 
 ## Integración con Chromium real (`bun run test:browser`)
 
+Por defecto la evidencia se escribe en `.cache/browser-validation/` (no versionado). Para refrescar la evidencia versionada de `docs/browser-validation/` hay que pedirlo: `LINKLOG_BROWSER_EVIDENCE=docs/browser-validation bun run test:browser`, y después actualizar el resumen y la matriz de abajo con el resultado de esa corrida.
+
 Última corrida: **67/67 checks pasan** en ~9 minutos —
 [`browser-validation/run.md`](browser-validation/run.md) (detalle en `run.json`, 332 llamadas
 del proveedor fixture en total). Incluye al final los 11 checks nativos de pestañas dormidas (FAC-163),
-con una sesión nueva de la cuenta de la corrida porque un check anterior la cierra. Cada fila es un check automatizado contra la extensión cargada; los
+con una sesión nueva de la cuenta de la corrida porque un check anterior la cierra. Cada fila es un
+check automatizado contra la extensión cargada; los
 contadores de llamadas son del proveedor **fixture** (prueban la deduplicación del flujo, no
 facturación real).
 
@@ -114,7 +117,7 @@ Corrida nativa: **11/11 checks pasan** —
 | --- | --- |
 | Navegador | Chrome for Testing 153.0.8010.12 (Playwright chromium-1243), headless nuevo, perfil aislado |
 | Extensión | Linklog 0.1.1, ID `ohpalbbmodgclkjoknohidbcnnnaadic`, build de `bfbf6f2` (merge con `main`) más los arreglos de la revisión |
-| Comando | `LINKLOG_BROWSER_ONLY=sleeping bun run test:browser` (sólo esta sección; sin la corrida Playwright) |
+| Comando | `LINKLOG_BROWSER_ONLY=sleeping LINKLOG_BROWSER_EVIDENCE=docs/browser-validation bun run test:browser` (sólo esta sección; sin la corrida Playwright) |
 | Driver | CDP crudo (`tests/browser/cdp.ts`): Playwright se adjunta a todas las páginas y un `discard` bajo Playwright cerraba Chromium 153. Este cliente se adjunta sólo al worker y a la página de Linklog |
 | Despertares | contados por hits al servidor de fixtures, que sobreviven al reinicio del worker |
 

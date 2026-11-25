@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "./api";
+import { apiRead } from "./api";
 import type { Library } from "./types";
 
 // How library data stays current:
@@ -33,7 +33,7 @@ export const createQueryClient = () =>
 export function useLibrary() {
   return useQuery({
     queryKey: libraryKey,
-    queryFn: ({ signal }) => api<Library>("/library", "GET", undefined, signal),
+    queryFn: ({ signal }) => apiRead<Library>("/library", signal),
     refetchInterval: (query) => (busy(query.state.data) ? POLL_MS : false),
     // Kept while no view reads it (Settings), for as long as the account's client lives.
     gcTime: Infinity,
