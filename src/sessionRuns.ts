@@ -7,13 +7,20 @@ import { useInvalidateLibrary, useLibrary } from "./library";
 import { plural, tokens, usd } from "./lib/format";
 import type { Batch } from "./types";
 
-/** An action this page started. Its batches share one toast, which settles once the run has ended and they all finished. */
-export type SessionRun = { add: (batchId: string) => void; end: () => void };
+/**
+ * An action this page started. Its batches share one toast, which settles once the run has ended and they all
+ * finished. `cancelled` turns true when the user cancels it from that toast: whoever drives the run stops starting
+ * more work.
+ */
+export type SessionRun = { add: (batchId: string) => void; end: () => void; readonly cancelled: boolean };
 export type StartRun = () => SessionRun;
 
 type Run = {
   batchIds: string[];
   open: boolean;
+  cancelled: boolean;
+  /** Cancels every batch of the run, and from then on each batch that joins it (its request was in flight). */
+  cancel: () => void;
   /**
    * Library data from after this time lists every batch of the run that the library's 30-batch window holds. A batch
    * it doesn't list then has left the window (or never got a job): it can't be followed, so it stops holding the toast.
@@ -39,29 +46,25 @@ export function useSessionRuns({
   const runs = useRef(new Map<string, Run>());
   const [version, changed] = useReducer((n: number) => n + 1, 0);
 
-  /** Called once the library that answered the batch's request is in the cache. */
-  const trackBatch = useCallback((batchId: string) => {
-    runs.current.set(crypto.randomUUID(), { batchIds: [batchId], open: false, listedAfter: 0 });
-    changed();
-  }, []);
-  const startRun = useCallback<StartRun>(() => {
-    const run: Run = { batchIds: [], open: true, listedAfter: Infinity };
-    runs.current.set(crypto.randomUUID(), run);
-    return {
-      add: (batchId) => {
-        run.batchIds.push(batchId);
-        changed();
-      },
-      end: () => {
-        run.open = false;
-        run.listedAfter = Date.now();
-        if (run.batchIds.length) void invalidateLibrary();
-        changed();
-      },
-    };
-  }, [invalidateLibrary]);
-
   const cancelBatches = useCancelBatches();
+  const cancel = useCallback((ids: string[]) => void cancelBatches(ids), [cancelBatches]);
+
+  /** Called once the library that answered the batch's request is in the cache. */
+  const trackBatch = useCallback(
+    (batchId: string) => {
+      const { run, session } = createRun(cancel, changed, invalidateLibrary);
+      session.add(batchId);
+      Object.assign(run, { open: false, listedAfter: 0 });
+      runs.current.set(crypto.randomUUID(), run);
+      changed();
+    },
+    [cancel, invalidateLibrary],
+  );
+  const startRun = useCallback<StartRun>(() => {
+    const { run, session } = createRun(cancel, changed, invalidateLibrary);
+    runs.current.set(crypto.randomUUID(), run);
+    return session;
+  }, [cancel, invalidateLibrary]);
 
   const showRuns = useEffectEvent(() => {
     const listed = new Map(data?.batches.map((batch) => [batch.id, batch]));
@@ -89,7 +92,7 @@ export function useSessionRuns({
           id: toastId,
           ...runningBatchToast({
             batch: { total, done: finished - failed - cancelled, failed, cancelled },
-            onCancel: () => void cancelBatches(run.batchIds),
+            onCancel: run.cancel,
             onActivity,
           }),
         });
@@ -119,4 +122,35 @@ export function useSessionRuns({
   useEffect(() => showRuns(), [data?.batches, dataUpdatedAt, version]);
 
   return { trackBatch, startRun };
+}
+
+/** A run's bookkeeping and the handle its driver gets. Exported for tests. */
+export function createRun(cancelBatches: (ids: string[]) => void, changed: () => void, invalidateLibrary: () => unknown = () => {}) {
+  const run: Run = {
+    batchIds: [],
+    open: true,
+    listedAfter: Infinity,
+    cancelled: false,
+    cancel: () => {
+      run.cancelled = true;
+      cancelBatches([...run.batchIds]);
+    },
+  };
+  const session: SessionRun = {
+    add: (batchId) => {
+      run.batchIds.push(batchId);
+      if (run.cancelled) cancelBatches([batchId]);
+      changed();
+    },
+    end: () => {
+      run.open = false;
+      run.listedAfter = Date.now();
+      if (run.batchIds.length) void invalidateLibrary();
+      changed();
+    },
+    get cancelled() {
+      return run.cancelled;
+    },
+  };
+  return { run, session };
 }

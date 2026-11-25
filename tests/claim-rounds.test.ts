@@ -35,3 +35,14 @@ test("stops instead of spinning when a round takes nothing", async () => {
   );
   expect(calls).toBe(1);
 });
+
+// FAC-265: Cancel on a run's toast once landed between its first and second batch; the second was never cancelled.
+test("a run cancelled after its first round claims nothing more", async () => {
+  const ext = extension(20);
+  const ids = Array.from({ length: 45 }, (_, i) => `t${i}`);
+  let cancelled = false;
+  let posts = 0;
+  await claimRounds(ext.claim, async () => void (posts++, (cancelled = true)), ids, 50, () => cancelled);
+  expect(posts).toBe(1);
+  expect(ext.evaluations).toHaveLength(20);
+});

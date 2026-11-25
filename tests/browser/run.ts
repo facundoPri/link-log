@@ -738,6 +738,10 @@ try {
     await L.locator(`[data-lens-filter="${lensB.id}"]`).getByRole("button", { name: /^Retry \d+ failed/ }).click();
     const progress = L.locator("[data-sonner-toast]", { hasText: /Applying lens to \d+ tabs/ });
     await progress.waitFor({ timeout: 20000 });
+    // Cancel once both batches exist, so the check covers a multi-batch run. A Cancel that lands before the second
+    // batch (once this check's flake) stops the run from claiming more, covered in claim-rounds and
+    // session-run-cancel tests.
+    await waitFor("both batches of the run created", async () => (await batchIds()).filter((id) => !before.includes(id)).length >= 2, 30000);
     await progress.getByRole("button", { name: "Cancel" }).click();
     const answer = L.locator("[data-sonner-toast]", { hasText: /Cancelled \d+ queued jobs?|Nothing left to cancel/ });
     await answer.waitFor({ timeout: 20000 });

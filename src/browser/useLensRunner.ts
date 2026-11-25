@@ -85,6 +85,8 @@ export function useLensRunner(browser: BrowserState, active: Lens[], allLenses: 
   const submit = useCallback(
     async (ref: LensRef, claim: ClaimResult, run?: SessionRun) => {
       if (!claim.requestId || !claim.targets.length || !catalog || !hello) return;
+      // Claimed before the user cancelled the run: release it as a cancelled batch's targets would end.
+      if (run?.cancelled) return void (await request("release", { requestId: claim.requestId, error: "Cancelled.", state: "failed" }));
       const body = {
         kind: "lens" as const,
         requestId: claim.requestId,
@@ -125,6 +127,8 @@ export function useLensRunner(browser: BrowserState, active: Lens[], allLenses: 
           (tabInstanceIds) => request("claim", { ...extra, lens: ref, limit: 20, tabInstanceIds }, 120_000),
           (claim) => submit(ref, claim, run),
           extra.tabInstanceIds,
+          undefined,
+          () => !!run?.cancelled,
         );
       } finally {
         run?.end();

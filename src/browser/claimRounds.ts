@@ -13,10 +13,12 @@ export async function claimRounds(
   submit: (claim: ClaimResult) => Promise<void>,
   tabInstanceIds?: string[],
   maxRounds = 50,
+  /** The user cancelled the run: claim nothing more. */
+  cancelled: () => boolean = () => false,
 ) {
   let remaining = tabInstanceIds;
   for (let round = 0; round < maxRounds; round++) {
-    if (remaining && !remaining.length) return;
+    if ((remaining && !remaining.length) || cancelled()) return;
     const result = await claim(remaining);
     if (result.requestId) await submit(result);
     if (!result.skipped) return;
