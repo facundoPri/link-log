@@ -20,7 +20,6 @@ export function TagPicker({
   trigger,
   tags,
   link,
-  value,
   onToggle,
   onCreate,
   open: openProp,
@@ -28,10 +27,8 @@ export function TagPicker({
 }: {
   trigger: ReactNode;
   tags: Tag[];
-  /** Link mode: tag membership of this link is toggled via onToggle/onCreate. */
-  link?: Link;
-  /** Local mode: selected tag names (e.g. AddLinkDialog). */
-  value?: string[];
+  /** Its tag membership is toggled via onToggle/onCreate. */
+  link: Link;
   onToggle: (name: string) => void;
   onCreate: (name: string) => void;
   /** Controlled open state (optional). */
@@ -42,9 +39,7 @@ export function TagPicker({
   const open = openProp ?? internalOpen;
   const setOpen = onOpenChange ?? setInternalOpen;
   const [input, setInput] = useState("");
-  const assigned = link
-    ? new Set(link.tags.map((t) => t.name))
-    : new Set(value ?? []);
+  const assigned = new Set(link.tags.map((t) => t.name));
   const exact = tags.some(
     (t) => t.name === input.trim().toLocaleLowerCase(),
   );
