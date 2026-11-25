@@ -46,6 +46,7 @@ export const catalogQuery = queryOptions({
     return data;
   },
   gcTime: 0, // useBrowser keeps the catalog in its own state; the cache holds no second copy
+  networkMode: "always", // an unreachable API throws OfflineError instead of pausing while the browser says offline
 });
 
 /**
@@ -58,6 +59,7 @@ export const evaluationStatusQuery = (requestId: string) =>
     queryFn: ({ signal }) => request<EvaluationStatus>(`/browser/evaluations/${requestId}`, "GET", undefined, signal),
     staleTime: 0,
     gcTime: 0,
+    networkMode: "always",
   });
 
 export function evaluationTargets(targets: ClaimTarget[]): EvaluationRequest["targets"] {

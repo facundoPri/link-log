@@ -17,7 +17,7 @@ const read = (file: string) => readFileSync(file, "utf8").replace(/\/\*[\s\S]*?\
 
 /** Each `fetch(...)` call's text, through its matching closing parenthesis. */
 const fetchCalls = (source: string) =>
-  [...source.matchAll(/\bfetch\(/g)].map((m) => {
+  [...source.matchAll(/\bfetch\s*\(/g)].map((m) => {
     let depth = 0;
     for (let i = m.index + m[0].length - 1; i < source.length; i++) {
       if (source[i] === "(") depth++;
@@ -25,6 +25,30 @@ const fetchCalls = (source: string) =>
     }
     return source.slice(m.index);
   });
+
+/** Whether a `fetch(url, options)` call's options object has its own `signal` property (not a nested one). */
+const passesSignal = (call: string) => {
+  // Text at each bracket depth: 1 is fetch's arguments, 2 is the top level of an object argument.
+  let depth = 0;
+  let args = "";
+  let options = "";
+  for (const ch of call.slice(call.indexOf("("))) {
+    if ("{([".includes(ch)) {
+      depth++;
+      if (depth === 2 && ch === "{" && args.includes(",")) options = " ";
+      continue;
+    }
+    if ("})]".includes(ch)) {
+      if (--depth === 0) break;
+      continue;
+    }
+    if (depth === 1) args += ch;
+    else if (depth === 2 && options) options += ch;
+  }
+  return /(^|,)\s*signal\s*(,|:|$)/.test(options.trim());
+};
+
+const apiKeyList = /\bapiKey\s*\.\s*list\s*\(/;
 
 describe("client reads", () => {
   test("only the two transports call fetch", () => {
@@ -36,12 +60,21 @@ describe("client reads", () => {
     for (const file of TRANSPORTS) {
       const calls = fetchCalls(read(file));
       expect(calls.length).toBeGreaterThan(0);
-      for (const call of calls) expect({ file, passesSignal: /\bsignal,/.test(call) }).toEqual({ file, passesSignal: true });
+      for (const call of calls) expect({ file, passesSignal: passesSignal(call) }).toEqual({ file, passesSignal: true });
     }
   });
 
+  test("the guards see through spacing and nesting", () => {
+    expect(fetchCalls('fetch ("/api/library")')).toHaveLength(1);
+    expect(passesSignal("fetch(path, { method, signal, headers: {} })")).toBe(true);
+    expect(passesSignal("fetch(path, { method, signal: controller.signal })")).toBe(true);
+    expect(passesSignal("fetch(path, { body: JSON.stringify({ signal, }) })")).toBe(false);
+    expect(passesSignal("fetch(path, { headers: { signal: 1 } })")).toBe(false);
+    expect(apiKeyList.test("authClient.apiKey . list ()")).toBe(true);
+  });
+
   test("the API keys list is read only through apiKeysRead, which needs a signal", () => {
-    const offenders = files.filter((f) => f !== "src/api.ts" && /\bapiKey\.list\(/.test(read(f)));
+    const offenders = files.filter((f) => f !== "src/api.ts" && apiKeyList.test(read(f)));
     expect(offenders).toEqual([]);
   });
 });

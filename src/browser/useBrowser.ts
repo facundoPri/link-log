@@ -65,6 +65,10 @@ export function useBrowser() {
 
   const refreshCatalog = useCallback(async () => {
     try {
+      // fetchQuery joins a read already in flight, which may predate a write this refresh follows: let it
+      // land, then read again so the catalog returned started after the caller's write.
+      if (queryClient.isFetching({ queryKey: catalogQuery.queryKey }) > 0)
+        await queryClient.fetchQuery(catalogQuery).catch(() => {});
       const next = await queryClient.fetchQuery(catalogQuery);
       setCatalog(next);
       setBackendError(null);
