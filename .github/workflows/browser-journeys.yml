@@ -42,6 +42,8 @@ jobs:
         with:
           bun-version: 1.3.14
       - run: bun install --frozen-lockfile
+      # Journeys record video, which Playwright renders with its own ffmpeg build.
+      - run: bunx playwright-core install ffmpeg
       - run: bun "$V" up
       - name: Run the Browser journeys
         run: |
