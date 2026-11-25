@@ -461,7 +461,7 @@ export const REVIEW_BOT_LOGIN = "coderabbitai[bot]";
 // A real review can quote the skip phrase, so its own markers win.
 const isSkipNotice = (body: string): boolean =>
   /no files to review/i.test(body) &&
-  !/actionable comments posted|files selected for processing/i.test(body);
+  !/actionable comments posted|files selected for processing\D*[1-9]/i.test(body);
 export function reviewBotHeadState(
   activity: T.ReviewBotActivity
 ): Exclude<T.ReviewBotHeadState, "unknown"> {
@@ -478,7 +478,8 @@ export function reviewBotHeadState(
     activity.headCommittedAt === null ? 0 : Date.parse(activity.headCommittedAt);
   return activity.comments.some(
     (comment) =>
-      /rate limit/i.test(comment.body) && Date.parse(comment.updatedAt) >= since
+      /rate limit exceeded/i.test(comment.body) &&
+      Date.parse(comment.updatedAt) >= since
   )
     ? "rate-limited"
     : "not-reviewed";
@@ -668,14 +669,22 @@ export class GhGitHubReader implements T.GitHubReader {
         "--repo",
         `${context.owner}/${context.repo}`,
         "--json",
-        "headRefOid,commits",
+        "headRefOid",
       ]),
       "pull request"
     );
     const headOid = optionalString(pr.headRefOid, "pull request.headRefOid");
-    const head = list(pr.commits, "pull request.commits")
-      .map((commit, index) => record(commit, `commits[${index}]`))
-      .find((commit) => commit.oid === headOid);
+    const headCommittedAt =
+      headOid === null
+        ? null
+        : string(
+            at(await runJson(["gh", "api", `${repo}/commits/${headOid}`]), [
+              "commit",
+              "committer",
+              "date",
+            ]),
+            "commit.committer.date"
+          );
     const reviews = await botItems(
       `${repo}/pulls/${context.number}/reviews`,
       "commit_id, body"
@@ -686,10 +695,7 @@ export class GhGitHubReader implements T.GitHubReader {
     );
     return {
       headOid,
-      headCommittedAt:
-        head === undefined
-          ? null
-          : string(head.committedDate, "commit.committedDate"),
+      headCommittedAt,
       reviews: reviews.map((item, index) => {
         const review = record(item, `reviews[${index}]`);
         return {

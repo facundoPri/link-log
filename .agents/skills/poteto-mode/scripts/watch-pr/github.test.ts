@@ -497,6 +497,36 @@ describe("review bot on the head commit", () => {
     ).toBe("reviewed");
   });
 
+  it("does not count a skip notice that lists zero files selected", () => {
+    expect(
+      reviewBotHeadState(
+        activity({
+          reviews: [
+            {
+              commitId: head,
+              body: "No files to review.\n<summary>Files selected for processing (0)</summary>",
+            },
+          ],
+        })
+      )
+    ).toBe("not-reviewed");
+  });
+
+  it("does not read a summary that mentions rate limiting as a spent quota", () => {
+    expect(
+      reviewBotHeadState(
+        activity({
+          comments: [
+            {
+              body: "Walkthrough: adds a rate limit to the login endpoint",
+              updatedAt: "2026-11-25T18:10:00Z",
+            },
+          ],
+        })
+      )
+    ).toBe("not-reviewed");
+  });
+
   it("reports the quota when the bot hit a rate limit after the head commit", () => {
     expect(
       reviewBotHeadState(
