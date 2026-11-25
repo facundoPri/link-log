@@ -5,6 +5,7 @@ export const EXPECTED_EXTENSION_VERSION: string = extensionPackage.version;
 
 const RELEASES = "https://github.com/facundoPri/link-log/releases";
 export const LATEST_EXTENSION_URL = `${RELEASES}/latest`;
+export const extensionReleaseUrl = (version: string) => `${RELEASES}/tag/extension-v${version}`;
 
 /**
  * The release page of the version this page expects. Web deploys and extension releases run
@@ -12,12 +13,11 @@ export const LATEST_EXTENSION_URL = `${RELEASES}/latest`;
  * fallback only when GitHub answers that the expected release doesn't exist.
  */
 export async function extensionDownloadUrl(expected: string, fetchRelease: typeof fetch = fetch): Promise<string> {
-  const tag = `extension-v${expected}`;
   try {
-    const res = await fetchRelease(`https://api.github.com/repos/facundoPri/link-log/releases/tags/${tag}`);
+    const res = await fetchRelease(`https://api.github.com/repos/facundoPri/link-log/releases/tags/extension-v${expected}`);
     if (res.status === 404) return LATEST_EXTENSION_URL;
   } catch {}
-  return `${RELEASES}/tag/${tag}`;
+  return extensionReleaseUrl(expected);
 }
 
 export type ExtensionUpdate = { installed: string; expected: string };

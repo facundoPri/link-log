@@ -36,6 +36,8 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          # extension-released.ts walks main's history for the first commit declaring the version.
+          fetch-depth: 0
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.3.14
@@ -48,6 +50,7 @@ jobs:
       # "Already released" below is only safe when that release has this commit's extension code;
       # otherwise two PRs raised to the same version and this one's changes would never ship (FAC-282).
       - name: Version not already released from other code
+        if: github.ref == 'refs/heads/main'
         run: bun scripts/extension-released.ts
       - id: version
         name: Version and whether it is released

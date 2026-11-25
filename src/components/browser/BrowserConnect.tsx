@@ -1,7 +1,7 @@
 import { CircleAlert, Download, Globe, PlugZap, RefreshCw } from "lucide-react";
 import type { BrowserWorkspace } from "../../browser/useBrowserWorkspace";
 import { useQuery } from "@tanstack/react-query";
-import { EXPECTED_EXTENSION_VERSION, extensionDownloadUrl, type ExtensionUpdate } from "../../browser/extensionVersion";
+import { EXPECTED_EXTENSION_VERSION, extensionDownloadUrl, extensionReleaseUrl, type ExtensionUpdate } from "../../browser/extensionVersion";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -24,7 +24,7 @@ function useExtensionDownloadUrl(): string {
     staleTime: Infinity,
     retry: false,
   });
-  return data ?? `https://github.com/facundoPri/link-log/releases/tag/extension-v${EXPECTED_EXTENSION_VERSION}`;
+  return data ?? extensionReleaseUrl(EXPECTED_EXTENSION_VERSION);
 }
 
 export function UpdateBanner({ update }: { update: ExtensionUpdate }) {

@@ -46,6 +46,8 @@ function fakeBridge() {
 export default (async ({ page, api, fixture, step, check, shot, aria, note }) => {
   const urls = [fixture("article", "one"), fixture("article", "two")];
   await page.addInitScript(fakeBridge);
+  // The Connect screen asks GitHub for the expected extension release; CI must not reach the internet.
+  await page.route("https://api.github.com/**", (route) => route.fulfill({ status: 404, body: "{}" }));
   const setMode = async (mode: FakeMode | null) => {
     await page.evaluate((m) => {
       sessionStorage.removeItem("fakeOpenLog");
