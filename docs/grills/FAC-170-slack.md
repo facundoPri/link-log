@@ -86,7 +86,7 @@ What we do take from Better Auth: `symmetricEncrypt`/`symmetricDecrypt` from `be
 
 **Q3 Messages that count (arena A):** no subtype, `thread_broadcast` and `file_share`, with thread replies included. Messages with `bot_id`, edits, deletes and joins are ignored. There is no separate user filter: authorship is now the filter.
 
-**Q3b Decoding (arena A):** Slack sends mrkdwn. `<url|label>` becomes the url, then `&lt;` and `&gt;` are unescaped, `&amp;` last. Without decoding, a URL like `https://…/a?x=1&amp;y=2|label` was saved as a broken Link (GT1).
+**Q3b Decoding (arena A, refined in review):** Slack sends mrkdwn. A URL inside Slack's link markup, `<url>` or `<url|label>`, is already delimited by Slack: it is unescaped (`&lt;`, `&gt;`, then `&amp;` last) and passed whole to `normalizeUrl`, without the trailing-punctuation trim that `scanUrls` applies to prose. So `<https://example.com/article_|label>` keeps its final `_`. Only text outside the markup goes through `scanUrls`. Without decoding, a URL like `https://…/a?x=1&amp;y=2|label` was saved as a broken Link (GT1).
 
 ### Security
 
@@ -114,8 +114,13 @@ Round 3 refuted the moderator's first version, a bare nonce: it couldn't tell th
 All four are requested at install, because adding a scope later forces every workspace to reinstall, and backfill needs `*:history`. Events to subscribe to: `message.channels`, `message.groups`, `app_uninstalled`, `tokens_revoked` (the last two need no scope).
 
 **B5e Revocation and uninstall:**
-- `app_uninstalled`, or `tokens_revoked` with `bot[]`, deletes every connection of that team. Both handlers are idempotent, because Slack doesn't guarantee their order (tested, both orders).
-- **Disconnect** in Settings deletes that connection. When it was the workspace's last connection, it also calls `apps.uninstall` and ignores errors such as an already-revoked token. Linklog should not keep receiving message text from a workspace where nobody is linked. This was a swap in round 2, decided by the owner's word "seguridad" (tested: called exactly once, and late events afterwards are harmless).
+- `app_uninstalled`, or `tokens_revoked` with `bot[]`, deletes the connections of that team **installed before the event's `event_time`**. Each callback sets the row's `installed_at`, so a delayed event from an old installation cannot delete a newer one. Both handlers are idempotent, because Slack doesn't guarantee their order (tested, both orders).
+- **Disconnect** in Settings deletes that connection. When it is the workspace's last connection, it first calls `apps.uninstall`:
+  - success, or an already-revoked token (`invalid_auth`, `token_revoked`, `account_inactive`), counts as uninstalled, and the row is deleted;
+  - any other failure keeps the row and answers an error, so the user can try Disconnect again. There is no hidden "uninstall pending" state.
+
+  Linklog should not keep receiving message text from a workspace where nobody is linked. This was a swap in round 2, decided by the owner's word "seguridad" (tested: called exactly once, and late events afterwards are harmless).
+- Known edge: if someone in the same workspace finishes an install at the very moment the last connection is disconnected, the uninstall revokes the new token too, and Slack's `app_uninstalled` then removes that connection. That user sees the connection disappear and adds the app again. It is rare and visible, so there is no lock.
 - Deleting a Linklog user cascades to their connections.
 
 **B5f Multi-tenant invariant:** the only route from a Slack event to a library is the connection row found by (`team_id`, `event.user`), plus its channel list. No code path takes a user id from the request.
@@ -136,7 +141,7 @@ All four are requested at install, because adding a scope later forces every wor
 
 In round 3's run with existing data, Usage went from `{web:2, apiKeys:["Slack:2"], slack:[]}` to `{web:2, apiKeys:["Slack:2"], slack:["Acme:1"]}`. A URL already saved on the web and posted again in Slack stays under Web.
 
-**Q6 Retries and idempotency (arena A):** processing happens inline. A transient failure answers 5xx, and Slack retries immediately, after 1 minute and after 5 minutes. A redelivery is a Duplicate. Known edge: a Link deleted within the 5-minute retry window can come back.
+**Q6 Retries and idempotency (arena A):** processing happens inline. A transient failure answers 5xx, and Slack retries immediately, after 1 minute and after 5 minutes. A redelivery is a Duplicate: no new Link, batch or links-quota charge. It still spends 1 write of the per-minute budget, because the write is charged before `addLinks` knows the URL is a Duplicate. Known edge: a Link deleted within the 5-minute retry window can come back.
 
 **Q4 Feedback in Slack (arena A):** none in v1.
 
@@ -191,8 +196,8 @@ These are one-time steps, for the Linklog app itself:
 
 Then, as a user, like anyone else:
 
-7. In Linklog, go to **Settings › Slack** and click **Add to Slack**, then **Allow**.
-8. In #read-later, run `/invite @Linklog`, then tick #read-later in **Settings › Slack**. Until PR2 ships, set the channel from the browser.
+7. Signed in to Linklog, click **Add to Slack** in **Settings › Slack**, then **Allow**. Before FAC-322 ships, open `https://linklog.facundopri.com/api/slack/install` directly instead.
+8. In #read-later, run `/invite @Linklog`, then tick #read-later in **Settings › Slack**. Before FAC-322 ships, use the channels API call documented in `docs/slack.md` (FAC-321 adds it): list the channels with `GET`, then `PUT` the chosen ids, from the browser console while signed in.
 9. Hermes: arena A's note still holds. A Hermes that posts *as you* (no APP badge) has its links saved too; one that posts as a bot is ignored.
 
 ## Implementation tickets (created in Linear as FAC-321, FAC-322, FAC-323)
@@ -220,22 +225,25 @@ Then, as a user, like anyone else:
    - Signature and `url_verification` work as in arena A.
    - A counted message by a linked author, in an allowed channel, saves its decoded URLs to that author's library with `source: "slack"`.
    - Each of these saves nothing and answers 200: an unlinked author, a non-allowed channel, a bot, an edit or a delete, a mismatched team.
-   - A redelivery creates nothing.
-5. `app_uninstalled` and `tokens_revoked{bot}` delete every row of the team, in either order, idempotently.
+   - URLs inside `<url>` / `<url|label>` are saved exactly as Slack sent them (no trailing-punctuation trim).
+   - A redelivery (the same envelope and `event_id`, with `X-Slack-Retry-Num`) creates no Link, batch or links charge. It spends 1 write.
+5. `app_uninstalled` and `tokens_revoked{bot}` delete the team's rows installed before the event's `event_time`, in either order, idempotently. A delayed event leaves a newer installation in place.
 6. Channels API:
-   - It lists `users.conversations(user)` intersected with the channels the bot is in.
+   - It lists `users.conversations(user)` intersected with the channels the bot is in, following `response_metadata.next_cursor` on every page.
+   - A Slack `ok: false` answers a recoverable error, never an empty list.
    - It stores only ids from that list.
    - An undecryptable token answers `409 {code: "slack-reconnect"}`.
 7. `DELETE` connection:
    - Only the owner can delete it.
-   - On the workspace's last connection, it calls `apps.uninstall` once and ignores errors.
+   - On the workspace's last connection, it calls `apps.uninstall` first. Success or an already-revoked token deletes the row. Any other failure keeps the row and answers an error, so the user can retry.
 8. Activity shows `Extract context · Slack · <workspace>`. `GET /api/usage/summary` returns `month.slack[]` per workspace, and the Web count and API key rows are unchanged (tested with existing data).
 9. Quotas and limits as in arena A: 1 write per message, links-quota 429 gives 200 plus `console.warn`, more than 100 URLs saves the first 100 plus a warning. Installs are rate-limited per user.
-10. A QA fake of `slack.com` in `qa/video/worker-entry.ts` covers `oauth.v2.access` (single-use codes), `users.conversations`, `conversations.list` and `apps.uninstall`. `docs/slack.md` covers setup, behaviour and the known edges. `docs/upload-api.md`'s Usage paragraph mentions Slack workspaces. GLOSSARY gains "Slack connection".
+10. A QA fake of `slack.com` in `qa/video/worker-entry.ts` covers `oauth.v2.access` (single-use codes), `users.conversations`, `conversations.list` and `apps.uninstall`. `docs/slack.md` covers setup, behaviour and the known edges, including the owner's setup before FAC-322 (open `/api/slack/install` directly; the channels `GET`/`PUT` calls from the browser console). `docs/upload-api.md`'s Usage paragraph mentions Slack workspaces. GLOSSARY gains "Slack connection".
 
 **Verification.** Worker tests for criteria 1–9. The `verify-linklog` scenarios script (prototype: `arena-b/scenarios-r3.ts.txt`) runs on an instance with existing web and API key data. Then a manual install in the owner's real workspace after deploy (manual steps 1–8).
 
 +++ Agent notes
+- The table also needs `installed_at`, set on every callback (criterion 5). The prototype only has `created_at`.
 - The prototype's migration comment still says "AES-GCM derived from BETTER_AUTH_SECRET". The decision is `symmetricEncrypt` from `better-auth/crypto`.
 - Readers of changed shapes: `BatchSource` (`worker/links.ts`, `public-api.ts`), `ActivitySheet.label()` and its `BatchConfig`, the `usage-summary.ts` SQL, the `Usage` type in `src/types.ts` and the Settings Usage UI. The `apiKeys` tests and journeys are unchanged and pass in the prototype.
 - Not verified against real Slack: comma-joined scopes, a second non-admin user re-authorizing, `authed_user.id` on a bot-only install (taken from the docs' sample), admin-approval workspaces, `users.conversations` on private channels.

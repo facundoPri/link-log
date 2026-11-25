@@ -8,7 +8,7 @@ Moderator: Opus (medium). Debaters: Opus and Sonnet subagents, each in its own w
 
 The moderator started verify-linklog (3460/9160), created an API key "Slack" and sent Slack-formatted text to `/api/v1/links`:
 
-- **GT1:** `<https://article.qa.example/gt/a?x=1&amp;y=2|article.qa.example/gt/a?x=1&amp;y=2>` was saved as the Link `https://article.qa.example/gt/a?x=1&amp;y=2|article.qa.example/gt/a?x=1&amp;y=2` (202 created). Script: `FAC-170-prototype/ground-truth-scan.ts.txt`.
+- **GT1:** `<https://article.qa.example/gt/a?x=1&amp;y=2|article.qa.example/gt/a?x=1&amp;y=2>` was saved as the Link `https://article.qa.example/gt/a?x=1&amp;y=2|article.qa.example/gt/a?x=1&amp;y=2` (202 created). Reproduce it on a verify-linklog instance with an API key: `curl -s -X POST $UI/api/v1/links -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' -d '{"urls":["mirá <https://article.qa.example/gt/a?x=1&amp;y=2|article.qa.example/gt/a?x=1&amp;y=2> y <https://article.qa.example/gt/b>"]}'`, then read the Link back in the 202's `results[].url`. `FAC-170-prototype/ground-truth-scan.ts.txt` shows the same thing at the `scanUrls` level, without a request.
 - **GT2:** sending the same URL again gave `duplicate`, no batch and no charge.
 - **GT3:** a key named "Slack" already made Usage show `apiKeys:[{name:"Slack",links:2}]`, and the Activity label reads `Extract context · API · <key name>`.
 
