@@ -28,7 +28,7 @@ import { BrowserInspector } from "./components/browser/BrowserInspector";
 import { BrowserDialogs } from "./components/browser/BrowserDialogs";
 import { useBrowserActions } from "./browser/useBrowserActions";
 import { BATCH_WORDS, deleteInChunks, submitInChunks, type BatchReply, type DeleteReply } from "./batches";
-import { actionStates, BULK_ACTIONS, bulkProgress, lacksContent, runAction, type BulkRunners } from "./bulkActions";
+import { actionStates, BULK_ACTIONS, lacksContent, runAction, type BulkRunners } from "./bulkActions";
 import { copyLinks } from "./lib/copy-links";
 import { isInput, overlayOpen } from "./lib/overlay";
 import { useQueryClient } from "@tanstack/react-query";
@@ -717,9 +717,8 @@ export function App({
   };
   const pickedSet = new Set(picked);
   const allVisibleSelected = filtered.length > 0 && filtered.every((l) => pickedSet.has(l.id));
-  const progress = bulkProgress(library.batches, selectionBatches.current);
   // The bar, chip or mobile bar covers the list's end while links are selected and while it reports a run.
-  const bulkSurfaceShown = view !== "browser" && (picked.length > 0 || !!progress || results.length > 0);
+  const bulkSurfaceShown = view !== "browser" && (picked.length > 0 || results.length > 0);
   const selectFailed = (r: BulkResult) => {
     const ids = new Set(library.links.map((l) => l.id));
     setPicked(r.failed.map((f) => f.linkId).filter((id) => ids.has(id)));
@@ -737,8 +736,6 @@ export function App({
         activeBatch
           ? {
               label: BATCH_WORDS[activeBatch.kind].running,
-              done: activeBatch.done + activeBatch.failed + activeBatch.cancelled,
-              total: activeBatch.total,
             }
           : null
       }
@@ -1161,7 +1158,6 @@ export function App({
             },
           ]}
           picker={(id) => (id === "lens" ? lensPicker : null)}
-          progress={progress}
           results={results}
           onRun={runAction(BULK_ACTIONS, bulkStates, bulkRunners)}
           onSelectAll={() => setPicked(filtered.map((l) => l.id))}

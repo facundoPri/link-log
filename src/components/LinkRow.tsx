@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import type { Lens, Link, Tag } from "../types";
 import { attentionMessage, canRetryPreview, canUsePreview } from "../attention";
-import { failureMessage, stepLabel } from "../failures";
+import { failureMessage, rowJobLabel } from "../failures";
 import { cn } from "../lib/utils";
 import { youtubeId } from "../lib/youtube";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -83,15 +83,7 @@ export function LinkRow({
       : yt
         ? `https://i.ytimg.com/vi/${yt}/mqdefault.jpg`
         : null;
-  const jobLabel =
-    job && ["queued", "waiting", "running"].includes(job.status)
-      ? job.status === "queued" ? "Queued…"
-        : job.status === "waiting" ? "Waiting for content…"
-          : job.step?.startsWith("Waiting for ") ? stepLabel(job.step)
-            : job.kind === "extract" ? "Extracting…"
-              : job.kind === "preview" ? "Fetching preview…"
-                : job.kind === "autotag" ? "Tagging…" : "Applying lens…"
-      : null;
+  const jobLabel = rowJobLabel(job);
   return (
     <LinkRowFrame
       className={cn(active && "bg-accent")}

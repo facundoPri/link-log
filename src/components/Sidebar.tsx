@@ -80,7 +80,7 @@ export function Sidebar({
   library: Library;
   view: View;
   tagIds: string[];
-  activeBatch: { label: string; done: number; total: number } | null;
+  activeBatch: { label: string } | null;
   onView: (v: View) => void;
   onToggleTag: (id: string) => void;
   onNewTag: () => void;
@@ -304,12 +304,7 @@ export function Sidebar({
         <Button variant="ghost" className={item} onClick={onActivity}>
           <Activity className="size-4" />
           {activeBatch ? activeBatch.label : "Activity"}
-          {activeBatch && (
-            <span className="ml-auto flex items-center gap-1.5 text-2xs text-muted-foreground tabular">
-              {activeBatch.done}/{activeBatch.total}
-              <span className="size-1.5 rounded-full bg-brand animate-pulse" />
-            </span>
-          )}
+          {activeBatch && <span className="ml-auto size-1.5 rounded-full bg-brand animate-pulse" />}
         </Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

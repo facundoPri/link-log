@@ -20,8 +20,10 @@
   ],
   "r2_buckets": [{"binding":"CONTENT","bucket_name":"linklog-content"}],
   "queues": {
-    "producers":[{"binding":"JOBS","queue":"linklog-jobs"}],
-    "consumers":[{"queue":"linklog-jobs","max_batch_size":10,"max_batch_timeout":1,"max_retries":3,"max_concurrency":10}]
+    "producers":[{"binding":"JOBS","queue":"linklog-jobs"},{"binding":"JEV_JOBS","queue":"linklog-jev"}],
+    // Jev queue (ADR 0002): max_batch_size × max_concurrency is the ceiling on simultaneous Jev calls.
+    // 2 × 4 = 8 keeps sustained load under TypeSafe's 100k input tokens/s (prod avg ~3.2k tokens, ~0.3 s per call); FAC-197 tunes it.
+    "consumers":[{"queue":"linklog-jobs","max_batch_size":10,"max_batch_timeout":1,"max_retries":3,"max_concurrency":10},{"queue":"linklog-jev","max_batch_size":2,"max_batch_timeout":1,"max_retries":3,"max_concurrency":4}]
   },
   "workflows":[{"binding":"PROCESS_LINK","name":"linklog-process-link","class_name":"LinkWorkflow"}],
   "triggers":{"crons":["*/5 * * * *"]},
@@ -66,8 +68,11 @@
       ],
       "r2_buckets": [{ "binding": "CONTENT", "bucket_name": "linklog-content-production" }],
       "queues": {
-        "producers": [{ "binding": "JOBS", "queue": "linklog-jobs-production" }],
-        "consumers": [{ "queue": "linklog-jobs-production", "max_batch_size": 10, "max_batch_timeout": 1, "max_retries": 3, "max_concurrency": 10 }],
+        "producers": [{ "binding": "JOBS", "queue": "linklog-jobs-production" }, { "binding": "JEV_JOBS", "queue": "linklog-jev-production" }],
+        "consumers": [
+          { "queue": "linklog-jobs-production", "max_batch_size": 10, "max_batch_timeout": 1, "max_retries": 3, "max_concurrency": 10 },
+          { "queue": "linklog-jev-production", "max_batch_size": 2, "max_batch_timeout": 1, "max_retries": 3, "max_concurrency": 4 },
+        ],
       },
       "workflows": [{ "binding": "PROCESS_LINK", "name": "linklog-process-link-production", "class_name": "LinkWorkflow" }],
       "triggers": { "crons": ["*/5 * * * *"] },

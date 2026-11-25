@@ -1,7 +1,7 @@
 import { contentPrefix } from "./store";
 
 /**
- * Deletes an owner's links and everything they own (ADR 0002). Owned rows go through ON DELETE CASCADE, queued
+ * Deletes an owner's links and everything they own (ADR 0003). Owned rows go through ON DELETE CASCADE, queued
  * and waiting jobs included: a queued job's message then finds no row, and the workflow's start is guarded on the
  * row still being queued, so nothing runs. The running-job check sits inside the DELETE, so a job that starts
  * meanwhile is seen and its link is reported as `running` instead. Ids that are not the owner's are ignored,

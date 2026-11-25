@@ -44,7 +44,8 @@ test("a batch logs queue wait, call latency, first result, duration and its 429 
   const log = capture();
   const batch = (await s.api("/batches", "POST", { kind: "autotag", ids })).data.batchId as string;
   tick(3000);
-  await s.runQueued();
+  // One delivery at a time, so each call's scripted latency is its own on the shared clock.
+  for (const m of s.jevSent.splice(0)) await s.runJob(m.body.id);
   log.stop();
   const jobs = s.db.query("SELECT id,status FROM jobs WHERE batch_id=? ORDER BY rowid").all(batch) as { id: string; status: string }[];
   expect(jobs.map((j) => j.status)).toEqual(["done", "failed", "done"]);
@@ -74,6 +75,24 @@ test("a batch logs queue wait, call latency, first result, duration and its 429 
   expect(done[0]!.duration_ms).toBeGreaterThanOrEqual(3450);
 
   expect(JSON.stringify(log.lines)).not.toContain("secret-key-do-not-log");
+});
+
+test("a job retried after a storage error before its call logs its start once", async () => {
+  const s = await setup();
+  const id = (await s.api("/links", "POST", { url: "https://m.example/retried" })).data.id as string;
+  await s.runQueued();
+  await s.api("/tags", "POST", { name: "topic" });
+  Object.assign(s.env as any, { JEV_PROVIDER: "typesafe", TYPESAFE_API_KEY: "test-only" });
+  jev(() => ({ latency: 10 }));
+  const content = s.env.CONTENT as any, get = content.get;
+  let failures = 1;
+  content.get = async (k: string) => (failures-- > 0 ? Promise.reject(new Error("We encountered an internal error. Please try again.")) : get(k));
+  const log = capture();
+  const batch = (await s.api("/batches", "POST", { kind: "autotag", ids: [id] })).data.batchId as string;
+  await s.runQueued();
+  log.stop();
+  expect(s.db.query("SELECT status,attempt FROM jobs WHERE batch_id=?").get(batch)).toEqual({ status: "done", attempt: 2 });
+  expect(log.events("jev_job_started")).toHaveLength(1);
 });
 
 test("extraction jobs log no Jev events", async () => {

@@ -1,6 +1,6 @@
 # Bulk delete
 
-A user selects saved links and deletes them, with everything they own: extracted content and previews in R2, tag assignments, tag evaluations, lens results, media and pending jobs. A confirmation names the count and says it can't be undone. Tags and lenses stay (ADR 0002). A link whose job is already running is skipped, reported in the toast and left selected. The action is the `Delete` entry of `src/bulkActions.ts`, in the `Danger` group: a row in the `⌘K` palette and a full-width button in the mobile drawer. It has no single-key shortcut and no desktop toolbar button.
+A user selects saved links and deletes them, with everything they own: extracted content and previews in R2, tag assignments, tag evaluations, lens results, media and pending jobs. A confirmation names the count and says it can't be undone. Tags and lenses stay (ADR 0003). A link whose job is already running is skipped, reported in the toast and left selected. The action is the `Delete` entry of `src/bulkActions.ts`, in the `Danger` group: a row in the `⌘K` palette and a full-width button in the mobile drawer. It has no single-key shortcut and no desktop toolbar button.
 
 ## Sub-features
 

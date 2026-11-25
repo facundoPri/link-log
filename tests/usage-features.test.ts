@@ -1,4 +1,4 @@
-// Usage by feature, from real runs: a Link saved over HTTP, run through the Worker's workflow with the
+// Usage by feature, from real runs: a Link saved over HTTP, run through the Worker's workflow or Jev queue with the
 // Browser Rendering call faked (it answers with the browser time it used), then read back from
 // GET /api/usage/summary. No feature is capped; every run is counted, retries included.
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
@@ -18,7 +18,7 @@ const ARTICLE = `# Transit plan approved\n\n${"The city council approved the new
 const renders = (ms: number) => () => new Response(JSON.stringify({ success: true, result: ARTICLE }), { status: 200, headers: { "content-type": "application/json", "x-browser-ms-used": String(ms) } });
 
 const save = async (s: S, url: string) => (await s.api("/links", "POST", { url })).data.id as string;
-const runAll = async (s: S) => { while (s.sent.length) await s.runQueued(); };
+const runAll = async (s: S) => { while (s.sent.length || s.jevSent.length) await s.runQueued(); };
 const features = async (s: S) => {
   const { data } = await s.api("/usage/summary");
   return { rows: Object.fromEntries((data.month.features as Row[]).map((f) => [f.key, f])) as Record<string, Row>, total: data.month.total as { usd: number; unknownCostCalls: number } };

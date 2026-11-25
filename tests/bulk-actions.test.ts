@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { BrowserTab } from "@linklog/browser-protocol";
-import { actionForKey, actionState, actionStates, BULK_ACTIONS, bulkProgress, routeKey, type ActionMeta, type BulkContext, type KeyScene } from "../src/bulkActions";
+import { actionForKey, actionState, actionStates, BULK_ACTIONS, routeKey, type ActionMeta, type BulkContext, type KeyScene } from "../src/bulkActions";
 import { TAB_ACTIONS, type TabContext } from "../src/browser/tabActions";
 import type { Batch, Link, Tag } from "../src/types";
 
@@ -209,21 +209,7 @@ describe("registry", () => {
   });
 });
 
-describe("progress of a run started from the selection", () => {
-  const batch = (id: string, kind: Batch["kind"], total: number, active: number) => ({ id, kind, total, active }) as Batch;
-
-  test("reports done over total for the active batch, and nothing once it settles", () => {
-    const started = new Set(["b1"]);
-    expect(bulkProgress([batch("b1", "extract", 12, 10)], started)).toEqual({ label: "Extracting", done: 2, total: 12 });
-    expect(bulkProgress([batch("b1", "extract", 12, 0)], started)).toBeNull();
-  });
-
-  test("sums the chunks of one run and ignores batches the selection did not start", () => {
-    const started = new Set(["b1", "b2"]);
-    const batches = [batch("b1", "autotag", 100, 40), batch("b2", "autotag", 20, 20), batch("other", "extract", 5, 5)];
-    expect(bulkProgress(batches, started)).toEqual({ label: "Auto-tagging", done: 60, total: 120 });
-  });
-
+describe("drawer labels", () => {
   test("the drawer shortens only the label that would not fit", () => {
     expect(BULK_ACTIONS.filter((a) => a.tileLabel).map((a) => [a.id, a.tileLabel])).toEqual([["extract", "Extract"]]);
   });

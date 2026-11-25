@@ -1,7 +1,7 @@
 import { useEffect, useEffectEvent, useImperativeHandle, useState, type ReactNode, type Ref } from "react";
 import type { LucideIcon } from "lucide-react";
 import { toast } from "sonner";
-import { routeKey, type ActionMeta, type ActionState, type BulkProgress } from "../bulkActions";
+import { routeKey, type ActionMeta, type ActionState } from "../bulkActions";
 import { BulkChip, BulkDock } from "./BulkBar";
 import { BulkDrawer, BulkMobileBar } from "./BulkMobile";
 import { BulkPalette } from "./BulkPalette";
@@ -88,7 +88,6 @@ export function SelectionSurface({
   states,
   commands,
   picker,
-  progress = null,
   results = NO_RESULTS,
   onRun,
   onSelectAll,
@@ -107,7 +106,6 @@ export function SelectionSurface({
   states: ActionState[];
   commands: PaletteCommand[];
   picker: (id: string) => Picker | null;
-  progress?: BulkProgress | null;
   results?: BulkResult[];
   /** Runs an action on its eligible items; availability and pickers were already handled here. */
   onRun: (id: string, detail?: string) => void;
@@ -213,7 +211,6 @@ export function SelectionSurface({
           selected={selected}
           visibleCount={visibleCount}
           states={states}
-          progress={progress}
           results={results}
           onInvoke={invoke}
           onSelectAll={onSelectAll}
@@ -227,7 +224,6 @@ export function SelectionSurface({
         <BulkChip
           noun={noun}
           selected={selected}
-          progress={progress}
           results={results}
           onOpenPalette={openPalette}
           onClear={onClear}
@@ -241,7 +237,6 @@ export function SelectionSurface({
           selected={selected}
           visibleCount={visibleCount}
           allVisibleSelected={allVisibleSelected}
-          progress={progress}
           results={results}
           onSelectAll={onSelectAll}
           onClear={onClear}

@@ -1,10 +1,9 @@
-import { ArrowLeft, ChevronUp, CircleAlert, Loader2, Plus, X } from "lucide-react";
-import type { ActionMeta, ActionState, BulkProgress } from "../bulkActions";
+import { ArrowLeft, ChevronUp, CircleAlert, Plus, X } from "lucide-react";
+import type { ActionMeta, ActionState } from "../bulkActions";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import { plural } from "../lib/format";
-import { progressText } from "./BulkBar";
 import { BulkResultsPopover, resultTitle, type BulkResult } from "./BulkResults";
 import type { PaletteCommand, Picker, SelectionNoun } from "./SelectionSurface";
 
@@ -15,7 +14,6 @@ export function BulkMobileBar({
   selected,
   visibleCount,
   allVisibleSelected,
-  progress,
   results,
   onSelectAll,
   onClear,
@@ -27,7 +25,6 @@ export function BulkMobileBar({
   selected: number;
   visibleCount: number;
   allVisibleSelected: boolean;
-  progress: BulkProgress | null;
   results: BulkResult[];
   onSelectAll: () => void;
   onClear: () => void;
@@ -35,14 +32,8 @@ export function BulkMobileBar({
   onSelectFailed: (result: BulkResult) => void;
   onDismissResult: (result: BulkResult) => void;
 }) {
-  if (!selected && !progress && !results.length) return null;
+  if (!selected && !results.length) return null;
   const last = results.at(-1);
-  const running = progress && (
-    <span className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
-      <Loader2 className="size-3.5 shrink-0 animate-spin" />
-      <span className="truncate tabular">{progressText(progress)}</span>
-    </span>
-  );
   return (
     <div
       role="toolbar"
@@ -54,29 +45,22 @@ export function BulkMobileBar({
           <Button variant="ghost" size="icon" className="size-11 shrink-0 rounded-full" aria-label="Clear selection" onClick={onClear}>
             <X className="size-5" />
           </Button>
-          {progress ? (
-            <div className="min-w-0 flex-1 px-1 leading-tight">
-              <div className="text-[16px] font-semibold tabular">{selected} selected</div>
-              {running}
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={allVisibleSelected ? onClear : onSelectAll}
-              className="min-h-12 min-w-0 flex-1 rounded-xl px-1 text-left leading-tight active:bg-muted"
-            >
-              <span className="block text-[16px] font-semibold tabular">{selected} selected</span>
-              <span className="block truncate text-[12px] text-muted-foreground">
-                {allVisibleSelected ? (
-                  <>
-                    All {visibleCount} selected · <span className="font-medium text-foreground underline underline-offset-2">Deselect all</span>
-                  </>
-                ) : (
-                  <span className="font-medium text-foreground underline underline-offset-2">Select all {visibleCount}</span>
-                )}
-              </span>
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={allVisibleSelected ? onClear : onSelectAll}
+            className="min-h-12 min-w-0 flex-1 rounded-xl px-1 text-left leading-tight active:bg-muted"
+          >
+            <span className="block text-[16px] font-semibold tabular">{selected} selected</span>
+            <span className="block truncate text-[12px] text-muted-foreground">
+              {allVisibleSelected ? (
+                <>
+                  All {visibleCount} selected · <span className="font-medium text-foreground underline underline-offset-2">Deselect all</span>
+                </>
+              ) : (
+                <span className="font-medium text-foreground underline underline-offset-2">Select all {visibleCount}</span>
+              )}
+            </span>
+          </button>
           <Button onClick={onOpenDrawer} className="h-12 shrink-0 gap-1.5 rounded-2xl px-5 text-[15px]">
             Actions <ChevronUp className="size-4" />
           </Button>
@@ -84,10 +68,10 @@ export function BulkMobileBar({
       ) : (
         <>
           <span className="grid size-11 shrink-0 place-items-center">
-            {progress ? <Loader2 className="size-5 animate-spin" /> : <CircleAlert className="size-5 text-amber-600" />}
+            <CircleAlert className="size-5 text-amber-600" />
           </span>
           <p className="min-w-0 flex-1 truncate text-[14px] font-medium tabular">
-            {progress ? progressText(progress) : resultTitle(last!)}
+            {resultTitle(last!)}
           </p>
           {results.length > 0 && (
             <BulkResultsPopover results={results} onSelectFailed={onSelectFailed} onDismiss={onDismissResult}>

@@ -1,6 +1,6 @@
 // FAC-46: bulk delete removes the selected links and everything they own (content and previews in R2, tag
 // associations, tag evaluations, lens results, media, hidden related links, pending jobs). Tag definitions stay
-// (ADR 0002). A link with a running job is skipped and reported, so in-flight processing can never write
+// (ADR 0003). A link with a running job is skipped and reported, so in-flight processing can never write
 // content for a link that no longer exists. Cross-owner attempts are covered in isolation.test.ts.
 import { afterEach, expect, test } from "bun:test";
 import { fakes, resetClock, setup } from "./worker-harness";
@@ -58,7 +58,7 @@ test("deletes the selected links with everything they own and keeps the rest", a
   }
   for (const table of OWNED) expect([table, count(s, table, keep)]).toEqual([table, 1]);
   expect(objectsOf(s, keep).length).toBeGreaterThan(1);
-  // Tag definitions and lenses are the owner's taxonomy, not the link's: they stay (ADR 0002).
+  // Tag definitions and lenses are the owner's taxonomy, not the link's: they stay (ADR 0003).
   expect(res.data.tags.map((t: { name: string }) => t.name)).toEqual(["keep-me"]);
   expect(res.data.lenses.map((l: { id: string }) => l.id)).toEqual([lensId]);
   expect((s.db.query("SELECT count(*) n FROM usage_events").get() as { n: number }).n).toBe(usageBefore);

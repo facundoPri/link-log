@@ -25,7 +25,7 @@ export default (async ({ page, api, fixture, step, check, shot, note }) => {
 
   await step("The list labels the running links while the batch runs");
   await page.reload();
-  await check("The list shows a running or queued label", async () => (await page.getByText(/^(Queued…|Extracting…|Fetching preview…)$/).count()) > 0);
+  await check("The list shows the In progress label", async () => (await page.getByText(/^In progress…$/).count()) > 0);
   await shot("01-running-labels");
 
   await step("Open Activity and expand the batch, counting GET /api/batches/:id");

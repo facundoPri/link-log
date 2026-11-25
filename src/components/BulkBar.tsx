@@ -1,8 +1,7 @@
-import { ChevronDown, CircleAlert, Loader2, MoreHorizontal, X } from "lucide-react";
-import type { ActionMeta, ActionState, BulkProgress } from "../bulkActions";
+import { ChevronDown, CircleAlert, MoreHorizontal, X } from "lucide-react";
+import type { ActionMeta, ActionState } from "../bulkActions";
 import type { SelectionNoun } from "./SelectionSurface";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import { Kbd } from "@/components/ui/kbd";
 import {
@@ -22,7 +21,6 @@ export function BulkDock({
   selected,
   visibleCount,
   states,
-  progress,
   results,
   onInvoke,
   onSelectAll,
@@ -35,7 +33,6 @@ export function BulkDock({
   selected: number;
   visibleCount: number;
   states: ActionState[];
-  progress: BulkProgress | null;
   results: BulkResult[];
   onInvoke: (action: ActionMeta) => void;
   onSelectAll: () => void;
@@ -44,24 +41,10 @@ export function BulkDock({
   onSelectFailed: (result: BulkResult) => void;
   onDismissResult: (result: BulkResult) => void;
 }) {
-  if (!selected && !progress && !results.length) return null;
+  if (!selected && !results.length) return null;
   const promoted = states.filter((s) => s.action.promoted);
   return (
     <div className="fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] left-1/2 z-40 flex -translate-x-1/2 flex-col items-center gap-2">
-      {progress && (
-        <section
-          aria-label="Running job"
-          className="flex w-[440px] max-w-[calc(100vw-2rem)] items-center gap-2.5 rounded-lg border bg-popover px-3 py-2 shadow-md animate-in fade-in slide-in-from-bottom-2 duration-200"
-        >
-          <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
-          <p className="text-[13px] font-medium tabular">{progressText(progress)}</p>
-          <Progress
-            value={progress.total ? (progress.done / progress.total) * 100 : 0}
-            aria-label={progress.label}
-            className="h-1.5 flex-1"
-          />
-        </section>
-      )}
       {results.map((r) => (
         <BulkResultCard
           key={r.batchId}
@@ -135,14 +118,11 @@ export function BulkDock({
   );
 }
 
-export const progressText = (p: BulkProgress) => `${p.label} ${p.done}/${p.total}`;
-
 // The narrow surface: a chip that opens the same palette. A running job shows in it and results open from it, and
 // it stays after the selection clears for as long as there is something to report.
 export function BulkChip({
   noun,
   selected,
-  progress,
   results,
   onOpenPalette,
   onClear,
@@ -151,14 +131,13 @@ export function BulkChip({
 }: {
   noun: SelectionNoun;
   selected: number;
-  progress: BulkProgress | null;
   results: BulkResult[];
   onOpenPalette: () => void;
   onClear: () => void;
   onSelectFailed: (result: BulkResult) => void;
   onDismissResult: (result: BulkResult) => void;
 }) {
-  if (!selected && !progress && !results.length) return null;
+  if (!selected && !results.length) return null;
   const failed = results.reduce((n, r) => n + r.failed.length, 0);
   return (
     <div
@@ -167,12 +146,6 @@ export function BulkChip({
       className="selection-bar fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] left-1/2 z-40 flex max-w-[calc(100vw-1.5rem)] -translate-x-1/2 items-center gap-1 rounded-full border bg-popover p-1 pl-3 shadow-lg animate-in fade-in slide-in-from-bottom-2 duration-200"
     >
       {selected > 0 && <span className="whitespace-nowrap text-[13px] font-medium tabular">{selected} selected</span>}
-      {progress && (
-        <span className="flex items-center gap-1.5 whitespace-nowrap px-2 text-[13px] tabular text-muted-foreground">
-          <Loader2 className="size-3.5 animate-spin" />
-          {progressText(progress)}
-        </span>
-      )}
       {failed > 0 && (
         <BulkResultsPopover results={results} onSelectFailed={onSelectFailed} onDismiss={onDismissResult}>
           <Button size="sm" variant="ghost" className="rounded-full">

@@ -1,5 +1,6 @@
 // FAC-53: a link runs one job at a time. Jev requested on a link whose extraction is queued or running waits
 // for it (status 'waiting', outside the Queue) and starts when it settles, without blocking other links or batches.
+// Extraction runs from the jobs queue; Jev jobs from the Jev queue (FAC-193).
 import { afterEach, expect, test } from "bun:test";
 import { dispatch, fakes, resetClock, setup } from "./worker-harness";
 import { recover } from "../worker/jobs";
@@ -18,6 +19,7 @@ const jobOf = (s: S, batch: string, link: string) =>
   s.db.query("SELECT id,status,step,error FROM jobs WHERE batch_id=? AND link_id=?").get(batch, link) as { id: string; status: string; step: string; error: string | null };
 const batchOf = (s: S, where: string, id: string) => (s.db.query(`SELECT batch_id FROM jobs WHERE ${where}=?`).get(id) as { batch_id: string }).batch_id;
 const sentIds = (s: S) => s.sent.map((m) => m.body.id);
+const jevIds = (s: S) => s.jevSent.map((m) => m.body.id);
 const active = (s: S, link: string) =>
   (s.db.query("SELECT count(*) n FROM jobs WHERE link_id=? AND status IN ('queued','running')").get(link) as { n: number }).n;
 const usage = (s: S) => (s.db.query("SELECT count(*) n FROM usage_events").get() as { n: number }).n;
@@ -44,8 +46,9 @@ test("auto-tag on ready, extracting and never-extracted links: ready runs now, e
   expect(jobOf(s, batch, never)).toBeNull();
   expect(jobOf(s, batch, ready).status).toBe("queued");
   expect(jobOf(s, batch, extracting).status).toBe("waiting");
-  // Only the ready link goes to the Queue; the waiting one is not sent.
-  expect(sentIds(s)).toEqual([jobOf(s, batch, ready).id]);
+  // Only the ready link goes to the Jev queue; the waiting one is not sent.
+  expect(jevIds(s)).toEqual([jobOf(s, batch, ready).id]);
+  expect(sentIds(s)).toEqual([]);
   // Activity shows what it waits for; the batch counts it as active and the link as processing.
   expect((await activity(s, batch)).find((j) => j.link_id === extracting)).toMatchObject({ status: "waiting", waiting_for: "extract" });
   expect((await s.api("/library")).data.batches.find((b: { id: string }) => b.id === batch)).toMatchObject({ total: 2, active: 2, waiting: 1 });
@@ -59,7 +62,7 @@ test("auto-tag on ready, extracting and never-extracted links: ready runs now, e
   // The extraction settles and its waiting auto-tag starts, with no action from the user.
   await s.runJob(extractJob);
   expect(jobOf(s, batch, extracting).status).toBe("queued");
-  expect(sentIds(s)).toEqual([jobOf(s, batch, extracting).id]);
+  expect(jevIds(s)).toEqual([jobOf(s, batch, extracting).id]);
   await s.runQueued();
   expect(jobOf(s, batch, extracting).status).toBe("done");
   expect(s.db.query("SELECT count(*) n FROM tag_evaluations WHERE link_id=?").get(extracting)).toMatchObject({ n: 1 });
@@ -87,7 +90,7 @@ test("another batch is not blocked: a lens on a ready link runs while auto-tag w
   const tagBatch = (await s.api("/batches", "POST", { kind: "autotag", ids: [extracting] })).data.batchId;
   const lensBatch = (await s.api("/batches", "POST", { kind: "lens", ids: [ready], lensId: lens.id })).data.batchId;
   expect(jobOf(s, tagBatch, extracting).status).toBe("waiting");
-  expect(sentIds(s)).toEqual([jobOf(s, lensBatch, ready).id]);
+  expect(jevIds(s)).toEqual([jobOf(s, lensBatch, ready).id]);
   await s.runQueued();
   expect(jobOf(s, lensBatch, ready).status).toBe("done");
   await s.runJob(extractJob);
@@ -107,11 +110,11 @@ test("Jev jobs on one link run one after the other, oldest first; never two acti
   // Extraction is still refused while the link is busy (it never waits behind Jev).
   expect((await s.api("/batches", "POST", { kind: "extract", ids: [id] })).data.error).toBe("Some selected links are still processing.");
   const order: string[] = [];
-  while (s.sent.length) {
+  while (s.jevSent.length) {
     expect(active(s, id)).toBe(1);
-    const [m] = s.sent.splice(0, 1);
+    const [m] = s.jevSent.splice(0, 1);
     order.push(batchOf(s, "id", m!.body.id));
-    await s.runJob(m!.body.id);
+    await s.deliver([m!]);
   }
   expect(order).toEqual([first, second, third]);
   expect([first, second, third].map((b) => jobOf(s, b, id).status)).toEqual(["done", "done", "done"]);
@@ -169,7 +172,7 @@ const results = (s: S, link: string) => ({
   lens: (s.db.query("SELECT count(*) n FROM lens_results WHERE link_id=?").get(link) as { n: number }).n,
 });
 const runAll = async (s: S) => {
-  while (s.sent.length) await s.runQueued();
+  while (s.sent.length || s.jevSent.length) await s.runQueued();
 };
 
 test("cancelling an extraction cancels the Jev jobs waiting for it: fresh link, several dependents, nothing runs", async () => {
@@ -229,21 +232,22 @@ test("cancel cascades only from extractions it actually cancelled; unrelated wai
   expect([queued, running, ready].map((l) => jobOf(s, tag, l).status)).toEqual(["waiting", "waiting", "queued"]);
   expect(jobOf(s, ask, ready).status).toBe("waiting");
   s.sent.splice(0);
+  s.jevSent.splice(0);
 
   expect((await s.api(`/batches/${extract}`, "DELETE")).data).toMatchObject({ cancelled: 1, dependents: 1 });
   expect(jobOf(s, tag, queued).step).toBe("Cancelled");
   expect(jobOf(s, tag, running).status).toBe("waiting");
-  expect(s.sent).toHaveLength(0);
+  expect([...s.sent, ...s.jevSent]).toHaveLength(0);
 
   // An unrelated cancel: the auto-tag batch drops its jobs and the lens waiting behind it on the ready link starts.
   expect((await s.api(`/batches/${tag}`, "DELETE")).data).toMatchObject({ cancelled: 2, dependents: 0 });
   expect(jobOf(s, ask, ready).status).toBe("queued");
-  expect(sentIds(s)).toEqual([jobOf(s, ask, ready).id]);
+  expect(jevIds(s)).toEqual([jobOf(s, ask, ready).id]);
   await runAll(s);
   expect(jobOf(s, ask, ready).status).toBe("done");
 });
 
-test("recover starts an orphaned waiting job once; dispatch ignores waiting jobs and repeats", async () => {
+test("recover starts an orphaned waiting job once; the Jev queue ignores waiting jobs and repeated messages", async () => {
   const s = await start();
   const id = await save(s, "https://q.example/orphan");
   await s.runQueued();
@@ -251,14 +255,12 @@ test("recover starts an orphaned waiting job once; dispatch ignores waiting jobs
   const second = (await s.api("/batches", "POST", { kind: "autotag", ids: [id] })).data.batchId;
   const third = (await s.api("/batches", "POST", { kind: "autotag", ids: [id] })).data.batchId;
   const waiting = jobOf(s, second, id).id;
-  s.sent.splice(0);
+  s.jevSent.splice(0);
 
-  // A stray message for a waiting job creates no workflow.
-  const created: string[] = [];
-  (s.env as any).PROCESS_LINK = { create: async ({ id }: { id: string }) => void created.push(id), get: async () => ({ status: async () => null }) };
-  await dispatch({ messages: [{ body: { id: waiting }, ack() {}, retry() {} }] } as never, s.env);
-  expect(created).toEqual([]);
+  // A stray message for a waiting job runs nothing.
+  await s.deliver([{ id: "stray", body: { id: waiting }, attempts: 1 }]);
   expect(jobOf(s, second, id).status).toBe("waiting");
+  expect(usage(s)).toBe(0);
 
   // The first job settles without promoting (a crash between the two): recover starts only the oldest waiting job.
   s.db.run("UPDATE jobs SET status='done' WHERE id=?", [jobOf(s, first, id).id]);
@@ -266,20 +268,12 @@ test("recover starts an orphaned waiting job once; dispatch ignores waiting jobs
   await recover(s.env);
   expect([second, third].map((b) => jobOf(s, b, id).status)).toEqual(["queued", "waiting"]);
   expect(active(s, id)).toBe(1);
-  expect(new Set(sentIds(s))).toEqual(new Set([waiting]));
-  // Dispatching the promoted job twice creates one workflow: the second create fails and finds it running.
-  (s.env as any).PROCESS_LINK = {
-    create: async ({ id }: { id: string }) => {
-      if (created.includes(id)) throw new Error("instance already exists");
-      created.push(id);
-    },
-    get: async () => ({ status: async () => ({ status: "running" }) }),
-  };
-  const acks = { n: 0, retries: 0 };
-  const message = { body: { id: waiting }, ack: () => void acks.n++, retry: () => void acks.retries++ };
-  await dispatch({ messages: [message, message] } as never, s.env);
-  expect(created).toEqual([waiting]);
-  expect(acks).toEqual({ n: 2, retries: 0 });
+  expect(new Set(jevIds(s))).toEqual(new Set([waiting]));
+  // Both resends, delivered at once, run the promoted job once: one call and one usage row.
+  await s.deliver(s.jevSent.splice(0));
+  expect(jobOf(s, second, id).status).toBe("done");
+  expect(usage(s)).toBe(1);
+  expect(s.deliveries.filter((d) => d.job === waiting).map((d) => d.outcome)).toEqual(["ack", "ack", "ack"]);
 });
 
 test("an interrupted job starts the next waiting job on its link", async () => {
@@ -295,7 +289,7 @@ test("an interrupted job starts the next waiting job on its link", async () => {
   await dispatch({ messages: [{ body: { id: extractJob }, ack() {}, retry() {} }] } as never, s.env);
   expect(s.db.query("SELECT step FROM jobs WHERE id=?").get(extractJob)).toEqual({ step: "Interrupted" });
   expect(jobOf(s, batch, id).status).toBe("queued");
-  expect(sentIds(s)).toEqual([jobOf(s, batch, id).id]);
+  expect(jevIds(s)).toEqual([jobOf(s, batch, id).id]);
 });
 
 // Round 2: the client sends a selection in chunks of 100; a chunk with no eligible link must not stop the others.
