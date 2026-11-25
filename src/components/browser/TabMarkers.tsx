@@ -30,9 +30,21 @@ export function ContentBadge({ tab }: { tab: BrowserTab }) {
         {LOAD_LABEL[load.state]}
       </Badge>
     );
-  if (tab.content === "available") return null;
-  const access = ACCESS_LABEL[tab.content];
   const failed = load?.state === "failed" || load?.state === "skipped" ? load : null;
+  // Readable now (e.g. it stayed awake on a sign-in page), yet Load content couldn't read it: say so.
+  if (tab.content === "available")
+    return failed?.state === "failed" ? (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Badge variant="outline" tabIndex={0} className="gap-1 font-normal text-destructive" data-load-state="failed">
+            <FileWarning className="size-3" />
+            {LOAD_LABEL.failed}
+          </Badge>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-64 text-left">{failed.error ?? "Load content couldn't read this page."}</TooltipContent>
+      </Tooltip>
+    ) : null;
+  const access = ACCESS_LABEL[tab.content];
   return (
     <Tooltip>
       <TooltipTrigger asChild>
