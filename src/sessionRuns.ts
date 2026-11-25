@@ -52,7 +52,7 @@ export function useSessionRuns({
   /** Called once the library that answered the batch's request is in the cache. */
   const trackBatch = useCallback(
     (batchId: string) => {
-      const { run, session } = createRun(cancel, changed, invalidateLibrary);
+      const { run, session } = createRun({ cancelBatches: cancel, changed, invalidateLibrary });
       session.add(batchId);
       Object.assign(run, { open: false, listedAfter: 0 });
       runs.current.set(crypto.randomUUID(), run);
@@ -61,7 +61,7 @@ export function useSessionRuns({
     [cancel, invalidateLibrary],
   );
   const startRun = useCallback<StartRun>(() => {
-    const { run, session } = createRun(cancel, changed, invalidateLibrary);
+    const { run, session } = createRun({ cancelBatches: cancel, changed, invalidateLibrary });
     runs.current.set(crypto.randomUUID(), run);
     return session;
   }, [cancel, invalidateLibrary]);
@@ -125,7 +125,16 @@ export function useSessionRuns({
 }
 
 /** A run's bookkeeping and the handle its driver gets. Exported for tests. */
-export function createRun(cancelBatches: (ids: string[]) => void, changed: () => void, invalidateLibrary: () => unknown = () => {}) {
+export function createRun({
+  cancelBatches,
+  changed,
+  invalidateLibrary = () => {},
+}: {
+  cancelBatches: (ids: string[]) => void;
+  /** Re-renders the run's toast. */
+  changed: () => void;
+  invalidateLibrary?: () => unknown;
+}) {
   const run: Run = {
     batchIds: [],
     open: true,

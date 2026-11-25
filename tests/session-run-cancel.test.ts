@@ -5,7 +5,7 @@ import { createRun } from "../src/sessionRuns";
 
 test("Cancel cancels the run's batches, and a batch added afterwards on arrival", () => {
   const cancelledBatches: string[][] = [];
-  const { run, session } = createRun((ids) => cancelledBatches.push(ids), () => {});
+  const { run, session } = createRun({ cancelBatches: (ids) => cancelledBatches.push(ids), changed: () => {} });
   session.add("b1");
   expect(session.cancelled).toBe(false);
   run.cancel();
@@ -18,7 +18,7 @@ test("Cancel cancels the run's batches, and a batch added afterwards on arrival"
 
 test("a batch added to a run nobody cancelled is not cancelled", () => {
   const cancelledBatches: string[][] = [];
-  const { session } = createRun((ids) => cancelledBatches.push(ids), () => {});
+  const { session } = createRun({ cancelBatches: (ids) => cancelledBatches.push(ids), changed: () => {} });
   session.add("b1");
   session.add("b2");
   expect(cancelledBatches).toEqual([]);

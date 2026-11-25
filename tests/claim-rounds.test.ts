@@ -20,7 +20,7 @@ test("Re-evaluate of an explicit set evaluates each tab exactly once, across rou
   const ext = extension(20);
   const ids = Array.from({ length: 45 }, (_, i) => `t${i}`);
   let posts = 0;
-  await claimRounds(ext.claim, async () => void posts++, ids);
+  await claimRounds(ext.claim, async () => void posts++, { tabInstanceIds: ids });
   expect(ext.evaluations.sort()).toEqual([...ids].sort());
   expect(new Set(ext.evaluations).size).toBe(45);
   expect(posts).toBe(3);
@@ -31,7 +31,7 @@ test("stops instead of spinning when a round takes nothing", async () => {
   await claimRounds(
     async () => (calls++, { requestId: null, targets: [], skipped: 3, attempted: [] }),
     async () => {},
-    ["a", "b", "c"],
+    { tabInstanceIds: ["a", "b", "c"] },
   );
   expect(calls).toBe(1);
 });
@@ -42,7 +42,7 @@ test("a run cancelled after its first round claims nothing more", async () => {
   const ids = Array.from({ length: 45 }, (_, i) => `t${i}`);
   let cancelled = false;
   let posts = 0;
-  await claimRounds(ext.claim, async () => void (posts++, (cancelled = true)), ids, 50, () => cancelled);
+  await claimRounds(ext.claim, async () => void (posts++, (cancelled = true)), { tabInstanceIds: ids, cancelled: () => cancelled });
   expect(posts).toBe(1);
   expect(ext.evaluations).toHaveLength(20);
 });

@@ -312,6 +312,17 @@ describe("Load content", () => {
     expect(ids.reduce((n, id) => n + fake.count("reload", id), 0)).toBeLessThan(8);
   });
 
+  test("a Load content request still on its way when sign-out runs wakes nothing", async () => {
+    await setup();
+    const ids = sleepingTabs(3);
+    const load = run("loadContent", { tabs: await refs(ids) }).catch((e: Error) => e);
+    await run("forget", {});
+    const result = await load;
+    await Bun.sleep(50);
+    expect(result).toBeInstanceOf(Error);
+    expect(ids.reduce((n, id) => n + fake.count("reload", id), 0)).toBe(0);
+  });
+
   test("retry requeues only the failed tabs", async () => {
     await setup();
     sleepingTabs(3);

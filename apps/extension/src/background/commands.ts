@@ -527,7 +527,8 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
     s.hub.schedule(0);
     return result;
   },
-  async loadContent(args, { windowId, s }) {
+  async loadContent(args, { c, windowId, s }) {
+    const scope = requireScope(c);
     const snap = await s.hub.snapshot(windowId, null);
     const add: Parameters<LoadQueue["add"]>[0] = [];
     const { items } = await each(args.tabs, windowId, s, (tab, ref) => {
@@ -540,6 +541,8 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
       add.push({ tabInstanceId: dto.tabInstanceId, windowId, documentRevision: dto.documentRevision, url: tab.url || dto.url, reason: dto.sleep });
       return null;
     });
+    // Signed out while the tabs were checked: forget already cancelled the run, so don't start another.
+    if (c.scope !== scope) fail("Connect first.");
     if (add.length) await s.loader.add(add);
     return { items, loadRun: s.loader.runView(windowId) };
   },
