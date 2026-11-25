@@ -138,6 +138,19 @@ export function setTags(
   return statements;
 }
 
+/** Adds the named tags to many owned links: two statements per tag, whatever the number of links. */
+export function tagLinks(db: D1Database, userId: string, ids: string[], names: string[]) {
+  if (!ids.length) return [];
+  return names.flatMap((name) => [
+    db.prepare("INSERT OR IGNORE INTO tags (id,user_id,name) VALUES (?,?,?)").bind(crypto.randomUUID(), userId, name),
+    db
+      .prepare(
+        "INSERT OR IGNORE INTO link_tags (link_id,tag_id) SELECT l.id,t.id FROM links l JOIN tags t ON t.user_id=l.user_id WHERE l.user_id=? AND t.name=? AND l.id IN (SELECT value FROM json_each(?))",
+      )
+      .bind(userId, name, JSON.stringify(ids)),
+  ]);
+}
+
 export async function assertNoActiveJob(db: D1Database, linkId: string) {
   const active = await db
     .prepare("SELECT id FROM jobs WHERE link_id=? AND status IN ('queued','running','waiting')")

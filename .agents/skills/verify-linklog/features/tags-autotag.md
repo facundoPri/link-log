@@ -16,7 +16,7 @@ A user creates tags with a description for the AI and a confidence threshold, ad
 ## How to get to it (user POV)
 
 - The sidebar `TAGS` section: `New tag`, or `Create one` when there are no tags yet. Each tag has a `Tag options for <name>` menu.
-- Select rows with their `Select <title>` checkbox, or with `Select all N links`. On desktop the `Selected link actions` toolbar shows `Auto-tag`, `Lens` and `Open N` (see `bulk-open.md`), each with an `eligible/total` badge such as `4/7` when only some links qualify, plus `More` (`⌘K`), which opens the actions palette with every action, including `Extract context`, `Copy URLs` and `Copy URLs + titles`. With links selected, `T`/`L`/`E`/`O`/`C`/`⇧C` run actions directly. Narrow screens show an `Actions ⌘K` chip, and phones show an `Actions` button that opens a bottom drawer; see `journeys/bulk-actions-desktop.ts` and `journeys/bulk-actions-responsive.ts`.
+- Select rows with their `Select <title>` checkbox, or with `Select all N links`. On desktop the `Selected link actions` toolbar shows `Auto-tag`, `Lens` and `Open N` (see `bulk-open.md`), each with an `eligible/total` badge such as `4/7` when only some links qualify, plus `More` (`⌘K`), which opens the `Commands` palette with every action, including `Extract context`, `Copy URLs` and `Copy URLs + titles`. With links selected, `T`/`L`/`E`/`O`/`C`/`⇧C` run actions directly. Narrow screens show an `Actions ⌘K` chip, and phones show an `Actions` button that opens a bottom drawer; see `journeys/bulk-actions-desktop.ts` and `journeys/bulk-actions-responsive.ts`.
 - The inspector's `Add tag` button, and a row's `Link actions` → `Edit tags`.
 - The sidebar `LENSES` section: `New lens`, and `Lens options for <name>`.
 
@@ -42,3 +42,4 @@ Preconditions:
 - Links without content are skipped, and the result says `Skipped N link(s) without content`. `Extract, then auto-tag` is a separate, explicit choice.
 - Fixture Jev markers live in the content: `jev:yes`, `jev:fail` and `jev:slow=<ms>` (`worker/ai/fixture.ts`). Pick an `*-yes` fixture to get a positive score.
 - An Auto-tag requested while the link is still extracting waits (`waiting` job) and starts after extraction. Wait for `!processing` before asserting tags.
+- Jev receives at most 24,000 characters: the description, then the beginning of the content (`MAX_JEV_TEXT_CHARS`). The saved content is never cut, so assert the cap on the sent state in unit tests and assert that `GET /links/:id/content` still ends with its tail. `fixture("article-long", ...)` is far over the cap, and the fixture Jev rejects an uncapped state with `too_long`. `journeys/long-page-lens.ts` proves it.

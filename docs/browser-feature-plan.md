@@ -220,7 +220,7 @@ Capturar versión del navegador, manifest/extension ID, comandos ejecutados, scr
 
 - `src/components/Sidebar.tsx`: Browser deshabilitado; navegación tags/lenses.
 - `src/App.tsx`, `LinkList.tsx`, `LinkRow.tsx`, `SelectionBar.tsx`, `LensDialog.tsx`, `LensHeader.tsx`, `LensVerdict.tsx`: UI reutilizable, actualmente un lens activo.
-- `src/types.ts`, `worker/ai/jev.ts`: definiciones y respuestas existentes. `truncateState` puede recortar: representar parcialidad explícitamente en el flujo nuevo.
+- `src/types.ts`, `worker/ai/jev.ts`: definiciones y respuestas existentes. `capJevText` puede recortar: representar parcialidad explícitamente en el flujo nuevo.
 - `worker/jobs.ts`, `worker/handlers/{index,classify}.ts`, `worker/usage.ts`: ejecución, `link_id`, pool, recovery y consumo.
 - `worker/index.ts`: límites same-origin/local, import/save que disparan extracción, lentes y Activity.
 - `migrations/0003_context_and_evaluations.sql`, `0004_provider_leases.sql`, `0005_lease_pools.sql`, `0006_lenses.sql`, `0007_lens_types.sql`: relaciones que revisar al admitir browser targets.

@@ -2,9 +2,10 @@ import type { Answer, Lens, LensOption, Question, Tag } from "../../src/types";
 import { finishUsage, guardedUsageInsert, type Meter } from "../usage";
 import { capabilities } from "../store";
 import { jevUnavailable } from "../../src/attention";
-import { fixtureJev } from "./fixture";
+import { exceedsFixtureWindow, fixtureJev } from "./fixture";
 import { JEV_FAILURE_MESSAGES, type JevReason } from "../../src/failures";
 import { fixtureJevAllowed } from "../config";
+import { logJevCall, logJevRateLimited } from "../jev-metrics";
 export type { Answer, Question } from "../../src/types";
 export function probability(n: unknown): n is number {
   return typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= 1;
@@ -158,23 +159,45 @@ export function lensAnswer(
     ),
   };
 }
-export const MAX_STATE_CHARS = 160_000;
-export function truncateState(state: unknown): unknown {
-  if (
-    state &&
-    typeof state === "object" &&
-    typeof (state as { content?: unknown }).content === "string"
-  ) {
-    const content = (state as { content: string }).content;
-    if (content.length > MAX_STATE_CHARS)
-      return {
-        ...(state as Record<string, unknown>),
-        content:
-          content.slice(0, MAX_STATE_CHARS) +
-          "\n\n[Content truncated for classification]",
-      };
-  }
-  return state;
+/** Description plus content sent to Jev. About 6k tokens, well under its 32k-token window per question. */
+export const MAX_JEV_TEXT_CHARS = 24_000;
+const TRUNCATION_MARKER = "\n\n[Content truncated for classification]";
+const LEADING_BOILERPLATE_MAX_CHARS = 8_000;
+const FRONTMATTER = /^---\n[\s\S]*?\n---\n/;
+const HAS_LINK = /\]\(/;
+/**
+ * Browser Rendering returns the whole page, so the article's `# Title` can follow thousands of characters of site
+ * navigation. Drops that lead-in only when it is short and mostly links (real Wikipedia pages: about 75%).
+ * A byline, abstract or any prose lead-in has few links and stays. Otherwise the content is returned unchanged.
+ */
+function dropLeadingBoilerplate(content: string): string {
+  const withoutFrontmatter = content.replace(FRONTMATTER, "");
+  const title = /^# .+$/m.exec(withoutFrontmatter);
+  if (!title || title.index === 0 || title.index > LEADING_BOILERPLATE_MAX_CHARS) return content;
+  const lines = withoutFrontmatter.slice(0, title.index).split("\n").filter((line) => line.trim());
+  const links = lines.filter((line) => HAS_LINK.test(line)).length;
+  return links * 2 > lines.length ? withoutFrontmatter.slice(title.index) : content;
+}
+/**
+ * Caps the text of a Jev state: `description` then `content`, together at most MAX_JEV_TEXT_CHARS.
+ * The beginning of each is kept. A state within the cap is returned as is; the input is never mutated.
+ * Only a state over the cap loses leading boilerplate, to make room for the article.
+ */
+export function capJevText(state: unknown): unknown {
+  if (!state || typeof state !== "object") return state;
+  const { description, content } = state as { description?: unknown; content?: unknown };
+  if (typeof content !== "string") return state;
+  const descriptionText = typeof description === "string" ? description : "";
+  if (descriptionText.length + content.length <= MAX_JEV_TEXT_CHARS) return state;
+  const sentDescription = descriptionText.slice(0, MAX_JEV_TEXT_CHARS / 2);
+  const article = dropLeadingBoilerplate(content);
+  const fits = sentDescription.length + article.length <= MAX_JEV_TEXT_CHARS;
+  const room = MAX_JEV_TEXT_CHARS - sentDescription.length - TRUNCATION_MARKER.length;
+  return {
+    ...(state as Record<string, unknown>),
+    ...(typeof description === "string" ? { description: sentDescription } : {}),
+    content: fits ? article : article.slice(0, room) + TRUNCATION_MARKER,
+  };
 }
 /** Where a Jev failure happened: before the request was sent (no cost) or after (it may have been billed). */
 export type JevPhase = "before_call" | "sent";
@@ -224,7 +247,7 @@ function afterSend(e: unknown): JevFailure {
     return new JevFailure("sent", "network", undefined, detail);
   return new JevFailure("sent", "provider_error", undefined, detail);
 }
-type JevJob = { id: string; batch_id: string; link_id: string | null };
+type JevJob = { id: string; batch_id: string; link_id: string | null; created_at?: string };
 // A job of the batch settled with an account error, or recorded one and has not settled yet.
 const accountStopped = "EXISTS (SELECT 1 FROM jobs s WHERE s.batch_id=? AND s.id<>? AND (s.reason='account' OR json_extract(s.jev_outcome,'$.reason')='account'))";
 export type JevResult = { answers: Record<string, Answer>; model: string };
@@ -267,9 +290,8 @@ export async function judge(
   questions: Record<string, Question>,
   job: JevJob,
 ) {
-  // Bytes are not tokens. Content past ~40k tokens is truncated before sending;
-  // the provider's tokenizer still enforces the real context window.
-  const input = { state: truncateState(state), questions };
+  // Jev rejects more than 32k tokens per question and bills per input token. Only what is sent is capped.
+  const input = { state: capJevText(state), questions };
   const provider = env.JEV_PROVIDER || "cloudflare";
   // The configuration can change between enqueue and run; fail before Usage records a call.
   if (provider === "fixture" && !fixtureJevAllowed(env)) throw new JevFailure("before_call", "not_configured", "The fixture Jev provider is only available in local and test environments.");
@@ -283,11 +305,15 @@ export async function judge(
   await claimCall(env, job, usageId, provider);
   let failure: JevFailure | null = null;
   let result: JevResult | undefined;
+  const sentAt = Date.now();
   try {
     let raw: Record<string, unknown>;
     // Fixture: deterministic, unpaid answers for automated tests, only with ALLOW_FIXTURE_JEV.
-    if (provider === "fixture") raw = await fixtureJev(input);
-    else if (provider === "typesafe") {
+    if (provider === "fixture") {
+      if (exceedsFixtureWindow(input.state))
+        throw new JevFailure("sent", "too_long", undefined, { technical: "Fixture Jev window exceeded" });
+      raw = await fixtureJev(input);
+    } else if (provider === "typesafe") {
       const response = await fetch("https://api.typesafe.ai/v1/systemone", {
         method: "POST",
         headers: {
@@ -301,6 +327,7 @@ export async function judge(
         signal: AbortSignal.timeout(60000),
       });
       if (!response.ok) {
+        if (response.status === 429) logJevRateLimited(job, response.headers.get("retry-after"));
         // The status decides an account error, before any body is awaited.
         if ([401, 402, 403].includes(response.status)) {
           void response.body?.cancel().catch(() => {});
@@ -317,8 +344,10 @@ export async function judge(
           /(?:context|tokens?).{0,100}(?:length|limit|exceed|maximum|too)|(?:exceed|maximum|too many|too long).{0,100}(?:tokens?|context)/is.test(
             detail,
           )
-        )
+        ) {
+          meter.refused = true;
           throw new JevFailure("sent", "too_long", undefined, http);
+        }
         throw new JevFailure("sent", ACCOUNT.test(detail) ? "account" : "provider_error", undefined, http);
       }
       raw = await response.json<Record<string, unknown>>().catch((e: unknown) => {
@@ -343,6 +372,7 @@ export async function judge(
   } catch (e) {
     failure = afterSend(e);
   }
+  logJevCall(job, { provider, latency_ms: Date.now() - sentAt, ok: !failure, http_status: failure?.detail.http_status ?? null, reason: failure?.reason ?? null });
   // The outcome is recorded under the claim before metering is awaited: if the attempt ends during the
   // metering, the next one recovers it (an account error must still stop the batch). Metering never replaces it.
   const outcome: JevOutcome = failure

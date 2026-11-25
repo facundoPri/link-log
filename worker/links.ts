@@ -1,5 +1,6 @@
 import { domainOf, normalizeUrl } from "../src/url";
 import { LIMITS, chargeOrThrow } from "./limits";
+import { sendJobs } from "./job-routing";
 
 /** Where a batch of added links came from, kept in the batch's config. Web calls pass none. */
 export type BatchSource = { source: "api"; apiKeyId: string; apiKeyName: string };
@@ -122,7 +123,7 @@ export async function addLinks(
     });
     await charged.release(fresh.length - createdLinks.size);
     try {
-      if (queuedJobs.length) await env.JOBS.sendBatch(queuedJobs.map((id) => ({ body: { id } })));
+      if (queuedJobs.length) await sendJobs(env, queuedJobs.map((id) => ({ id, kind: "extract" })));
     } catch {
       console.error("Queue dispatch deferred to outbox recovery");
     }

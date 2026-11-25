@@ -3,7 +3,6 @@
 import { TestD1 } from "./support/d1";
 import { testSession } from "./support/auth.test-instance";
 import { Database } from "bun:sqlite";
-import { readdirSync } from "node:fs";
 import { spyOn, setSystemTime } from "bun:test";
 import * as metadata from "../worker/metadata";
 import * as adapters from "../worker/adapters";
@@ -128,9 +127,8 @@ export async function setup(options: { placeholder?: boolean } = {}) {
   fakes.discoverError = undefined;
   fakes.discover = undefined;
   const db = new Database(":memory:");
-  db.exec("PRAGMA foreign_keys=ON");
-  for (const f of readdirSync("migrations").filter((f) => f.endsWith(".sql")).sort())
-    db.exec(await Bun.file(`migrations/${f}`).text());
+  const adapter = new TestD1(db);
+  await adapter.migrate();
   const r2 = new Map<string, string>();
   const sent: { body: { id: string } }[] = [];
   // Workflow instances as cancel sees them. `terminate`: "stop" ends the instance after its current step
@@ -138,7 +136,6 @@ export async function setup(options: { placeholder?: boolean } = {}) {
   // terminate that came too late; "ended" and "throw" make terminate fail with an ended or a live instance.
   const workflows = { terminate: "stop" as "stop" | "ignore" | "ended" | "throw", terminated: [] as string[] };
   const stopped = new Set<string>();
-  const adapter = new TestD1(db);
   const instrumented = d1(db);
   const env = {
     APP_ENV: "test",

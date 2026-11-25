@@ -5,7 +5,7 @@ import { settleAttention } from "../attention";
 import { canUsePreview, readPreview, storePreview, usePreviewStatement, dropUnusedPreview } from "../preview-content";
 import { addLinks } from "../links";
 import { badRequest, HttpError, notFound, ownerOf, type AppEnv } from "../http/context";
-import { assertNoActiveJob, enrich, setTags, tagNames, urlInput } from "./shared";
+import { assertNoActiveJob, enrich, setTags, tagLinks, tagNames, urlInput } from "./shared";
 
 /** Library, links and their content. Every handler runs behind requireSession. */
 export const linkRoutes = new Hono<AppEnv>()
@@ -21,7 +21,12 @@ export const linkRoutes = new Hono<AppEnv>()
       throw badRequest("Import up to 100 URLs per batch.");
     // Every URL must be valid; quotas are admitted before anything is saved (see addLinks).
     const urls = [...new Set((body.urls as string[]).map(urlInput))];
+    const names = tagNames(body.tags || []);
     const results = await addLinks(env, userId, urls);
+    // Tags picked while pasting apply to every link, new or already saved.
+    const ids = results.flatMap((r) => ("id" in r ? [r.id] : []));
+    const statements = tagLinks(env.DB, userId, ids, names);
+    if (statements.length) await env.DB.batch(statements);
     const imported = results.filter((r) => "created" in r && r.created).length;
     return json({ ...(await library(env, userId)), imported, duplicates: urls.length - imported });
   })

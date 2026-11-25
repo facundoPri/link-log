@@ -10,7 +10,10 @@ let workerCode = "";
 
 beforeAll(() => {
   const out = mkdtempSync(join(tmpdir(), "linklog-bundle-"));
-  const build = Bun.spawnSync(["bunx", "wrangler", "deploy", "--dry-run", "--outdir", out], { stdout: "pipe", stderr: "pipe" });
+  // Only the Worker is inspected here: an empty assets directory replaces dist/, so no prior build is needed.
+  const assets = mkdtempSync(join(tmpdir(), "linklog-bundle-assets-"));
+  const build = Bun.spawnSync(["bunx", "wrangler", "deploy", "--dry-run", "--outdir", out, "--assets", assets], { stdout: "pipe", stderr: "pipe" });
+  rmSync(assets, { recursive: true, force: true });
   if (build.exitCode !== 0) throw new Error(build.stderr.toString());
   workerCode = readdirSync(out).filter((f) => f.endsWith(".js")).map((f) => readFileSync(join(out, f), "utf8")).join("\n");
   rmSync(out, { recursive: true, force: true });

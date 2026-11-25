@@ -4,9 +4,12 @@ export async function api<T = Library & { duplicate?: boolean; id?: string }>(
   path = "/library",
   method = "GET",
   body?: unknown,
+  // A query's signal: a cancelled or superseded GET is aborted instead of running to the end on the server.
+  signal?: AbortSignal,
 ): Promise<T> {
   const response = await fetch(`/api${path}`, {
     method,
+    signal,
     headers: { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });

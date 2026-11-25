@@ -19,8 +19,7 @@ Every library is private to its account (Better Auth on D1). Sign up with email 
 - `bun run demo:connected` → the same local accounts and storage, with real Cloudflare Browser Run/AI bindings. Requires `wrangler login` and may incur cloud usage charges. Use this to test automatic page extraction: `quickAction` is not supported by Wrangler's local Browser simulator. Stop the other demo first; keep the same `LINKLOG_PERSIST_TO` to preserve its data. Email remains locally simulated in both modes; real delivery requires the hosted preview.
 - Data created before accounts existed stays in D1/R2 but belongs to nobody and is invisible until you assign it with the local tool `bun run legacy:adjudicate` (inventory → backup → assign to a verified user). See `planning/research/auth-implementation-report.md`.
 
-- **Add link** button or `⌘/Ctrl K`: one URL or a list, with optional tags.
-- Paste a URL or a list outside of a field, or drag a link from the browser onto the page: saves directly.
+- Paste a URL or a list anywhere outside a field, into the `⌘/Ctrl K` palette, or drag a link onto the page: the palette shows them with your tags. Type to filter or create tags, Enter saves them all to the Library. The **Add link** button and **Add links…** open the same page. In Browser the same page opens the links as tabs instead, optionally into a group.
 - `/`: focuses search. Searches title, description, URL, domain and tags.
 - **Filter** menu: domain and context filters; tags filter with AND semantics.
 - Click a row to open the inspector: preview, tags, AI confidence, content and details. `↑`/`↓` move between links and `Esc` closes it.
@@ -29,11 +28,11 @@ Every library is private to its account (Better Auth on D1). Sign up with email 
   - Wide screens: a floating bar with the count (a menu with **Select all N visible** and **Clear selection**), **Auto-tag** `T`, **Lens** `L` and **Open N** `O`, each with an `eligible/total` badge when only some of the links qualify and the reason in a tooltip, then **More** `⌘K` and **Clear**.
   - Narrow screens (up to 1099 px): a chip, "N selected · Actions ⌘K · ×", that opens the same palette. A running job and the results of the last run show in the chip.
   - Phones (up to 767 px): a full-width bar with clear on the left, the count over a one-tap **Select all N** (or the running job), and an **Actions** button that opens a bottom drawer of large tiles, one per action, with the `eligible/total` count on partial ones, plus the lens picker in place. After the selection clears the bar stays to report the last run; **Details** lists the failures.
-- While links are selected, `⌘K` opens an actions palette (it stays **Add link** otherwise; on phones it opens the drawer). It has one row per action with its skip reason, `eligible/total` and key, a filter (typing only filters; Enter or a click runs the highlighted row), and a lens picker with **New lens…**. The keys run an action without opening the palette: `T` Auto-tag, `L` Lens, `E` Extract context, `O` Open, `C` Copy URLs, `⇧C` Copy URLs + titles. The keys work on every layout and are ignored while typing or while a menu or dialog is open. A key whose action can't run shows a toast with the reason.
+- `⌘K` always opens the **Commands** palette, the same in All links and Browser. With a selection it lists one row per action with its skip reason, `eligible/total` and key, then the view's commands; with nothing selected it lists only the commands: **Add links…** (save to the Library) or, in Browser, **Open links…** (open tabs), and **Select all N visible**. On phones with a selection it opens the drawer instead. Typing only filters, and pasting links opens its links page; Enter or a click runs the highlighted row. `⌘K` again or Escape closes it; it does nothing while another dialog or menu is open. Pickers replace the list in place: a lens with **New lens…**, or in Browser a group with **New group…**. The keys run an action without opening the palette: `T` Auto-tag, `L` Lens, `E` Extract context, `O` Open, `C` Copy URLs, `⇧C` Copy URLs + titles. The keys work on every layout and are ignored while typing or while a menu or dialog is open. A key whose action can't run shows a toast with the reason.
 - **Open** needs the Chrome extension (see Browser view): it opens up to 50 selected links as background tabs in
   this window and skips links that are already open there. The selection stays; links that fail are listed in a toast with **Retry** (same operation, no duplicate tabs) and **Select failed**. On narrow and mobile screens **Open** is in the palette and the drawer.
 - When a batch started from the selection ends with failures, a card above the bar (in the chip's popover or the phone bar's **Details**) lists each failed link with its reason and **Select failed** selects exactly those links.
-- To add a bulk action, add one entry to `BULK_ACTIONS` in `src/bulkActions.ts` (label, group, key, availability rule, runner). The bar, palette, drawer and keys read that list, so the availability rules live only there.
+- To add a bulk action, add one entry to `BULK_ACTIONS` in `src/bulkActions.ts` (label, group, key, availability rule, runner), or to `TAB_ACTIONS` in `src/browser/tabActions.ts` for Browser tabs. `SelectionSurface` renders the bar, chip, palette, drawer and keys from that list for either view, so the availability rules live only there.
 - In the sidebar, **Tags** `+` creates a tag and `…` edits it (name, description for the AI, confidence threshold) or deletes it. **Activity** and **Usage** live in the sidebar footer.
 
 ## Browser view (Chrome extension)
@@ -42,7 +41,11 @@ The repo is a Bun workspace: the app/Worker stay at the root, plus
 `packages/browser-protocol` (shared contract) and `apps/extension` (MV3 extension).
 Browser shows the tabs and groups of **the Chrome window that holds the Linklog page**:
 groups replace tags in the sidebar, lenses become toggles you can combine as filters,
-and the selection bar saves, groups, autogroups and closes tabs.
+and the same selection surface as All links (bar, chip, palette, drawer and keys) acts on tabs:
+**Save** `S` (to the Library), **Move to group** `G`, **Autogroup** `A`, **Remove from group** `U`,
+**Copy URLs** `C` / `⇧C` and **Close tabs** (palette or drawer only). Pasting or dropping URLs on
+Browser, **Open links** in the header or `⌘K` open the palette's links page: it opens them as
+background tabs in this window, optionally into an existing, pinned or new group, and never saves them.
 
 ```sh
 bun run dev               # app + API as before (ports: LINKLOG_UI_PORT / LINKLOG_API_PORT)
@@ -240,15 +243,17 @@ seconds (each attempt gives up after 20) and the Markdown step after two minutes
 run cron automatically in local dev.
 
 The full content is stored in R2 (maximum 2 MB; manual upload 500,000 characters).
-Classification sends the content up to 160,000 characters (`MAX_STATE_CHARS`);
-longer content is cut there and ends with "[Content truncated for classification]",
-so the end of a long document does not reach Jev. The provider's tokenizer still
-validates the real window, without confusing bytes with tokens. TypeSafe documents
-32,000 tokens for `state` plus the longest question and 64,000 for the complete
-request. If the provider rejects the size, the job fails with a clear message and
-preserves content, tags and previous scores. No per-fragment probabilities are
-added automatically; the strategy for documents that truly exceed the window is
-still pending.
+Classification sends Jev at most 24,000 characters of text (`MAX_JEV_TEXT_CHARS`,
+about 6,000 tokens, well under TypeSafe's 32,000-token window per question). The
+text is the description first, then the beginning of the content. Longer content is cut
+there and ends with "[Content truncated for classification]", which counts inside
+the cap, so the end of a long document does not reach Jev. Content over the cap
+first loses leading site navigation (up to 8,000 characters before the first `# `
+title, mostly links), because Browser Rendering returns the whole page. Only what is sent is
+capped: the saved document in R2 and the reader view are untouched. Jobs that
+failed earlier with "too long" succeed with "Retry failed". If the provider still
+rejects the size, the job fails with a clear message and preserves content, tags
+and previous scores.
 Processing uses full context per link, not embeddings or a vector index.
 
 ### Verification

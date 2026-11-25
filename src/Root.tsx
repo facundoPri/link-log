@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { App } from "./App";
 import { authClient, onUnauthorized, signOutAndReset } from "./auth-client";
 import { AuthScreen, ResetPasswordScreen } from "./components/AuthScreen";
 import { SettingsPage } from "./components/SettingsPage";
 import { gateView } from "./session";
+import { createQueryClient } from "./library";
 
 // Two signed-in pages: the library and /settings. Back/forward switch between them; pushState
 // fires no popstate of its own, so navigate() sends one.
@@ -40,7 +42,20 @@ export function Root() {
   if (view === "loading") return <div className="min-h-dvh bg-background" aria-busy="true" />;
   if (view === "auth" || !data) return <AuthScreen onSignedIn={() => void refetch()} />;
   const account = { email: data.user.email };
-  if (path === "/settings") return <SettingsPage key={data.user.id} account={account} onSignOut={signOut} onBack={() => navigate("/")} />;
-  // Keyed by user: switching accounts remounts App, so no state from the previous user survives.
-  return <App key={data.user.id} account={account} onSignOut={signOut} onSettings={() => navigate("/settings")} />;
+  // Keyed by user: switching accounts remounts the pages and drops the query cache, so no state
+  // from the previous user survives. Settings and the library share one cache.
+  return (
+    <AccountData key={data.user.id}>
+      {path === "/settings" ? (
+        <SettingsPage account={account} onSignOut={signOut} onBack={() => navigate("/")} />
+      ) : (
+        <App account={account} onSignOut={signOut} onSettings={() => navigate("/settings")} />
+      )}
+    </AccountData>
+  );
+}
+
+function AccountData({ children }: { children: ReactNode }) {
+  const [client] = useState(createQueryClient);
+  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 }

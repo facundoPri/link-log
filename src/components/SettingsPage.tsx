@@ -1,8 +1,9 @@
-import { useEffect, useState, type Dispatch, type FormEvent, type ReactNode, type SetStateAction } from "react";
+import { useState, type FormEvent, type ReactNode } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ChevronRight, Copy, KeyRound, Loader2, LogOut } from "lucide-react";
 import { toast } from "sonner";
-import { api } from "../api";
 import { announceUnauthorized, authClient } from "../auth-client";
+import { useInvalidateUsage, useUsageSummary } from "../entities";
 import { relativeTime } from "../lib/time";
 import { featureCost, featureUnits, minutesUntil } from "../lib/usage-format";
 import { uploadCurl } from "../lib/upload-curl";
@@ -44,6 +45,17 @@ async function unwrap<T>(answer: Promise<{ data: T | null; error: { message?: st
 const listKeys = async () =>
   (await unwrap(authClient.apiKey.list())).apiKeys.map(keyView).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
 
+const apiKeysKey = ["api-keys"] as const;
+const useApiKeys = () => useQuery({ queryKey: apiKeysKey, queryFn: listKeys });
+/** Writes a key list a mutation produced. An in-flight list request is cancelled first, so an older answer can't overwrite it. */
+function useWriteApiKeys() {
+  const client = useQueryClient();
+  return (update: (list: ApiKey[]) => ApiKey[]) => {
+    void client.cancelQueries({ queryKey: apiKeysKey });
+    client.setQueryData<ApiKey[]>(apiKeysKey, (list) => update(list ?? []));
+  };
+}
+
 function Section({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
   return (
     <section aria-label={title} className="flex flex-col gap-3">
@@ -58,23 +70,9 @@ function Section({ title, description, children }: { title: string; description?
 
 /** Settings: the account basics, usage and the owner's API keys. */
 export function SettingsPage({ account, onSignOut, onBack }: { account: { email: string }; onSignOut: () => void; onBack: () => void }) {
-  const [usage, setUsage] = useState<Usage | null>(null);
-  const [usageError, setUsageError] = useState("");
+  const usage = useUsageSummary();
   // Shared: the key list manages the keys and Usage names the same keys, so its rows can tell them apart.
-  const [keys, setKeys] = useState<ApiKey[] | null>(null);
-  const [keysError, setKeysError] = useState("");
-  useEffect(() => {
-    let live = true;
-    api<Usage>("/usage/summary")
-      .then((r) => live && setUsage(r))
-      .catch((e: Error) => live && setUsageError(e.message));
-    listKeys()
-      .then((r) => live && setKeys(r))
-      .catch((e: Error) => live && setKeysError(e.message));
-    return () => {
-      live = false;
-    };
-  }, []);
+  const keys = useApiKeys();
   return (
     <div className="min-h-dvh bg-background">
       <div className="mx-auto flex max-w-2xl flex-col gap-8 px-4 py-6 md:py-10">
@@ -96,8 +94,8 @@ export function SettingsPage({ account, onSignOut, onBack }: { account: { email:
             </Button>
           </div>
         </Section>
-        <UsageSection usage={usage} error={usageError} keys={keys} />
-        <ApiKeys keys={keys} setKeys={setKeys} loadError={keysError} monthly={usage && Object.fromEntries(usage.month.apiKeys.map((k) => [k.id, k.links]))} />
+        <UsageSection usage={usage.data ?? null} error={usage.data ? "" : (usage.error?.message ?? "")} keys={keys.data ?? null} />
+        <ApiKeys keys={keys.data ?? null} loadError={keys.data ? "" : (keys.error?.message ?? "")} monthly={usage.data ? Object.fromEntries(usage.data.month.apiKeys.map((k) => [k.id, k.links])) : null} />
       </div>
     </div>
   );
@@ -119,7 +117,7 @@ function LinksWindow({ quota }: { quota: QuotaUsage }) {
   );
 }
 
-/** What each feature used this month. Nothing here is capped; "unpriced" calls have no known price, so the cost is at least what is shown. */
+/** What each feature used this month. Nothing here is capped. */
 function FeatureTable({ month }: { month: Usage["month"] }) {
   const total = featureCost(month.total);
   return (
@@ -144,8 +142,7 @@ function FeatureTable({ month }: { month: Usage["month"] }) {
               <td className="py-1.5 text-right tabular-nums">{f.runs}</td>
               <td className="hidden py-1.5 pl-3 text-right tabular-nums text-muted-foreground sm:table-cell">{units || "—"}</td>
               <td className="py-1.5 pl-3 text-right tabular-nums">
-                {cost.amount}
-                {cost.unpriced && <span className="block text-xs text-muted-foreground">{cost.unpriced}</span>}
+                {cost}
               </td>
             </tr>
           );
@@ -157,8 +154,7 @@ function FeatureTable({ month }: { month: Usage["month"] }) {
           <td />
           <td className="hidden sm:table-cell" />
           <td className="pt-2 pl-3 text-right tabular-nums">
-            {total.amount}
-            {total.unpriced && <span className="block text-xs font-normal text-muted-foreground">{total.unpriced}</span>}
+            {total}
           </td>
         </tr>
       </tfoot>
@@ -216,20 +212,20 @@ function UsageSection({ usage, error, keys }: { usage: Usage | null; error: stri
 }
 
 /**
- * `keys` and `setKeys`: the list, owned by the page (null while loading). `monthly`: this month's new
+ * `keys`: the list, owned by the page's query (null while loading). `monthly`: this month's new
  * Links per key id (null while loading); keys that added none are absent.
  */
 function ApiKeys({
   keys,
-  setKeys,
   loadError,
   monthly,
 }: {
   keys: ApiKey[] | null;
-  setKeys: Dispatch<SetStateAction<ApiKey[] | null>>;
   loadError: string;
   monthly: Record<string, number> | null;
 }) {
+  const writeKeys = useWriteApiKeys();
+  const invalidateUsage = useInvalidateUsage();
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
   // The full secret lives only in this state: it is gone once dismissed or the page is left.
@@ -244,7 +240,7 @@ function ApiKeys({
     setCreateError("");
     try {
       const r = await unwrap(authClient.apiKey.create({ name: name.trim() }));
-      setKeys((list) => [keyView(r), ...(list ?? [])]);
+      writeKeys((list) => [keyView(r), ...list]);
       setCreated({ name: r.name ?? "", secret: r.key });
       setName("");
     } catch (error) {
@@ -257,7 +253,8 @@ function ApiKeys({
   const setEnabled = async (key: ApiKey, enabled: boolean) => {
     try {
       const r = await unwrap(authClient.apiKey.update({ keyId: key.id, enabled }));
-      setKeys((list) => list?.map((k) => (k.id === key.id ? keyView(r) : k)) ?? null);
+      writeKeys((list) => list.map((k) => (k.id === key.id ? keyView(r) : k)));
+      invalidateUsage();
       toast.success(`“${key.name}” ${enabled ? "enabled" : "revoked"}`);
     } catch (error) {
       toast.error((error as Error).message);
@@ -268,7 +265,8 @@ function ApiKeys({
   const remove = async (key: ApiKey) => {
     try {
       await unwrap(authClient.apiKey.delete({ keyId: key.id }));
-      setKeys((list) => list?.filter((k) => k.id !== key.id) ?? null);
+      writeKeys((list) => list.filter((k) => k.id !== key.id));
+      invalidateUsage();
       toast.success(`“${key.name}” deleted`);
     } catch (error) {
       toast.error((error as Error).message);

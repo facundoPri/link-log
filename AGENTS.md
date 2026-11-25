@@ -29,7 +29,7 @@ Use the five default triage labels. Before triaging or changing triage labels, r
 
 ### Domain docs
 
-Use a single-context layout. Before exploring domain concepts or proposing architectural changes, read `docs/agents/domain.md`.
+Use a single-context layout. Before exploring domain concepts, proposing architectural changes, or acting on a policy the owner settles during ticket work, read `docs/agents/domain.md`.
 
 ### Model roles
 
@@ -41,7 +41,7 @@ After changing React code, run the `react-doctor` skill for an advisory scan of 
 
 ### Verification
 
-To prove web UI or API behavior in a running app, use the `verify-linklog` skill. It starts an isolated instance with fixture external services and records evidence.
+To prove web UI or API behavior in a running app, use the `verify-linklog` skill. It is this repo's control skill (poteto-mode's `control-ui`): reproduce and verify a symptom the user sees in the UI there, because Worker tests skip what the screen renders. It starts an isolated instance with fixture external services and records evidence.
 
 ### Production
 

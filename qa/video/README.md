@@ -106,7 +106,7 @@ Retry counters for `flaky` are stored per full URL in the run's R2, under `qa/co
 
 To add a fixture, add an entry to `FIXTURES` with an `about` line. The Worker picks it up on the next start.
 
-Current catalog: `pool`, `article`, `pdf`, `gone`, `flaky`, `down`, `slow`, `blocked`, `nowhere`, `login-wall`, `render-timeout`, `browser-auth`, `browser-flaky`, `browser-empty`, `browser-hang`, `jev-401`, `jev-402`, `jev-500`. The `about` field of each entry describes it.
+Current catalog: `pool`, `article`, `article-long`, `pdf`, `gone`, `flaky`, `down`, `slow`, `blocked`, `nowhere`, `login-wall`, `render-timeout`, `browser-auth`, `browser-flaky`, `browser-empty`, `browser-hang`, `jev-401`, `jev-402`, `jev-500`. The `about` field of each entry describes it.
 
 ## Environment options (per chapter)
 
