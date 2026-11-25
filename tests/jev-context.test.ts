@@ -1,5 +1,5 @@
 import { test, expect, spyOn } from "bun:test";
-import { judge } from "../worker/ai/jev";
+import { judge, MAX_JEV_TEXT_CHARS } from "../worker/ai/jev";
 const fetchTarget: {
   fetch: (...args: Parameters<typeof fetch>) => Promise<Response>;
 } = globalThis;
@@ -32,16 +32,11 @@ function environment() {
   } as unknown as Env;
   return { env, writes };
 }
-test("full context above the former byte limit reaches the provider unchanged", async () => {
-  const state = {
-    content:
-      "Artificial intelligence and dispositivos IoT. ".repeat(1000) +
-      "Final evidence: sensores.",
-  };
-  let sent: unknown;
+function recordRequest() {
+  const sent: { body?: { model: string; questions: typeof questions; state: { description?: string; content: string } } } = {};
   const mock = spyOn(fetchTarget, "fetch").mockImplementation(
     async (_url, options) => {
-      sent = JSON.parse(options!.body as string);
+      sent.body = JSON.parse(options!.body as string);
       return Response.json({
         model: "jev-fixture",
         answers: { topic: { type: "noul", noul: 0.93 } },
@@ -49,13 +44,20 @@ test("full context above the former byte limit reaches the provider unchanged", 
       });
     },
   );
+  return { sent, mock };
+}
+test("a state under the cap reaches the provider byte-identical", async () => {
+  const state = {
+    description: "About AI.",
+    content:
+      "Artificial intelligence and dispositivos IoT. ".repeat(400) +
+      "Final evidence: sensores.",
+  };
+  const { sent, mock } = recordRequest();
   try {
     const { env, writes } = environment();
     const result = await judge(env, state, questions, job);
-    expect(
-      new TextEncoder().encode(JSON.stringify(state)).length,
-    ).toBeGreaterThan(28000);
-    expect(sent).toEqual({ model: "jev-1.13.0", state, questions });
+    expect(sent.body).toEqual({ model: "jev-1.13.0", state, questions });
     expect(result.answers.topic).toEqual({ type: "noul", noul: 0.93 });
     expect(writes.at(-1)?.slice(0, 4)).toEqual([
       "done",
@@ -67,7 +69,29 @@ test("full context above the former byte limit reaches the provider unchanged", 
     mock.mockRestore();
   }
 });
-test("actual provider token limit is reported without silently truncating or retrying", async () => {
+test("a state far over the cap is sent capped from the beginning, without touching the caller's object", async () => {
+  const state = {
+    url: "https://example.com",
+    description: "DESCRIPTION-MARKER summary",
+    content: "HEAD-MARKER " + "body ".repeat(40_000) + "TAIL-MARKER",
+  };
+  const original = structuredClone(state);
+  const { sent, mock } = recordRequest();
+  try {
+    const { env } = environment();
+    await judge(env, state, questions, job);
+    const text = sent.body!.state;
+    expect((text.description?.length ?? 0) + text.content.length).toBeLessThanOrEqual(MAX_JEV_TEXT_CHARS);
+    expect(text.description).toBe(state.description);
+    expect(text.content.startsWith("HEAD-MARKER body")).toBe(true);
+    expect(JSON.stringify(sent.body)).not.toContain("TAIL-MARKER");
+    expect(Object.keys(text).indexOf("description")).toBeLessThan(Object.keys(text).indexOf("content"));
+    expect(state).toEqual(original);
+  } finally {
+    mock.mockRestore();
+  }
+});
+test("a provider token-limit refusal is reported once and not retried", async () => {
   let calls = 0;
   const mock = spyOn(fetchTarget, "fetch").mockImplementation(async () => {
     calls++;

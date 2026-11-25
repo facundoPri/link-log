@@ -29,8 +29,10 @@ export function fakeChrome() {
       query: async (q: { windowId?: number }) => [...tabs.values()].filter((t) => q.windowId === undefined || t.windowId === q.windowId).map((t) => ({ ...t })),
       update: async () => ({}),
       remove: async (id: number) => void tabs.delete(id),
-      group: async ({ tabIds, groupId }: { tabIds: number[]; groupId?: number }) => {
+      group: async ({ groupId, tabIds, createProperties }: { groupId?: number; tabIds: number[]; createProperties?: { windowId?: number } }) => {
         const id = groupId ?? nextGroupId++;
+        if (!groups.has(id))
+          groups.set(id, { id, windowId: createProperties?.windowId ?? 1, title: "", color: "grey", collapsed: false } as chrome.tabGroups.TabGroup);
         for (const tabId of tabIds) {
           const t = tabs.get(tabId);
           if (!t) continue;
@@ -83,7 +85,11 @@ export function fakeChrome() {
     tabGroups: {
       get: async (id: number) => groups.get(id) ?? Promise.reject(new Error("no group")),
       query: async () => [...groups.values()],
-      update: async () => ({}),
+      update: async (id: number, props: Partial<chrome.tabGroups.TabGroup>) => {
+        const g = groups.get(id);
+        if (g) Object.assign(g, props);
+        return g;
+      },
     },
     scripting: {
       executeScript: async ({ target, files }: { target: { tabId: number }; files?: string[] }) => {

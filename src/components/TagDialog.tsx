@@ -26,19 +26,18 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import type { Library } from "../types";
+import { useLibrary, useWriteLibrary } from "../library";
 
 export function TagDialog({
   tag,
   onClose,
-  onChange,
-  linkCount,
 }: {
   tag: Tag | "new";
   onClose: () => void;
-  onChange: (library: Library) => void;
-  linkCount: (tagId: string) => number;
 }) {
+  const setLibrary = useWriteLibrary();
+  const links = useLibrary().data?.links ?? [];
+  const linkCount = (tagId: string) => links.filter((l) => l.tags.some((t) => t.id === tagId)).length;
   const editing = tag !== "new";
   const [name, setName] = useState(editing ? tag.name : "");
   const [description, setDescription] = useState(
@@ -71,9 +70,9 @@ export function TagDialog({
             description,
             threshold: threshold / 100,
           });
-          onChange(lib2);
+          setLibrary(lib2);
         } else {
-          onChange(lib);
+          setLibrary(lib);
         }
         toast.success("Tag created");
       } else {
@@ -82,7 +81,7 @@ export function TagDialog({
           description,
           threshold: threshold / 100,
         });
-        onChange(lib);
+        setLibrary(lib);
         toast.success("Tag updated");
       }
       onClose();
@@ -180,9 +179,7 @@ export function TagDialog({
                   <AlertDialogAction
                     onClick={async () => {
                       try {
-                        onChange(
-                          await api(`/tags/${tag.id}`, "DELETE", {}),
-                        );
+                        setLibrary(await api(`/tags/${tag.id}`, "DELETE", {}));
                         toast.success("Tag deleted");
                         onClose();
                       } catch (e) {

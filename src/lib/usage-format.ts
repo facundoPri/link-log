@@ -16,17 +16,14 @@ export function formatBrowserTime(ms: number) {
 
 /** Small amounts keep their digits ($0.0009): an estimate that rounds to $0.00 would hide the spend. */
 export const formatUsd = (usd: number) =>
-  new Intl.NumberFormat("en", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: usd > 0 && usd < 1 ? 4 : 2 }).format(usd);
+  usd > 0 && usd < 0.0001 ? "<$0.0001" : new Intl.NumberFormat("en", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: usd > 0 && usd < 1 ? 4 : 2 }).format(usd);
 
 /** What a feature used, in the units it is billed in: tokens and/or browser time. */
 export const featureUnits = (f: Pick<FeatureUsage, "inputTokens" | "outputTokens" | "browserMs">) =>
   [formatTokens(f.inputTokens + f.outputTokens), formatBrowserTime(f.browserMs)].filter(Boolean).join(" · ");
 
-/** The cost cell: the priced total, how many calls had no price, or a dash when nothing was billed. */
-export function featureCost(f: Pick<FeatureUsage, "usd" | "unknownCostCalls">) {
-  const unpriced = f.unknownCostCalls ? `${f.unknownCostCalls} unpriced` : "";
-  return { amount: f.usd > 0 ? formatUsd(f.usd) : unpriced ? "" : "—", unpriced };
-}
+/** The cost cell: the estimated total, or a dash when nothing was billed. */
+export const featureCost = (f: Pick<FeatureUsage, "usd">) => (f.usd > 0 ? formatUsd(f.usd) : "—");
 
 /** Minutes until a window resets, at least 1. */
 export const minutesUntil = (iso: string, now = Date.now()) => Math.max(1, Math.ceil((Date.parse(iso) - now) / 60_000));

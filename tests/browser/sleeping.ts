@@ -50,6 +50,16 @@ export async function sleepingChecks(ctx: Ctx) {
   const click = (finder: string) => dom(`const el = ${finder}; if (!el) throw new Error("not found: " + ${JSON.stringify(finder)}); el.click(); return true;`);
   const button = (text: string, scope = "document") =>
     `[...${scope}.querySelectorAll("button")].find((e) => e.textContent.trim().startsWith(${JSON.stringify(text)}) && !e.disabled)`;
+  const SELECTION = `document.querySelector('[aria-label="Selected tab actions"]')`;
+  /** Opens More ⌘K from the selection bar and returns the text of the row starting with `label`. */
+  const paletteRow = async (label: string) => {
+    await click(button("More", SELECTION));
+    const row = `[...document.querySelectorAll('[role=dialog] [cmdk-item]')].find((e) => e.textContent.trim().startsWith(${JSON.stringify(label)}) && e.getAttribute("aria-disabled") !== "true")`;
+    await waitFor(`palette row ${label}`, () => dom<boolean>(`return !!${row}`), 10000);
+    return { text: await dom<string>(`return ${row}.textContent.trim()`), select: () => click(row) };
+  };
+  /** Runs a palette-only selection action (Load content, Put to sleep) through More ⌘K. */
+  const fromMore = async (label: string) => (await paletteRow(label)).select();
   const rows = () =>
     dom<{ tabId: number; content: string | null; load: string | null; pinned: boolean }[]>(
       `return [...document.querySelectorAll("[data-tab-id]")].map((r) => ({ tabId: Number(r.dataset.tabId), content: r.querySelector("[data-content]")?.dataset.content ?? null, load: r.querySelector("[data-load-state]")?.dataset.loadState ?? null, pinned: !!r.querySelector('[aria-label="Pinned tab"]') }));`,
@@ -219,13 +229,17 @@ export async function sleepingChecks(ctx: Ctx) {
       await Bun.sleep(300);
       await shot("26-selection-bar");
       const order = await dom<string[]>(`return [...document.querySelector('[aria-label="Selected tab actions"]').querySelectorAll("button")].map((b) => b.textContent.trim()).filter(Boolean)`);
-      await click(button("Put to sleep", `document.querySelector('[aria-label="Selected tab actions"]')`));
+      // The palette says which selected tabs it skips before running; the extension only gets the eligible ones.
+      const row = await paletteRow("Put to sleep");
+      assert(/1 of 3 are asleep/.test(row.text), `palette row: ${row.text}`);
+      await shot("26b-put-to-sleep-row");
+      await row.select();
       await waitFor("slept", async () => (await tabsOf(`${SITE}/awake/`)).every((t) => t.discarded), 10000);
       const toast = await dom<string>(`return document.querySelector("[data-sonner-toast]")?.innerText ?? ""`);
       await shot("27-put-to-sleep");
-      assert(/Put to sleep 2 of 3/.test(toast) && /Already asleep/.test(toast), `toast: ${toast}`);
+      assert(/Put to sleep 2 tabs/.test(toast), `toast: ${toast}`);
       await click(`document.querySelector('[aria-label="Clear selection"]')`);
-      return `bar: ${order.join(" · ")}; toast “${toast.replace(/\n/g, " ")}”`;
+      return `bar: ${order.join(" · ")}; palette row “${row.text}”; toast “${toast.replace(/\n/g, " ")}”`;
     });
 
     await check("pinned tabs show a marker and keep pin, order, group and window through Put to sleep and Load content", async () => {
@@ -237,9 +251,9 @@ export async function sleepingChecks(ctx: Ctx) {
       await waitFor("pinned rows", async () => (await rows()).filter((r) => pinned.includes(r.tabId) && r.pinned && r.content === null).length === 2, 20000);
       const before = (await tabsOf(`${SITE}/pinned/`)).map((t) => [t.id, t.pinned, t.index, t.groupId, t.windowId]);
       for (const id of pinned) await click(`document.querySelector('[data-tab-id="${id}"] button[role=checkbox]')`);
-      await click(button("Put to sleep", `document.querySelector('[aria-label="Selected tab actions"]')`));
+      await fromMore("Put to sleep");
       await waitFor("pinned asleep", async () => (await tabsOf(`${SITE}/pinned/`)).every((t) => t.discarded), 10000);
-      await click(button("Load content", `document.querySelector('[aria-label="Selected tab actions"]')`));
+      await fromMore("Load content");
       await awaitRun("pinned run", "/pinned/", 60000);
       const after = (await tabsOf(`${SITE}/pinned/`)).map((t) => [t.id, t.pinned, t.index, t.groupId, t.windowId]);
       await click(`document.querySelector('[aria-label="Clear selection"]')`);

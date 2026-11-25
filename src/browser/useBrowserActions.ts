@@ -18,8 +18,11 @@ import {
   type TabRef,
 } from "@linklog/browser-protocol";
 import type { Lens, Library } from "../types";
+import { useInvalidateLibrary, useWriteLibrary } from "../library";
+import type { StartRun } from "../sessionRuns";
 import { plural } from "../lib/format";
 import { call, evaluationStatus, postEvaluation } from "./api";
+import { summarizeOpen } from "./openLinks";
 import type { BrowserWorkspace, Destination } from "./useBrowserWorkspace";
 import type { GroupDraft } from "../components/browser/GroupDialog";
 import { groupTitle } from "../components/browser/groups";
@@ -56,8 +59,10 @@ function summarize(items: ItemResult[], verb: string, note?: string) {
 const FINAL_STATES = ["done", "failed", "expired", "acked"];
 
 /** Browser actions shared by the sidebar, rows, selection bar and inspector; dialogs render in <BrowserDialogs>. */
-export function useBrowserActions(ws: BrowserWorkspace, setLibrary: (l: Library) => void, clearPicked: (tabIds?: number[]) => void) {
+export function useBrowserActions(ws: BrowserWorkspace, startRun: StartRun, clearPicked: (tabIds?: number[]) => void) {
   const { request, catalog, hello } = ws.browser;
+  const setLibrary = useWriteLibrary();
+  const invalidateLibrary = useInvalidateLibrary();
   const [dialog, setDialog] = useState<BrowserDialog | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -141,11 +146,18 @@ export function useBrowserActions(ws: BrowserWorkspace, setLibrary: (l: Library)
       maxBytes: BROWSER_LIMITS.maxRequestBytes,
       overhead: jsonBytes({ ...base, requestId: crypto.randomUUID(), targets: [] }),
     });
-    for (const part of parts) {
-      const body: EvaluationRequest = { ...base, requestId: crypto.randomUUID(), targets: part };
-      const { status, data } = await postEvaluation(body);
-      if (status >= 400) throw new Error(data.error || "Autogroup failed.");
-      requestIds.push(body.requestId);
+    const run = startRun();
+    try {
+      for (const part of parts) {
+        const body: EvaluationRequest = { ...base, requestId: crypto.randomUUID(), targets: part };
+        const { status, data } = await postEvaluation(body);
+        if (status >= 400) throw new Error(data.error || "Autogroup failed.");
+        requestIds.push(body.requestId);
+        run.add(data.batchId);
+        void invalidateLibrary();
+      }
+    } finally {
+      run.end();
     }
     const open = new Set(requestIds);
     for (let i = 0; i < 180 && open.size; i++) {
@@ -167,10 +179,49 @@ export function useBrowserActions(ws: BrowserWorkspace, setLibrary: (l: Library)
     return { suggestions, catalogVersion: version };
   };
 
+  /**
+   * Opens the URLs as background tabs in this window, optionally into a group. Only tabs: nothing reaches the
+   * Library. Retry replays the same operation, so tabs and the group it made are never duplicated.
+   */
+  const openUrls = async (urls: string[], target: MoveTarget | null, groupName: string | null) => {
+    const operationId = crypto.randomUUID();
+    const attempt = async () => {
+      const retry = { label: "Retry", onClick: () => void attempt() };
+      try {
+        const { items, group } = await request("openTabs", { operationId, urls, ...(target ? { target } : {}) }, 30_000);
+        const summary = summarizeOpen(items, urls.map((url) => ({ url, title: "" })));
+        // With every page already open there is nothing to group: no failure, and Retry wouldn't change it.
+        const openedAny = items.some((i) => i.outcome === "opened");
+        const groupFailed = group && !group.ok && openedAny ? `Not grouped: ${group.error}` : null;
+        const message = group?.ok ? `${summary.message} · ${plural(group.grouped, "tab")} in “${groupName}”` : summary.message;
+        if (summary.kind === "success" && !groupFailed) toast.success(message);
+        else
+          toast.error(message, {
+            description: [summary.description, groupFailed].filter(Boolean).join(" · "),
+            action: retry,
+            duration: 10_000,
+          });
+      } catch (error) {
+        toast.error("Couldn't confirm which links opened", { description: (error as Error).message, action: retry, duration: 10_000 });
+      }
+    };
+    await attempt();
+  };
+
   const actions = {
+    openUrls,
+    moveTarget,
     busy,
     focus: (tab: BrowserTab) => void request("focusTab", { tab: ref(tab) }).catch((e) => toast.error(e.message)),
     copy: (tab: BrowserTab) => void navigator.clipboard.writeText(tab.url).then(() => toast("URL copied")),
+    copyMany: async (tabs: BrowserTab[], withTitles: boolean) => {
+      try {
+        await navigator.clipboard.writeText(tabs.map((t) => (withTitles && t.title ? `${t.url} — ${t.title}` : t.url)).join("\n"));
+        toast.success(`${plural(tabs.length, "link")} copied`);
+      } catch {
+        toast.error("Could not copy links");
+      }
+    },
     /** Same as adding the links in All links: the library fetches and extracts them. */
     save: (tabs: BrowserTab[]) =>
       guard(async () => {
@@ -272,6 +323,7 @@ export function useBrowserActions(ws: BrowserWorkspace, setLibrary: (l: Library)
 
   /** What the dialogs do once confirmed. */
   const ops = {
+    moveTarget,
     close: () => setDialog(null),
     guard,
     move: actions.move,

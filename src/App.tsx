@@ -1,21 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link2 } from "lucide-react";
+import { Link2, ListChecks, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "./api";
-import type { Batch, Job, Lens, LensResult, LensScope, Library, Link, Tag } from "./types";
+import type { Batch, Lens, LensResult, LensScope, Library, Link, Tag } from "./types";
 import { jevUnavailable, needsAttention } from "./attention";
-import { clipboardUrls, pastedUrls } from "./url";
-import { Sidebar, type View } from "./components/Sidebar";
+import { clipboardUrls } from "./url";
+import { lensIcon, Sidebar, type View } from "./components/Sidebar";
 import { Toolbar, type ContextFilter } from "./components/Toolbar";
 import { LinkList } from "./components/LinkList";
 import { PendingLinks } from "./components/PendingLinks";
-import { BulkChip, BulkDock } from "./components/BulkBar";
-import { BulkDrawer, BulkMobileBar } from "./components/BulkMobile";
-import { BulkPalette } from "./components/BulkPalette";
+import { SelectionSurface, type LinkEntry, type Picker, type SurfaceHandle } from "./components/SelectionSurface";
+import { TagDot } from "./components/TagChip";
+import { plural } from "./lib/format";
 import type { BulkResult } from "./components/BulkResults";
 import { Inspector } from "./components/Inspector";
 import { TagDialog } from "./components/TagDialog";
-import { AddLinkDialog } from "./components/AddLinkDialog";
 import { LensDialog, type LensDraft } from "./components/LensDialog";
 import { lensBucket, lensSelectedKeys } from "./components/LensVerdict";
 import { LensHeader } from "./components/LensHeader";
@@ -28,11 +27,15 @@ import { openUnavailable, useOpenLinks } from "./browser/openLinks";
 import { BrowserInspector } from "./components/browser/BrowserInspector";
 import { BrowserDialogs } from "./components/browser/BrowserDialogs";
 import { useBrowserActions } from "./browser/useBrowserActions";
-import { usd, tokens } from "./lib/format";
-import { submitInChunks, type BatchReply } from "./batches";
-import { actionForKey, actionStates, BULK_ACTIONS, bulkProgress, lacksContent, type BulkAction, type BulkRunners } from "./bulkActions";
+import { BATCH_WORDS, submitInChunks, type BatchReply } from "./batches";
+import { actionStates, BULK_ACTIONS, bulkProgress, lacksContent, runAction, type BulkRunners } from "./bulkActions";
 import { copyLinks } from "./lib/copy-links";
+import { isInput, overlayOpen } from "./lib/overlay";
+import { useQueryClient } from "@tanstack/react-query";
 import { failureMessage } from "./failures";
+import { batchJobsOptions, useRunningJobs } from "./entities";
+import { emptyLibrary, useLibrary, useWriteLibrary } from "./library";
+import { useSessionRuns } from "./sessionRuns";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
@@ -69,17 +72,6 @@ function useMedia(query: string) {
   return matches;
 }
 
-function isInput(target: EventTarget | null) {
-  return (
-    target instanceof HTMLElement &&
-    !!target.closest('input,textarea,select,[contenteditable="true"]')
-  );
-}
-
-// Radix menus, popovers, dialogs and sheets mount into portals with these roles while open.
-const overlayOpen = () =>
-  !!document.querySelector('[role="dialog"],[role="alertdialog"],[role="menu"],[role="listbox"]');
-
 export function App({
   account,
   onSignOut,
@@ -89,15 +81,11 @@ export function App({
   onSignOut: () => void;
   onSettings: () => void;
 }) {
-  const [library, setLibrary] = useState<Library>({
-    links: [],
-    tags: [],
-    lenses: [],
-    batches: [],
-    capabilities: { markdown: false, jev: false, provider: "typesafe" },
-  });
-  const [loaded, setLoaded] = useState(false);
-  const [loadError, setLoadError] = useState("");
+  const libraryQuery = useLibrary();
+  const library = libraryQuery.data ?? emptyLibrary;
+  const loaded = !libraryQuery.isPending;
+  const loadError = libraryQuery.isLoadingError ? libraryQuery.error.message : "";
+  const setLibrary = useWriteLibrary();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [picked, setPicked] = useState<string[]>([]);
   const [view, setView] = useState<View>("all");
@@ -107,7 +95,6 @@ export function App({
   const [context, setContext] = useState<ContextFilter>("any");
   const [ascending, setAscending] = useState(false);
   const [dialog, setDialog] = useState<
-    | "add"
     | { tag: Tag | "new" }
     | { lens: Lens | "new"; scope?: LensScope }
     | null
@@ -129,13 +116,9 @@ export function App({
   const [extractFirst, setExtractFirst] = useState(false);
   const [confirmExtract, setConfirmExtract] = useState<string[] | null>(null);
   const [running, setRunning] = useState(false);
-  const [palette, setPalette] = useState<{ page: string | null } | null>(null);
   const [results, setResults] = useState<BulkResult[]>([]);
   const [dragging, setDragging] = useState(false);
   const [focusTags, setFocusTags] = useState(false);
-  const [jobsByLink, setJobsByLink] = useState<
-    Map<string, { kind: "extract" | "preview" | "autotag" | "lens" | "query"; status: string; step: string | null }>
-  >(new Map());
   const dragDepth = useRef(0);
   const [pendingUrls, setPendingUrls] = useState<string[]>([]);
   const pendingSaves = useRef(new Map<string, string>());
@@ -148,7 +131,6 @@ export function App({
       for (const id of new Set(pendingSaves.current.values())) toast.dismiss(id);
     };
   }, []);
-  const libraryEpoch = useRef(0);
   const listScroll = useRef<HTMLDivElement>(null);
   const pendingNewUrls = useMemo(() => {
     const saved = new Set(library.links.flatMap((link) => [link.original_url, link.url]));
@@ -161,20 +143,28 @@ export function App({
     return inspectorW.current;
   });
   const search = useRef<HTMLInputElement>(null);
-  const sessionBatches = useRef(new Set<string>());
   // Batches started from the selection surface; the ones that settle with failures get a results card.
   const selectionBatches = useRef(new Set<string>());
   // "Extract, then auto-tag" is one flow with one results card, on the auto-tag batch: the extract batches are
   // reported through it, since the auto-tag jobs that fail do so because their extraction did.
   const extractFlows = useRef(new Map<string, string[]>());
   const flowExtracts = useRef(new Set<string>());
+  const { trackBatch, startRun } = useSessionRuns({
+    onActivity: () => setActivityOpen(true),
+    onSettled: (batches, failed) => {
+      for (const batch of batches) {
+        if (failed ? selectionBatches.current.has(batch.id) : extractFlows.current.has(batch.id)) void showFailures(batch);
+        selectionBatches.current.delete(batch.id);
+      }
+    },
+  });
   const narrow = useMedia("(max-width: 1099px)");
   const mobile = useMedia("(max-width: 767px)");
-  const ws = useBrowserWorkspace(library, view === "browser", loaded && !loadError);
+  const ws = useBrowserWorkspace(library, view === "browser", loaded && !loadError, startRun);
   const openLinks = useOpenLinks(ws.browser, setPicked);
   const browserController = useBrowserActions(
     ws,
-    setLibrary,
+    startRun,
     (tabIds) =>
       setBrowserPicked((cur) =>
         tabIds
@@ -183,6 +173,8 @@ export function App({
       ),
   );
   const browserActions = browserController.actions;
+  // The view's selection surface: its palette's links page is where pasted, dropped and added links go.
+  const surface = useRef<SurfaceHandle>(null);
   const libraryLenses = useMemo(
     () => library.lenses.filter((l) => l.scope !== "browser"),
     [library.lenses],
@@ -196,123 +188,14 @@ export function App({
     );
   }, [sidebarOpen]);
 
-  const refresh = useCallback(async () => {
-    const epoch = libraryEpoch.current;
-    const data = await api();
-    if (epoch === libraryEpoch.current) setLibrary(data);
-    setLoaded(true);
-    setLoadError("");
-    return data;
-  }, []);
-
-  useEffect(() => {
-    refresh().catch((e) => {
-      setLoaded(true);
-      setLoadError((e as Error).message);
-    });
-  }, [refresh]);
-
-  const busyPolling = library.links.some((l) => l.processing) ||
-    library.batches.some((b) => b.active > 0);
-
-  // Poll library + per-batch jobs while work is in flight.
-  useEffect(() => {
-    if (!busyPolling) {
-      setJobsByLink(new Map());
-      return;
-    }
-    let alive = true;
-    const tick = async () => {
-      try {
-        const lib = await refresh();
-        const active = lib.batches.filter((b) => b.active > 0);
-        if (!alive) return;
-        const map = new Map<string, { kind: "extract" | "preview" | "autotag" | "lens" | "query"; status: string; step: string | null }>();
-        for (const b of active) {
-          try {
-            const { jobs } = await api<{ jobs: Job[] }>(`/batches/${b.id}`);
-            for (const j of jobs)
-              // A waiting job never hides the job it waits for.
-              if (j.link_id && ["queued", "running", "waiting"].includes(j.status) && !(j.status === "waiting" && map.has(j.link_id)) && (b.kind === "extract" || b.kind === "preview" || b.kind === "autotag" || b.kind === "lens" || b.kind === "query"))
-                map.set(j.link_id, { kind: b.kind, status: j.status, step: j.step });
-          } catch {
-            /* batch may be gone */
-          }
-        }
-        if (alive) setJobsByLink(map);
-      } catch {
-        /* keep polling */
-      }
-    };
-    void tick();
-    const id = setInterval(() => void tick(), 1800);
-    return () => {
-      alive = false;
-      clearInterval(id);
-    };
-  }, [busyPolling, refresh]);
-
-  // Batch progress toasts for batches this session created.
-  useEffect(() => {
-    for (const b of library.batches) {
-      if (!sessionBatches.current.has(b.id)) continue;
-      const n = b.total;
-      const verb =
-        b.kind === "autotag"
-          ? "Auto-tagging"
-          : b.kind === "extract"
-            ? "Extracting context for"
-            : "Applying lens to";
-      if (b.active > 0) {
-        toast.loading(`${verb} ${n} ${n === 1 ? "link" : "links"}…`, {
-          id: b.id,
-          description: `${b.done + b.failed + b.cancelled} of ${n} done`,
-          action: { label: "Cancel", onClick: () => void cancelBatch(b.id) },
-        });
-      } else if (b.cancelled === n) {
-        toast("Cancelled", { id: b.id });
-        sessionBatches.current.delete(b.id);
-        if (extractFlows.current.has(b.id)) void showFailures(b);
-      } else if (b.failed === 0) {
-        const ran = n - b.cancelled;
-        toast.success(
-          b.kind === "autotag"
-            ? `Auto-tagged ${ran} ${ran === 1 ? "link" : "links"}`
-            : b.kind === "extract"
-              ? `Extracted ${ran} ${ran === 1 ? "link" : "links"}`
-              : `Lens applied to ${ran} ${ran === 1 ? "link" : "links"}`,
-          {
-            id: b.id,
-            description:
-              b.usage?.usd != null
-                ? `${usd(b.usage.usd)} · ${tokens(b.usage.input_tokens + b.usage.output_tokens)} tokens`
-                : undefined,
-            action: { label: "Activity", onClick: () => setActivityOpen(true) },
-          },
-        );
-        sessionBatches.current.delete(b.id);
-        if (extractFlows.current.has(b.id)) void showFailures(b);
-      } else {
-        toast[b.failed === n ? "error" : "success"](
-          `${verb.replace("ing", "ed")} ${n} ${n === 1 ? "link" : "links"}`,
-          {
-            id: b.id,
-            description: `${b.failed} failed — see Activity`,
-            action: { label: "Activity", onClick: () => setActivityOpen(true) },
-          },
-        );
-        sessionBatches.current.delete(b.id);
-        if (selectionBatches.current.has(b.id)) void showFailures(b);
-      }
-      if (b.active === 0) selectionBatches.current.delete(b.id);
-    }
-  }, [library.batches]);
+  const jobsByLink = useRunningJobs(library.batches);
+  const queryClient = useQueryClient();
 
   // The same jobs Activity lists, narrowed to the failed ones, so the selection surface can say why and re-select them.
   const showFailures = async (b: Batch) => {
     if (flowExtracts.current.has(b.id)) return;
     const failedOf = async (batchId: string) => {
-      const { jobs } = await api<{ jobs: Job[] }>(`/batches/${batchId}`);
+      const jobs = await queryClient.fetchQuery({ ...batchJobsOptions(batchId), staleTime: 0 });
       return jobs
         .filter((j) => j.status === "failed" && j.step !== "Cancelled" && j.link_id)
         .map((j) => ({
@@ -350,22 +233,15 @@ export function App({
   }, []);
 
   const save = useCallback(async (url: string, tags: string[] = []) => {
-    libraryEpoch.current++;
     const data = await api("/links", "POST", { url, tags });
-    libraryEpoch.current++;
     setLibrary(data);
-    setLoaded(true);
     showRecentLinks();
     if (data.duplicate) toast.success("Link moved to the top", { description: "Already in your library." });
     else toast.success("Link saved");
-  }, [showRecentLinks]);
+  }, [showRecentLinks, setLibrary]);
 
-  const capture = useCallback((text: string) => {
-    const parsed = pastedUrls(text);
-    if (!parsed.length) {
-      toast.error("Paste http or https links, separated by spaces or new lines.");
-      return;
-    }
+  /** Saves pasted links, with tags when picked. Every chunk carries the same tags. */
+  const capture = useCallback((parsed: string[], tags: string[] = []) => {
     // A second paste while the first request is pending must not send the same URLs again.
     const urls = parsed.filter((url) => !pendingSaves.current.has(url));
     if (!urls.length) {
@@ -383,7 +259,6 @@ export function App({
     ].filter(Boolean).join(" · ");
     for (const url of urls) pendingSaves.current.set(url, id);
     setPendingUrls([...pendingSaves.current.keys()]);
-    libraryEpoch.current++;
     showRecentLinks();
     toast.loading(`Saving ${count(urls.length)}…`, { id });
     // Serialize separate pastes so an older response cannot replace a newer library snapshot.
@@ -393,12 +268,9 @@ export function App({
         for (let offset = 0; offset < urls.length; offset += 100) {
           if (!captureActive.current) return;
           const chunk = urls.slice(offset, offset + 100);
-          const data = await api<Library & { imported: number; duplicates: number }>("/import", "POST", { urls: chunk });
+          const data = await api<Library & { imported: number; duplicates: number }>("/import", "POST", { urls: chunk, ...(tags.length ? { tags } : {}) });
           if (!captureActive.current) return;
-          libraryEpoch.current++;
           setLibrary(data);
-          setLoaded(true);
-          setLoadError("");
           added += data.imported;
           existing += data.duplicates;
           confirmed += chunk.length;
@@ -408,7 +280,10 @@ export function App({
         }
         toast.success(summary(added, existing), {
           id,
-          description: added ? "New links will be processed in the background." : "Already in your library.",
+          description: [
+            tags.length ? `Tagged ${tags.join(", ")}.` : "",
+            added ? "New links will be processed in the background." : "Already in your library.",
+          ].filter(Boolean).join(" "),
         });
       } catch (e) {
         if (!captureActive.current) return;
@@ -421,11 +296,11 @@ export function App({
         setPendingUrls([...pendingSaves.current.keys()]);
       }
     });
-  }, [showRecentLinks]);
+  }, [showRecentLinks, setLibrary]);
 
   const mutate = useCallback(async (path: string, method: string, body: unknown = {}) => {
     setLibrary(await api(path, method, body));
-  }, []);
+  }, [setLibrary]);
 
   const runBatch = useCallback(
     async (
@@ -445,14 +320,13 @@ export function App({
         );
         onBatches?.(batchIds);
         for (const id of batchIds) {
-          sessionBatches.current.add(id);
           if (fromSelection) selectionBatches.current.add(id);
+          trackBatch(id);
         }
         if (skipped.length)
           toast(`Skipped ${skipped.length} ${skipped.length === 1 ? "link" : "links"} without content`, {
             description: "Extract the content first.",
           });
-        await refresh();
       } catch (e) {
         toast.error((e as Error).message);
         throw e;
@@ -460,38 +334,16 @@ export function App({
         setRunning(false);
       }
     },
-    [refresh],
+    [setLibrary, trackBatch],
   );
 
-  // Keyboard: ⌘K add (or the bulk palette while links are selected), T/L/E/C bulk actions, / search, Esc close
-  // inspector, ↑/↓ navigate while inspector open.
-  const hasPicked = picked.length > 0;
-  const invokeBulkRef = useRef<(action: BulkAction, detail?: string) => void>(() => {});
-  // The confirms are alert dialogs of their own, not `dialog`, but block the keys the same way.
-  const confirming = confirmNoContent || confirmAutoTag || !!confirmExtract || !!deleteLink || !!deleteTag || !!deleteLens;
-  const paletteOpen = !!palette;
+  // Keyboard: / search, ⌘\ sidebar, ⌘A select all, Esc close inspector, ↑/↓ navigate while inspector open.
+  // ⌘K and the action keys belong to each view's SelectionSurface.
   const filteredRef = useRef<Link[]>([]);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        // The open palette is itself an overlay, and ⌘K closes it.
-        if (dialog || confirming || (!paletteOpen && overlayOpen())) return;
-        // With links selected ⌘K is the actions palette; otherwise it adds a link.
-        if (hasPicked && view !== "browser") setPalette((p) => (p ? null : { page: null }));
-        else setDialog("add");
-        return;
-      }
       // Browser view has its own search, selection and Escape handling.
       if (view === "browser" && e.key !== "\\") return;
-      if (hasPicked && !e.repeat && !dialog && !confirming && !isInput(e.target) && !overlayOpen()) {
-        const action = actionForKey(e);
-        if (action) {
-          e.preventDefault();
-          invokeBulkRef.current(action);
-          return;
-        }
-      }
       if (e.key === "/" && !isInput(e.target) && !dialog) {
         e.preventDefault();
         search.current?.focus();
@@ -537,23 +389,9 @@ export function App({
         }
       }
     };
-    const paste = (e: ClipboardEvent) => {
-      if (isInput(e.target) || dialog || activityOpen) return;
-      const urls = e.clipboardData ? clipboardUrls(e.clipboardData) : [];
-      if (urls.length) {
-        e.preventDefault();
-        capture(urls.join("\n"));
-      } else if (/https?:\/\//i.test(e.clipboardData?.getData("text/plain") || "")) {
-        toast.error("Couldn't read this link list", { description: "Use one URL per line, or copy links with their titles." });
-      }
-    };
     window.addEventListener("keydown", key);
-    window.addEventListener("paste", paste);
-    return () => {
-      window.removeEventListener("keydown", key);
-      window.removeEventListener("paste", paste);
-    };
-  }, [dialog, confirming, paletteOpen, activeId, activityOpen, capture, view, hasPicked]);
+    return () => window.removeEventListener("keydown", key);
+  }, [dialog, activeId, activityOpen, view]);
 
   useEffect(() => {
     setTagIds((current) => current.filter((id) => library.tags.some((t) => t.id === id)));
@@ -777,23 +615,6 @@ export function App({
     setConfirmExtract(ids);
   };
 
-  const cancelBatch = async (id: string) => {
-    try {
-      const data = await api<Library & { cancelled?: number; dependents?: number }>(
-        `/batches/${id}`,
-        "DELETE",
-      );
-      setLibrary(data);
-      toast(
-        data.cancelled
-          ? `Cancelled ${data.cancelled} queued ${data.cancelled === 1 ? "job" : "jobs"}${data.dependents ? `, and ${data.dependents} waiting for that extraction` : ""}`
-          : "Nothing left to cancel",
-      );
-    } catch (e) {
-      toast.error((e as Error).message);
-    }
-  };
-
   const manualTagged = pickedLinks.filter((l) =>
     l.tags.some((t) => t.origin === "manual"),
   ).length;
@@ -816,32 +637,41 @@ export function App({
     copy: (links, withTitles) => void copyLinks(links, withTitles),
     open: (links) => void openLinks.open(links),
   };
-  const bulkStates = actionStates(pickedLinks, {
+  const bulkStates = actionStates(BULK_ACTIONS, pickedLinks, {
     tags: library.tags,
     jevReason,
     running,
     openReason: openUnavailable(ws.browser),
     opening: openLinks.opening,
   });
-  const invokeBulk = (action: BulkAction, detail?: string) => {
-    const state = bulkStates.find((s) => s.action.id === action.id);
-    if (!state) return;
-    if (state.disabled) {
-      toast(state.reason ?? `${action.label} isn't available`);
-      return;
-    }
-    if (action.picker && detail === undefined) {
-      setPalette({ page: action.id });
-      return;
-    }
-    setPalette(null);
-    void action.run(bulkRunners, state.availability.eligible, detail);
+  const linkEntry: LinkEntry = {
+    command: { label: "Add links…", description: "Save to your Library, with optional tags", icon: Plus },
+    submitLabel: (n) => `Save ${plural(n, "link")} to Library`,
+    note: "Saved to your Library and extracted in the background.",
+    // The same limits /import checks, so the palette never closes on links the server refuses.
+    problem: (_urls, picks) =>
+      picks.length > 20 ? "Use up to 20 tags." : picks.some((p) => p.label.trim().length > 40) ? "Use tags of up to 40 characters." : null,
+    choice: {
+      heading: "Tags",
+      multiple: true,
+      placeholder: "Add tags (optional)…",
+      choices: library.tags.map((t) => ({ id: t.name, label: t.name, icon: <TagDot name={t.name} /> })),
+      newLabel: (name) => `Create tag “${name}”`,
+    },
+    onSubmit: (urls, picks) => capture(urls, picks.map((p) => p.label)),
   };
-  invokeBulkRef.current = invokeBulk;
-  useEffect(() => {
-    if (!picked.length) setPalette(null);
-  }, [picked.length]);
-  const paletteAction = BULK_ACTIONS.find((a) => a.id === palette?.page) ?? null;
+  const lensPicker: Picker = {
+    placeholder: "Pick a lens…",
+    empty: libraryLenses.length ? "No matching lens" : "No lenses yet",
+    choices: libraryLenses.map((lens) => ({
+      id: lens.id,
+      label: lens.name,
+      description: lens.question,
+      icon: lensIcon(lens.type, "size-4 shrink-0"),
+    })),
+    newLabel: "New lens…",
+    onNew: () => setDialog({ lens: "new" }),
+  };
   const pickedSet = new Set(picked);
   const allVisibleSelected = filtered.length > 0 && filtered.every((l) => pickedSet.has(l.id));
   const progress = bulkProgress(library.batches, selectionBatches.current);
@@ -863,14 +693,7 @@ export function App({
       activeBatch={
         activeBatch
           ? {
-              label:
-                activeBatch.kind === "autotag"
-                  ? "Auto-tagging"
-                  : activeBatch.kind === "extract"
-                    ? "Extracting"
-                    : activeBatch.kind === "preview"
-                      ? "Fetching preview"
-                      : "Applying lens",
+              label: BATCH_WORDS[activeBatch.kind].running,
               done: activeBatch.done + activeBatch.failed + activeBatch.cancelled,
               total: activeBatch.total,
             }
@@ -987,10 +810,7 @@ export function App({
       lenses={libraryLenses}
       onClose={() => setActiveId(null)}
       onChange={setLibrary}
-      onDeleted={() => {
-        void refresh();
-        setActiveId(null);
-      }}
+      onDeleted={() => setActiveId(null)}
       onRunLens={(lens) => void runBatch("lens", [activeLink.id], lens.id)}
       onOpenLens={(id) => setView({ kind: "lens", id })}
       onToggleTag={toggleTagFilter}
@@ -1002,7 +822,7 @@ export function App({
         try {
           const data = await api<Library & { batchId?: string }>(`/links/${activeLink.id}/transcript`, "POST", { language });
           setLibrary(data);
-          if (data.batchId) sessionBatches.current.add(data.batchId);
+          if (data.batchId) trackBatch(data.batchId);
         } catch (e) { toast.error((e as Error).message); }
       }}
       onRetry={() => {
@@ -1027,6 +847,8 @@ export function App({
     <div
       className="flex h-dvh overflow-hidden"
       onDragEnter={(e) => {
+        // Like paste: Browser's own dialogs (Autogroup review, Open links, confirms) keep what the user is doing.
+        if (view === "browser" && overlayOpen()) return;
         if (e.dataTransfer.types.some((t) => ["text/uri-list", "text/plain"].includes(t))) {
           e.preventDefault();
           dragDepth.current++;
@@ -1047,16 +869,17 @@ export function App({
         }
       }}
       onDrop={(e) => {
-        e.preventDefault();
         dragDepth.current = 0;
         setDragging(false);
-        const text =
-          e.dataTransfer
-            .getData("text/uri-list")
-            .split("\n")
-            .find((l) => l && !l.startsWith("#")) ||
-          e.dataTransfer.getData("text/plain");
-        if (text) capture(text);
+        if (overlayOpen()) {
+          // An open dialog keeps what the user is doing: a drop into a field inserts natively, anywhere else it
+          // must not navigate away.
+          if (!isInput(e.target)) e.preventDefault();
+          return;
+        }
+        e.preventDefault();
+        const urls = clipboardUrls(e.dataTransfer);
+        if (urls.length) surface.current?.enterLinks(urls);
       }}
     >
       {!mobile && sidebarOpen && (
@@ -1078,8 +901,11 @@ export function App({
             ws={ws}
             library={library}
             actions={browserActions}
+            surfaceRef={surface}
             picked={browserPicked}
             setPicked={setBrowserPicked}
+            narrow={narrow}
+            mobile={mobile}
             onToggleSidebar={() =>
               mobile ? setMenuOpen(true) : setSidebarOpen((o) => !o)
             }
@@ -1122,7 +948,7 @@ export function App({
           onRemoveTag={toggleTagFilter}
           onClear={clearFilters}
           onToggleSort={() => setAscending(!ascending)}
-          onAdd={() => setDialog("add")}
+          onAdd={() => surface.current?.enterLinks()}
           onToggleSidebar={() =>
             mobile ? setMenuOpen(true) : setSidebarOpen((o) => !o)
           }
@@ -1156,11 +982,7 @@ export function App({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() =>
-                  void refresh()
-                    .then(() => setLoadError(""))
-                    .catch((e) => setLoadError(e.message))
-                }
+                onClick={() => void libraryQuery.refetch()}
               >
                 Retry
               </Button>
@@ -1180,7 +1002,7 @@ export function App({
               }}
               onPicked={(id, c) => pickMany([id], c)}
               onPickedMany={pickMany}
-              onAdd={() => setDialog("add")}
+              onAdd={() => surface.current?.enterLinks()}
               onClearFilters={clearFilters}
               rowActions={{
                 onToggleTagFilter: toggleTagFilter,
@@ -1274,87 +1096,37 @@ export function App({
           {inspector}
         </SheetContent>
       </Sheet>
-      {view !== "browser" && !narrow && (
-        <BulkDock
-          selected={picked.length}
-          visibleCount={filtered.length}
-          states={bulkStates}
-          progress={progress}
-          results={results}
-          onInvoke={invokeBulk}
-          onSelectAll={() => setPicked(filtered.map((l) => l.id))}
-          onClear={() => setPicked([])}
-          onOpenPalette={() => setPalette({ page: null })}
-          onSelectFailed={selectFailed}
-          onDismissResult={dismissResult}
-        />
-      )}
-      {view !== "browser" && narrow && !mobile && (
-        <BulkChip
-          selected={picked.length}
-          progress={progress}
-          results={results}
-          onOpenPalette={() => setPalette({ page: null })}
-          onClear={() => setPicked([])}
-          onSelectFailed={selectFailed}
-          onDismissResult={dismissResult}
-        />
-      )}
-      {view !== "browser" && mobile && (
-        <BulkMobileBar
-          selected={picked.length}
-          visibleCount={filtered.length}
-          allVisibleSelected={allVisibleSelected}
-          progress={progress}
-          results={results}
-          onSelectAll={() => setPicked(filtered.map((l) => l.id))}
-          onClear={() => setPicked([])}
-          onOpenDrawer={() => setPalette({ page: null })}
-          onSelectFailed={selectFailed}
-          onDismissResult={dismissResult}
-        />
-      )}
-      {!!picked.length && view !== "browser" && !mobile && (
-        <BulkPalette
-          open={!!palette}
-          onOpenChange={(o) => !o && setPalette(null)}
-          page={paletteAction}
-          onPage={(a) => setPalette({ page: a?.id ?? null })}
-          selected={picked.length}
-          states={bulkStates}
-          lenses={libraryLenses}
-          onInvoke={invokeBulk}
-          onNewLens={() => {
-            setPalette(null);
-            setDialog({ lens: "new" });
-          }}
-        />
-      )}
-      {!!picked.length && view !== "browser" && mobile && (
-        <BulkDrawer
-          open={!!palette}
-          onOpenChange={(o) => !o && setPalette(null)}
-          page={paletteAction}
-          onPage={(a) => setPalette({ page: a?.id ?? null })}
+      {view !== "browser" && (
+        <SelectionSurface
+          noun="link"
+          narrow={narrow}
+          mobile={mobile}
           selected={picked.length}
           visibleCount={filtered.length}
           allVisibleSelected={allVisibleSelected}
           states={bulkStates}
-          lenses={libraryLenses}
-          onInvoke={invokeBulk}
+          ref={surface}
+          entry={linkEntry}
+          commands={[
+            {
+              id: "select-all",
+              label: `Select all ${filtered.length} visible`,
+              description: "Then pick an action here",
+              icon: ListChecks,
+              shortcut: "⌘A",
+              keepOpen: true,
+              disabled: filtered.length ? null : "No links to select",
+              onSelect: () => setPicked(filtered.map((l) => l.id)),
+            },
+          ]}
+          picker={(id) => (id === "lens" ? lensPicker : null)}
+          progress={progress}
+          results={results}
+          onRun={runAction(BULK_ACTIONS, bulkStates, bulkRunners)}
           onSelectAll={() => setPicked(filtered.map((l) => l.id))}
-          onNewLens={() => {
-            setPalette(null);
-            setDialog({ lens: "new" });
-          }}
-        />
-      )}
-      {dialog === "add" && (
-        <AddLinkDialog
-          tags={library.tags}
-          onClose={() => setDialog(null)}
-          onSave={save}
-          onImport={capture}
+          onClear={() => setPicked([])}
+          onSelectFailed={selectFailed}
+          onDismissResult={dismissResult}
         />
       )}
       {dialog && typeof dialog === "object" && "lens" in dialog && (
@@ -1399,10 +1171,6 @@ export function App({
         <TagDialog
           tag={dialog.tag}
           onClose={() => setDialog(null)}
-          onChange={setLibrary}
-          linkCount={(id) =>
-            library.links.filter((l) => l.tags.some((t) => t.id === id)).length
-          }
         />
       )}
       <AlertDialog open={!!deleteLink} onOpenChange={(o) => !o && setDeleteLink(null)}>
@@ -1583,17 +1351,12 @@ export function App({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      <ActivitySheet
-        open={activityOpen}
-        batches={library.batches}
-        onOpenChange={setActivityOpen}
-        onLibrary={setLibrary}
-      />
+      <ActivitySheet open={activityOpen} onOpenChange={setActivityOpen} />
       {dragging && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
           <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed p-10 text-center">
             <Link2 className="size-6 text-muted-foreground" />
-            <p className="text-sm font-medium">Drop to save</p>
+            <p className="text-sm font-medium">{view === "browser" ? "Drop to open as tabs" : "Drop to save"}</p>
           </div>
         </div>
       )}

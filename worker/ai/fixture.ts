@@ -1,6 +1,10 @@
 import { stableHash } from "@linklog/browser-protocol";
 import type { Question } from "../../src/types";
 
+// Stands in for Jev's 32k-token window at a conservative ~3 chars/token.
+export const FIXTURE_JEV_WINDOW_CHARS = 100_000;
+export const exceedsFixtureWindow = (state: unknown) => JSON.stringify(state).length > FIXTURE_JEV_WINDOW_CHARS;
+
 /**
  * Deterministic stand-in for Jev used only by automated tests (JEV_PROVIDER="fixture"
  * plus ALLOW_FIXTURE_JEV="1"). Markers in the content steer the answer:

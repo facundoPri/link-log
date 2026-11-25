@@ -6,7 +6,7 @@
 //  - env.BROWSER: a fake Browser Rendering binding whose quickAction answers from the same catalog;
 //  - the Workflow step: with QA_FAST_RETRIES=1 every retry backoff is 1 s (product timing otherwise).
 import worker, { LinkWorkflow as ProductWorkflow } from "../../worker/index";
-import { fixtureJev } from "../../worker/ai/fixture";
+import { exceedsFixtureWindow, fixtureJev } from "../../worker/ai/fixture";
 import { FIXTURE_IP, fixtureFor, type BrowserSpec, type PreviewSpec } from "./fixtures";
 import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
 
@@ -81,12 +81,16 @@ async function browserResponse(spec: BrowserSpec, url: URL): Promise<Response> {
   }
 }
 
-/** Fake TypeSafe Jev: the key `qa-fake-invalid` gets 401 (a wrong key); otherwise a `qa:jev-http=<status>` marker
- * in the content picks the error, and anything else gets fixture answers. Each call is logged (`qa_fake_typesafe`). */
+/** Fake TypeSafe Jev: the key `qa-fake-invalid` gets 401 (a wrong key); a state past the fixture window gets 400
+ * (token window); otherwise a `qa:jev-http=<status>` marker in the content picks the error, and anything else gets fixture answers. Each call is logged (`qa_fake_typesafe`). */
 async function fakeTypesafe(request: Request): Promise<Response> {
   const body = (await request.json()) as { state: unknown; questions: Parameters<typeof fixtureJev>[0]["questions"] };
   const badKey = request.headers.get("authorization") === "Bearer qa-fake-invalid";
   const status = badKey ? 401 : Number(JSON.stringify(body.state).match(/qa:jev-http=(\d{3})/)?.[1] ?? 0);
+  if (!badKey && exceedsFixtureWindow(body.state)) {
+    console.log(JSON.stringify({ event: "qa_fake_typesafe", status: 400 }));
+    return Response.json({ error: { message: "state exceeds maximum context length of 32000 tokens" } }, { status: 400 });
+  }
   console.log(JSON.stringify({ event: "qa_fake_typesafe", status: status || 200 }));
   if (status) {
     const message = status === 402 ? "Insufficient balance: out of credits" : status === 401 ? "Unauthorized: invalid API key" : "Internal provider error";

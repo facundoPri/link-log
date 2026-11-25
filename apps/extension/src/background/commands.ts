@@ -8,6 +8,8 @@ import {
   type ClaimTarget,
   type Commands,
   type ItemResult,
+  type MoveTarget,
+  type OpenGroupOutcome,
   type OpenOutcome,
   type PageRequest,
   type TabPreview,
@@ -19,7 +21,7 @@ import { captureTab, CaptureError, metadataCapture, previewTab } from "./capture
 import type { GroupMetaStore } from "./groups";
 import { sleepReason, type Connection, type Hub } from "./hub";
 import type { LoadQueue } from "./loader";
-import type { OpenLedger } from "./opens";
+import type { OpenLedger, OpenRecord } from "./opens";
 import type { TabRegistry } from "./registry";
 
 export type Services = {
@@ -104,6 +106,51 @@ async function groupInWindow(groupId: number, windowId: number) {
   return group!;
 }
 
+async function groupOpened(target: MoveTarget, ledger: OpenRecord, windowId: number, scope: string, s: Services): Promise<OpenGroupOutcome> {
+  const previous = ledger.groupId();
+  const live = await Promise.all(ledger.tabIds().map((id) => chrome.tabs.get(id).catch(() => null)));
+  // A retry leaves alone the tabs the user grouped elsewhere since the first attempt.
+  const tabIds = live
+    // Pinned tabs too: Chrome would unpin them (e.g. a tab the user pinned between attempts).
+    .filter((t) => t?.windowId === windowId && !t.pinned && ((t.groupId ?? -1) < 0 || t.groupId === previous))
+    .map((t) => t!.id!);
+  if (!tabIds.length) return { ok: false, error: "No new tab was opened, so nothing was grouped." };
+  const reuse = previous !== null && (await chrome.tabGroups.get(previous).catch(() => null))?.windowId === windowId;
+  try {
+    const groupId = await groupInto(reuse ? { kind: "group", groupId: previous! } : target, tabIds as [number, ...number[]], windowId, scope, s);
+    await ledger.recordGroup(groupId);
+    return { ok: true, groupId, grouped: tabIds.length };
+  } catch (error) {
+    return { ok: false, error: (error as Error).message || "Chrome could not group the tabs." };
+  }
+}
+
+/** Moves the tabs into the target group, creating it in this window when needed. Returns the group's id. */
+async function groupInto(target: MoveTarget, tabIds: [number, ...number[]], windowId: number, scope: string, s: Services) {
+  if (target.kind === "group") {
+    await groupInWindow(target.groupId, windowId);
+    return chrome.tabs.group({ groupId: target.groupId, tabIds });
+  }
+  // A pinned destination reuses its binding in this window; names never merge groups.
+  const bound =
+    target.kind === "pinned"
+      ? (
+          await Promise.all(
+            s.groups.groupsBoundTo(target.pinnedId, scope).map((id) => chrome.tabGroups.get(id).catch(() => null)),
+          )
+        ).find((g) => g?.windowId === windowId)
+      : null;
+  if (bound) return chrome.tabs.group({ groupId: bound.id, tabIds });
+  const groupId = await chrome.tabs.group({ tabIds, createProperties: { windowId } });
+  await chrome.tabGroups.update(groupId, { title: target.title, color: target.color });
+  await s.groups.set(
+    groupId,
+    { description: target.description, pinnedId: target.kind === "pinned" ? target.pinnedId : null },
+    scope,
+  );
+  return groupId;
+}
+
 // Metadata previews are tiny and cheap to re-read; memory is enough (lost when the worker sleeps).
 const previewCache = new Map<string, TabPreview>();
 const PREVIEW_CACHE_MAX = 500;
@@ -129,7 +176,7 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
       installationId: s.ids.installationId,
       browserSessionId: s.ids.browserSessionId,
       windowId,
-      capabilities: ["tabs", "groups", "lenses", "capture", "save", "close", "open", "forget", "load", "sleep"],
+      capabilities: ["tabs", "groups", "lenses", "capture", "save", "close", "open", "open-group", "forget", "load", "sleep"],
       contentAccess: s.hub.granted,
     };
   },
@@ -376,32 +423,7 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
     }
     const tabIds = ok.map((t) => t.id!) as [number, ...number[]];
     if (!tabIds.length) return { items, groupId: null };
-    const target = args.target;
-    let groupId: number;
-    if (target.kind === "group") {
-      await groupInWindow(target.groupId, windowId);
-      groupId = await chrome.tabs.group({ groupId: target.groupId, tabIds });
-    } else {
-      // A pinned destination reuses its binding in this window; names never merge groups.
-      const bound =
-        target.kind === "pinned"
-          ? (
-              await Promise.all(
-                s.groups.groupsBoundTo(target.pinnedId, scope).map((id) => chrome.tabGroups.get(id).catch(() => null)),
-              )
-            ).find((g) => g?.windowId === windowId)
-          : null;
-      if (bound) groupId = await chrome.tabs.group({ groupId: bound.id, tabIds });
-      else {
-        groupId = await chrome.tabs.group({ tabIds, createProperties: { windowId } });
-        await chrome.tabGroups.update(groupId, { title: target.title, color: target.color });
-        await s.groups.set(
-          groupId,
-          { description: target.description, pinnedId: target.kind === "pinned" ? target.pinnedId : null },
-          scope,
-        );
-      }
-    }
+    const groupId = await groupInto(args.target, tabIds, windowId, scope, s);
     s.hub.schedule(0);
     return { items, groupId };
   },
@@ -444,7 +466,7 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
   },
   async openTabs(args, { c, windowId, s }) {
     const scope = requireScope(c);
-    const items = await s.opens.run(scope, args.operationId, async (ledger) => {
+    const result = await s.opens.run(scope, args.operationId, async (ledger) => {
       const present = new Set(
         (await chrome.tabs.query({ windowId })).map((t) => documentKey(t.url || t.pendingUrl || "")),
       );
@@ -472,10 +494,11 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
           items.push({ url, outcome: "failed", error: (error as Error).message || "Chrome could not open the tab." });
         }
       }
-      return items;
+      if (!args.target) return { items };
+      return { items, group: await groupOpened(args.target, ledger, windowId, scope, s) };
     });
     s.hub.schedule(0);
-    return { items };
+    return result;
   },
   async loadContent(args, { windowId, s }) {
     const snap = await s.hub.snapshot(windowId, null);

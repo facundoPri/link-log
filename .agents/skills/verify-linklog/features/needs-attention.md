@@ -10,7 +10,7 @@ When a link's preview or content fails for good (after its retries), the link is
 - `attention-use-preview` stores the preview's title and description as content.
 - `attention-dismiss` removes the flag without changing anything else.
 - `activity-progress` shows batches, the current step and attempts in the `Activity` sheet.
-- `activity-cancel` cancels a batch (`Cancel batch`) or one job. The job ends Cancelled and no flag is set.
+- `activity-cancel` cancels a batch (`Cancel batch`) or one job. The job ends Cancelled and no flag is set. `Cancel batch` skips a job whose provider call is running; only that job's own `Cancel`, inside the expanded batch, interrupts the call (`DELETE /jobs/:id`).
 
 ## How to get to it (user POV)
 
@@ -33,7 +33,7 @@ Preconditions:
 - **Use preview.** On a content-flagged row with usable metadata, click `Use preview`. `content_source === "preview"` and the flag clears.
 - **Dismiss.** Click `Dismiss`. `attention_kind === null`, while `content_state` or `status` keep their failed values. The `Needs attention` count drops.
 - **Activity.** Click `Activity`. The sheet titled `Activity` lists the batch with each job's step, such as `Waiting to extract content` (stored as `Waiting for Browser slot`). Use `page.locator("button button").count() === 0` to confirm the markup is valid.
-- **Cancel.** With `fixture("pool", …)` links queued behind the Browser pool (launch with `--var BROWSER_CONCURRENCY=1`), click `Cancel batch`. The cancelled jobs show `Cancelled`, and no cancelled link gains content or a flag. Use `check` repeatedly over a window of about 15 s.
+- **Cancel.** With `fixture("pool", …)` links queued behind the Browser pool (launch with `--var BROWSER_CONCURRENCY=1`), click `Cancel batch`. The cancelled jobs show `Cancelled`, and no cancelled link gains content or a flag. Use `check` repeatedly over a window of about 15 s. To interrupt a running provider call, save a `fixture("browser-hang", …)` link, wait for its `browser-markdown` usage event to read `started` (`GET /usage`), expand the newest `Extract context` batch and click the job's `Cancel`.
 - **Proof.** Save a `shot` of the Needs attention view and a `note` of the flagged links' `attention_kind`, `attention_reason` and `content_state`. The video shows each Retry and Dismiss with its result.
 
 ## Gotchas

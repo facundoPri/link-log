@@ -15,8 +15,9 @@ qué límites conocidos quedan. Evidencia en [browser-validation.md](browser-val
 | `worker/handlers/browser.ts` | Handler de evaluación de capturas (reusa `judge`, pool Jev, leases, workflow, consumo). |
 | `migrations/0010_browser_targets.sql` | Target discriminado de job + tablas de browser. |
 | `migrations/0011_jobs_target_index.sql` | Índice `jobs(target_id)`. |
-| `src/browser/*` | Cliente del bridge, hooks de conexión/snapshot, driver de evaluación (`useLensRunner`, `claimRounds`), acciones (`useBrowserActions`, sin JSX). |
-| `src/components/browser/*` | Sidebar de grupos/lenses, filas de pestaña, estado de lens compartido (`BrowserLensStatus`), barra de filtros, barra de selección, inspector (`BrowserInspector` + `BrowserTabContent`), pantalla de conexión (`BrowserConnect`) y diálogos (`BrowserDialogs`). |
+| `src/browser/*` | Cliente del bridge, hooks de conexión/snapshot, driver de evaluación (`useLensRunner`, `claimRounds`), acciones (`useBrowserActions`, sin JSX) y el registro de acciones sobre pestañas seleccionadas (`tabActions.ts`). |
+| `src/components/SelectionSurface.tsx` | Superficie de selección compartida con All links: barra, chip, paleta `⌘K`, drawer de teléfono y teclas, leídos del registro de cada vista. |
+| `src/components/browser/*` | Sidebar de grupos/lenses, filas de pestaña, estado de lens compartido (`BrowserLensStatus`), barra de filtros, inspector (`BrowserInspector` + `BrowserTabContent`), pantalla de conexión (`BrowserConnect`) y diálogos (`BrowserDialogs`). |
 | `src/components/DomainFilter.tsx`, `MarkdownView.tsx` | Filtro de dominios y render de Markdown compartidos por All links y Browser. |
 | `scripts/ports.ts`, `scripts/dev.ts`, `scripts/chrome.ts` | Puertos configurables, dev sin matar procesos ajenos, launcher con perfil aislado. |
 | `tests/browser/` | Entorno aislado + runner de integración con Chromium real. |
@@ -110,6 +111,11 @@ se abre la página **Connect**, donde se concede (o no) el acceso a contenido.
 4. Respuesta perdida: el request sigue `submitting`; el sondeo lo encuentra por request ID. Si el
    backend nunca lo recibió (404 tras 15 s), se re-captura y se reenvía **con el mismo ID**.
 5. API caído: banner, resultados guardados visibles, nada se vacía; al volver se reconcilia.
+6. Cada request aceptado invalida la biblioteca, así que su batch aparece en Activity y en el
+   indicador de la sidebar sin recargar. Las corridas explícitas (activar un lens, Retry,
+   Re-evaluate) registran una corrida de sesión: todos sus batches comparten un solo toast de
+   progreso y de cierre. El auto-completado de pestañas nuevas no registra nada, así que corre sin
+   toast.
 
 ### Backend
 - `jobs.link_id` pasa a ser nullable con `target_id → browser_targets` y
@@ -163,7 +169,25 @@ se abre la página **Connect**, donde se concede (o no) el acceso a contenido.
   catálogo y se avisa si cambió. La corrida arranca en el clic (no en un efecto del diálogo), así
   que corre una sola vez por acción aun con StrictMode; con más de 100 pestañas o más de 1,8 MB se
   parte en varios requests (una entrada de Activity por request) y las sugerencias se unen en la
-  misma revisión.
+  misma revisión. Como las corridas explícitas de lenses, registra una corrida de sesión con un solo
+  toast para todos sus requests, y cada request aceptado invalida la biblioteca.
+
+### Selección, ⌘K y Open links (FAC-184)
+- Browser usa la misma `SelectionSurface` que All links con su propio registro (`TAB_ACTIONS`):
+  Save `S`, Move to group `G` (picker de destinos con **New group…**), Autogroup `A`, Remove from
+  group `U`, Copy `C`/`⇧C` y Close tabs (sin tecla, en el grupo Danger). Cada vista monta una sola
+  superficie, así que `⌘K` y las teclas tienen un único handler; `App` ya no las maneja.
+- `⌘K` abre siempre la paleta **Commands**. Sin selección sólo lista los comandos de la vista:
+  en Browser **Open links…**, que abre pestañas y nunca guarda en la biblioteca.
+- `openTabs` acepta un `target` opcional (el mismo `MoveTarget` de `moveToGroup`) y agrupa sólo las
+  pestañas que abrió esa operación; las ya abiertas quedan donde estaban. El ledger guarda el
+  grupo creado, así que un reintento con el mismo `operationId` lo reutiliza. La página sólo
+  manda `target` si `hello` anuncia `open-group`; con una extensión anterior el selector de grupo
+  queda deshabilitado con el motivo.
+- No hay diálogos Add link ni Open links: pegar URLs fuera de un campo, pegarlas en el input de la
+  paleta, soltarlas en la página, el botón del header o el comando abren la página de links de la
+  paleta (`LinkEntryPage`). Cada vista le pasa su `LinkEntry`: All links guarda con tags (los tags
+  van a todo el lote por `/import`), Browser abre pestañas con un grupo opcional y nunca guarda.
 
 ### Permisos
 - Obligatorios: `tabs`, `tabGroups`, `storage`, `scripting` y los orígenes de Linklog (bridge).
@@ -194,8 +218,12 @@ se abre la página **Connect**, donde se concede (o no) el acceso a contenido.
   dormida con captura de su documento es legible: inspector, previews y lentes la usan sin despertarla.
 - **Put to sleep** (`sleepTabs`): excluye la activa, las que suenan, las de Chrome y las ya dormidas; si
   Chrome se niega (p. ej. usa cámara o pantalla) se informa. Chrome no expone un indicador de captura.
+- En la selección, **Load content** y **Put to sleep** son acciones de `TAB_ACTIONS` (grupo *Memory*,
+  sin tecla, desde More `⌘K` o el drawer): la paleta dice cuántas omite y por qué antes de correr, y
+  Put to sleep muestra su aviso (`hint`: puede perder cambios sin guardar) cuando no omite ninguna.
 - **Fijadas nativas**: `moveToGroup` las rechaza ("Pinned — kept in place.") y vuelve a leer el pin justo
-  antes de agrupar, porque agrupar desfija. Autogroup no las sugiere. Filas e inspector muestran el pin.
+  antes de agrupar, porque agrupar desfija; agrupar las pestañas de Open links también las saltea.
+  Autogroup no las sugiere ni las incluye (`TAB_ACTIONS` las omite). Filas e inspector muestran el pin.
 - **Integración nativa**: `LINKLOG_BROWSER_ONLY=sleeping bun run test:browser` corre sólo estas
   comprobaciones por CDP directo (`tests/browser/cdp.ts`): bajo Playwright, descartar una pestaña cerró
   Chromium 153. Los despertares se cuentan por pedidos al sitio de fixtures.

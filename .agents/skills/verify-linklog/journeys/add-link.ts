@@ -1,5 +1,5 @@
-// add-link: save one URL from the Add link dialog, watch extraction finish in the list, open it in the
-// inspector, and confirm the stored link and content from a reload and the API (features/add-link.md).
+// add-link: save one URL from the Add link button (the palette's links page), watch extraction finish in the list,
+// open it in the inspector, and confirm the stored link and content from a reload and the API (features/add-link.md).
 import type { Journey } from "../scripts/journey";
 
 export default (async ({ page, api, fixture, step, check, shot, aria, note }) => {
@@ -11,13 +11,15 @@ export default (async ({ page, api, fixture, step, check, shot, aria, note }) =>
   await check("Add link button is visible", () => add.isVisible());
   await shot("01-library");
 
-  await step("Add one link from the dialog");
+  await step("Add one link from the palette's links page: type it, Enter, then Enter on Save");
   await add.click();
-  const dialog = page.getByRole("dialog", { name: "Add link" });
-  await dialog.getByRole("textbox").fill(url);
-  await shot("02-dialog-filled");
-  await dialog.getByRole("button", { name: /^Save/ }).click();
-  await check("Dialog closes after Save", async () => !(await dialog.isVisible()));
+  const palette = page.getByRole("dialog", { name: "Commands" });
+  await palette.getByRole("combobox").fill(url);
+  await page.keyboard.press("Enter");
+  await check("The typed URL is listed, with Save first", () => palette.getByRole("option", { name: /^Save 1 link to Library/ }).isVisible());
+  await shot("02-links-page");
+  await page.keyboard.press("Enter");
+  await check("Palette closes after Save", async () => !(await palette.isVisible()));
 
   await step("Wait for the preview and content extraction to settle");
   const link = await check(

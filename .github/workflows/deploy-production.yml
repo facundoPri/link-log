@@ -20,6 +20,7 @@ env:
   CI: 'true'
 
 jobs:
+  # Same steps as check.yml, which runs them on every PR.
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -32,7 +33,6 @@ jobs:
           bun-version: 1.3.14
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
-      # tests/bundle.test.ts dry-runs wrangler deploy, which needs dist/.
       - run: bun run build
       - run: bun test
 
