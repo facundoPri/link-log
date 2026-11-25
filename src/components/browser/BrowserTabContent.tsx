@@ -5,7 +5,7 @@ import type { BrowserTab, Capture } from "@linklog/browser-protocol";
 import { cn } from "../../lib/utils";
 import { relativeTime } from "../../lib/time";
 import { MarkdownView } from "../MarkdownView";
-import { ACCESS_LABEL } from "./BrowserLensStatus";
+import { accessOf } from "./BrowserLensStatus";
 import { LOAD_IN_PROGRESS, LOAD_LABEL, LOAD_NOTE, SLEEP_DETAIL } from "../../browser/sleeping";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -30,7 +30,7 @@ function readMode(): "preview" | "markdown" {
 
 /** Why the page can't be read, and the one thing that helps. */
 function Unreadable({ tab, onAllowAccess, onFocus, onLoad }: { tab: BrowserTab; onAllowAccess: () => void; onFocus: () => void; onLoad: () => void }) {
-  const access = ACCESS_LABEL[tab.content as Exclude<BrowserTab["content"], "available">];
+  const access = accessOf(tab.content);
   const loading = !!tab.load && LOAD_IN_PROGRESS.includes(tab.load.state);
   return (
     <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed p-5 text-center">

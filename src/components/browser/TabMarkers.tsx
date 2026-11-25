@@ -2,7 +2,7 @@ import { FileWarning, Loader2, Lock, Moon, Pin } from "lucide-react";
 import type { BrowserTab } from "@linklog/browser-protocol";
 import { relativeTime } from "../../lib/time";
 import { LOAD_IN_PROGRESS, LOAD_LABEL, SLEEP_DETAIL } from "../../browser/sleeping";
-import { ACCESS_LABEL } from "./BrowserLensStatus";
+import { accessOf } from "./BrowserLensStatus";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
@@ -44,7 +44,7 @@ export function ContentBadge({ tab }: { tab: BrowserTab }) {
         <TooltipContent className="max-w-64 text-left">{failed.error ?? "Load content couldn't read this page."}</TooltipContent>
       </Tooltip>
     ) : null;
-  const access = ACCESS_LABEL[tab.content];
+  const access = accessOf(tab.content);
   return (
     <Tooltip>
       <TooltipTrigger asChild>

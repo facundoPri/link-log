@@ -13,6 +13,16 @@ export const ACCESS_LABEL: Record<Exclude<BrowserTab["content"], "available">, {
   sleeping: { label: "Sleeping", hint: "Chrome hasn't loaded this page, so Linklog can't read it. Use Load content, or open the tab." },
 };
 
+/**
+ * The label and hint for a tab's content state. The extension decides that state, and a build with the
+ * same protocol version can still send one this app doesn't know: show it as unreadable, never crash.
+ */
+export function accessOf(content: BrowserTab["content"]): { label: string; hint: string } {
+  // Own keys only: an inherited name such as "constructor" is not a state either.
+  if (content !== "available" && Object.hasOwn(ACCESS_LABEL, content)) return ACCESS_LABEL[content];
+  return { label: "Can't read", hint: "Linklog can't read this tab right now. Updating the Linklog extension may fix it." };
+}
+
 /** A Sleeping tab with nothing captured: lenses wait for Load content. */
 export const isSleepingWait = (tab: BrowserTab, record: LensRecord | undefined) =>
   (!record || record.state === "missing") && tab.content === "sleeping" && !tab.capturedAt;
@@ -109,7 +119,7 @@ export function BrowserLensStatus({
     );
   if (isUnreadable(tab, record)) {
     const reason =
-      record?.error ?? (tab.content !== "available" ? ACCESS_LABEL[tab.content].hint : "The page could not be read.");
+      record?.error ?? (tab.content !== "available" ? accessOf(tab.content).hint : "The page could not be read.");
     return (
       <>
         <Tooltip>
