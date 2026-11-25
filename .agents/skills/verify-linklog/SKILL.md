@@ -84,7 +84,7 @@ The feature map in `features/README.md` lists every user-facing feature with its
 
 The Browser view needs the extension, which this harness doesn't load. A journey drives it through a scripted stand-in for the extension bridge, injected with `page.addInitScript` (see `journeys/bulk-open.ts` and `journeys/extension-version.ts`):
 
-- A fake of the current extension answers `hello` with `PROTOCOL_VERSION` imported from `@linklog/browser-protocol`, never a literal: a stale number puts the page on the update screen and every connected check fails. The init script runs in the page and can't import, so the journey hands the number over through `sessionStorage` before reloading. A fake of an old release takes its protocol and payload shapes from that release's tag (`git show extension-v<version>:packages/browser-protocol/src/browser.ts`).
+- A fake of the current extension answers `hello` with `PROTOCOL_VERSION` imported from `@linklog/browser-protocol`, never a literal: a stale number puts the page on the update screen and every connected check fails. The init script runs in the page and can't import, so the journey hands the number over through `sessionStorage` before reloading. A fake of an old release takes its handshake and payload shapes from that release's tag (`git show extension-v<version>:packages/browser-protocol/src/browser.ts`), never from memory or the current types.
 - Answer each command the connected view sends with the result shape its type in `packages/browser-protocol` declares (`previews` needs `{ previews: [] }`, `pending` needs `{ requests: [] }`). A bare `{}` where a list is expected crashes the page once a tab is listed.
 - To prove something never renders, record `[data-tab-id]` rows with a `MutationObserver` started at `DOMContentLoaded`; sampling misses a one-frame flash. Also check that the fake sent its stimulus, so the negative check can't pass without it.
 
@@ -102,6 +102,7 @@ Proof standards:
 - Capture the action and the state it produced, not only the final screen. Confirm a mutation from a second view, such as a reload or the API, as `add-link.ts` does.
 - Check side effects alongside the visible UI: stored content (`GET /links/:id/content`), jobs (`GET /batches/:id`), tags and scores (`api.library()`).
 - Fixtures replace only the external systems: DNS, sites, Browser Rendering and Jev. D1, R2, Queues, Workflows, auth and email run for real on the local runtime.
+- A negative check ("never renders", "is ignored") needs proof that the page received the stimulus in the state under test. Before trusting it, make the guard fail on purpose and confirm the check turns red. When porting a test that caught a broken guard, rerun that same broken version against the port.
 - When you report, give the evidence path, the PASS/FAIL line, and the features or entry points you did not cover.
 
 ### Before and after for a PR
