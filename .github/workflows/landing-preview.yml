@@ -81,7 +81,8 @@ jobs:
           "$RUNNER_TEMP/tools/node_modules/.bin/wrangler" preview --config apps/landing/wrangler.jsonc \
             --name "pr-$PR_NUMBER" --tag "${SHA::7}" --message "PR #$PR_NUMBER" --json > preview.json || { cat preview.json; exit 1; }
           cat preview.json
-          url=$(jq -r '[.. | strings | select(test("^https://[^ ]+\\.workers\\.dev"))] | first // empty' preview.json)
+          # Wrangler prints upload logs before the JSON, so match the alias URL in the text.
+          url=$(grep -oE "https://pr-$PR_NUMBER-[a-z0-9.-]+\.workers\.dev" preview.json | head -n 1 || true)
           if [ -z "$url" ]; then echo "No preview URL in Wrangler output" >&2; exit 1; fi
           echo "url=$url" >> "$GITHUB_OUTPUT"
           echo "Landing preview: $url" >> "$GITHUB_STEP_SUMMARY"
