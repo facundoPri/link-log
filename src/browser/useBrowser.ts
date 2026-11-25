@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   applyPatch,
   libraryScope,
@@ -10,7 +11,7 @@ import {
   type WindowSnapshot,
 } from "@linklog/browser-protocol";
 import { BridgeClient, BridgeTimeout, compatibleBrowser } from "./bridge";
-import { fetchCatalog } from "./api";
+import { catalogQuery } from "./api";
 import { onSignedOut } from "../auth-client";
 
 export type Connection =
@@ -34,6 +35,7 @@ const HELLO_TIMEOUT_MS = 5000;
  * keeps the last snapshot (marked stale) — it never reads as an empty window.
  */
 export function useBrowser() {
+  const queryClient = useQueryClient();
   const client = useRef<BridgeClient | null>(null);
   const [connection, setConnection] = useState<Connection>("checking");
   const [hello, setHello] = useState<HelloAck | null>(null);
@@ -63,7 +65,11 @@ export function useBrowser() {
 
   const refreshCatalog = useCallback(async () => {
     try {
-      const next = await fetchCatalog();
+      // fetchQuery joins a read already in flight, which may predate a write this refresh follows: let it
+      // land, then read again so the catalog returned started after the caller's write.
+      if (queryClient.isFetching({ queryKey: catalogQuery.queryKey }) > 0)
+        await queryClient.fetchQuery(catalogQuery).catch(() => {});
+      const next = await queryClient.fetchQuery(catalogQuery);
       setCatalog(next);
       setBackendError(null);
       return next;
@@ -71,7 +77,7 @@ export function useBrowser() {
       setBackendError((error as Error).message);
       return null;
     }
-  }, []);
+  }, [queryClient]);
 
   const connect = useCallback(async () => {
     if (connecting.current) return;

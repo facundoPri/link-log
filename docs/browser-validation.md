@@ -31,6 +31,8 @@ Baseline antes de empezar: `typecheck` OK, `bun test` 45/45, `build` OK.
 
 ## Integración con Chromium real (`bun run test:browser`)
 
+Por defecto la evidencia se escribe en `.cache/browser-validation/` (no versionado). Para refrescar la evidencia versionada de `docs/browser-validation/` hay que pedirlo: `LINKLOG_BROWSER_EVIDENCE=docs/browser-validation bun run test:browser`, y después actualizar el resumen y la matriz de abajo con el resultado de esa corrida.
+
 Última corrida: **44/44 checks pasan** en ~4 minutos —
 [`browser-validation/run.md`](browser-validation/run.md) (detalle en `run.json`, 160 llamadas
 del proveedor fixture en total). Cada fila es un check automatizado contra la extensión cargada; los
