@@ -259,7 +259,6 @@ export function Toolbar({
           <Button size="sm" onClick={onAdd} aria-label="Add link">
             <Plus className="size-3.5" />
             <span className="hidden @2xl:inline">Add link</span>
-            <Kbd className="ml-1 hidden @2xl:inline-flex">⌘K</Kbd>
           </Button>
         </div>
       </div>
