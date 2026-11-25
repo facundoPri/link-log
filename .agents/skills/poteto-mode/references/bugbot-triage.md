@@ -1,12 +1,29 @@
 # Bugbot triage
 
-Use this reference when the Babysit playbook (`../playbooks/babysit.md`) handles Bugbot or review-automation comments. The goal is not to ignore Bugbot by default. The goal is to stop treating every comment as a required code change.
+Use this reference when the Babysit playbook (`../playbooks/babysit.md`) handles comments from Bugbot, CodeRabbit, or any other review bot. "Bugbot" below stands for whichever bot commented. The goal is not to ignore Bugbot by default. The goal is to stop treating every comment as a required code change.
+
+## Reading CodeRabbit comments
+
+A CodeRabbit inline comment is mostly `<details>` blocks (a fix prompt, suggestions) and markup. The finding is the text before the first `<details>`: the severity line, the bold title, and the paragraph under it. Read just that, stripping only CodeRabbit's `<picture>` icons and HTML comments so code like `<T>` survives:
+
+```bash
+gh api --paginate "repos/<owner>/<repo>/pulls/<pr>/comments" \
+  --jq '.[] | select(.user.login == "coderabbitai[bot]") | {id, path, line, finding: (.body | split("<details>")[0] | gsub("(?s)<picture>.*?</picture>|<!--.*?-->"; ""))}'
+```
+
+Review bodies carry findings too: sections such as "Outside diff range comments", "Minor comments" and "Nitpick comments" sit inside `<details>` and have no thread, so the watcher never sees them. Read each review body whole, with the same strip, and triage those findings before reporting ready. With no thread to reply on, record each one's disposition (and its ticket link) in a single PR comment that names the finding by its title:
+
+```bash
+gh api --paginate "repos/<owner>/<repo>/pulls/<pr>/reviews" \
+  --jq '.[] | select(.user.login == "coderabbitai[bot]") | {id, commit_id, body: (.body | gsub("(?s)<picture>.*?</picture>|<!--.*?-->"; ""))}'
+```
 
 ## Decision rubric
 
-Classify each Bugbot thread before acting:
+Classify each review-bot thread before acting:
 
-- `fix`: The comment identifies a plausible correctness, security, privacy, data loss, auth, billing, migration, idempotency, race, or shipped-behavior issue. Fix it in the lowest owning PR, then reply with the commit SHA and resolve the thread.
+- `fix`: The comment identifies a plausible correctness, security, privacy, data loss, auth, billing, migration, idempotency, race, or shipped-behavior issue that this PR introduced or worsened. Fix it in the lowest owning PR, then reply with the commit SHA and resolve the thread.
+- `ticket`: The comment is real but pre-existing (the base branch has the same problem, and this diff neither introduced nor worsened it), or real and deliberately deferred. Open a ticket in the repo's issue tracker, reply with its link, and resolve the thread. The PR keeps its scope.
 - `dismiss`: The comment matches a documented low-risk noisy pattern, and the current code/context proves the concern does not need a code change. Reply with a short reason and resolve the thread.
 - `ask`: The comment is novel, high-severity, security/privacy/data-related, or ambiguous. Ask the user instead of guessing.
 

@@ -13,6 +13,7 @@ Verify every task output by checking the real thing directly. Do not infer from 
 Check the real thing, not a proxy:
 - Check process liveness directly, not indirectly through derived state
 - Read the actual value, not a cached or derived representation
+- A test of new behavior or a fix counts as evidence only if it fails without the change: run it against the code before the change and watch it go red. A test guarding a behavior-preserving change passes on both sides instead
 - When verification fails, suspect the observation method before suspecting the system
 
 ## Script the check when you can
