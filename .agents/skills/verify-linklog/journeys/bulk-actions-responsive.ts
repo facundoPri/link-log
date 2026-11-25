@@ -166,7 +166,7 @@ export default (async ({ page, api, fixture, step, check, shot, note }) => {
   await check("Drawer closed", async () => !(await drawer.isVisible()));
   await check("Selection kept", async () => new RegExp(`All ${visible} selected`).test((await bar.textContent()) ?? ""));
 
-  await step("Extract from the drawer: progress shows in the bar");
+  await step("Extract from the drawer: progress shows in the toast, not the bar");
   await bar.getByRole("button", { name: /^Actions/ }).click();
   await drawer.getByRole("button", { name: /^Extract/ }).click();
   const confirm = page.getByRole("alertdialog", { name: `Extract context for ${visible} links?` });
@@ -174,7 +174,20 @@ export default (async ({ page, api, fixture, step, check, shot, note }) => {
   await snap("08-mobile-extract-confirm");
   await confirm.getByRole("button", { name: "Extract", exact: true }).click();
   const batch = await check("API: an extract batch started", async () => (await api.library()).batches.find((b) => b.kind === "extract" && b.total === visible));
-  await check("The bar reports Extracting n/N", () => bar.getByText(new RegExp(`Extracting \\d+/${visible}`)).isVisible(), { timeout: 5_000 }).catch(() => note("progress-missed", "the batch settled before the bar was polled"));
+  const toast = page.locator("[data-sonner-toast]").filter({ hasText: new RegExp(`Extracting context for ${visible} links`) });
+  // Read the toast, then the API: the UI trails the API, so the toast's n can never exceed what the API settled.
+  const read = await check("The running toast is read, or the API shows the batch settled first", async () => {
+    const text = await toast.getByText(/^\d+ of \d+$/).textContent({ timeout: 300 }).catch(() => null);
+    const after = (await api.library()).batches.find((x) => x.id === batch.id);
+    if (text) return { text, after };
+    return after?.active === 0 && { text: null, after };
+  }, { timeout: 10_000 });
+  if (read.text) {
+    const [n, total] = /^(\d+) of (\d+)$/.exec(read.text)!.slice(1).map(Number);
+    await check(`The toast's "${read.text}" counts the batch: N is ${visible}, n is at most the jobs the API had settled`, () =>
+      total === visible && !!read.after && n! <= read.after.total - read.after.active);
+  } else await note("progress-missed", "the batch settled before the toast was polled");
+  await check("The bar shows no run count", async () => !new RegExp(`\\d+/${visible}`).test((await bar.textContent()) ?? ""));
   await shot("09-mobile-running");
   await check("API: the batch settles with every link that can never be extracted failed", async () => {
     const b = (await api.library()).batches.find((x) => x.id === batch.id);

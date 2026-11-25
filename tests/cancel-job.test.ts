@@ -1,5 +1,5 @@
-// FAC-55: one link's job is cancelled from Activity whether queued, waiting or running. A running one has its
-// workflow terminated first. The job ends Cancelled as if never requested: what already ran is kept, nothing is
+// FAC-55: one link's job is cancelled from Activity whether queued, waiting or running. A running Workflow job has
+// its workflow terminated first; a running Jev queue job (FAC-193) has no Workflow and is fenced by the cancel alone. The job ends Cancelled as if never requested: what already ran is kept, nothing is
 // stored for what didn't, Needs attention is never touched, and an extraction takes its waiting Jev jobs with it.
 import { afterEach, expect, test } from "bun:test";
 import { fakes, resetClock, setup } from "./worker-harness";
@@ -39,7 +39,7 @@ const lensOf = async (s: S) =>
   (await s.api("/lenses", "POST", { name: "Useful", type: "noul", question: "Is it useful?", threshold: 0.8 })).data.lenses[0] as { id: string };
 const cancel = (s: S, id: string) => s.api(`/jobs/${id}`, "DELETE");
 const runAll = async (s: S) => {
-  while (s.sent.length) await s.runQueued();
+  while (s.sent.length || s.jevSent.length) await s.runQueued();
 };
 
 // An extraction held inside its content step (the workflow is running) until `release` is called.
@@ -127,17 +127,17 @@ test("queued and waiting jobs are cancelled without touching the workflow; the n
   const tag = (await s.api("/batches", "POST", { kind: "autotag", ids: [id] })).data.batchId;
   const ask = (await s.api("/batches", "POST", { kind: "lens", ids: [id], lensId: lens.id })).data.batchId;
   const tag2 = (await s.api("/batches", "POST", { kind: "autotag", ids: [id] })).data.batchId;
-  s.sent.splice(0);
+  s.jevSent.splice(0);
   expect([tag, ask, tag2].map((b) => jobOf(s, b, id).status)).toEqual(["queued", "waiting", "waiting"]);
 
   // A waiting job: only it goes; the queued one ahead is untouched and nothing new starts.
   expect((await cancel(s, jobOf(s, ask, id).id)).data).toMatchObject({ from: "waiting", dependents: 0 });
   expect([tag, ask, tag2].map((b) => jobOf(s, b, id).status)).toEqual(["queued", "failed", "waiting"]);
-  expect(s.sent).toEqual([]);
+  expect(s.jevSent).toEqual([]);
   // A queued Jev job: the auto-tag waiting behind it starts.
   expect((await cancel(s, jobOf(s, tag, id).id)).data).toMatchObject({ from: "queued", dependents: 0 });
   expect(jobOf(s, tag2, id).status).toBe("queued");
-  expect(s.sent.map((m) => m.body.id)).toEqual([jobOf(s, tag2, id).id]);
+  expect(s.jevSent.map((m) => m.body.id)).toEqual([jobOf(s, tag2, id).id]);
   expect(s.workflows.terminated).toEqual([]);
   // A stray message for the cancelled job runs nothing.
   await s.runJob(jobOf(s, tag, id).id);
@@ -153,7 +153,7 @@ test("queued and waiting jobs are cancelled without touching the workflow; the n
   expect((await cancel(s, extractJob)).data).toMatchObject({ from: "queued", dependents: 1 });
   expect(jobOf(s, dep, fresh).step).toBe("Cancelled");
   expect(await s.view(fresh)).toMatchObject({ content: "missing", processing: false, attention: false });
-  expect(s.sent).toEqual([]);
+  expect([...s.sent, ...s.jevSent]).toEqual([]);
   // Finished or unknown jobs are refused plainly.
   expect(await cancel(s, extractJob)).toMatchObject({ status: 409, data: { error: "This job already finished." } });
   expect((await cancel(s, "nope")).status).toBe(404);
@@ -258,7 +258,7 @@ test("a running Jev job cancelled before its call claim never calls Jev and reco
     if (phase === "write" && /^UPDATE jobs SET jev_call=/.test(sql) && !reached) { reached = true; await hold.opened; }
   };
   const batch = (await s.api("/batches", "POST", { kind: "autotag", ids: [id] })).data.batchId;
-  const j = s.sent.splice(0)[0]!.body.id;
+  const j = s.jevSent.splice(0)[0]!.body.id;
   const running = s.runJob(j);
   await until(() => reached);
   expect((await cancel(s, j)).data).toMatchObject({ from: "running" });
@@ -275,11 +275,12 @@ test("a running Jev job cancelled after sending may have been billed, is never r
   const reply = gate();
   const calls = provider(async (q) => (await reply.opened, answer(q)));
   const batch = (await s.api("/batches", "POST", { kind: "autotag", ids: [id] })).data.batchId;
-  const j = s.sent.splice(0)[0]!.body.id;
+  const j = s.jevSent.splice(0)[0]!.body.id;
   const running = s.runJob(j);
   await until(() => calls.n === 1);
   const res = await cancel(s, j);
   expect(res.status).toBe(200);
+  expect(s.workflows.terminated).toEqual([]);
   expect(jobOf(s, batch, id)).toMatchObject({ status: "failed", step: "Cancelled", error: JEV_FAILURE_MESSAGES.cancelled_sent });
   // Usage keeps the call (it may be billed) as soon as the cancel lands.
   expect(usage(s)).toEqual([{ status: "failed" }]);
@@ -365,12 +366,12 @@ async function successorRace(kind: "autotag" | "lens", pattern: RegExp) {
   const body = { kind, ids: [id], ...(lens && { lensId: lens.id }) };
   const a = (await s.api("/batches", "POST", body)).data.batchId;
   const b = (await s.api("/batches", "POST", body)).data.batchId;
-  const ja = s.sent.splice(0)[0]!.body.id;
+  const ja = s.jevSent.splice(0)[0]!.body.id;
   const pause = pauseAt(pattern);
   const runningA = s.runJob(ja);
   await until(() => pause.state.reached);
   expect((await cancel(s, ja)).status).toBe(200);
-  expect(s.sent.map((m) => m.body.id)).toEqual([jobOf(s, b, id).id]);
+  expect(s.jevSent.map((m) => m.body.id)).toEqual([jobOf(s, b, id).id]);
   await s.runQueued();
   expect(jobOf(s, b, id).status).toBe("done");
   pause.release();

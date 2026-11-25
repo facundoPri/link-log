@@ -1,12 +1,26 @@
 import { createHmac, randomBytes, scryptSync } from "node:crypto";
 
+import wrangler from "../../wrangler.jsonc";
+
 export const WRANGLER_VERSION = "4.136.1";
+// The top-level wrangler.jsonc is the source of truth for queues (bindings and consumer settings).
+// A preview gets one queue per entry, named `<worker>-<queue minus "linklog-">`, so adding a queue
+// there provisions, binds and tears it down in previews with no second list.
+type Consumer = { queue: string; max_batch_size: number; max_batch_timeout: number; max_retries: number; max_concurrency: number };
+const { queues: { producers, consumers } }: { queues: { producers: { binding: string; queue: string }[]; consumers: Consumer[] } } = wrangler;
+const QUEUES = producers.map(({ binding, queue }) => {
+  const consumer = consumers.find(c => c.queue === queue);
+  if (!consumer || !queue.startsWith("linklog-")) throw new Error(`wrangler.jsonc queue ${queue} needs a consumer and a linklog- prefix`);
+  const { queue: _, ...settings } = consumer;
+  return { binding, key: queue.slice("linklog-".length), settings };
+});
 export function names(repositoryId: string, pr: string) {
   for (const value of [repositoryId, pr]) {
     if (!/^[1-9][0-9]{0,14}$/.test(value)) throw new Error("Invalid numeric repository/PR identity");
   }
   const worker = `llpr-${repositoryId}-${pr}`;
-  return { worker, db: `${worker}-db`, bucket: `${worker}-content`, queue: `${worker}-jobs`, workflow: `${worker}-process` };
+  const queues: Record<string, string> = Object.fromEntries(QUEUES.map(q => [q.key, `${worker}-${q.key}`]));
+  return { worker, db: `${worker}-db`, bucket: `${worker}-content`, queues, workflow: `${worker}-process` };
 }
 export type PullRequest = {
   number: number; state: string; head: { sha: string; repo: { id: number } | null };
@@ -64,8 +78,8 @@ export function config(repositoryId: string, pr: string, databaseId: string, sub
     d1_databases: [{ binding: "DB", database_name: n.db, database_id: databaseId, migrations_dir: "./migrations" }],
     r2_buckets: [{ binding: "CONTENT", bucket_name: n.bucket }],
     queues: {
-      producers: [{ binding: "JOBS", queue: n.queue }],
-      consumers: [{ queue: n.queue, max_batch_size: 10, max_batch_timeout: 1, max_retries: 3, max_concurrency: 10 }],
+      producers: QUEUES.map(q => ({ binding: q.binding, queue: n.queues[q.key]! })),
+      consumers: QUEUES.map(q => ({ queue: n.queues[q.key]!, ...q.settings })),
     },
     workflows: [{ binding: "PROCESS_LINK", name: n.workflow, class_name: "LinkWorkflow" }],
     triggers: { crons: ["*/5 * * * *"] },

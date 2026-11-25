@@ -1,10 +1,8 @@
 // Timing events for Jev work (FAC-190), one JSON console line each, for Workers Logs. Ids and numbers only:
 // never content, URLs or secrets. Logging never fails a job. They are called from where a Jev job starts,
-// calls Jev and settles, so any runner of Jev jobs (the Workflow today, a queue consumer later) uses the same helpers.
-
-/** The batch kinds whose jobs call Jev. */
-const JEV_KINDS = new Set(["autotag", "lens", "query", "browser-lens", "browser-autogroup"]);
-export const isJevKind = (kind: string) => JEV_KINDS.has(kind);
+// calls Jev and settles, so both runners of Jev jobs (the Jev queue's consumer, and the Workflow for jobs it
+// started before that queue existed) use the same helpers.
+import { runsInJevQueue, type BatchKind } from "./job-routing";
 
 const emit = (event: string, fields: Record<string, unknown>) => {
   try { console.log(JSON.stringify({ event, ...fields })); } catch { /* metrics must never fail a job */ }
@@ -17,9 +15,9 @@ const since = (iso: string | null | undefined, now = Date.now()) => {
 type Ids = { id: string; batch_id: string; created_at?: string };
 
 /** A Jev job left the queue and began running. `queue_wait_ms` runs from the job's creation (a job behind another on the same link waits for it too). */
-export function logJevJobStarted(job: Ids, kind: string) {
-  if (!isJevKind(kind)) return;
-  emit("jev_job_started", { job_id: job.id, batch_id: job.batch_id, kind, queue_wait_ms: since(job.created_at) });
+export function logJevJobStarted(job: Ids & { kind: BatchKind }) {
+  if (!runsInJevQueue(job.kind)) return;
+  emit("jev_job_started", { job_id: job.id, batch_id: job.batch_id, kind: job.kind, queue_wait_ms: since(job.created_at) });
 }
 
 /** One sent Jev call. `waited_ms` is the job's age when the call was sent (queue wait plus any slot wait). */
@@ -38,8 +36,9 @@ export function logJevRateLimited(job: Ids, retryAfter: string | null) {
  * batch's first success, and `jev_batch_done` when no job of the batch is left. Two jobs settling together may
  * both log the done event: read it as the latest line per batch.
  */
-export async function logJevBatchProgress(env: Env, jobId: string, kind: string) {
-  if (!isJevKind(kind)) return;
+export async function logJevBatchProgress(env: Env, job: { id: string; kind: BatchKind }) {
+  const { id: jobId, kind } = job;
+  if (!runsInJevQueue(kind)) return;
   try {
     const row = await env.DB.prepare(
       `SELECT j.batch_id,j.status,j.completed_at,b.created_at,

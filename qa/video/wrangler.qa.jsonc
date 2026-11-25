@@ -22,8 +22,13 @@
   ],
   "r2_buckets": [{ "binding": "CONTENT", "bucket_name": "linklog-content" }],
   "queues": {
-    "producers": [{ "binding": "JOBS", "queue": "linklog-jobs" }],
-    "consumers": [{ "queue": "linklog-jobs", "max_batch_size": 10, "max_batch_timeout": 1, "max_retries": 3, "max_concurrency": 10 }]
+    "producers": [{ "binding": "JOBS", "queue": "linklog-jobs" }, { "binding": "JEV_JOBS", "queue": "linklog-jev" }],
+    "consumers": [
+      { "queue": "linklog-jobs", "max_batch_size": 10, "max_batch_timeout": 1, "max_retries": 3, "max_concurrency": 10 },
+      // Miniflare runs one consumer invocation at a time and ignores max_concurrency, so one batch of 8 stands in for
+      // production's 2 × 4 = 8 simultaneous Jev calls.
+      { "queue": "linklog-jev", "max_batch_size": 8, "max_batch_timeout": 1, "max_retries": 3, "max_concurrency": 1 }
+    ]
   },
   "workflows": [{ "binding": "PROCESS_LINK", "name": "linklog-process-link", "class_name": "LinkWorkflow" }],
   "send_email": [{ "name": "EMAIL" }],
