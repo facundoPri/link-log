@@ -34,7 +34,7 @@ import { isInput, overlayOpen } from "./lib/overlay";
 import { useQueryClient } from "@tanstack/react-query";
 import { failureMessage } from "./failures";
 import { batchJobsOptions, useRunningJobs } from "./entities";
-import { emptyLibrary, useLibrary, useWriteLibrary } from "./library";
+import { emptyLibrary, useInvalidateLibrary, useLibrary, useWriteLibrary } from "./library";
 import { useSessionRuns } from "./sessionRuns";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -86,6 +86,7 @@ export function App({
   const loaded = !libraryQuery.isPending;
   const loadError = libraryQuery.isLoadingError ? libraryQuery.error.message : "";
   const setLibrary = useWriteLibrary();
+  const invalidateLibrary = useInvalidateLibrary();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [picked, setPicked] = useState<string[]>([]);
   const [view, setView] = useState<View>("all");
@@ -627,8 +628,9 @@ export function App({
         (chunk) => api<Library & DeleteReply>("/links/delete", "POST", { ids: chunk }),
         setLibrary,
         async (chunk) => {
+          // Only decides what was deleted; the cache refreshes through its query, so this read can't overwrite a newer write.
           const lib = await apiRead<Library>("/library", new AbortController().signal);
-          setLibrary(lib);
+          void invalidateLibrary();
           const listed = new Set(lib.links.map((l) => l.id));
           return new Set(chunk.filter((id) => listed.has(id)));
         },
