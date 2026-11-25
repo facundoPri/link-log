@@ -79,7 +79,7 @@ jobs:
           SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           "$RUNNER_TEMP/tools/node_modules/.bin/wrangler" preview --config apps/landing/wrangler.jsonc \
-            --name "pr-$PR_NUMBER" --tag "${SHA::7}" --message "PR #$PR_NUMBER" --json > preview.json
+            --name "pr-$PR_NUMBER" --tag "${SHA::7}" --message "PR #$PR_NUMBER" --json > preview.json || { cat preview.json; exit 1; }
           cat preview.json
           url=$(jq -r '[.. | strings | select(test("^https://[^ ]+\\.workers\\.dev"))] | first // empty' preview.json)
           if [ -z "$url" ]; then echo "No preview URL in Wrangler output" >&2; exit 1; fi
