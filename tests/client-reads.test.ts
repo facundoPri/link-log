@@ -32,7 +32,9 @@ const passesSignal = (call: string) => {
   let depth = 0;
   let args = "";
   let options = "";
-  for (const ch of call.slice(call.indexOf("("))) {
+  // String contents are blanked first, so a quoted bracket cannot shift the depth.
+  const code = call.replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`/g, '""');
+  for (const ch of code.slice(code.indexOf("("))) {
     if ("{([".includes(ch)) {
       depth++;
       if (depth === 2 && ch === "{" && args.includes(",")) options = " ";
@@ -70,6 +72,8 @@ describe("client reads", () => {
     expect(passesSignal("fetch(path, { method, signal: controller.signal })")).toBe(true);
     expect(passesSignal("fetch(path, { body: JSON.stringify({ signal, }) })")).toBe(false);
     expect(passesSignal("fetch(path, { headers: { signal: 1 } })")).toBe(false);
+    expect(passesSignal('fetch(`/api${path}`, { headers: { "X-Note": "{" }, signal })')).toBe(true);
+    expect(passesSignal('fetch(path, { headers: { "X-Note": "}" }, signal })')).toBe(true);
     expect(apiKeyList.test("authClient.apiKey . list ()")).toBe(true);
   });
 
