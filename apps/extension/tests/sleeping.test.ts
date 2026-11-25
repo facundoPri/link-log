@@ -14,6 +14,8 @@ const LINKLOG_TAB = 99;
 const N = 3;
 let fake: ReturnType<typeof fakeChrome>;
 let kv: ReturnType<typeof memoryKV>;
+/** storage.local: survives a worker restart like storage.session (`kv`) does here. */
+let local: ReturnType<typeof memoryKV>;
 let s: Services;
 let c: Connection;
 let seq = 0;
@@ -27,7 +29,7 @@ async function boot() {
   const hub = new Hub(kv, registry, groups);
   hub.grants = ["http://*/*", "https://*/*"];
   const cache = new ResultCache(kv, mutex);
-  const loader = new LoadQueue(kv, mutex, registry, cache, hub, { concurrency: N, readyTimeoutMs: 150, settleMs: 0, pollMs: 2 });
+  const loader = new LoadQueue(kv, mutex, registry, cache, hub, { concurrency: N, readyTimeoutMs: 150, settleMs: 0, pollMs: 2 }, local);
   hub.cache = cache;
   hub.loader = loader;
   s = { registry, cache, groups, hub, opens: new OpenLedger(kv), loader, ids: { installationId: "inst", browserSessionId: "sess" } };
@@ -40,6 +42,7 @@ async function boot() {
 async function setup() {
   fake = fakeChrome();
   kv = memoryKV();
+  local = memoryKV();
   fake.addTab(LINKLOG_TAB, "http://localhost:4321/", 1, { active: true });
   await boot();
 }
@@ -521,6 +524,33 @@ describe("Load content", () => {
     expect(awakeAtWake).toBeGreaterThan(0);
     expect(awakeAtWake).toBeLessThanOrEqual(N);
     expect([1, 2, 3, 4].every((id) => fake.tabs.get(id)!.discarded)).toBe(true);
+  });
+
+  test("the concurrency chosen in Settings bounds the awake tabs and survives a worker restart", async () => {
+    await setup();
+    expect(await run("loadSettings", {})).toEqual({ concurrency: N });
+    expect(await run("loadSettings", { concurrency: 1 })).toEqual({ concurrency: 1 });
+    s.loader.stop();
+    await boot();
+    expect(await run("loadSettings", {})).toEqual({ concurrency: 1 });
+    const ids = sleepingTabs(5);
+    fake.loadMs = 10;
+    await run("loadContent", { tabs: await refs(ids) });
+    await settled();
+    expect(fake.maxAwakeByReload()).toBe(1);
+    expect(ids.every((id) => fake.tabs.get(id)!.discarded)).toBe(true);
+  });
+
+  test("raising the concurrency during a run wakes more tabs at once", async () => {
+    await setup();
+    await run("loadSettings", { concurrency: 1 });
+    const ids = sleepingTabs(8);
+    fake.loadMs = 30;
+    await run("loadContent", { tabs: await refs(ids) });
+    await until("one awake", () => fake.count("reload") >= 1);
+    await run("loadSettings", { concurrency: 4 });
+    await settled();
+    expect(fake.maxAwakeByReload()).toBe(4);
   });
 
   test("a second request, from another Linklog page too, joins the running run", async () => {

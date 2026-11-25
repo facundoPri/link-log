@@ -109,6 +109,9 @@ describe("messages", () => {
   test("validates commands and rejects unknown or malformed ones", () => {
     expect(parsePageRequest({ id: "r1", command: "snapshot", args: {} })?.command).toBe("snapshot");
     expect(parsePageRequest({ id: "r1", command: "eval", args: {} })).toBeNull();
+    expect(parsePageRequest({ id: "r1", command: "loadSettings", args: {} })?.command).toBe("loadSettings");
+    expect(parsePageRequest({ id: "r1", command: "loadSettings", args: { concurrency: 6 } })?.command).toBe("loadSettings");
+    for (const concurrency of [0, 7, 2.5, "3"]) expect(parsePageRequest({ id: "r1", command: "loadSettings", args: { concurrency } })).toBeNull();
     const ref = { tabId: 1, tabInstanceId: "i1" };
     expect(parsePageRequest({ id: "r1", command: "previews", args: { tabs: [ref] } })?.command).toBe("previews");
     expect(parsePageRequest({ id: "r1", command: "previews", args: { tabs: [{ tabId: 1 }] } })).toBeNull();

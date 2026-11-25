@@ -230,6 +230,8 @@ export type HelloAck = {
 export type ItemResult = { tabId: number; ok: boolean; error?: string };
 
 export type LoadAction = "pause" | "resume" | "cancel" | "retry";
+/** How many tabs Load content keeps awake at once, chosen per browser in Settings. */
+export const LOAD_CONCURRENCY = { min: 1, max: 6, default: 3 } as const;
 
 /** How one requested URL ended up. */
 export type OpenOutcome =
@@ -369,6 +371,8 @@ export type Commands = {
    */
   loadContent: { args: { tabs: TabRef[] }; result: { items: ItemResult[]; loadRun: LoadRunView | null } };
   loadControl: { args: { action: LoadAction }; result: { loadRun: LoadRunView | null } };
+  /** Reads this browser's Load content settings; with `concurrency`, sets it first. Offered when hello lists "load-settings". */
+  loadSettings: { args: { concurrency?: number }; result: { concurrency: number } };
   /** Put to sleep: one outcome per tab, skipped ones with the reason. */
   sleepTabs: { args: { tabs: TabRef[] }; result: { items: ItemResult[] } };
   /**

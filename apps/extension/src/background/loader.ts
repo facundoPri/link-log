@@ -1,5 +1,6 @@
 import {
   documentKey,
+  LOAD_CONCURRENCY,
   type LoadAction,
   type LoadItemView,
   type LoadRunStatus,
@@ -23,7 +24,8 @@ export type LoadOptions = {
   pollMs: number;
 };
 // N and the bound come from the FAC-163 probe (planning/fac-163/run.md).
-export const LOAD_DEFAULTS: LoadOptions = { concurrency: 3, readyTimeoutMs: 30_000, settleMs: 1_000, pollMs: 250 };
+export const LOAD_DEFAULTS: LoadOptions = { concurrency: LOAD_CONCURRENCY.default, readyTimeoutMs: 30_000, settleMs: 1_000, pollMs: 250 };
+const SETTINGS_KEY = "loadSettings";
 
 type Item = {
   tabInstanceId: string;
@@ -77,12 +79,30 @@ export class LoadQueue {
     private cache: ResultCache,
     private hub: Hub,
     private opts: LoadOptions = LOAD_DEFAULTS,
-  ) {}
+    /** Where this browser's chosen concurrency lives (storage.local: it outlives the session). */
+    private prefs?: KV,
+  ) {
+    this.opts = { ...opts };
+  }
 
   /** Picks up a run a previous worker left, including tabs it had woken. */
   async resume() {
+    const saved = await this.prefs?.get<{ concurrency: number }>(SETTINGS_KEY);
+    if (saved) this.opts.concurrency = saved.concurrency;
     this.run = (await this.kv.get<Run>(KEY)) ?? null;
     this.pump();
+  }
+
+  /** This browser's concurrency; a new value (already validated) applies to the running run right away. */
+  settings(concurrency?: number) {
+    return this.mutex.run(async () => {
+      if (concurrency !== undefined && concurrency !== this.opts.concurrency) {
+        await this.prefs?.set({ [SETTINGS_KEY]: { concurrency } });
+        this.opts.concurrency = concurrency;
+        this.pump();
+      }
+      return { concurrency: this.opts.concurrency };
+    });
   }
 
   /** Ends this instance's work without touching state: the next worker owns the run. */

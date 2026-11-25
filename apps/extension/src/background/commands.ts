@@ -179,7 +179,7 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
       installationId: s.ids.installationId,
       browserSessionId: s.ids.browserSessionId,
       windowId,
-      capabilities: ["tabs", "groups", "lenses", "capture", "save", "close", "open", "open-group", "forget", "load", "sleep"],
+      capabilities: ["tabs", "groups", "lenses", "capture", "save", "close", "open", "open-group", "forget", "load", "sleep", "load-settings"],
       contentAccess: s.hub.granted,
     };
   },
@@ -533,6 +533,7 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
     if (add.length) await s.loader.add(add);
     return { items, loadRun: s.loader.runView(windowId) };
   },
+  loadSettings: (args, { s }) => s.loader.settings(args.concurrency),
   async loadControl(args, { windowId, s }) {
     await s.loader.control(args.action);
     return { loadRun: s.loader.runView(windowId) };
