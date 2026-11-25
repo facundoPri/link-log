@@ -116,6 +116,7 @@ export class LoadQueue {
   /** Adds tabs to the running run, or starts one. A tab already in it is not added twice. */
   add(tabs: { tabInstanceId: string; windowId: number; documentRevision: number; url: string; reason: SleepReason | null }[]) {
     return this.mutex.run(async () => {
+      await this.releaseSettled();
       // A new run keeps the tabs a cancelled run's slots still hold: they finish (and go
       // back to sleep) in it, stay persisted, and are not woken a second time.
       // A tab an earlier run woke and couldn't put back (`woke`, e.g. failed) stays too: this run owes it only
@@ -147,6 +148,7 @@ export class LoadQueue {
     return this.mutex.run(async () => {
       const run = this.run;
       if (!run) return;
+      await this.releaseSettled();
       if (action === "pause" && run.status === "running") run.status = "paused";
       if (action === "resume" && run.status === "paused") {
         run.status = "running";
@@ -171,6 +173,19 @@ export class LoadQueue {
   }
 
   /** Persists the run; failures are logged, or thrown with `strict` (a step that must not run unsaved). */
+  /**
+   * A failed tab the run couldn't put back stays the run's (`woke`) and takes a slot until it is asleep or
+   * closed: the user does that, then resumes. Re-check those tabs so the slots come back.
+   */
+  private async releaseSettled() {
+    for (const item of this.run?.items ?? []) {
+      if (!item.woke || item.state !== "failed" || this.slots.has(item.tabInstanceId)) continue;
+      const tabId = this.registry.tabIdOf(item.tabInstanceId);
+      const tab = tabId === undefined ? null : await chrome.tabs.get(tabId).catch(() => null);
+      if (!tab || tab.windowId !== item.windowId || sleepReason(tab)) item.woke = false;
+    }
+  }
+
   private save(strict = false) {
     if (this.stopped) return Promise.resolve();
     const snapshot = this.run;
@@ -350,13 +365,25 @@ export class LoadQueue {
   }
 
   private async capture(item: Item, tab: chrome.tabs.Tab) {
-    let capture;
-    try {
-      capture = await captureTab(tab.id!);
-    } catch (error) {
-      throw new Fail(error instanceof CaptureError ? error.message : "The page could not be read.");
+    // Chrome may never answer a page that froze after loading: bound the wait (same bound as loading) and
+    // let a cancel end it. A late answer is dropped: nothing below runs for it.
+    const read = captureTab(tab.id!).then(
+      (capture) => ({ capture }),
+      (error: unknown) => ({ error }),
+    );
+    const deadline = Date.now() + this.opts.readyTimeoutMs;
+    let outcome: Awaited<typeof read> | "timeout" | "cancelled" | null = null;
+    while (!outcome) {
+      outcome = await Promise.race([read, wait(this.opts.pollMs).then(() => null)]);
+      this.alive();
+      if (!outcome && this.cancelled()) outcome = "cancelled";
+      else if (!outcome && Date.now() > deadline) outcome = "timeout";
     }
-    this.alive();
+    if (outcome === "cancelled") throw new Skip("Cancelled.");
+    if (outcome === "timeout")
+      throw new Fail(`The page didn't answer within ${Math.round(this.opts.readyTimeoutMs / 1000)} seconds, so it wasn't captured.`);
+    if ("error" in outcome) throw new Fail(outcome.error instanceof CaptureError ? outcome.error.message : "The page could not be read.");
+    const capture = outcome.capture;
     const now = await this.current(item);
     if (!this.sameDocument(item, now) || (capture.url && documentKey(capture.url) !== item.docKey))
       throw new Fail("The page went to another address (maybe a sign-in page), so it wasn't captured. It stays awake.", true);

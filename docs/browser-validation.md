@@ -34,7 +34,7 @@ Baseline antes de empezar: `typecheck` OK, `bun test` 45/45, `build` OK.
 Por defecto la evidencia se escribe en `.cache/browser-validation/` (no versionado). Para refrescar la evidencia versionada de `docs/browser-validation/` hay que pedirlo: `LINKLOG_BROWSER_EVIDENCE=docs/browser-validation bun run test:browser`, y después actualizar el resumen y la matriz de abajo con el resultado de esa corrida.
 
 Última corrida: **67/67 checks pasan** en ~10 minutos —
-[`browser-validation/run.md`](browser-validation/run.md) (detalle en `run.json`, 340 llamadas
+[`browser-validation/run.md`](browser-validation/run.md) (detalle en `run.json`, 338 llamadas
 del proveedor fixture en total). Incluye al final los 11 checks nativos de pestañas dormidas (FAC-163),
 con una sesión nueva de la cuenta de la corrida porque un check anterior la cierra. Cada fila es un
 check automatizado contra la extensión cargada; los
@@ -126,23 +126,24 @@ Corrida nativa: **11/11 checks pasan** —
 | Pestañas restauradas y nunca cargadas | 26 de 30 con `status: "unloaded"`, `discarded: false`; las 26 dicen Sleeping y 0 dicen Loading tras 20 s | 20 |
 | Filtro Sleeping | 26 filas, todas Sleeping; contador en el header | 21 |
 | Sin despertares implícitos | entrar a Browser, filtrar y seleccionar: 0 cargas | — |
-| Load content desde el banner | 26/26 hechas y cada una con captura, cada página cargada una vez, máximo 3 despiertas (cargando, capturando o esperando el descarte; 584 muestras), pestaña activa intacta, las 26 descartadas de nuevo | 22, 23 |
+| Load content desde el banner | 26/26 hechas y cada una con captura, cada página cargada una vez, máximo 3 despiertas (cargando, capturando o esperando el descarte; 614 muestras), pestaña activa intacta, las 26 descartadas de nuevo | 22, 23 |
 | Contenido capturado en el inspector | se muestra sin despertar la pestaña | 24 |
 | Pestaña congelada | `frozen: true` → `discarded: true`; la UI avisa que quedó dormida | 25 |
 | Put to sleep con selección mixta | desde More `⌘K` (barra: Save · Move to group · Autogroup · More): la fila dice "1 of 3 are asleep, …" y 2/3 antes de correr; duerme las 2 elegibles con la advertencia de estado no guardado | 26, 26b, 27 |
 | Pestañas fijadas | pin, índice, grupo y ventana sin cambios tras Put to sleep y Load content; marcador visible | 28 |
 | Move to group con fijadas | agrupa sólo la no fijada; una pestaña fijada después de seleccionarla queda en su lugar ("Pinned — kept in place.") | — |
 | Barra de lente | "0/46 · 34 waiting · 8 sleeping · 4 unreadable" → tras Load content "42/46 · 4 unreadable", sin otro clic; cada una de las 6 pestañas termina con veredicto (la lente no lee una pestaña mientras Load content la tiene despierta, sino su captura) | 29, 30 |
-| Cola de 450 pestañas | 450/450 en 199 s (2.26 pestañas/s), máximo 3 despiertas (muestreo cada 100 ms), worker detenido tras 100 con trabajo pendiente y otra instancia del worker siguió la misma corrida, cada página cargada exactamente una vez, 0 despiertas al final | 31 |
+| Cola de 450 pestañas | 450/450 en 228 s (1.97 pestañas/s), máximo 3 despiertas (muestreo cada 100 ms), worker detenido tras 101 con trabajo pendiente y otra instancia del worker siguió la misma corrida, cada página cargada exactamente una vez, 0 despiertas al final | 31 |
 
 Límites medidos:
 
-- **Memoria**: la suma de RSS del árbol de procesos del navegador subió ~3 % durante la
-  cola (58219 → pico 59856 MB; en la corrida anterior, 56405 → 56410). El valor absoluto cuenta las
-  páginas compartidas una vez por proceso, así que no es un tamaño de RAM; sólo muestra que la cola
-  no hace crecer la memoria con las 450 pestañas. No hay un techo de RAM garantizado para sitios
-  arbitrarios.
-- **Tiempo**: las páginas sintéticas locales cargan en ~70 ms; 2.26 pestañas/s es un techo, no una
+- **Memoria**: la suma de RSS del árbol de procesos del navegador, antes y en el pico de la cola, fue
+  54921 → 58982 MB en esta corrida (+7 %) y varió entre corridas (de plano a +18 % en la corrida
+  completa). El valor absoluto cuenta las páginas compartidas una vez por proceso, así que no es un
+  tamaño de RAM, y esta máquina corre otras cosas: sirve para ver que no hay una fuga proporcional a las
+  450 pestañas (como mucho 3 despiertas), no como medida. No hay un techo de RAM garantizado para
+  sitios arbitrarios.
+- **Tiempo**: las páginas sintéticas locales cargan en ~70 ms; ~2 pestañas/s es un techo, no una
   predicción para sitios reales (que tienen el límite de 30 s por pestaña).
 - **Captura de pantalla, cámara o micrófono**: `chrome.tabs` no la expone; se detecta sólo cuando
   Chrome rechaza el descarte, y se informa por pestaña. No verificado de forma nativa.

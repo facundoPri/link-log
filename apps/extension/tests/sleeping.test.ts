@@ -170,11 +170,20 @@ describe("Load content", () => {
   test("a lens waits for a tab Load content is still on, then reads its capture", async () => {
     await setup();
     sleepingTabs(1);
-    fake.loadMs = 40;
+    // Hold the run's read of the page: the tab is awake and readable while the run is still on it.
+    let release = () => {};
+    const held = new Promise<void>((r) => (release = r));
+    const exec = chrome.scripting.executeScript;
+    (chrome.scripting as { executeScript: unknown }).executeScript = async (args: never) => {
+      await held;
+      return exec(args);
+    };
     await run("loadContent", { tabs: await refs([1]) });
-    await until("tab awake and loaded", () => fake.tabs.get(1)!.status === "complete" && !fake.tabs.get(1)!.discarded);
+    await until("the run is reading the awake tab", async () => (await tabOf(1)).load?.state === "capturing");
+    expect((await tabOf(1)).content).toBe("available");
     const during = await run("claim", { lens: { id: "lens", fingerprint: "fp" }, limit: 20 });
     expect(during.targets).toEqual([]);
+    release();
     await settled();
     const after = await run("claim", { lens: { id: "lens", fingerprint: "fp" }, limit: 20 });
     expect(after.targets.map((t: { tabId: number }) => t.tabId)).toEqual([1]);
@@ -436,6 +445,42 @@ describe("Load content", () => {
     expect((await snapshot()).loadRun!.awake).toBe(awake());
   });
 
+  for (const cancel of [false, true])
+    test(`a page that never answers the read ${cancel ? "is skipped on cancel" : "fails after the bound"} and goes back to sleep`, async () => {
+      await setup();
+      sleepingTabs(1);
+      const exec = chrome.scripting.executeScript;
+      (chrome.scripting as { executeScript: unknown }).executeScript = async (args: { target: { tabId: number } }) =>
+        args.target.tabId === 1 ? new Promise(() => {}) : exec(args as never);
+      await run("loadContent", { tabs: await refs([1]) });
+      if (cancel) {
+        await until("reading", async () => (await tabOf(1)).load?.state === "capturing");
+        await run("loadControl", { action: "cancel" });
+      }
+      const snap = await settled(cancel ? ["cancelled"] : ["done"]);
+      await until("asleep again", () => !!fake.tabs.get(1)!.discarded);
+      const load = snap.tabs.find((t) => t.tabId === 1)!.load;
+      if (cancel) expect((await tabOf(1)).load).toMatchObject({ state: "skipped" });
+      else expect(load).toMatchObject({ state: "failed", error: expect.stringMatching(/didn't answer/) });
+    });
+
+  test("Resume after the user puts a kept-awake tab to sleep frees its slot", async () => {
+    await setup();
+    const ids = sleepingTabs(6);
+    for (const id of [1, 2, 3]) fake.discardErrors.set(id, "Cannot discard tab");
+    await run("loadContent", { tabs: await refs(ids) });
+    await settled(["paused"]);
+    await until("three stuck", async () => (await snapshot()).loadRun!.failed === 3);
+    for (const id of [1, 2, 3]) {
+      fake.discardErrors.delete(id);
+      await chrome.tabs.discard(id);
+    }
+    await run("loadControl", { action: "resume" });
+    const snap = await settled();
+    expect(snap.loadRun).toMatchObject({ status: "done", done: 3, failed: 3, awake: 0 });
+    expect(ids.every((id) => fake.tabs.get(id)!.discarded)).toBe(true);
+  });
+
   test("a second request, from another Linklog page too, joins the running run", async () => {
     await setup();
     const ids = sleepingTabs(6);
@@ -588,7 +633,8 @@ describe("Captured content budget", () => {
     const kept = snap.tabs.filter((t) => ids.includes(t.tabId) && t.capturedAt).map((t) => t.tabId);
     expect(kept.length).toBeGreaterThan(0);
     expect(kept.length).toBeLessThan(12);
-    expect([kept.includes(1), kept.includes(12)]).toEqual([false, true]);
+    // The first slots (tabs 1–3, in any order) captured first, so the oldest evicted is one of them; the last tab stays.
+    expect([[1, 2, 3].some((id) => !kept.includes(id)), kept.includes(12)]).toEqual([true, true]);
     expect((await s.cache.usage()).captureBytes).toBeLessThanOrEqual(3 * 1024 * 1024);
   });
 });

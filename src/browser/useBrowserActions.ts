@@ -50,8 +50,8 @@ export type BrowserDialog =
 /** One toast per bulk action: how many it did, and each distinct reason it skipped the rest. */
 function summarize(items: ItemResult[], verb: string, note?: string) {
   const ok = items.filter((i) => i.ok).length;
-  const failed = items.filter((i) => !i.ok);
-  const reasons = [...new Set(failed.map((f) => f.error))].map((e) => `${failed.filter((f) => f.error === e).length} skipped: ${e}`);
+  const failed = items.filter((i) => !i.ok).map((i) => i.error || "Unknown reason");
+  const reasons = [...new Set(failed)].map((e) => `${failed.filter((f) => f === e).length} skipped: ${e}`);
   const description = [...reasons, ok ? note : undefined].filter(Boolean).join(" ") || undefined;
   if (!failed.length) toast.success(`${verb} ${plural(ok, "tab")}`, { description });
   else toast[ok ? "success" : "error"](`${verb} ${ok} of ${plural(items.length, "tab")}`, { description });
