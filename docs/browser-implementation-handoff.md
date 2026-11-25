@@ -35,7 +35,7 @@ qué límites conocidos quedan. Evidencia en [browser-validation.md](browser-val
 | `bun run build:all` | App + extensión. |
 | `bun run typecheck` | `tsc` de la app, del protocolo y de la extensión (tres tsconfig separados). |
 | `bun test` | Tests existentes + protocolo (batching por bytes, validación), caché/registro/grupos/comandos de la extensión (con un `chrome` falso), rutas de browser y migración 0010. `tests/setup.ts` stubbea `cloudflare:workers`. |
-| `bun run test:browser` | Integración real (ver abajo). |
+| `bun run test:browser` | Integración real con la extensión en Chromium (~11 min). Variables, puertos y fallas conocidas: `docs/agents/browser-extension-testing.md`. |
 
 ### Chrome estable
 

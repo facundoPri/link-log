@@ -9,6 +9,7 @@ import type { BrowserContext, Page, Worker } from "playwright-core";
 import { PROTOCOL_VERSION } from "@linklog/browser-protocol";
 import { api, API, API_PORT, buildAll, createAccount, EXTENSION, launch, OTHER_APP_PORT, OUT, ROOT, signInRunAccount, SITE, SITE_PORT, startApi, startMarkedApp, startSite, UI, UI_PORT, waitFor } from "./env";
 import { sleepingChecks } from "./sleeping";
+import { portInUse } from "../../scripts/ports";
 
 // A run never rewrites tracked files by default. LINKLOG_BROWSER_EVIDENCE picks another directory;
 // docs/browser-validation is the committed evidence and only an explicit value writes there.
@@ -203,6 +204,17 @@ async function activeActivityRow(page: Page, label: RegExp) {
 }
 
 // ---------- run ----------
+// Another worktree's run may hold the default ports. Stop before touching evidence; never kill it.
+for (const [name, port, env] of [
+  ["UI", UI_PORT, "TEST_UI_PORT"],
+  ["API", API_PORT, "TEST_API_PORT"],
+  ["fixture site", SITE_PORT, "TEST_SITE_PORT"],
+  ["marked app", OTHER_APP_PORT, "TEST_OTHER_APP_PORT"],
+] as const)
+  if (await portInUse(port)) {
+    console.error(`${name} port ${port} is already in use (another test:browser run?). Set ${env} to a free port.`);
+    process.exit(1);
+  }
 if (!ONLY) await rm(EVIDENCE, { recursive: true, force: true });
 await mkdir(EVIDENCE, { recursive: true });
 section("Setup");

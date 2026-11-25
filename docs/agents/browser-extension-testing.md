@@ -121,6 +121,22 @@ Run `bun run test:browser` from the worktree for the existing isolated Chromium
 extension integration checks. It writes its evidence to `.cache/browser-validation/`;
 only `LINKLOG_BROWSER_EVIDENCE=docs/browser-validation` rewrites the committed evidence. Use the `verify-linklog` skill for isolated web
 UI/API proof; that harness does not install or verify the Ego Lite extension.
+
+`test:browser` takes about 11 minutes; run it in the background and wait on its
+exit, not on `sleep`. It uses Playwright's Chromium (`CHROME_PATH` for another
+binary) and fixed ports: `TEST_UI_PORT` 3010, `TEST_API_PORT` 8790,
+`TEST_SITE_PORT` 3099 and `TEST_OTHER_APP_PORT` 3098. Another worktree's run may
+hold them; the runner then stops and names the variable to change. Never kill
+another worktree's run; stop only your own (its background task), and only
+after confirming the ports it holds. `LINKLOG_BROWSER_ONLY=sleeping` runs only
+the native Sleeping-tab lane (about 5 minutes).
+
+A check that fails once may be timing-flaky. Compare it with the committed
+`docs/browser-validation/run.md`. If it passed there and your branch doesn't touch
+its area, rerun the suite once before treating it as a regression. Name the
+flaky check in your report. A failing privacy check is the exception: sign-out forget,
+account isolation, or data left in another account's scope. That failure is a
+finding to explain, never a flake to rerun.
 For an Ego Lite check, connect the actual extension to the owning worktree's
 isolated app and drive the feature through its UI.
 

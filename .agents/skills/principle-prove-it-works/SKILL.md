@@ -15,6 +15,7 @@ Check the real thing, not a proxy:
 - Read the actual value, not a cached or derived representation
 - A test of new behavior or a fix counts as evidence only if it fails without the change: run it against the code before the change and watch it go red. A test guarding a behavior-preserving change passes on both sides instead
 - When verification fails, suspect the observation method before suspecting the system
+- A green suite proves only the checks that ran. Compare how many checks each section ran with the last trusted run, because a section that crashed or was skipped can still leave the exit code at 0 and the pass line at N/N
 
 ## Script the check when you can
 

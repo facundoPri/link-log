@@ -17,6 +17,7 @@ npx react-doctor@latest -y --no-telemetry --no-supply-chain --verbose --scope ch
 ```
 
 - `--scope changed --base origin/main` reports only findings your branch introduced. Use `origin/main`, not a local `main` that may be stale. Drop both flags for a full scan.
+- For a later round on an open PR, `--base origin/main` still reports everything the whole PR introduced. Pass the previous round's head commit as `--base` to see only what this round added.
 - `--json --json-out /tmp/react-doctor.json` writes a machine-readable report. Add `--blocking none` so the exit code is always 0.
 - `npx react-doctor@latest design --verbose` runs only the UI design rules.
 - `npx react-doctor@latest why src/App.tsx:42` explains why a rule fired there. `npx react-doctor@latest rules explain <rule>` explains a rule.
