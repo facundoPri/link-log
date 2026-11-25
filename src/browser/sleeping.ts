@@ -45,3 +45,21 @@ export function loadBlocked(t: BrowserTab): string | null {
 }
 
 export const runActive = (run: LoadRunView | null | undefined) => !!run && (run.status === "running" || run.status === "paused");
+
+/** The Browser view's content filters: one at a time, from the header toggles and the Load content banner. */
+export type ContentFilter = "sleeping" | "failed";
+export const CONTENT_FILTERS: Record<ContentFilter, { chip: string; toggle: (n: number) => string; tooltip: string; match: (t: BrowserTab) => boolean }> = {
+  sleeping: {
+    chip: "Sleeping",
+    toggle: (n) => `Show only sleeping tabs (${n})`,
+    tooltip: "Sleeping tabs: Chrome hasn't loaded their pages",
+    match: (t) => t.content === "sleeping",
+  },
+  failed: {
+    chip: "Couldn't load",
+    toggle: (n) => `Show only tabs that couldn't load (${n})`,
+    tooltip: "Tabs Load content couldn't read. Retry them from the banner.",
+    match: (t) => t.load?.state === "failed",
+  },
+};
+export const CONTENT_FILTER_IDS = Object.keys(CONTENT_FILTERS) as ContentFilter[];

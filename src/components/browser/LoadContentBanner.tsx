@@ -1,7 +1,7 @@
 import { Loader2, Moon, Pause, Play, RotateCw, X } from "lucide-react";
 import type { BrowserTab, LoadAction, LoadRunView } from "@linklog/browser-protocol";
 import { plural } from "../../lib/format";
-import { LOAD_NOTE, runActive } from "../../browser/sleeping";
+import { LOAD_NOTE, runActive, type ContentFilter } from "../../browser/sleeping";
 import { Banner } from "./BrowserConnect";
 import { Button } from "@/components/ui/button";
 
@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 export function LoadContentBanner({
   sleeping,
   run,
-  sleepingOnly,
+  contentFilter,
   onLoad,
   onControl,
   onToggleFilter,
@@ -20,10 +20,10 @@ export function LoadContentBanner({
   /** Sleeping tabs of the current view (scope and filters) with nothing captured. */
   sleeping: BrowserTab[];
   run: LoadRunView | null;
-  sleepingOnly: boolean;
+  contentFilter: ContentFilter | null;
   onLoad: () => void;
   onControl: (action: LoadAction) => void;
-  onToggleFilter: () => void;
+  onToggleFilter: (filter: ContentFilter) => void;
 }) {
   const small = "h-7";
   if (runActive(run) || (run && (run.failed > 0 || run.pauseReason) && run.status !== "cancelled")) {
@@ -44,6 +44,11 @@ export function LoadContentBanner({
               <Button size="sm" variant="outline" className={small} onClick={() => onControl("resume")}>
                 <Play className="size-3.5" />
                 Resume
+              </Button>
+            )}
+            {r.failed > 0 && (
+              <Button size="sm" variant="ghost" className={small} aria-pressed={contentFilter === "failed"} onClick={() => onToggleFilter("failed")}>
+                Show failed
               </Button>
             )}
             {r.failed > 0 && (
@@ -68,15 +73,9 @@ export function LoadContentBanner({
         }
       >
         <span role="status" aria-label="Load content progress" data-load-run={r.status}>
-          {r.status === "paused"
-            ? "Loading paused"
-            : r.status === "done"
-              ? r.failed > 0
-                ? "Load run finished"
-                : "Content loaded"
-              : "Loading content"}
-          {" · "}
-          {r.awake} awake now · {finished} of {r.total} processed
+          {r.status === "done"
+            ? `Loaded ${r.done} of ${plural(r.total, "tab")}`
+            : `${r.status === "paused" ? "Loading paused" : "Loading content"} · ${finished} of ${plural(r.total, "tab")}`}
           {r.failed > 0 && ` · ${r.failed} couldn't load`}
           {r.skipped > 0 && ` · ${r.skipped} skipped`}
           {r.pauseReason && <span className="block text-muted-foreground">{r.pauseReason}</span>}
@@ -90,7 +89,7 @@ export function LoadContentBanner({
       icon={<Moon className="size-3.5" />}
       action={
         <div className="flex shrink-0 items-center gap-1">
-          <Button size="sm" variant="ghost" className={small} aria-pressed={sleepingOnly} onClick={onToggleFilter}>
+          <Button size="sm" variant="ghost" className={small} aria-pressed={contentFilter === "sleeping"} onClick={() => onToggleFilter("sleeping")}>
             Show sleeping
           </Button>
           <Button size="sm" variant="outline" className={small} onClick={onLoad}>
