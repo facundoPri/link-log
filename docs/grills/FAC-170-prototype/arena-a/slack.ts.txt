@@ -1,0 +1,55 @@
+// PROTOTYPE (FAC-170 arena, Opus round 3, merged design D1–D8 + M1/M2). Never commit.
+import { Hono } from "hono";
+import { scanUrls } from "../../src/url";
+import { addLinks } from "../links";
+import { LIMITS, LimitError, chargeOrThrow } from "../limits";
+import { json } from "../store";
+import { apiKeyPrincipal, readBounded } from "../http/middleware";
+import type { AppEnv } from "../http/context";
+
+type SlackEnv = Env & { SLACK_SIGNING_SECRET?: string; SLACK_LINKLOG_API_KEY?: string };
+const enc = new TextEncoder();
+const MAX_URLS = 100;
+// Human messages only: no subtype, a reply also sent to the channel, or a file with a comment (M1).
+const COUNTED = new Set<string | undefined>([undefined, "thread_broadcast", "file_share"]);
+
+async function signed(secret: string, ts: string, body: string, signature: string) {
+  const hex = /^v0=([0-9a-f]{64})$/.exec(signature)?.[1];
+  if (!hex || !/^\d+$/.test(ts) || Math.abs(Date.now() / 1000 - Number(ts)) > 300) return false;
+  const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
+  return crypto.subtle.verify("HMAC", key, new Uint8Array(hex.match(/../g)!.map((b) => parseInt(b, 16))), enc.encode(`v0:${ts}:${body}`));
+}
+
+/** Slack mrkdwn to plain text: `<url|label>` keeps the url, then `&lt; &gt; &amp;` (amp last). */
+export const slackText = (text: string) =>
+  text.replace(/<([^<>|]*)(?:\|[^<>]*)?>/g, " $1 ").replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
+
+const ok = () => new Response(null, { status: 200 });
+const log = (event: string, extra: object = {}) => console.log(JSON.stringify({ event, ...extra }));
+
+/** POST /api/slack/events. Inline: a thrown error reaches onError (5xx/429) and Slack redelivers. */
+export const slackRoutes = new Hono<AppEnv>().post("/events", async (c) => {
+  const env = c.env as SlackEnv;
+  if (!env.SLACK_SIGNING_SECRET || !env.SLACK_LINKLOG_API_KEY) return json({ error: "Not found." }, 404);
+  const raw = await readBounded(c.req.raw, 64_000);
+  if (!(await signed(env.SLACK_SIGNING_SECRET, c.req.header("x-slack-request-timestamp") ?? "", raw, c.req.header("x-slack-signature") ?? "")))
+    return json({ error: "Invalid signature." }, 401);
+  const body = JSON.parse(raw) as { type?: string; challenge?: string; event?: { type?: string; subtype?: string; bot_id?: string; text?: string } };
+  if (body.type === "url_verification") return json({ challenge: body.challenge });
+  const ev = body.event;
+  if (body.type !== "event_callback" || ev?.type !== "message" || ev.bot_id || !COUNTED.has(ev.subtype)) return ok();
+  const { urls, overBudget } = scanUrls(slackText(ev.text ?? ""), { left: 1000 });
+  if (!urls.length) return ok();
+  if (urls.length > MAX_URLS || overBudget) log("slack_truncated", { found: urls.length, overBudget: !!overBudget });
+  const principal = await apiKeyPrincipal(c, env.SLACK_LINKLOG_API_KEY);
+  if (!principal) return log("slack_key_rejected"), ok();
+  await chargeOrThrow(env.DB, [{ key: `writes:${principal.userId}`, limit: LIMITS.writesPerUser, cost: 1, code: "writes" }]);
+  try {
+    const saved = await addLinks(env, principal.userId, urls.slice(0, MAX_URLS), { source: { source: "api", apiKeyId: principal.keyId, apiKeyName: principal.keyName } });
+    log("slack_saved", { created: saved.filter((r) => "created" in r && r.created).length, total: saved.length });
+  } catch (error) {
+    if (error instanceof LimitError && error.code === "links") return log("slack_links_limited"), ok();
+    throw error;
+  }
+  return ok();
+});

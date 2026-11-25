@@ -1,0 +1,13 @@
+# PROTOTYPE (FAC-170 arena). Not production code; rewrite test-first.
+import { scanUrls } from "../../src/url";
+const cases = [
+  "<https://example.com/a>",
+  "<https://example.com/a|example.com/a>",
+  "mirá esto <https://example.com/search?q=1&amp;b=2|example.com/search?q=1&amp;b=2> buenísimo",
+  "<https://example.com/a?x=1&amp;y=2>",
+  "<mailto:a@b.com|a@b.com>",
+  "<https://en.wikipedia.org/wiki/Rust_(programming_language)>",
+  "<@U123> <#C123|read-later> sin link",
+  "<https://www.youtube.com/watch?v=abc&amp;t=10s>",
+];
+for (const c of cases) console.log(JSON.stringify(c), "=>", JSON.stringify(scanUrls(c, { left: 1000 })));
