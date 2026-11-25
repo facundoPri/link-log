@@ -56,3 +56,7 @@ A bug, failure or slowdown the user hit in real use (production, the deployed ap
 Before touching Browser, the Chrome extension, or `packages/browser-protocol`, read `docs/browser-feature-plan.md` (product spec) and `docs/browser-implementation-handoff.md` (how it's actually built: monorepo map, commands, decisions, known limits). `docs/browser-validation.md` holds the evidence. Before running or judging `bun run test:browser`, read `docs/agents/browser-extension-testing.md`. It explains that a failing privacy check is a finding, never a flake, and lists what each run must report.
 
 Every PR that changes `apps/extension/` or `packages/browser-protocol/` raises `"version"` (x.y.z) in `apps/extension/package.json`. CI fails without it, and merging to `main` publishes that version as the extension release the web app links to.
+
+### Privacy barrier
+
+`bun install` points `core.hooksPath` at `.githooks`, whose pre-commit rejects staged files under `local/`, `fixtures/private/` or the other local-only folders in `scripts/check-private-paths.ts`; CI runs the same script on the PR diff, so never bypass the hook.

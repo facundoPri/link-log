@@ -178,4 +178,4 @@ When the PR spans parts that ship separately (the web app and the extension rele
 
 ## After you open the PR
 
-If your brief makes you own this PR until it is ready, open poteto-mode's `playbooks/babysit.md` now and run its `drive` mode with `scripts/watch-pr/watch-pr`. Don't wrap it in your own Monitor or `sleep` loop. A hand-rolled loop counts your own thread replies as bot reviews and misses a paused or rate-limited bot.
+If your brief makes you own this PR until it is ready, open poteto-mode's `playbooks/babysit.md` now and run its `drive` mode with `scripts/watch-pr/watch-pr`. Don't wrap it in your own Monitor or `sleep` loop.

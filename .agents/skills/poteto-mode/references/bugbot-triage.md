@@ -1,39 +1,10 @@
 # Bugbot triage
 
-Use this reference when the Babysit playbook (`../playbooks/babysit.md`) handles comments from Bugbot, CodeRabbit, or any other review bot. "Bugbot" below stands for whichever bot commented. The goal is not to ignore Bugbot by default. The goal is to stop treating every comment as a required code change.
+Use this reference when the Babysit playbook (`../playbooks/babysit.md`) handles comments from Bugbot or any other review bot. "Bugbot" below stands for whichever bot commented. The goal is not to ignore Bugbot by default. The goal is to stop treating every comment as a required code change.
 
-## Reading CodeRabbit comments
+## Old comments
 
-A CodeRabbit inline comment is mostly `<details>` blocks (a fix prompt, suggestions) and markup. The finding is the text before the first `<details>`: the severity line, the bold title, and the paragraph under it. Read just that, stripping only CodeRabbit's `<picture>` icons and HTML comments so code like `<T>` survives:
-
-```bash
-gh api --paginate "repos/<owner>/<repo>/pulls/<pr>/comments" \
-  --jq '.[] | select(.user.login == "coderabbitai[bot]") | {id, path, line, finding: (.body | split("<details>")[0] | gsub("(?s)<picture>.*?</picture>|<!--.*?-->"; ""))}'
-```
-
-Review bodies carry findings too: sections such as "Outside diff range comments", "Minor comments" and "Nitpick comments" sit inside `<details>` and have no thread, so the watcher never sees them. Read each review body whole, with the same strip, and triage those findings before reporting ready. With no thread to reply on, record each one's disposition (and its ticket link) in a single PR comment that names the finding by its title:
-
-```bash
-gh api --paginate "repos/<owner>/<repo>/pulls/<pr>/reviews" \
-  --jq '.[] | select(.user.login == "coderabbitai[bot]") | {id, commit_id, body: (.body | gsub("(?s)<picture>.*?</picture>|<!--.*?-->"; ""))}'
-```
-
-## Did the bot review the head?
-
-A bot reviewed the head only when one of its reviews has a `commit_id` equal to the PR's current head and a body with findings or a summary. `scripts/watch-pr/watch-pr` reports this on exit as `reviewBot`. These do not count:
-
-- A reply in a thread. GitHub stores it as a review with an empty body, often on the head.
-- A "No files to review" pass, or a path filter that left nothing to read.
-- A SKIPPED bot check.
-- A review on an earlier commit.
-
-When the bot ran out of quota (a "Rate limit exceeded" comment after the head commit), the head is unreviewed. Say so in the report instead of treating the PR as reviewed.
-
-CodeRabbit's other signals:
-
-- **Paused.** A `skipping` CodeRabbit check plus a "Reviews paused … Last reviewed commit: <sha>" comment means it stopped after several reviewed commits on this PR. The head is unreviewed, so run the review the brief names for that case.
-- **Old text.** Its summary comment is edited in place and can keep an old "Rate limit exceeded" notice. Read only comments newer than the head commit or your request.
-- **Quota.** Thread replies and `@coderabbitai review` use its hourly chat quota, as pushes use the review quota. Post one round's replies together, and save a manual `@coderabbitai review` for the final head.
+A bot comment on an earlier commit is a review comment like any other. Read it against the current code. If the code it points at changed and the concern is gone, say so in the reply and resolve the thread. If the concern still holds, triage it per the rubric below. No bot's review is awaited, and a bot that never reviewed the head blocks nothing.
 
 ## Decision rubric
 

@@ -388,32 +388,6 @@ export interface ReviewThreadPage {
   readonly threads: readonly RawReviewThread[];
   readonly endCursor: string | null;
 }
-export interface ReviewBotActivity {
-  readonly headOid: string | null;
-  readonly headCommittedAt: string | null;
-  readonly reviews: readonly {
-    readonly commitId: string;
-    readonly body: string;
-  }[];
-  readonly comments: readonly {
-    readonly body: string;
-    readonly updatedAt: string;
-  }[];
-}
-export type ReviewBotHeadState =
-  | "reviewed"
-  | "not-reviewed"
-  | "rate-limited"
-  | "unknown";
-export interface ReviewBotHead {
-  readonly pr: PrNumber;
-  readonly bot: string;
-  readonly head: string | null;
-  readonly state: ReviewBotHeadState;
-}
-export type WatchResult = TerminalVerdict & {
-  readonly reviewBot: readonly ReviewBotHead[];
-};
 export interface GitHubReader {
   originRepo(): Promise<Repository | null>;
   currentPr(pr: PrNumber | null): Promise<PrContext>;
@@ -429,7 +403,6 @@ export interface GitHubReader {
     after: string | null
   ): Promise<ReviewThreadPage>;
   commitRollups(context: PrContext): Promise<readonly CommitRollup[]>;
-  reviewBotActivity(context: PrContext): Promise<ReviewBotActivity>;
 }
 export interface PollingOptions {
   readonly interval: number;
