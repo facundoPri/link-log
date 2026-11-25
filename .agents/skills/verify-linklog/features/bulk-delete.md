@@ -1,6 +1,6 @@
 # Bulk delete
 
-A user selects saved links and deletes them, with everything they own: extracted content and previews in R2, tag assignments, tag evaluations, lens results, media. A confirmation names the count and says it can't be undone. Tags and lenses stay (ADR 0003). Jobs still on a deleted link, running ones included, are cancelled: Activity keeps them under the link's title with "Cancelled: link deleted". The Inspector's single delete does the same. The action is the `Delete` entry of `src/bulkActions.ts`, in the `Danger` group: a row in the `⌘K` palette and a full-width button in the mobile drawer. It has no single-key shortcut and no desktop toolbar button.
+A user selects saved links and deletes them, with everything they own: extracted content and previews in R2, tag assignments, tag evaluations, lens results, media. A confirmation names the count and says it can't be undone. Tags and lenses stay (ADR 0003). Jobs still on a deleted link, running ones included, are cancelled: Activity keeps them under the link's title with "Cancelled: link deleted" while their batch runs; once it finishes, the cron (every 5 minutes) forgets the title and the job reads "Deleted link" (FAC-264). The Inspector's single delete does the same. The action is the `Delete` entry of `src/bulkActions.ts`, in the `Danger` group: a row in the `⌘K` palette and a full-width button in the mobile drawer. It has no single-key shortcut and no desktop toolbar button.
 
 ## Sub-features
 

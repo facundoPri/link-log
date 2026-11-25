@@ -1,5 +1,6 @@
 import { createApp } from "./http/app";
 import { cleanupBrowser } from "./browser";
+import { forgetDeletedLinkTitles } from "./delete-links";
 import { dispatch, recover } from "./jobs";
 import { consumeJevJobs } from "./jev-queue";
 import { isJevQueue } from "./job-routing";
@@ -14,5 +15,6 @@ export default {
   async scheduled(_event, env, ctx) {
     ctx.waitUntil(recover(env));
     ctx.waitUntil(cleanupBrowser(env));
+    ctx.waitUntil(forgetDeletedLinkTitles(env));
   },
 } satisfies ExportedHandler<Env, { id: string }>;
