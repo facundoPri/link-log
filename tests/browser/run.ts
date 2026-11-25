@@ -724,7 +724,10 @@ try {
     await waitFor("the slow tabs failed", async () => {
       const s = await cacheStats(ctx, lensB.id);
       return s.failed >= failedBefore + 21 && s.inflight === 0;
-    }, 21 * 4000 * 2 + 30000);
+    }, 21 * 4000 * 2 + 30000).catch(async (e: Error) => {
+      // Slow or stuck: the counters tell them apart.
+      throw new Error(`${e.message}: lens B ${JSON.stringify(await cacheStats(ctx, lensB.id))}, failed before ${failedBefore}`);
+    });
     const batchIds = async () => (await api<{ batches: { id: string; kind: string }[] }>("/library")).batches.filter((b) => b.kind === "browser-lens").map((b) => b.id);
     const before = await batchIds();
     const cancelled: string[] = [];
