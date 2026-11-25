@@ -126,7 +126,8 @@ describe("bridge commands", () => {
     await run("forget", {});
     await hello();
     release();
-    await claim;
+    // Caught before its binding check: it claims nothing, rather than finishing before the sign-out.
+    expect(await claim).toMatchObject({ requestId: null, targets: [] });
     expect(await kept("local:lib")).toBe(0);
   });
 
@@ -144,7 +145,8 @@ describe("bridge commands", () => {
     c = mine;
     await hello();
     release();
-    await claim;
+    // Caught before its binding check: it claims nothing, rather than finishing before the sign-out.
+    expect(await claim).toMatchObject({ requestId: null, targets: [] });
     expect(await kept("local:lib")).toBe(0);
   });
 
