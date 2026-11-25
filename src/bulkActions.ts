@@ -1,4 +1,4 @@
-import { Copy, ExternalLink, FileText, ClipboardList, Sparkles, Telescope, type LucideIcon } from "lucide-react";
+import { Copy, ExternalLink, FileText, ClipboardList, Sparkles, Telescope, Trash2, type LucideIcon } from "lucide-react";
 import { openLimitReason } from "./browser/openLinks";
 import type { Batch, Link, Tag } from "./types";
 
@@ -16,6 +16,8 @@ export type BulkContext = {
   openReason: string | null;
   /** An open request is in flight. */
   opening: boolean;
+  /** A delete request is in flight. */
+  deleting: boolean;
 };
 
 export type Availability<T = Link> = {
@@ -58,6 +60,8 @@ export type BulkRunners = {
   extract: () => void;
   copy: (links: Link[], withTitles: boolean) => void;
   open: (links: Link[]) => void;
+  /** Asks for confirmation before anything is deleted. */
+  delete: (links: Link[]) => void;
 };
 
 export type BulkAction = SelectionAction<Link, BulkRunners, BulkContext>;
@@ -162,6 +166,17 @@ export const BULK_ACTIONS: BulkAction[] = [
     icon: ClipboardList,
     availability: (ls) => everyItem(ls, null),
     run: (h, eligible) => h.copy(eligible, true),
+  },
+  // FAC-46. No single-key shortcut for a destructive action; ⌘K finds it by name. Every link is eligible: the server
+  // cancels whatever is still processing it, and Activity shows those jobs as cancelled because the link was deleted.
+  {
+    id: "delete",
+    label: "Delete",
+    group: "Danger",
+    icon: Trash2,
+    barLabel: (n) => `Delete ${n} ${plural(n)}`,
+    availability: (ls, ctx) => everyItem(ls, ctx.deleting ? "Deleting links…" : null),
+    run: (h, eligible) => h.delete(eligible),
   },
 ];
 

@@ -1,4 +1,6 @@
-import type { Batch } from "./types";
+import { api } from "./api";
+import { plural } from "./lib/format";
+import type { Batch, Library } from "./types";
 
 // Sends a selection to POST /api/batches in chunks of 100. For auto-tag and lenses, a chunk whose links all lack
 // content is refused with the links it skipped; that only leaves those links out and the other chunks still run.
@@ -43,3 +45,42 @@ export const BATCH_WORDS: Record<Batch["kind"], { running: string; verb: string;
   "browser-lens": { running: "Applying lens", verb: "Applying lens to", done: "Lens applied to", noun: "tab" },
   "browser-autogroup": { running: "Autogrouping", verb: "Autogrouping", done: "Suggested groups for", noun: "tab" },
 };
+
+export type DeleteReply = { deleted: string[]; cancelled: number };
+/** What a delete toast adds when jobs still processing the deleted links were cancelled with them (ADR 0003). */
+export const cancelledNote = (cancelled: number, links: number) =>
+  cancelled ? `Cancelled ${plural(cancelled, "job")} still processing ${links === 1 ? "it" : "them"}.` : undefined;
+/** DELETE /api/links/:id, the Inspector's and a row's single delete: the same cleanup and cancel as a bulk delete. */
+export async function deleteLink(id: string) {
+  const reply = await api<Library & { cancelled: number }>(`/links/${id}`, "DELETE");
+  return { library: reply, note: cancelledNote(reply.cancelled, 1) };
+}
+/**
+ * Sends a selection to POST /api/links/delete in chunks of 100 (FAC-46). The first failed request stops the run.
+ * Its answer may only have been lost after the server committed, so `present` reads which of its links still exist
+ * before they are reported; when that read fails too, they count as not deleted. Links not deleted are `untouched`.
+ * `cancelled` counts the jobs that were still processing the deleted links and were cancelled with them.
+ */
+export async function deleteInChunks<T extends DeleteReply>(
+  ids: string[],
+  send: (chunk: string[]) => Promise<T>,
+  onChunk: (reply: T) => void = () => {},
+  present: (chunk: string[]) => Promise<Set<string>> = async (chunk) => new Set(chunk),
+) {
+  const deleted: string[] = [];
+  let cancelled = 0;
+  for (let offset = 0; offset < ids.length; offset += 100) {
+    const chunk = ids.slice(offset, offset + 100);
+    try {
+      const reply = await send(chunk);
+      onChunk(reply);
+      deleted.push(...reply.deleted);
+      cancelled += reply.cancelled;
+    } catch (e) {
+      const still = await present(chunk).catch(() => new Set(chunk));
+      deleted.push(...chunk.filter((id) => !still.has(id)));
+      return { deleted, cancelled, untouched: [...chunk.filter((id) => still.has(id)), ...ids.slice(offset + 100)], error: e as Error };
+    }
+  }
+  return { deleted, cancelled, untouched: [] as string[], error: null };
+}

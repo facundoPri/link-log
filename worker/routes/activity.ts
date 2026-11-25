@@ -87,7 +87,7 @@ export const activityRoutes = new Hono<AppEnv>()
     const env = c.env, userId = ownerOf(c);
     const batch = await ownedBatch(env.DB, userId, c.req.param("id"));
     const [jobs, usage] = await Promise.all([
-      env.DB.prepare(`SELECT j.*,coalesce(l.title,bt.title) title,CASE WHEN j.status='waiting' THEN (SELECT b.kind FROM jobs a JOIN batches b ON b.id=a.batch_id WHERE a.link_id=j.link_id AND a.status IN ('queued','running','waiting') AND a.id<>j.id ORDER BY a.status='waiting',a.created_at LIMIT 1) END waiting_for FROM jobs j ${OWNED_TITLE_JOINS} WHERE j.batch_id=?2 ORDER BY j.created_at`)
+      env.DB.prepare(`SELECT j.*,coalesce(l.title,j.link_title,bt.title) title,CASE WHEN j.status='waiting' THEN (SELECT b.kind FROM jobs a JOIN batches b ON b.id=a.batch_id WHERE a.link_id=j.link_id AND a.status IN ('queued','running','waiting') AND a.id<>j.id ORDER BY a.status='waiting',a.created_at LIMIT 1) END waiting_for FROM jobs j ${OWNED_TITLE_JOINS} WHERE j.batch_id=?2 ORDER BY j.created_at`)
         .bind(userId, batch.id).all<Job>(),
       env.DB.prepare(
         `SELECT job_id,sum(input_tokens) input_tokens,sum(output_tokens) output_tokens,sum(browser_ms) browser_ms,sum(duration_ms) duration_ms,max(model) model,sum(estimated_usd) usd,sum(estimated_usd IS NULL) unknown_cost_calls,${OCR_USAGE_COLUMNS} FROM usage_events WHERE user_id=? AND batch_id=? AND status IN ('done','failed') GROUP BY job_id`,
@@ -121,7 +121,7 @@ export const activityRoutes = new Hono<AppEnv>()
     const env = c.env, userId = ownerOf(c);
     const [events, grouped] = await Promise.all([
       env.DB.prepare(
-        `SELECT u.id,u.batch_id,u.job_id,u.link_id,u.provider,u.service,u.model,u.operation,u.status,u.input_tokens,u.output_tokens,u.browser_ms,u.estimated_usd,u.rate_snapshot,u.created_at,u.duration_ms,u.error,coalesce(l.title,bt.title) title FROM usage_events u LEFT JOIN jobs j ON j.id=u.job_id ${OWNED_TITLE_JOINS.replace("l.id=j.link_id", "l.id=u.link_id")} WHERE u.user_id=?1 ORDER BY u.created_at DESC LIMIT 1000`,
+        `SELECT u.id,u.batch_id,u.job_id,u.link_id,u.provider,u.service,u.model,u.operation,u.status,u.input_tokens,u.output_tokens,u.browser_ms,u.estimated_usd,u.rate_snapshot,u.created_at,u.duration_ms,u.error,coalesce(l.title,j.link_title,bt.title) title FROM usage_events u LEFT JOIN jobs j ON j.id=u.job_id ${OWNED_TITLE_JOINS.replace("l.id=j.link_id", "l.id=u.link_id")} WHERE u.user_id=?1 ORDER BY u.created_at DESC LIMIT 1000`,
       ).bind(userId).all<UsageEvent>(),
       env.DB.prepare(
         "SELECT sum(input_tokens) input_tokens,sum(output_tokens) output_tokens,sum(browser_ms) browser_ms,count(*) calls,sum(estimated_usd) usd,sum(estimated_usd IS NULL) unknown_cost_calls FROM usage_events WHERE user_id=? AND status IN ('done','failed')",

@@ -11,7 +11,7 @@ const extracting = (id: string) => link(id, { content_state: "queued" });
 const bare = (id: string) => link(id);
 
 const tag = { id: "t1", name: "reading" } as unknown as Tag;
-const ready: BulkContext = { tags: [tag], jevReason: null, running: false, openReason: null, opening: false };
+const ready: BulkContext = { tags: [tag], jevReason: null, running: false, openReason: null, opening: false, deleting: false };
 const state = (id: string, selected: Link[], ctx = ready) =>
   actionState(BULK_ACTIONS.find((a) => a.id === id)!, selected, ctx);
 const key = (k: string, mods: Partial<Parameters<typeof actionForKey>[0]> = {}) =>
@@ -166,16 +166,41 @@ describe("shortcuts", () => {
   });
 });
 
+describe("delete (FAC-46)", () => {
+  test("applies to every selected link, sits alone in Danger, and has no single-key shortcut", () => {
+    const s = state("delete", mixed);
+    expect(s.availability.eligible.map((l) => l.id)).toEqual(mixed.map((l) => l.id));
+    expect(s.disabled).toBe(false);
+    const action = BULK_ACTIONS.find((a) => a.id === "delete")!;
+    expect(action.group).toBe("Danger");
+    expect(action.shortcut).toBeUndefined();
+    expect(action.barLabel?.(3)).toBe("Delete 3 links");
+    expect(action.barLabel?.(1)).toBe("Delete 1 link");
+  });
+
+  test("is blocked while a delete is in flight, but not by a running batch", () => {
+    expect(state("delete", mixed, { ...ready, deleting: true }).availability.blocked).toBe("Deleting links…");
+    expect(state("delete", mixed, { ...ready, running: true }).disabled).toBe(false);
+  });
+
+  test("hands the selection to the delete runner, which asks for confirmation", () => {
+    const got: string[][] = [];
+    const runners = { autotag() {}, lens() {}, extract() {}, copy() {}, open() {}, delete: (links: Link[]) => void got.push(links.map((l) => l.id)) };
+    void BULK_ACTIONS.find((a) => a.id === "delete")!.run(runners, mixed.slice(0, 2));
+    expect(got).toEqual([["a", "b"]]);
+  });
+});
+
 describe("registry", () => {
   test("holds exactly the actions that exist today, in bar order", () => {
-    expect(BULK_ACTIONS.map((a) => a.id)).toEqual(["autotag", "lens", "extract", "open", "copy", "copy-titles"]);
+    expect(BULK_ACTIONS.map((a) => a.id)).toEqual(["autotag", "lens", "extract", "open", "copy", "copy-titles", "delete"]);
     expect(BULK_ACTIONS.filter((a) => a.promoted).map((a) => a.id)).toEqual(["autotag", "lens", "open"]);
     expect(BULK_ACTIONS.find((a) => a.id === "lens")?.picker).toBe("lens");
   });
 
   test("lens runs only once a lens is chosen", () => {
     const calls: string[] = [];
-    const runners = { autotag: () => calls.push("autotag"), lens: (id: string) => calls.push(`lens:${id}`), extract: () => calls.push("extract"), copy: () => calls.push("copy"), open: () => calls.push("open") };
+    const runners = { autotag: () => calls.push("autotag"), lens: (id: string) => calls.push(`lens:${id}`), extract: () => calls.push("extract"), copy: () => calls.push("copy"), open: () => calls.push("open"), delete: () => calls.push("delete") };
     const lens = BULK_ACTIONS.find((a) => a.id === "lens")!;
     void lens.run(runners, mixed);
     expect(calls).toEqual([]);
