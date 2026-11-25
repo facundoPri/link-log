@@ -107,6 +107,20 @@ describe("bridge commands", () => {
     expect(await kept("local:lib")).toBe(0);
   });
 
+  test("a move into a pinned group already under way when forget runs leaves no group metadata for that account", async () => {
+    await setup(1);
+    await hello();
+    const tab = (await run("snapshot", {})).tabs[0];
+    const move = run("moveToGroup", {
+      tabs: [{ tabId: tab.tabId, tabInstanceId: tab.tabInstanceId }],
+      target: { kind: "pinned", pinnedId: "pin-a", title: "Research", color: "blue", description: "A's private brief" },
+    }).catch((e: Error) => e);
+    await run("forget", {});
+    await move;
+    const groups = Object.values(((await kv.get<Record<string, { scope?: string }>>("groups")) ?? {}) as Record<string, { scope?: string }>);
+    expect(groups.filter((g) => g.scope === "local:lib")).toEqual([]);
+  });
+
   test("forget ends the handshake of every connection of that account, not only the one that signed out", async () => {
     await setup(3);
     await hello();

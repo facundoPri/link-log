@@ -40,7 +40,7 @@ async function stayInsideWindow(window: number | "month") {
  * Registers a beforeEach that keeps every test of the file (or describe) inside the given windows. The wait can
  * take up to MARGIN per window, as long as bun's default 5 s hook timeout, so the hook gets its own budget:
  * waiting inside a hook that also does setup timed out whenever a test started in a window's last seconds
- * (FAC-265). Register it before the setup hook; hooks run in registration order.
+ * (FAC-265). Hooks run in registration order: register it before any setup that writes into a window.
  */
 export function stayInsideWindows(...windows: (number | "month")[]) {
   beforeEach(async () => {

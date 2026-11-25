@@ -106,7 +106,7 @@ async function groupInWindow(groupId: number, windowId: number) {
   return group!;
 }
 
-async function groupOpened(target: MoveTarget, ledger: OpenRecord, windowId: number, scope: string, s: Services): Promise<OpenGroupOutcome> {
+async function groupOpened(target: MoveTarget, ledger: OpenRecord, windowId: number, c: Connection, scope: string, s: Services): Promise<OpenGroupOutcome> {
   const previous = ledger.groupId();
   const reuse = previous !== null && (await chrome.tabGroups.get(previous).catch(() => null))?.windowId === windowId;
   try {
@@ -120,7 +120,7 @@ async function groupOpened(target: MoveTarget, ledger: OpenRecord, windowId: num
       .filter((t) => t?.windowId === windowId && !t.pinned && ((t.groupId ?? -1) < 0 || t.groupId === previous))
       .map((t) => t!.id!);
     if (!tabIds.length) return { ok: false, error: "No new tab was opened, so nothing was grouped." };
-    const groupId = await groupTabs(into, dest, tabIds as [number, ...number[]], windowId, scope, s);
+    const groupId = await groupTabs(into, dest, tabIds as [number, ...number[]], windowId, c, scope, s);
     await ledger.recordGroup(groupId);
     return { ok: true, groupId, grouped: tabIds.length };
   } catch (error) {
@@ -140,11 +140,14 @@ async function destinationGroup(target: MoveTarget, windowId: number, scope: str
 }
 
 /** Moves the tabs into `dest` (from destinationGroup), or into a new group for the target. Returns the group's id. */
-async function groupTabs(target: MoveTarget, dest: number | null, tabIds: [number, ...number[]], windowId: number, scope: string, s: Services) {
+async function groupTabs(target: MoveTarget, dest: number | null, tabIds: [number, ...number[]], windowId: number, c: Connection, scope: string, s: Services) {
   if (dest !== null) return chrome.tabs.group({ groupId: dest, tabIds });
   if (target.kind === "group") return fail("The group is not in this window any more.");
   const groupId = await chrome.tabs.group({ tabIds, createProperties: { windowId } });
   await chrome.tabGroups.update(groupId, { title: target.title, color: target.color });
+  // Signed out meanwhile (forget unbinds before it cleans): the group stays, its metadata isn't written for
+  // the forgotten account. Checked in the same tick as set queues behind forget's cleanup.
+  if (c.scope !== scope) return groupId;
   await s.groups.set(
     groupId,
     { description: target.description, pinnedId: target.kind === "pinned" ? target.pinnedId : null },
@@ -447,7 +450,7 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
     }
     const tabIds = ok.map((t) => t.id!) as [number, ...number[]];
     if (!tabIds.length) return { items, groupId: null };
-    const groupId = await groupTabs(args.target, dest, tabIds, windowId, scope, s);
+    const groupId = await groupTabs(args.target, dest, tabIds, windowId, c, scope, s);
     s.hub.schedule(0);
     return { items, groupId };
   },
@@ -519,7 +522,7 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
         }
       }
       if (!args.target) return { items };
-      return { items, group: await groupOpened(args.target, ledger, windowId, scope, s) };
+      return { items, group: await groupOpened(args.target, ledger, windowId, c, scope, s) };
     });
     s.hub.schedule(0);
     return result;
