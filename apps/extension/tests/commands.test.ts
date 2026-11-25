@@ -130,6 +130,24 @@ describe("bridge commands", () => {
     expect(await kept("local:lib")).toBe(0);
   });
 
+  test("a claim stays unbound when its page switches account and back while another page signs that account out", async () => {
+    await setup(3);
+    await hello();
+    const mine = c;
+    const other: Connection = { ...mine, id: "c2", scope: "local:lib" };
+    s.hub.connections.set(other.id, other);
+    const release = holdNextTabQuery();
+    const claim = run("claim", { lens, limit: 20 }).catch((e: Error) => e);
+    await run("hello", { libraryScope: "local:other" });
+    c = other;
+    await run("forget", {});
+    c = mine;
+    await hello();
+    release();
+    await claim;
+    expect(await kept("local:lib")).toBe(0);
+  });
+
   test("a move into a pinned group already under way when forget runs leaves no group metadata for that account", async () => {
     await setup(1);
     await hello();

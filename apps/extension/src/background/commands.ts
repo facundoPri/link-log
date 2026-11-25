@@ -85,14 +85,23 @@ function requireScope(c: Connection): string {
   return c.scope ?? fail("Connect first.");
 }
 
-/** Sign-outs per connection: a binding taken before one is stale even if the same account connects again. */
-const signOuts = new WeakMap<Connection, number>();
+/**
+ * Scope changes per connection (sign-outs and account switches): a binding taken before one is stale even if
+ * the connection returns to the same account.
+ */
+const rebinds = new WeakMap<Connection, number>();
+
+function bindScope(c: Connection, scope: string | null) {
+  if (c.scope === scope) return;
+  c.scope = scope;
+  rebinds.set(c, (rebinds.get(c) ?? 0) + 1);
+}
 
 /** The account a request started under, and whether that same binding still holds. */
 function binding(c: Connection) {
   const scope = requireScope(c);
-  const at = signOuts.get(c) ?? 0;
-  return { scope, bound: () => c.scope === scope && (signOuts.get(c) ?? 0) === at };
+  const at = rebinds.get(c) ?? 0;
+  return { scope, bound: () => c.scope === scope && (rebinds.get(c) ?? 0) === at };
 }
 type Binding = ReturnType<typeof binding>;
 
@@ -185,7 +194,7 @@ function sleepProblem(tab: chrome.tabs.Tab): string | null {
 
 const handlers: { [K in keyof Commands]: Handler<K> } = {
   async hello(args, { c, windowId, s }) {
-    c.scope = args.libraryScope;
+    bindScope(c, args.libraryScope);
     c.windowId = windowId;
     return {
       protocol: PROTOCOL_VERSION,
@@ -201,11 +210,7 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
     const scope = requireScope(c);
     // Unbind first, and every page of the account (its other tabs are signed out too): a request that took its
     // binding earlier finds it stale, even if the account connects again, so nothing is written after the cleanup.
-    for (const other of [...s.hub.connections.values(), c]) {
-      if (other.scope !== scope) continue;
-      other.scope = null;
-      signOuts.set(other, (signOuts.get(other) ?? 0) + 1);
-    }
+    for (const other of [...s.hub.connections.values(), c]) if (other.scope === scope) bindScope(other, null);
     try {
       const result = await s.cache.forget(scope);
       await s.groups.forget(scope);
