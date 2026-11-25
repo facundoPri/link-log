@@ -1,6 +1,6 @@
 # FAC-170: Slack channel → Linklog (grilling decisions)
 
-**Status: pending owner review.** Nothing is in Linear yet. Two arenas ran on 2026-11-25. Arena A designed a personal app. After the owner's feedback on PR #50, arena B reopened the design as an app any Linklog user can install. This document records arena B's decisions, plus the parts of arena A that still hold. The process is in [FAC-170-slack-process.md](FAC-170-slack-process.md). The prototypes are in [FAC-170-prototype/](FAC-170-prototype/) (`arena-b/` is current).
+**Status: accepted by the owner (2026-11-25).** The implementation tickets are in Linear: FAC-321 (server), FAC-322 (Settings › Slack, blocked by FAC-321) and FAC-323 (backfill, blocked by both). Two arenas ran on 2026-11-25. Arena A designed a personal app. After the owner's feedback on PR #50, arena B reopened the design as an app any Linklog user can install. This document records arena B's decisions, plus the parts of arena A that still hold. The process is in [FAC-170-slack-process.md](FAC-170-slack-process.md). The prototypes are in [FAC-170-prototype/](FAC-170-prototype/) (`arena-b/` is current).
 
 ## Owner's words
 
@@ -167,12 +167,13 @@ None of the three touches the extension or `packages/browser-protocol`, so there
 - **Requesting scopes later, when backfill ships.** Every workspace would have to reinstall.
 - **Arena A's personal Worker-secret app.** Superseded by Q1.
 
-## Questions for the owner (product only)
+## Owner decisions (2026-11-25)
 
-1. **Marketplace:** is "anyone with a Linklog account can add it" an unlisted pilot for now, or do you want to commit to the Marketplace review (about 10 weeks, after 10 active workspaces)? Recommendation: unlisted now, apply when the 10 workspaces exist. Until then, some workspaces will block the install and backfill runs slowly (1 request per minute, 15 messages each).
-2. **Privacy:** Linklog receives (and discards) the text of messages by unlinked members in channels the bot is in. That needs a line in the privacy policy before anyone else installs it. Is that acceptable, or do you prefer to only offer it to people whose whole channel is theirs?
+1. **Marketplace:** the app starts unlisted. Linklog applies to the Marketplace only once 10 active workspaces have it installed.
+2. **Privacy:** accepted. Linklog receives and discards the text of messages by members who have no Slack connection, in channels the bot is in. The privacy policy gets a line about it, proposed on FAC-307.
+3. **Design and tickets:** approved, together with the merge of PR #50 and the three tickets below.
 
-Answers the moderator gave for you, which you can overturn: no reaction in Slack (Q4); `file_share` counts (Q3); Disconnect of the last connection uninstalls the app from the workspace (B5e); Enterprise Grid isn't supported in v1 (B5h).
+Answers the moderator gave for the owner, accepted with the design: no reaction in Slack (Q4); `file_share` counts (Q3); Disconnect of the last connection uninstalls the app from the workspace (B5e); Enterprise Grid isn't supported in v1 (B5h).
 
 ## Manual steps for the owner in Slack
 
@@ -194,9 +195,9 @@ Then, as a user, like anyone else:
 8. In #read-later, run `/invite @Linklog`, then tick #read-later in **Settings › Slack**. Until PR2 ships, set the channel from the browser.
 9. Hermes: arena A's note still holds. A Hermes that posts *as you* (no APP badge) has its links saved too; one that posts as a bot is ignored.
 
-## Drafted implementation tickets (not created in Linear)
+## Implementation tickets (created in Linear as FAC-321, FAC-322, FAC-323)
 
-### Ticket 1: Slack app, server (install, connections, events)
+### Ticket 1 (FAC-321): Slack app, server (install, connections, events)
 
 **Labels:** `Feature`. **Project:** Linklog. **Related:** FAC-170.
 
@@ -240,7 +241,7 @@ Then, as a user, like anyone else:
 - Not verified against real Slack: comma-joined scopes, a second non-admin user re-authorizing, `authed_user.id` on a bot-only install (taken from the docs' sample), admin-approval workspaces, `users.conversations` on private channels.
 +++
 
-### Ticket 2: Settings › Slack UI
+### Ticket 2 (FAC-322): Settings › Slack UI
 
 **Goal.** Users connect, choose channels and disconnect without the console.
 
@@ -254,7 +255,7 @@ Then, as a user, like anyone else:
 - A Slack row in the Usage section.
 - Verified with a `verify-linklog` journey and the `react-doctor` skill.
 
-### Ticket 3: backfill
+### Ticket 3 (FAC-323): backfill
 
 See [FAC-170-backfill-ticket.md](FAC-170-backfill-ticket.md).
 

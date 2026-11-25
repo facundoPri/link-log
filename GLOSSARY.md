@@ -52,7 +52,7 @@ _Avoid_: Disabled key
 An API key removed for good. Its Links stay, and Usage keeps counting them under the name of the key's newest submission, marked as deleted.
 _Avoid_: Revoked key
 
-**Slack connection** _(pending owner review, FAC-170)_:
+**Slack connection**:
 One Slack identity (a workspace and a Slack user in it) linked to one Linklog user by adding the Linklog Slack app, with the channels whose messages count. A message lands only in the library of its author's Slack connection.
 _Avoid_: Slack integration, Slack account, installation
 

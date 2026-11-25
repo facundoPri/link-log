@@ -1,5 +1,5 @@
 ---
-status: proposed (pending owner review, FAC-170)
+status: accepted
 ---
 
 # A Slack message lands only in its author's library, through a Slack connection Linklog owns
@@ -8,7 +8,7 @@ Any Linklog user can add the Linklog Slack app to a workspace with Slack OAuth v
 
 A message from Slack's Events API lands only in the library of the connection found by (`team_id`, `event.user`), its author, and only if its channel is on that connection's list. A channel alone never decides, and no request field names a Linklog user. The Links are a new batch source, `slack`, shown as `Extract context · Slack · <workspace>`.
 
-Connections live in a Linklog table, `slack_connections`, not in Better Auth's `account` table. Better Auth's Slack support is Sign in with Slack (identity only). Its `genericOAuth` plugin can carry a bot install, but that turns an install into a sign-in identity: global email-linking rules have to be loosened and several auth routes must stay guarded forever. Proposed in the FAC-170 grilling arenas (2026-11-25), replacing the first arena's personal, API-key-based design.
+Connections live in a Linklog table, `slack_connections`, not in Better Auth's `account` table. Better Auth's Slack support is Sign in with Slack (identity only). Its `genericOAuth` plugin can carry a bot install, but that turns an install into a sign-in identity: global email-linking rules have to be loosened and several auth routes must stay guarded forever. Decided by the owner in FAC-170 (2026-11-25), replacing the first arena's personal, API-key-based design. The app starts unlisted and applies to the Marketplace at 10 active workspaces.
 
 ## Considered Options
 

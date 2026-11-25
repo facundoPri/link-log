@@ -1,8 +1,8 @@
 # Drafted ticket: import a Slack channel's history (backfill)
 
-**Status: draft, pending owner review. Not created in Linear.** It comes after the two Slack PRs in [FAC-170-slack.md](FAC-170-slack.md). The owner asked for it, in a separate PR, after those two (2026-11-25).
+**Status: accepted by the owner (2026-11-25); created in Linear as FAC-323.** It comes after the two Slack PRs in [FAC-170-slack.md](FAC-170-slack.md). The owner asked for it, in a separate PR, after those two (2026-11-25).
 
-**Labels:** `Feature`. **Project:** Linklog. **Related:** FAC-170. **Blocked by:** the Slack server ticket and the Settings › Slack ticket.
+**Labels:** `Feature`. **Project:** Linklog. **Related:** FAC-170. **Blocked by:** FAC-321 (server) and FAC-322 (Settings › Slack).
 
 ## Goal
 
