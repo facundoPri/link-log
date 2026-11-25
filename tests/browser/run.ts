@@ -672,6 +672,10 @@ try {
     return `${run.length} batches, all cancelled from one toast (“${answered}”)`;
   });
   await check("no permission and internal pages stay manageable with honest states", async () => {
+    // Earlier checks leave Jev work draining for tabs they closed (the local queue runs one consumer batch at a
+    // time), so count calls only once the server has none left.
+    await waitFor("earlier runs drained", async () =>
+      (await api<{ batches: { active: number }[] }>("/library")).batches.every((b) => b.active === 0), 90000);
     const [noAccess] = await createTabs(ctx, W1, [`http://localhost:${SITE_PORT}/private`]);
     // chrome:// pages and tabs.discard() close the Playwright context in headless Chromium
     // (reproduced with an empty extension); an extension page is equally unreadable, and the
