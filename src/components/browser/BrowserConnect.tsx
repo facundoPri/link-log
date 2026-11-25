@@ -22,6 +22,7 @@ function useExtensionDownloadUrl(): string {
     queryKey: ["extension-download", EXPECTED_EXTENSION_VERSION],
     queryFn: () => extensionDownloadUrl(EXPECTED_EXTENSION_VERSION),
     staleTime: Infinity,
+    gcTime: Infinity,
     retry: false,
   });
   return data ?? extensionReleaseUrl(EXPECTED_EXTENSION_VERSION);

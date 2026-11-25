@@ -33,11 +33,11 @@ describe("extensionUpdate", () => {
 });
 
 describe("extensionDownloadUrl", () => {
-  const answer = (status: number) => (async () => new Response("{}", { status })) as unknown as typeof fetch;
+  const answer = (status: number) => async () => ({ status });
 
   test("links the expected version's release when it exists", async () => {
     const asked: string[] = [];
-    const fetchRelease = (async (url: string) => (asked.push(url), new Response("{}", { status: 200 }))) as unknown as typeof fetch;
+    const fetchRelease = async (url: string) => (asked.push(url), { status: 200 });
     expect(await extensionDownloadUrl("0.3.0", fetchRelease)).toBe("https://github.com/facundoPri/link-log/releases/tag/extension-v0.3.0");
     expect(asked).toEqual(["https://api.github.com/repos/facundoPri/link-log/releases/tags/extension-v0.3.0"]);
   });
@@ -49,9 +49,9 @@ describe("extensionDownloadUrl", () => {
   test("keeps the expected version's release when GitHub can't say (rate limit, outage, offline)", async () => {
     const tag = "https://github.com/facundoPri/link-log/releases/tag/extension-v0.3.0";
     for (const status of [403, 429, 500]) expect(await extensionDownloadUrl("0.3.0", answer(status))).toBe(tag);
-    const offline = (async () => {
+    const offline = async (): Promise<{ status: number }> => {
       throw new TypeError("Failed to fetch");
-    }) as unknown as typeof fetch;
+    };
     expect(await extensionDownloadUrl("0.3.0", offline)).toBe(tag);
   });
 });

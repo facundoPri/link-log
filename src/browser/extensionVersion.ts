@@ -12,7 +12,10 @@ export const extensionReleaseUrl = (version: string) => `${RELEASES}/tag/extensi
  * separately, so /latest can be another version (a failed release, a rolled-back web): it is the
  * fallback only when GitHub answers that the expected release doesn't exist.
  */
-export async function extensionDownloadUrl(expected: string, fetchRelease: typeof fetch = fetch): Promise<string> {
+export async function extensionDownloadUrl(
+  expected: string,
+  fetchRelease: (url: string) => Promise<Pick<Response, "status">> = fetch,
+): Promise<string> {
   try {
     const res = await fetchRelease(`https://api.github.com/repos/facundoPri/link-log/releases/tags/extension-v${expected}`);
     if (res.status === 404) return LATEST_EXTENSION_URL;
