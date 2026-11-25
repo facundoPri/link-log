@@ -172,9 +172,12 @@ export default (async ({ page, api, fixture, step, check, shot, note }) => {
     "API: an extract batch of 7 links exists",
     async () => (await api.library()).batches.find((b) => b.kind === "extract" && b.total === 7),
   );
-  const running = page.getByRole("region", { name: "Running job" });
-  await check("Desktop shows the running job above the bar: Extracting n/7 with a progress bar", async () =>
-    (await running.getByText(/^Extracting \d+\/7$/).isVisible()) && (await running.getByRole("progressbar").isVisible()), { timeout: 10_000 });
+  // The batch toast is the only progress indicator: no running-job card or progress bar above the bar.
+  const toast = page.locator("[data-sonner-toast]").filter({ hasText: /Extracting context for 7 links/ });
+  await check("The toast reports the run as n of 7, with no running-job card or progress bar", async () =>
+    (await toast.getByText(/^\d of 7$/).isVisible()) &&
+    (await page.getByRole("region", { name: "Running job" }).count()) === 0 &&
+    (await page.getByRole("progressbar").count()) === 0, { timeout: 10_000 });
   await shot("06b-running-progress");
   await check("API: exactly one new batch", async () => (await api.library()).batches.length === before + 1);
   const settled = await check(

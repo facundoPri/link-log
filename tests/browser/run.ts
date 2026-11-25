@@ -370,17 +370,19 @@ try {
   });
   await check("activating lens A shows its run live: sidebar indicator, one progress toast, Activity row (no reload)", async () => {
     assert(activation, "activation not recorded");
-    const running = activation.sidebar.filter((t) => /^Applying lens\s*\d+\/20/.test(t));
+    const running = activation.sidebar.filter((t) => /^Applying lens$/.test(t));
     assert(running.length > 0, `sidebar never showed running work: ${JSON.stringify(activation.sidebar)}`);
     const progress = toastsMatching(activation.toasts, /Applying lens to 20 tabs/);
     assert(progress.length === 1, `expected 1 progress toast, got ${progress.length}: ${JSON.stringify(activation.toasts)}`);
     const done = toastsMatching(activation.toasts, /Lens applied to 20 tabs/);
     assert(done.length === 1, `expected 1 completion toast, got ${done.length}: ${JSON.stringify(activation.toasts)}`);
-    const progressed = /(\d+)\/20/.exec(live);
-    assert(progressed && Number(progressed[1]) < 20, `Activity didn't show the running batch's progress: ${JSON.stringify(live)}`);
+    // The toast is the only progress indicator: it counts, while the sidebar and Activity don't.
+    const progressed = progress[0]!.map((t) => /(\d+) of 20/.exec(t)).find((m) => m && Number(m[1]) < 20);
+    assert(progressed, `the progress toast never showed "N of 20": ${JSON.stringify(progress[0])}`);
+    assert(!/\d+\/20/.test(live), `Activity shows a count, the toast should be the only one: ${JSON.stringify(live)}`);
     const rows = await activityRows(L1, /^Browser lens: Relevant/);
     assert(rows === 1, `expected 1 "Browser lens: Relevant" row in Activity, got ${rows}`);
-    return `sidebar ${running.slice(0, 3).join(" → ")}…; toast ${progress[0]!.join(" → ")}; Activity row while running: ${progressed[0]}`;
+    return `sidebar ${running[0]}; toast ${progress[0]!.join(" → ")}; toast progress while running: ${progressed[0]}`;
   });
   await check("toggling lens A off and on reuses results (0 new calls)", async () => {
     await toggleLens(L1, "Relevant");
@@ -735,6 +737,10 @@ try {
     return `${run.length} batches, all cancelled from one toast (“${answered}”)`;
   });
   await check("no permission and internal pages stay manageable with honest states", async () => {
+    // Earlier checks leave Jev work draining for tabs they closed (the local queue runs one consumer batch at a
+    // time), so count calls only once the server has none left.
+    await waitFor("earlier runs drained", async () =>
+      (await api<{ batches: { active: number }[] }>("/library")).batches.every((b) => b.active === 0), 90000);
     const [noAccess] = await createTabs(ctx, W1, [`http://localhost:${SITE_PORT}/private`]);
     // chrome:// pages and tabs.discard() close the Playwright context in headless Chromium
     // (reproduced with an empty extension); an extension page is equally unreadable, and the
@@ -1094,7 +1100,7 @@ try {
     const manual = (await inSw(ctx, async (id: number) => chrome.tabGroups.get(id), g0!)).title;
     assert(manual === "Manual", "grouped-meanwhile tab was moved");
     const { toasts, sidebar } = await feedback();
-    assert(sidebar.some((t) => /^Autogrouping\s*\d+\/2/.test(t)), `sidebar never showed the autogroup running: ${JSON.stringify(sidebar)}`);
+    assert(sidebar.some((t) => /^Autogrouping$/.test(t)), `sidebar never showed the autogroup running: ${JSON.stringify(sidebar)}`);
     const progress = toastsMatching(toasts, /Autogrouping 2 tabs/);
     assert(progress.length === 1, `expected 1 autogroup progress toast, got ${JSON.stringify(toasts)}`);
     const completion = toastsMatching(toasts, /Suggested groups for 2 tabs/);

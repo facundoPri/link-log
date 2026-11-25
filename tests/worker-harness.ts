@@ -1,5 +1,5 @@
-// Drives the real Worker fetch handler, LinkWorkflow and dispatch against in-memory SQLite
-// (all migrations). Only the network-facing preview and content extraction are faked.
+// Drives the real Worker fetch handler, LinkWorkflow, dispatch and the Jev queue consumer against in-memory
+// SQLite (all migrations). Only the network-facing preview and content extraction are faked.
 import { TestD1 } from "./support/d1";
 import { testSession } from "./support/auth.test-instance";
 import { Database } from "bun:sqlite";
@@ -10,6 +10,15 @@ import { needsAttention } from "../src/attention";
 import { responseFailure } from "../worker/failures";
 import { webAdapter } from "../worker/adapters/web";
 import type { Link } from "../src/types";
+import wrangler from "../wrangler.jsonc";
+import { isJevQueue, parseBatchKind, queueFor, type JobMessage } from "../worker/job-routing";
+
+type Consumer = { queue: string; max_batch_size: number; max_concurrency: number; max_retries: number };
+const { queues }: { queues: { consumers: Consumer[] } } = wrangler;
+/** The local Jev queue consumer's settings, as deployed: its batch size times its concurrency caps Jev calls. */
+export const jevConsumer = queues.consumers.find((c) => isJevQueue(c.queue))!;
+/** A message waiting in the Jev queue. `attempts` counts its deliveries, like Message.attempts. */
+export type QueuedMessage = { id: string; body: { id: string }; attempts: number };
 
 type Meta = { status: "ready" | "failed"; description?: string; title?: string; title_source?: string } | { throws: string } | { http: number; type?: string; headers?: Record<string, string> };
 type Content = { markdown: string } | { throws: string } | { error: unknown } | { pending: true } | { wait: Promise<string> };
@@ -131,6 +140,13 @@ export async function setup(options: { placeholder?: boolean } = {}) {
   await adapter.migrate();
   const r2 = new Map<string, string>();
   const sent: { body: { id: string } }[] = [];
+  const jevSent: QueuedMessage[] = [];
+  // Every Jev queue delivery and how it ended: acknowledged, retried (with its delay), or its invocation killed.
+  const deliveries: { job: string; message: string; attempts: number; outcome: "ack" | "retry" | "killed"; delaySeconds?: number }[] = [];
+  const dropped: QueuedMessage[] = [];
+  // `timeoutMs` ends a consumer invocation like the platform's time limit: its unacknowledged messages are
+  // redelivered while the abandoned invocation keeps running here (a real one would be gone).
+  const queue: { timeoutMs?: number } = {};
   // Workflow instances as cancel sees them. `terminate`: "stop" ends the instance after its current step
   // (the step's own writes still land, nothing after it runs); "ignore" lets the workflow carry on, like a
   // terminate that came too late; "ended" and "throw" make terminate fail with an ended or a live instance.
@@ -151,6 +167,7 @@ export async function setup(options: { placeholder?: boolean } = {}) {
       delete: async (keys: string | string[]) => void [keys].flat().forEach((k) => r2.delete(k)),
     },
     JOBS: { sendBatch: async (m: { body: { id: string } }[]) => void sent.push(...m) },
+    JEV_JOBS: { sendBatch: async (m: { body: { id: string } }[]) => void jevSent.push(...m.map(({ body }) => ({ id: crypto.randomUUID(), body, attempts: 1 }))) },
     JEV_PROVIDER: "fixture",
     BROWSER: { quickAction: async (action: string, options: Record<string, any>) => (fakes.calls.browser++, fakes.browser!(action, options)) },
     PROCESS_LINK: {
@@ -208,7 +225,7 @@ export async function setup(options: { placeholder?: boolean } = {}) {
     },
     sleep: async () => {},
   };
-  const runJob = async (jobId: string) => {
+  const runWorkflow = async (jobId: string) => {
     const wf = new (LinkWorkflow as any)();
     wf.env = env;
     const ended = () => Object.assign(new Error("Workflow terminated"), { name: "Terminated" });
@@ -223,9 +240,45 @@ export async function setup(options: { placeholder?: boolean } = {}) {
     };
     try { await wf.run({ payload: { id: jobId } }, own); } catch { /* record-failure already ran */ }
   };
+  // One consumer invocation of the Jev queue with these messages, through the Worker's real queue handler.
+  // A message neither acknowledged nor retried is acknowledged when the handler returns, and retried when it
+  // throws or is killed. A retried message comes back with one more attempt, up to the queue's max_retries.
+  const deliver = async (batch: QueuedMessage[]) => {
+    type Settled = { outcome: "ack" | "retry"; delaySeconds?: number };
+    const settled = new Map<QueuedMessage, Settled>();
+    const mark = (m: QueuedMessage, outcome: "ack" | "retry", delaySeconds?: number) => void (settled.has(m) || settled.set(m, { outcome, delaySeconds }));
+    const messages: Message<JobMessage>[] = batch.map((m) => ({
+      id: m.id, timestamp: new Date(), body: m.body, attempts: m.attempts,
+      ack: () => mark(m, "ack"),
+      retry: (o?: { delaySeconds?: number }) => mark(m, "retry", o?.delaySeconds),
+    }));
+    const messageBatch: MessageBatch<JobMessage> = { queue: jevConsumer.queue, messages, metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } }, ackAll: () => batch.forEach((m) => mark(m, "ack")), retryAll: () => batch.forEach((m) => mark(m, "retry")) };
+    const handled = worker.queue(messageBatch, env);
+    const ended = await (queue.timeoutMs ? Promise.race([handled.then(() => "returned", () => "threw"), Bun.sleep(queue.timeoutMs).then(() => "killed")]) : handled.then(() => "returned", () => "threw"));
+    for (const m of batch) {
+      const result: Settled | { outcome: "killed" } = ended === "killed" && !settled.has(m) ? { outcome: "killed" } : settled.get(m) ?? { outcome: ended === "returned" ? "ack" : "retry" };
+      deliveries.push({ job: m.body.id, message: m.id, attempts: m.attempts, ...result });
+      if (result.outcome === "ack") continue;
+      if (m.attempts > jevConsumer.max_retries) dropped.push(m);
+      else jevSent.push({ ...m, attempts: m.attempts + 1 });
+    }
+  };
+  // Drains the Jev queue like the platform: up to max_concurrency invocations at once, each with up to
+  // max_batch_size messages, until no message (new, promoted or retried) is left.
+  const drainJev = async () => {
+    const lane = async () => { while (jevSent.length) await deliver(jevSent.splice(0, jevConsumer.max_batch_size)); };
+    while (jevSent.length) await Promise.all(Array.from({ length: jevConsumer.max_concurrency }, lane));
+  };
+  // Runs one job the way its queue would: a Workflow for the jobs queue, a single delivery for the Jev queue.
+  const runJob = async (jobId: string) => {
+    const row = db.query<{ kind: string }, [string]>("SELECT b.kind FROM jobs j JOIN batches b ON b.id=j.batch_id WHERE j.id=?").get(jobId);
+    if (queueFor(env, { kind: parseBatchKind(row?.kind) }) === env.JEV_JOBS) await deliver([{ id: crypto.randomUUID(), body: { id: jobId }, attempts: 1 }]);
+    else await runWorkflow(jobId);
+  };
   const runQueued = async () => {
     const ids = sent.splice(0).map((m) => m.body.id);
-    for (const id of ids) await runJob(id);
+    for (const id of ids) await runWorkflow(id);
+    await drainJev();
   };
   // What the UI sees after a reload: GET /api/library plus the shared Needs attention predicate.
   const view = async (id: string) => {
@@ -246,5 +299,5 @@ export async function setup(options: { placeholder?: boolean } = {}) {
       job: job ? `${job.status}/${job.step}` : null,
     };
   };
-  return { db, env, api, userId: session.userId, runQueued, runJob, view, sent, steps, engine, r2, workflows };
+  return { db, env, api, userId: session.userId, runQueued, runJob, runWorkflow, deliver, drainJev, view, sent, jevSent, deliveries, dropped, queue, steps, engine, r2, workflows };
 }

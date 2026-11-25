@@ -1,0 +1,19 @@
+---
+import Icon from "./Icon.astro";
+import { tone } from "../data/demo";
+interface Props {
+  name: string;
+  score?: number;
+  auto?: boolean;
+  class?: string;
+  [key: `data-${string}`]: string | number | boolean | undefined;
+}
+const { name, score, auto = false, class: className, ...rest } = Astro.props;
+---
+
+<span class:list={["chip", `t${tone(name)}`, className]} {...rest}>
+  <span class="dot"></span>
+  {name}
+  {auto && <Icon name="sparkle" weight="fill" class="size-3" />}
+  {score !== undefined && <span class="tabular opacity-60">{score}%</span>}
+</span>

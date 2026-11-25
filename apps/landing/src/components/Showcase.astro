@@ -1,0 +1,16 @@
+---
+import BrowserDemo from "./BrowserDemo.astro";
+---
+
+<section id="browser" class="bg-surface px-4 py-24">
+  <div class="mx-auto max-w-6xl">
+    <div class="mx-auto flex max-w-[680px] flex-col items-center gap-4 text-center" data-reveal>
+      <p class="caption-3 rounded-full bg-white px-3 py-1 text-brand-strong shadow-[0_0_0_1px_var(--color-line)]">Chrome extension</p>
+      <h2 class="heading-4 md:heading-3 text-ink">Your open tabs, sorted too</h2>
+      <p class="body-3 text-muted">Every tab lands in a group you described. The ones you already saved can close.</p>
+    </div>
+    <div class="mt-12" data-reveal style="--reveal-delay:80ms">
+      <BrowserDemo />
+    </div>
+  </div>
+</section>

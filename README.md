@@ -73,6 +73,12 @@ Details: [plan](docs/browser-feature-plan.md) · [implementation](docs/browser-i
 [validation](docs/browser-validation.md). Other commands: `extension:dev`, `extension:package`,
 `build:all`, `test:browser` (real Chromium, isolated ports/DB, fixture Jev provider).
 
+## Landing page
+
+`apps/landing` is the static marketing site (Astro + Tailwind, same palette as the app), with
+animated demos of auto tags, lenses and Browser. `bun run landing:dev` serves it on port 4321;
+`bun run landing:build` writes `apps/landing/dist`. Details in [its README](apps/landing/README.md).
+
 ## Metadata and URLs
 
 Saves immediately to D1; the extraction workflow enriches title, description, Open Graph and favicon. It follows up to six HTTP requests with manual redirects, a 10s timeout and a 1MiB read cap. It validates protocol, credentials, ports, host and public DNS addresses per hop. The preview does not execute remote JavaScript or access authenticated pages; the later Markdown extraction uses a Cloudflare browser. It decodes HTML entities; everything renders as React text.
@@ -89,7 +95,7 @@ FAC-48 migrations start at `0018`, after main's shipped `0012`–`0017`. Fresh d
 
 ## Cloudflare: production
 
-Production runs at **https://linklog.facundopri.com**: `wrangler.jsonc` → `env.production` (Worker `linklog`, custom domain, D1 `linklog-production`, R2 `linklog-content-production`, Queue `linklog-jobs-production`, Workflow `linklog-process-link-production`, Jev via TypeSafe). The top level of `wrangler.jsonc` stays local-only; dev and tests never touch production. Auth emails come from `auth@linklog.facundopri.com` (Cloudflare Email Sending; DNS records in the `facundopri.com` zone).
+Production runs at **https://linklog.facundopri.com**: `wrangler.jsonc` → `env.production` (Worker `linklog`, custom domain, D1 `linklog-production`, R2 `linklog-content-production`, Queues `linklog-jobs-production` and `linklog-jev-production` (lens, auto-tag, query, and Browser lens and auto-group jobs, ADR 0002), Workflow `linklog-process-link-production`, Jev via TypeSafe). The top level of `wrangler.jsonc` stays local-only; dev and tests never touch production. Auth emails come from `auth@linklog.facundopri.com` (Cloudflare Email Sending; DNS records in the `facundopri.com` zone).
 
 Every push to `main` deploys automatically (`.github/workflows/deploy-production.yml`): typecheck and tests, then build, D1 migrations and `wrangler deploy`. It logs a D1 Time Travel bookmark before migrating, to restore with `wrangler d1 time-travel restore linklog-production --bookmark <bookmark> --env production`. It runs in the `production` GitHub environment with the secret `CLOUDFLARE_API_TOKEN` (Workers Scripts, Workers Routes, D1, Queues, R2, Email Sending: edit) and the variable `CLOUDFLARE_ACCOUNT_ID`. To redeploy by hand, run the workflow from Actions, or locally:
 
@@ -99,6 +105,8 @@ bunx wrangler d1 migrations apply DB --remote --env production
 # Tag the commit so triage can tie the live version to code (wrangler deployments list --env production).
 bunx wrangler deploy --env production --tag "$(git rev-parse --short HEAD)" --message "$(git log -1 --format=%s)"
 ```
+
+A queue must exist before the first deploy that consumes it: `bunx wrangler queues create linklog-jev-production`.
 
 Secrets (`bunx wrangler secret put <NAME> --env production`): `BETTER_AUTH_SECRET`, `TYPESAFE_API_KEY`. Configuration fails closed: the API answers 503 if any of `BETTER_AUTH_URL`, the secret, `EMAIL_FROM` or the `EMAIL` binding is invalid, and requests for any other host get 403. Remote exposure still calls for hardening egress/DNS against rebinding and paginating the library.
 
