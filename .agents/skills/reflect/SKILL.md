@@ -56,7 +56,7 @@ Move any Accepted item that a lint rule, script, metadata flag, or runtime check
 
 ## 5. Apply
 
-Present the synthesizer's full Accepted / Rejected / Backlog output and wait for explicit approval before applying any Accepted edit. The user picks the subset and may redirect routings. Skill changes affect every future agent in the org. Do not auto-apply.
+Strip private data from the synthesizer's output first: real names, amounts, and dates lifted from private fixtures or user data become placeholders (`<person>`, `<amount>`, `<date>`). The same goes for Backlog items you file. Then present the full Accepted / Rejected / Backlog output and wait for explicit approval before applying any Accepted edit. The user picks the subset and may redirect routings. Skill changes affect every future agent in the org. Do not auto-apply.
 
 File each Backlog item to your team's devex or backlog tracker without waiting. Only the Accepted list waits for approval.
 
