@@ -69,7 +69,7 @@ These are the designer's own rules for working in Figma. They sit on top of the 
 - Use Tailwind radius values only (0, 2, 4, 6, 8, 12, 16, 24, full), as `radius/*` variables with the `CORNER_RADIUS` scope. Bind each corner (`topLeftRadius`…).
 - **Nested radius rule.** When a shape sits inside another and the gap between them is under 32:
   `inner radius = outer radius − gap`
-  Apply it only when the result is greater than 2. Example: a card at 16 with 8 padding gives inner elements 8.
+  Apply it only when the result is greater than 2. Example: a card at 16 with 8 padding gives inner elements 8. When the result has no `radius/*` variable (24 − 4 = 20), round down to the nearest one (`radius/16`).
 - Check this on every nested frame: read the parent's radius and padding, compute the child's radius, and set it to the matching `radius/*` variable.
 
 ## Color

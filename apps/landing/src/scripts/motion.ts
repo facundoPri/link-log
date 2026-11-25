@@ -7,7 +7,7 @@ export const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 export function onceInView(el: Element, onEnter: () => void, threshold = 0.35) {
   const io = new IntersectionObserver(
     (entries) => {
-      if (entries.some((e) => e.isIntersecting)) {
+      if (entries.some((e) => e.isIntersecting && e.intersectionRatio >= threshold)) {
         io.disconnect();
         onEnter();
       }

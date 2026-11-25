@@ -98,9 +98,16 @@ const href = (h: string) => (isHome ? h : `/${h}`);
       toggle.setAttribute("aria-expanded", String(open));
       toggle.setAttribute("aria-label", open ? "Close menu" : "Open menu");
       document.body.style.overflow = open ? "hidden" : "";
+      // Keep keyboard focus inside the fullscreen menu while it is open.
+      document.querySelectorAll<HTMLElement>("main, footer").forEach((el) => (el.inert = open));
       if (open) {
         menu.hidden = false;
-        requestAnimationFrame(() => requestAnimationFrame(() => menu.classList.add("is-open")));
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() => {
+            // The menu may have closed again before these frames ran.
+            if (toggle.getAttribute("aria-expanded") === "true") menu.classList.add("is-open");
+          }),
+        );
       } else {
         menu.classList.remove("is-open");
         setTimeout(() => {

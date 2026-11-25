@@ -89,11 +89,11 @@ export function initHeroDemo() {
     for (const [i, url] of URLS.entries()) {
       for (const ch of url) {
         typed.textContent += ch;
-        await wait(18);
+        await step(18);
       }
       linkCount.textContent = `${i + 1} link${i ? "s" : ""}`;
       if (i < URLS.length - 1) typed.textContent += "\n";
-      await wait(220);
+      await step(220);
     }
     await step(500);
     save.style.transform = "scale(0.94)";

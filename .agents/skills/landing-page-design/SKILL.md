@@ -69,7 +69,7 @@ If the user cannot answer, make a reasonable assumption, state it in one line, a
 11. Risk reversal, trial, cancel anytime, guarantee
 12. Final CTA, identical to the top
 
-Include the mandatory tagline reveal section from B11 somewhere in the mid page argument, typically right after the hero or after benefits.
+Include the mandatory tagline reveal section from B11 somewhere in the mid page argument, typically after benefits, never directly under the hero.
 
 ## A3. Layout selection
 
@@ -268,7 +268,7 @@ Only use Tailwind's radius values.
 inner radius = outer radius − gap
 ```
 
-Apply this only when the result is **greater than 2**. Below that, leave the inner shape square or unchanged.
+Apply this only when the result is **greater than 2**. Below that, leave the inner shape square or unchanged. When the result is not a Tailwind radius value (for example 24 − 4 = 20), round down to the nearest one (16).
 
 Example: an outer card at `rounded-2xl` (16px) with 8px of internal padding gives an inner element an 8px radius (`rounded-lg`).
 
