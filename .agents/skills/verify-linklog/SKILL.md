@@ -82,6 +82,12 @@ Driving rules:
 
 The feature map in `features/README.md` lists every user-facing feature with its entry points, handles and end states. Read the feature's file before you write its journey.
 
+The Browser view needs the extension, which this harness doesn't load. A journey drives it through a scripted stand-in for the extension bridge, injected with `page.addInitScript` (see `journeys/bulk-open.ts` and `journeys/extension-version.ts`):
+
+- Answer `hello` with `PROTOCOL_VERSION` imported from `@linklog/browser-protocol`, never a literal. A stale number puts the page in the update screen and every connected check fails.
+- Answer every command the connected view sends (`snapshot`, `pending`, `results`, `previews`, …) with its typed empty result from `packages/browser-protocol`. A bare `{}` crashes the page as soon as a tab is listed.
+- To prove something never renders, record `[data-tab-id]` rows with a `MutationObserver` from page load; sampling misses a one-frame flash.
+
 ## Evidence
 
 Each `run` writes to `.cache/verify-linklog/<run>/evidence/<journey>-<time>/`:

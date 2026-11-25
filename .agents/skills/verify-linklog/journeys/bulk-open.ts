@@ -1,12 +1,14 @@
 import type { Page } from "playwright-core";
+import { PROTOCOL_VERSION } from "@linklog/browser-protocol";
 import type { Journey } from "../scripts/journey";
 
 type FakeMode = { caps: string[]; open: "partial" | "disconnect-once" };
+type StoredMode = FakeMode & { protocol: number };
 
 function fakeBridge() {
   const raw = sessionStorage.getItem("fakeBridge");
   if (!raw) return;
-  const mode: FakeMode = JSON.parse(raw);
+  const mode: StoredMode = JSON.parse(raw);
   const log: { operationId: string; urls: string[] }[] = JSON.parse(sessionStorage.getItem("fakeOpenLog") || "[]");
   const opened = new Set(log.flatMap((l) => l.urls));
   // Init scripts can run before <html> exists.
@@ -20,7 +22,7 @@ function fakeBridge() {
     if (!data || data.channel !== "linklog-bridge" || data.from !== "page") return;
     const { id, command, args } = data.request;
     if (command === "hello")
-      return reply(id, { protocol: 2, extensionVersion: "fake", installationId: "fake", browserSessionId: "fake", windowId: 1, capabilities: mode.caps, contentAccess: true });
+      return reply(id, { protocol: mode.protocol, extensionVersion: "fake", installationId: "fake", browserSessionId: "fake", windowId: 1, capabilities: mode.caps, contentAccess: true });
     if (command === "snapshot") return reply(id, { revision: 1, windowId: 1, tabs: [], groups: [], linklogTabs: 1 });
     if (command === "results") return reply(id, { results: {} });
     if (command === "pending") return reply(id, { requests: [] });
@@ -49,7 +51,7 @@ export default (async ({ page, api, fixture, step, check, shot, aria, note }) =>
       sessionStorage.removeItem("fakeOpenLog");
       if (m) sessionStorage.setItem("fakeBridge", JSON.stringify(m));
       else sessionStorage.removeItem("fakeBridge");
-    }, mode);
+    }, mode && { ...mode, protocol: PROTOCOL_VERSION });
     await page.reload();
     await note(`bridge-${mode ? mode.open : "none"}`, await page.evaluate(() => ({ marker: document.documentElement.dataset.linklogBridge ?? null, mode: sessionStorage.getItem("fakeBridge") })));
   };

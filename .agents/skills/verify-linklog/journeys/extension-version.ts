@@ -3,12 +3,15 @@
 // snapshot it keeps pushing never reaches the tab list; one on this protocol but older gets a banner.
 // The reload scenario covers the gate's edges: a push before the first handshake, the extension
 // reloading as an older build (disconnect, push, protocol-2 hello) and a foreground refresh meanwhile.
+import { PROTOCOL_VERSION } from "@linklog/browser-protocol";
 import type { Journey } from "../scripts/journey";
 import extensionPackage from "../../../../apps/extension/package.json" with { type: "json" };
 
 const expected = extensionPackage.version;
 
 type FakeMode = { protocol: number; version: string; pushOldSnapshot: boolean; reloadToOld?: boolean };
+// The protocol extension 0.1.1 speaks; the "current" one always comes from the package, never a literal.
+const OLD_PROTOCOL = 2;
 
 function fakeBridge() {
   const raw = sessionStorage.getItem("fakeBridge");
@@ -63,11 +66,11 @@ function fakeBridge() {
           return;
         }
         setTimeout(() => {
-          protocol = 2;
+          protocol = mode.protocol - 1;
           post({ disconnected: true });
           setTimeout(() => push(old), 300);
           setTimeout(() => document.dispatchEvent(new Event("visibilitychange")), 600);
-          setTimeout(() => post({ ready: { version: "0.1.1", protocol: 2 } }), 1200);
+          setTimeout(() => post({ ready: { version: "0.1.1", protocol: mode.protocol - 1 } }), 1200);
         }, 2500);
       }, 1000);
       return;
@@ -112,7 +115,7 @@ export default (async ({ page, step, check, shot, aria, note }) => {
   await aria("01-missing");
 
   await step("Extension 0.1.1 on protocol 2, pushing an old-shape snapshot: blocked, versions named, no crash");
-  await openBrowser({ protocol: 2, version: "0.1.1", pushOldSnapshot: true });
+  await openBrowser({ protocol: OLD_PROTOCOL, version: "0.1.1", pushOldSnapshot: true });
   await check("Update screen shows", () => page.getByRole("heading", { name: "Update the Linklog extension" }).isVisible(), { timeout: 10_000 });
   await check("Names installed 0.1.1 and needed version", () => page.getByText(`The installed extension (0.1.1) can't talk to this version of Linklog. Browser view needs extension ${expected}.`).isVisible());
   await check("Download link points at the latest release", async () => (await download.getAttribute("href")) === latest);
@@ -124,7 +127,7 @@ export default (async ({ page, step, check, shot, aria, note }) => {
   await aria("02-outdated-protocol");
 
   await step("Gate edges: push before the first hello, reload as protocol 2 with a push and a foreground refresh before its hello");
-  await openBrowser({ protocol: 3, version: expected, pushOldSnapshot: false, reloadToOld: true });
+  await openBrowser({ protocol: PROTOCOL_VERSION, version: expected, pushOldSnapshot: false, reloadToOld: true });
   const seenRows = async () => (await page.evaluate(() => (window as unknown as { __seenRows: string[] }).__seenRows)).map((t) => t.replace(/\s+/g, " "));
   await check("Snapshots were pushed before the first handshake completed", async () => Number(await page.evaluate(() => document.documentElement.dataset.earlyPushes ?? 0)) > 1);
   await check("The current extension's tab shows after its handshake", async () => (await seenRows()).some((t) => t.includes("Current extension tab")), { timeout: 10_000 });
@@ -138,7 +141,7 @@ export default (async ({ page, step, check, shot, aria, note }) => {
   await shot("02b-reloaded-as-old");
 
   await step("Extension 0.1.1 on this protocol: tabs show, with a non-blocking update banner");
-  await openBrowser({ protocol: 3, version: "0.1.1", pushOldSnapshot: false });
+  await openBrowser({ protocol: PROTOCOL_VERSION, version: "0.1.1", pushOldSnapshot: false });
   const get = page.getByRole("link", { name: "Download update" });
   await check("Update banner names both versions", () => page.getByText(`Linklog extension 0.1.1 is older than this Linklog expects (${expected}).`).isVisible(), { timeout: 10_000 });
   await check("Banner links the latest release", async () => (await get.getAttribute("href")) === latest);
@@ -146,7 +149,7 @@ export default (async ({ page, step, check, shot, aria, note }) => {
   await shot("03-older-same-protocol");
 
   await step(`Extension ${expected}: no banner`);
-  await openBrowser({ protocol: 3, version: expected, pushOldSnapshot: false });
+  await openBrowser({ protocol: PROTOCOL_VERSION, version: expected, pushOldSnapshot: false });
   await check("Connected: the window's empty state shows", () => page.getByRole("heading", { name: "No other tabs in this window" }).isVisible(), { timeout: 10_000 });
   await check("No update banner", async () => !(await page.getByText(/is older than this Linklog expects/).isVisible()));
   await shot("04-current");
