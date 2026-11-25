@@ -30,7 +30,11 @@ function fakeBridge() {
     if (command === "hello") {
       reply(id, { protocol: mode.protocol, extensionVersion: mode.version, installationId: "fake", browserSessionId: "fake", windowId: 1, capabilities: ["tabs", "groups"], contentAccess: true });
       if (mode.pushOldSnapshot)
-        setTimeout(() => post({ event: { event: "snapshot", snapshot: { revision: 1, windowId: 1, tabs: [oldTab], groups: [], linklogTabs: 1 } } }), 50);
+        setTimeout(() => {
+          post({ event: { event: "snapshot", snapshot: { revision: 1, windowId: 1, tabs: [oldTab], groups: [], linklogTabs: 1 } } });
+          // Set after the page's message listener ran (a later task), so the check below follows delivery.
+          setTimeout(() => (document.documentElement.dataset.fakePushed = "1"), 0);
+        }, 50);
       return;
     }
     if (command === "snapshot") return reply(id, { revision: 1, windowId: 1, tabs: [], groups: [], linklogTabs: 1, loadRun: null });
@@ -65,7 +69,7 @@ export default (async ({ page, step, check, shot, aria, note }) => {
   await check("Update screen shows", () => page.getByRole("heading", { name: "Update the Linklog extension" }).isVisible(), { timeout: 10_000 });
   await check("Names installed 0.1.1 and needed version", () => page.getByText(`The installed extension (0.1.1) can't talk to this version of Linklog. Browser view needs extension ${expected}.`).isVisible());
   await check("Download link points at the latest release", async () => (await download.getAttribute("href")) === latest);
-  await page.waitForTimeout(1500);
+  await check("The fake bridge delivered the old snapshot", async () => (await page.evaluate(() => document.documentElement.dataset.fakePushed)) === "1");
   await check("The pushed old tab never renders", async () => !(await page.getByText("Discarded by Chrome").isVisible()));
   await check("Still on the update screen after the push", () => page.getByRole("heading", { name: "Update the Linklog extension" }).isVisible());
   await check("No page errors", () => errors.length === 0, { timeout: 1000 });
@@ -74,7 +78,7 @@ export default (async ({ page, step, check, shot, aria, note }) => {
 
   await step("Extension 0.1.1 on this protocol: tabs show, with a non-blocking update banner");
   await openBrowser({ protocol: 3, version: "0.1.1", pushOldSnapshot: false });
-  const get = page.getByRole("link", { name: `Get ${expected}` });
+  const get = page.getByRole("link", { name: "Download update" });
   await check("Update banner names both versions", () => page.getByText(`Linklog extension 0.1.1 is older than this Linklog expects (${expected}).`).isVisible(), { timeout: 10_000 });
   await check("Banner links the latest release", async () => (await get.getAttribute("href")) === latest);
   await check("Browser view is usable (no Connect/Update screen)", async () => !(await page.getByRole("heading", { name: /Update the Linklog extension|Connect the Linklog extension/ }).isVisible()));

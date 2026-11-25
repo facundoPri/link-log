@@ -12,7 +12,7 @@ describe("isOlderVersion", () => {
   });
 
   test("an unreadable installed version is never reported as older", () => {
-    for (const v of ["", "dev", "0.0", "1.x.0", undefined, null, 3] as unknown[]) expect(isOlderVersion(v, "0.2.0")).toBe(false);
+    for (const v of ["", "dev", "0.0", "1.x.0", "0.01.1", "0.1.65536", undefined, null, 3] as unknown[]) expect(isOlderVersion(v, "0.2.0")).toBe(false);
   });
 });
 

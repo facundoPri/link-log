@@ -62,6 +62,7 @@ export function useBrowser() {
   );
 
   const refreshSnapshot = useCallback(async () => {
+    if (!protocolMatched.current) return;
     try {
       setSnapshot(await request("snapshot", {}));
     } catch {
@@ -158,7 +159,10 @@ export function useBrowser() {
       } else if (e.event === "results-changed") setResultsVersion((v) => v + 1);
     });
     const offLife = c.onLifecycle((kind) => {
-      if (kind === "disconnected") setConnection((s) => (s === "connected" ? "reconnecting" : s));
+      if (kind === "disconnected") {
+        protocolMatched.current = false;
+        setConnection((s) => (s === "connected" ? "reconnecting" : s));
+      }
       else void connectRef.current();
     });
     void connectRef.current();

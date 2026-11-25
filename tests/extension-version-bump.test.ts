@@ -17,7 +17,8 @@ describe("versionBumpProblem", () => {
     expect(versionBumpProblem(["packages/browser-protocol/src/x.ts"], "0.1.1", "0.2.0")).toBeNull();
   });
 
-  test("a version that isn't x.y.z fails instead of slipping through", () => {
-    expect(versionBumpProblem(["apps/extension/package.json"], "0.2.0", "0.3")).not.toBeNull();
+  test("a version Chrome can't load fails, even without extension changes", () => {
+    for (const head of ["0.3", "0.02.0", "0.2.65536"]) expect(versionBumpProblem(["apps/extension/package.json"], "0.2.0", head)).toContain("Chrome");
+    expect(versionBumpProblem(["src/App.tsx"], "0.2.0", "0.02.0")).toContain("Chrome");
   });
 });

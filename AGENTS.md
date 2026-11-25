@@ -55,4 +55,4 @@ A bug, failure or slowdown the user hit in real use (production, the deployed ap
 
 Before touching Browser, the Chrome extension, or `packages/browser-protocol`, read `docs/browser-feature-plan.md` (product spec) and `docs/browser-implementation-handoff.md` (how it's actually built: monorepo map, commands, decisions, known limits). `docs/browser-validation.md` holds the evidence.
 
-Every PR that changes `apps/extension/` or `packages/browser-protocol/` raises `"version"` in `apps/extension/package.json` (x.y.z: patch for fixes, minor when `PROTOCOL_VERSION` changes). CI fails without it, and merging to `main` publishes that version as the extension release the web app links to.
+Every PR that changes `apps/extension/` or `packages/browser-protocol/` raises `"version"` (x.y.z) in `apps/extension/package.json`. CI fails without it, and merging to `main` publishes that version as the extension release the web app links to.

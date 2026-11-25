@@ -397,7 +397,7 @@ export function BrowserView({
             action={
               <Button size="sm" variant="outline" className="h-7" asChild>
                 <a href={LATEST_EXTENSION_URL} target="_blank" rel="noreferrer">
-                  Get {browser.update.expected}
+                  Download update
                 </a>
               </Button>
             }
