@@ -1,7 +1,7 @@
 {
   "meta": {
-    "startedAt": "2026-11-25T02:55:31.570Z",
-    "build": "03f5b87 + uncommitted changes",
+    "startedAt": "2026-11-25T05:07:28.319Z",
+    "build": "8340a6e",
     "browser": "153.0.8010.12",
     "extensionId": "ohpalbbmodgclkjoknohidbcnnnaadic",
     "extensionVersion": "0.1.1",
@@ -69,15 +69,15 @@
     },
     "queue": {
       "tabs": 450,
-      "ms": 201582,
+      "ms": 201602,
       "tabsPerSec": 2.23,
       "maxAwake": 3,
-      "rssBeforeMb": 54905,
-      "rssPeakMb": 57118,
+      "rssBeforeMb": 56994,
+      "rssPeakMb": 58757,
       "restartedAfterDone": 100
     },
-    "finishedAt": "2026-11-25T03:05:28.452Z",
-    "providerCalls": 340
+    "finishedAt": "2026-11-25T05:18:02.982Z",
+    "providerCalls": 318
   },
   "checks": [
     {
@@ -85,203 +85,203 @@
       "name": "0010 applies on a real local D1 with existing rows",
       "ok": true,
       "detail": "links 1, jobs 2, usage_events.job_id kept (j1), leases 1",
-      "ms": 15711
+      "ms": 11495
     },
     {
       "area": "Connection",
       "name": "without the extension Browser shows connect/install steps",
       "ok": true,
       "detail": "",
-      "ms": 10917
+      "ms": 4157
     },
     {
       "area": "Connection",
       "name": "lists only the tabs of Linklog's window (20 here, 3 in the other window)",
       "ok": true,
-      "detail": "window 867686237: 20 rows; window 867686243 tabs hidden",
-      "ms": 257
+      "detail": "window 1237957257: 20 rows; window 1237957263 tabs hidden",
+      "ms": 260
     },
     {
       "area": "Lenses and cache",
       "name": "activating lens A evaluates all 20 tabs once",
       "ok": true,
       "detail": "20 Jev calls (fixture provider)",
-      "ms": 24416
+      "ms": 6824
     },
     {
       "area": "Lenses and cache",
       "name": "activating lens A shows its run live: sidebar indicator, one progress toast, Activity row (no reload)",
       "ok": true,
-      "detail": "sidebar Applying lens0/20 → Applying lens8/20 → Applying lens19/20…; toast Applying lens to 20 tabs…0 of 20 doneCancel → Applying lens to 20 tabs…8 of 20 doneCancel → Applying lens to 20 tabs…19 of 20 doneCancel → Lens applied to 20 tabsActivity; Activity row while running: 0/20",
-      "ms": 2362
+      "detail": "sidebar Applying lens; toast Applying lens to 20 tabs…0 of 20CancelActivity → Applying lens to 20 tabs…1 of 20CancelActivity → Lens applied to 20 tabsActivity; toast progress while running: 0 of 20",
+      "ms": 1892
     },
     {
       "area": "Lenses and cache",
       "name": "toggling lens A off and on reuses results (0 new calls)",
       "ok": true,
       "detail": "",
-      "ms": 3933
+      "ms": 3905
     },
     {
       "area": "Lenses and cache",
       "name": "3 new tabs with A active: only the 3 missing are evaluated; inactive B waits",
       "ok": true,
       "detail": "20 reused + 3 new = 23 calls",
-      "ms": 7110
+      "ms": 8383
     },
     {
       "area": "Lenses and cache",
       "name": "automatic evaluation of new tabs shows no toast, but its batch appears in Activity",
       "ok": true,
       "detail": "0 toasts; Activity lists the automatic batch",
-      "ms": 2397
+      "ms": 2339
     },
     {
       "area": "Lenses and cache",
       "name": "filters narrow the list, never the evaluation scope",
       "ok": true,
       "detail": "Yes → 12 rows; new No tab still evaluated (24 done); inverse No filter → 12",
-      "ms": 4686
+      "ms": 4482
     },
     {
       "area": "Lenses and cache",
       "name": "two active lenses: AND across lenses, OR within a lens",
       "ok": true,
       "detail": "Yes∧Article = 3; Yes∧(Article∨Reference) = 8; Yes∧(any option) = 12",
-      "ms": 5135
+      "ms": 4853
     },
     {
       "area": "Lenses and cache",
       "name": "classifying tabs never creates saved links",
       "ok": true,
       "detail": "0 links before and after 48 evaluations",
-      "ms": 29
+      "ms": 7
     },
     {
       "area": "Lifecycle and recovery",
       "name": "closing and reopening Linklog keeps done results (0 new calls)",
       "ok": true,
       "detail": "",
-      "ms": 584
+      "ms": 401
     },
     {
       "area": "Lifecycle and recovery",
       "name": "real service-worker suspension keeps session and results",
       "ok": true,
-      "detail": "worker stopped and restarted; session 77697167… unchanged; 0 new calls",
-      "ms": 1608
+      "detail": "worker stopped and restarted; session 169e8cac… unchanged; 0 new calls",
+      "ms": 1423
     },
     {
       "area": "Lifecycle and recovery",
       "name": "API outage: stored answers stay visible, nothing is emptied",
       "ok": true,
       "detail": "banner shown; recovered by request id; 2 new calls (A, B) for the new tab",
-      "ms": 20702
+      "ms": 20358
     },
     {
       "area": "Lifecycle and recovery",
       "name": "response lost after the POST was accepted: same job, no duplicate",
       "ok": true,
       "detail": "2 responses dropped; reconciled by GET; 2 batches, 2 calls",
-      "ms": 4843
+      "ms": 3114
     },
     {
       "area": "Lifecycle and recovery",
       "name": "queue redelivery / recovery sweeps don't repeat evaluations; polling stays calm",
       "ok": true,
-      "detail": "4 recovery sweeps during running jobs; 4 calls for 2 tabs × 2 lenses; 6 status polls in 6.3 s",
-      "ms": 6277
+      "detail": "4 recovery sweeps during running jobs; 4 calls for 2 tabs × 2 lenses; 7 status polls in 7.5 s",
+      "ms": 7480
     },
     {
       "area": "Identity and invalidation",
       "name": "closing and reopening the same URL is a new tab instance",
       "ok": true,
       "detail": "new tabInstanceId; re-evaluated (2 calls)",
-      "ms": 7667
+      "ms": 6158
     },
     {
       "area": "Identity and invalidation",
       "name": "navigation invalidates; hash change doesn't; SPA pushState does",
       "ok": true,
       "detail": "hash: 0 calls; pushState: 2; full navigation: 2",
-      "ms": 11209
+      "ms": 10653
     },
     {
       "area": "Identity and invalidation",
       "name": "editing a lens: threshold reuses answers, a new question re-evaluates",
       "ok": true,
       "detail": "threshold: 0 calls; question: 28 calls (one per tab)",
-      "ms": 5573
+      "ms": 7279
     },
     {
       "area": "Identity and invalidation",
       "name": "Re-evaluate this window runs every readable tab exactly once",
       "ok": true,
-      "detail": "28 tabs → 28 calls, even across claim rounds of 20; one toast: Applying lens to 20 tabs…0 of 20 doneCancel → Lens applied to 28 tabsActivity",
-      "ms": 12265
+      "detail": "28 tabs → 28 calls, even across claim rounds of 20; one toast: Applying lens to 20 tabs…0 of 20CancelActivity → Lens applied to 28 tabsActivity",
+      "ms": 13691
     },
     {
       "area": "Identity and invalidation",
       "name": "Clean drops results, turns the lens off and doesn't re-evaluate",
       "ok": true,
       "detail": "0 results for A, A off, lens definition kept",
-      "ms": 3578
+      "ms": 3624
     },
     {
       "area": "Identity and invalidation",
       "name": "activating a lens while another lens's run is in flight runs it at once with its toast; the next automatic run stays quiet",
       "ok": true,
-      "detail": "lens A ran over 29 tabs right after lens B's run, one toast (Lens applied to 29 tabsActivity); the next automatic run: 0 toasts",
-      "ms": 14223
+      "detail": "lens A ran over 29 tabs right after lens B's run, one toast (Applying lens to 29 tabs…28 of 29CancelActivity); the next automatic run: 0 toasts",
+      "ms": 15784
     },
     {
       "area": "States that are not answers",
       "name": "provider failure is Failed with explicit retry, never No",
       "ok": true,
       "detail": "no automatic retry; explicit retry = 1 call",
-      "ms": 10928
+      "ms": 11090
     },
     {
       "area": "States that are not answers",
       "name": "an explicit run that fails ends in an error toast that points to Activity",
       "ok": true,
       "detail": "error toast “Lens applied to 1 tab · 1 failed — see Activity”; its Activity action opens Activity",
-      "ms": 5132
+      "ms": 5273
     },
     {
       "area": "States that are not answers",
       "name": "an explicit run with some tabs failed ends in a toast that counts the failures and points to Activity",
       "ok": true,
       "detail": "1 of 31 tabs failed: Lens applied to 31 tabs 1 failed — see Activity Activity",
-      "ms": 4124
+      "ms": 8701
     },
     {
       "area": "States that are not answers",
       "name": "Cancel on a run's progress toast cancels every batch of the run",
       "ok": true,
-      "detail": "2 batches, all cancelled from one toast (“Nothing left to cancel”)",
-      "ms": 20382
+      "detail": "2 batches, all cancelled from one toast (“Cancelled 22 queued jobs”)",
+      "ms": 49317
     },
     {
       "area": "States that are not answers",
       "name": "no permission and internal pages stay manageable with honest states",
       "ok": true,
       "detail": "No access / Can't read shown; neither evaluated nor activated",
-      "ms": 3156
+      "ms": 41772
     },
     {
       "area": "States that are not answers",
       "name": "application pages keep deterministic evidence (GitHub PR state)",
       "ok": true,
       "detail": "facts: state Merged, 2 comments; sent to Jev as evidence and shown as a badge",
-      "ms": 2762
+      "ms": 2821
     },
     {
       "area": "States that are not answers",
       "name": "page capture excludes form values and passwords",
       "ok": true,
       "detail": "",
-      "ms": 6
+      "ms": 7
     },
     {
       "area": "Content, previews and domains",
@@ -295,259 +295,280 @@
       "name": "clicking a tab opens the inspector with the page as Markdown and its links",
       "ok": true,
       "detail": "Markdown with GFM table, fenced code and absolute links (399 chars)",
-      "ms": 809
+      "ms": 784
     },
     {
       "area": "Content, previews and domains",
       "name": "domain filter: pick several (OR), remove one, clear",
       "ok": true,
       "detail": "34 tabs → 1 (github.com) → 32 (+127.0.0.1) → cleared",
-      "ms": 779
+      "ms": 783
     },
     {
       "area": "Bridge security",
       "name": "non-Linklog pages get no bridge and can't reach the extension",
       "ok": true,
       "detail": "{\"bridge\":null,\"connect\":\"no chrome.runtime on the page\",\"reply\":\"no answer\"}",
-      "ms": 1505
+      "ms": 1509
     },
     {
       "area": "Bridge security",
       "name": "bridge finds Linklog on a non-default port (3210) with no configured origin",
       "ok": true,
       "detail": "content script matches http://localhost/*, http://127.0.0.1/*; Linklog connected on :3210",
-      "ms": 1
+      "ms": 2
     },
     {
       "area": "Bridge security",
       "name": "a local page with the marker gets the bridge, but nothing before a handshake",
       "ok": true,
       "detail": "bridge attached; snapshot before hello → “Connect first.”",
-      "ms": 547
+      "ms": 573
     },
     {
       "area": "Bridge security",
       "name": "bridge rejects malformed commands and ids from another window",
       "ok": true,
       "detail": "unknown command dropped by the bridge; other-window tab refused and still open",
-      "ms": 3019
+      "ms": 3023
     },
     {
       "area": "Save and Close",
       "name": "Save adds links through the normal library pipeline (extraction queued)",
       "ok": true,
       "detail": "2 links from URLs only; 1 normal extract batch queued; re-save = duplicate, tags kept",
-      "ms": 15857
+      "ms": 15969
     },
     {
       "area": "Save and Close",
       "name": "Close closes only the selected tabs, after revalidation",
       "ok": true,
       "detail": "2 closed; 2 saved links untouched",
-      "ms": 1130
+      "ms": 1193
     },
     {
       "area": "Save and Close",
       "name": "Open creates background tabs once per operation, even when the request is repeated",
       "ok": true,
-      "detail": "2 background tabs in window 867686237; repeating the operation opened none",
-      "ms": 55
+      "detail": "2 background tabs in window 1237957257; repeating the operation opened none",
+      "ms": 70
     },
     {
       "area": "Groups",
       "name": "create a pinned group from the selection",
       "ok": true,
-      "detail": "native group 538104103 bound to pinned b7f25ae4…",
-      "ms": 1527
+      "detail": "native group 290359430 bound to pinned dd645594…",
+      "ms": 1567
     },
     {
       "area": "Groups",
       "name": "pinned group appears in another window without tabs and materializes on use",
       "ok": true,
-      "detail": "created group 1440966824 in window 867686243 bound to the same definition",
-      "ms": 1395
+      "detail": "created group 236959019 in window 1237957263 bound to the same definition",
+      "ms": 1719
     },
     {
       "area": "Groups",
       "name": "same name never merges groups",
       "ok": true,
       "detail": "two native 'Research' groups in window 1, one pinned definition",
-      "ms": 22
+      "ms": 26
     },
     {
       "area": "Groups",
       "name": "Autogroup keeps tabs grouped meanwhile and moves the rest after review",
       "ok": true,
-      "detail": "1 Activity batch, 2 calls; tab kept in “Manual”; other moved to pinned Research (538104103 = 538104103); live in the sidebar and Activity, one toast, then “Suggested groups for 2 tabsActivity”",
-      "ms": 13002
+      "detail": "1 Activity batch, 2 calls; tab kept in “Manual”; other moved to pinned Research (290359430 = 290359430); live in the sidebar and Activity, one toast, then “Suggested groups for 2 tabsActivity”",
+      "ms": 15019
     },
     {
       "area": "Groups",
       "name": "Move to group changes a grouped tab; Ungroup keeps it open",
       "ok": true,
-      "detail": "tab 867686254 open and ungrouped",
-      "ms": 5150
+      "detail": "tab 1237957274 open and ungrouped",
+      "ms": 5113
     },
     {
       "area": "Groups",
       "name": "group filters: one group, several groups (union), ungrouped",
       "ok": true,
       "detail": "Ungrouped = 31 rows; Ungrouped ∪ Manual shown together",
-      "ms": 470
+      "ms": 496
     },
     {
       "area": "Two pages, moves and a second profile",
       "name": "two Linklog pages in one window share results without duplicate jobs",
       "ok": true,
       "detail": "33 tabs, 33 calls from two concurrent activations",
-      "ms": 7094
+      "ms": 12514
     },
     {
       "area": "Two pages, moves and a second profile",
       "name": "moving a tab to another window keeps its cached result",
       "ok": true,
       "detail": "row left window 1, appeared in window 2, cache unchanged",
-      "ms": 281
+      "ms": 282
     },
     {
       "area": "Two pages, moves and a second profile",
       "name": "moving the Linklog page switches its scope to the new window",
       "ok": true,
       "detail": "patch stream re-scoped after onAttached",
-      "ms": 399
+      "ms": 375
     },
     {
       "area": "Two pages, moves and a second profile",
       "name": "second profile shares pinned definitions, not tabs",
       "ok": true,
-      "detail": "installation af38c71a… vs 7c518388…",
-      "ms": 1425
+      "detail": "installation 025b1fe4… vs 1e737730…",
+      "ms": 1440
     },
     {
       "area": "Two pages, moves and a second profile",
       "name": "Unpin keeps real groups and their metadata",
       "ok": true,
       "detail": "3 native “Research” groups still open; definition removed",
-      "ms": 1908
+      "ms": 1889
     },
     {
       "area": "Commands and Open links",
       "name": "⌘K opens one Commands palette with 0, 1 and 2 tabs selected; G and C run tab actions",
       "ok": true,
       "detail": "0: 2 rows · 1: 11 rows · 2: 11 rows; G → group picker; C → 2 copied, library unchanged",
-      "ms": 4418
+      "ms": 4395
     },
     {
       "area": "Commands and Open links",
       "name": "narrow chip and phone drawer are the same surface as All links",
       "ok": true,
       "detail": "900 px: Actions chip; 390 px: phone bar, drawer tiles with Close 2 tabs and the group picker in place",
-      "ms": 5336
+      "ms": 5334
     },
     {
       "area": "Commands and Open links",
       "name": "Open links opens tabs in Linklog's window into a new group, and saves nothing",
       "ok": true,
-      "detail": "2 tabs in new group “Later” (1155880940) in window 867686237; the already-open one kept its place; window 867686243 unchanged; 0 library writes",
-      "ms": 2364
+      "detail": "2 tabs in new group “Later” (1146652670) in window 1237957257; the already-open one kept its place; window 1237957263 unchanged; 0 library writes",
+      "ms": 2422
     },
     {
       "area": "Commands and Open links",
       "name": "pasting URLs in Browser opens the links page with them; nothing is saved",
       "ok": true,
       "detail": "links page lists it; Escape: 0 tabs opened, library unchanged",
-      "ms": 1935
+      "ms": 1953
     },
     {
       "area": "Activity",
       "name": "browser evaluations appear in Activity with their usage",
       "ok": true,
       "detail": "",
-      "ms": 835
+      "ms": 843
     },
     {
       "area": "Accounts",
       "name": "sign-out makes the extension forget this account; the next account sees none of it",
       "ok": true,
       "detail": "refused sign-out (503) kept 105 cached entries, metadata {\"meta\":2,\"hints\":2} and the bridge; retry: forgotten, old cookie 401; second account: new library id, 0 groups, 0 lens cells, none of 3 lenses",
-      "ms": 3063
+      "ms": 2332
     },
     {
       "area": "Sleeping tabs (native)",
       "name": "restored-but-never-loaded tabs show as Sleeping, never as an endless Loading",
       "ok": true,
       "detail": "26 of 30 restored tabs have Chrome status \"unloaded\" with discarded false; all 26 rows say Sleeping, 0 say Loading after 20 s; banner counts 26",
-      "ms": 20068
+      "ms": 20065
     },
     {
       "area": "Sleeping tabs (native)",
       "name": "the Sleeping filter lists only sleeping tabs and shows their count",
       "ok": true,
       "detail": "26 rows, all Sleeping; Show only sleeping tabs (26)",
-      "ms": 472
+      "ms": 468
     },
     {
       "area": "Sleeping tabs (native)",
       "name": "entering Browser, filtering and selecting never wake a tab",
       "ok": true,
       "detail": "0 page loads of the restored tabs",
-      "ms": 1021
+      "ms": 1028
     },
     {
       "area": "Sleeping tabs (native)",
       "name": "banner Load content wakes in the background, captures, and puts every tab back to sleep",
       "ok": true,
-      "detail": "26/26 done; 26 pages loaded once each; every one done with a capture; at most 3 awake at once (584 samples); active tab 74665420 unchanged; all 26 discarded again (26 Sleeping rows with captured content)",
-      "ms": 12569
+      "detail": "26/26 done; 26 pages loaded once each; every one done with a capture; at most 3 awake at once (584 samples); active tab 1561510628 unchanged; all 26 discarded again (26 Sleeping rows with captured content)",
+      "ms": 12563
     },
     {
       "area": "Sleeping tabs (native)",
       "name": "a Sleeping tab with captured content shows it in the inspector",
       "ok": true,
       "detail": "inspector: “The tab is sleeping. This is the content captured …”, page text shown, no wake",
-      "ms": 337
+      "ms": 343
     },
     {
       "area": "Sleeping tabs (native)",
       "name": "a frozen tab is loaded, put to sleep instead, and the UI says so",
       "ok": true,
       "detail": "frozen: true → discarded: true, frozen: false; note “It was frozen; Linklog put it to sleep instead.”",
-      "ms": 2348
+      "ms": 2357
     },
     {
       "area": "Sleeping tabs (native)",
       "name": "Put to sleep from the selection sleeps eligible tabs and reports the rest",
       "ok": true,
       "detail": "bar: 3 selected · Save 3S · Move to groupG · AutogroupA · More⌘K; palette row “Put to sleep1 of 3 are asleep, active, playing audio or a browser page. Frees memory. A page with unsaved changes, such as a half-filled form, may lose them.2/3”; toast “Put to sleep 2 tabs Frees memory. A page with unsaved changes, such as a half-filled form, may lose them.”",
-      "ms": 2636
+      "ms": 2608
     },
     {
       "area": "Sleeping tabs (native)",
       "name": "pinned tabs show a marker and keep pin, order, group and window through Put to sleep and Load content",
       "ok": true,
-      "detail": "[id, pinned, index, group, window] unchanged: [[74665423,true,0,-1,74665352],[74665424,true,1,-1,74665352]]",
-      "ms": 3762
+      "detail": "[id, pinned, index, group, window] unchanged: [[1561510631,true,0,-1,1561510560],[1561510632,true,1,-1,1561510560]]",
+      "ms": 3756
     },
     {
       "area": "Sleeping tabs (native)",
       "name": "Move to group keeps pinned tabs in place, including one pinned after it was selected",
       "ok": true,
-      "detail": "grouped 74665425; kept 74665426 (pinned after selection) and 74665423: “Pinned — kept in place.”; native [id, pinned, group] [[74665425,false,1264532665],[74665426,true,-1],[74665423,true,-1]]",
-      "ms": 284
+      "detail": "grouped 1561510633; kept 1561510634 (pinned after selection) and 1561510631: “Pinned — kept in place.”; native [id, pinned, group] [[1561510633,false,115431596],[1561510634,true,-1],[1561510631,true,-1]]",
+      "ms": 282
     },
     {
       "area": "Sleeping tabs (native)",
       "name": "a lens over sleeping tabs splits waiting from sleeping and finishes after Load content",
       "ok": true,
       "detail": "before: “Sleepy 0/46 · 34 waiting · 8 sleeping · 4 unreadable Load content Yes 0 Unsure 0 No 0”; after Load content: “Sleepy 42/46 · 4 unreadable Yes 11 Unsure 9 No 22”",
-      "ms": 11020
+      "ms": 9358
     },
     {
       "area": "Sleeping tabs (native)",
       "name": "a 450-tab queue keeps at most 3 awake, wakes each tab once across a worker restart, and leaks none",
       "ok": true,
-      "detail": "450/450 done in 202 s (2.23 tabs/s); max 3 awake (sampled every 100 ms); worker stopped after 100 done and a new worker instance resumed the same run; each page loaded exactly once; 0 left awake; browser process tree RSS 54905 → peak 57118 MB (sampled every 100 ms)",
-      "ms": 212137
+      "detail": "450/450 done in 202 s (2.23 tabs/s); max 3 awake (sampled every 100 ms); worker stopped after 100 done and a new worker instance resumed the same run; each page loaded exactly once; 0 left awake; browser process tree RSS 56994 → peak 58757 MB (sampled every 100 ms)",
+      "ms": 211562
+    },
+    {
+      "area": "Sleeping tabs (native)",
+      "name": "a page that renders its text after load is read again before it goes back to sleep, so its capture is complete",
+      "ok": true,
+      "detail": "a page that renders its text 2.5 s after load (the loader's settle is 1 s) was read again: capture “complete”, 1007 chars, with the late text; back asleep",
+      "ms": 4857
+    },
+    {
+      "area": "Sleeping tabs (native)",
+      "name": "tabs that couldn't load can be shown on their own and selected",
+      "ok": true,
+      "detail": "banner: “Loaded 1 of 2 tabs · 1 couldn't load”; Show failed lists only the tab that went to a sign-in page (load state failed); header toggle “Show only tabs that couldn't load (1)” pressed; Select all selects it",
+      "ms": 605
+    },
+    {
+      "area": "Sleeping tabs (native)",
+      "name": "Settings sets how many tabs Load content wakes at once, kept by the extension across a worker restart",
+      "ok": true,
+      "detail": "default 3; chose 5 → storage.local loadSettings {\"concurrency\":5}; after a worker restart and a reload Settings still shows 5; set back to 3",
+      "ms": 691
     }
   ]
 }
