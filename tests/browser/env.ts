@@ -37,6 +37,16 @@ export function startSite() {
       if (!url.pathname.startsWith("/img/") && url.pathname !== "/favicon.ico") siteHits.set(url.pathname, (siteHits.get(url.pathname) ?? 0) + 1);
       if (url.pathname.startsWith("/img/"))
         return new Response(`<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><rect width="320" height="180" fill="#0f766e"/><text x="24" y="100" font-size="28" fill="#fff" font-family="sans-serif">${url.pathname.slice(5)}</text></svg>`, { headers: { "content-type": "image/svg+xml" } });
+      // An app shell that renders its text a while after load, as YouTube does in a background tab.
+      if (url.pathname.startsWith("/lazy/"))
+        return new Response(
+          `<!doctype html><html><head><title>Lazy ${url.pathname}</title></head><body><main id="app"></main><script>
+addEventListener("load", () => setTimeout(() => { document.getElementById("app").innerHTML = "<h1>Rendered late</h1><p>" + "This description appears only after the app renders, well after the load event. ".repeat(12) + "LAZY-RENDERED</p>"; }, ${Number(url.searchParams.get("delay") ?? 2500)}));
+</script></body></html>`,
+          { headers: { "content-type": "text/html; charset=utf-8" } },
+        );
+      // Loads normally once; woken again, it goes to a sign-in page, so Load content can't read it.
+      if (url.pathname.startsWith("/moved/") && siteHits.get(url.pathname)! > 1) return Response.redirect(`${url.origin}/signin${url.pathname}`, 302);
       const marker = url.searchParams.get("m") ?? "";
       const title = url.searchParams.get("t") ?? `Fixture ${url.pathname}`;
       const body = `<!doctype html><html><head><title>${title}</title><meta name="description" content="Fixture page ${url.pathname}"><meta property="og:image" content="/img/cover${url.pathname.replaceAll("/", "-")}.svg"><meta property="og:site_name" content="Fixture site"></head>

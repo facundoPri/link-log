@@ -258,7 +258,10 @@ export async function sleepingChecks(ctx: Ctx) {
       await shot("26b-put-to-sleep-row");
       await row.select();
       await waitFor("slept", async () => (await tabsOf(`${SITE}/awake/`)).every((t) => t.discarded), 10000);
-      const toast = await dom<string>(`return document.querySelector("[data-sonner-toast]")?.innerText ?? ""`);
+      // The toast follows the extension's answer, which can land after Chrome reports the tabs discarded.
+      const toastText = () => dom<string>(`return [...document.querySelectorAll("[data-sonner-toast]")].map((t) => t.innerText).join("\\n")`);
+      await waitFor("put-to-sleep toast", async () => /Put to sleep 2 tabs/.test(await toastText()), 10000).catch(() => {});
+      const toast = await toastText();
       await shot("27-put-to-sleep");
       assert(/Put to sleep 2 tabs/.test(toast), `toast: ${toast}`);
       await click(`document.querySelector('[aria-label="Clear selection"]')`);
@@ -406,6 +409,76 @@ export async function sleepingChecks(ctx: Ctx) {
       assert(done === QUEUE, `${done} of ${QUEUE} done (${JSON.stringify(qItems.filter((i: { state: string }) => i.state !== "done").slice(0, 3))})`);
       await shot("31-queue-done");
       return `${done}/${QUEUE} done in ${Math.round(ms / 1000)} s (${meta.queue && (meta.queue as { tabsPerSec: number }).tabsPerSec} tabs/s); max ${maxAwake} awake (sampled every 100 ms); worker stopped after ${restartedAt} done and a new worker instance resumed the same run; each page loaded exactly once; 0 left awake; browser process tree RSS ${rssBefore} → peak ${rssPeak} MB (sampled every 100 ms)`;
+    });
+
+    // A page that renders late and one that moves to a sign-in page when woken, loaded together.
+    const lateIds = await b.sw(async ([w, base]: [number, string]) => {
+      const out: number[] = [];
+      for (const path of ["/lazy/1?delay=2500", "/moved/1"]) out.push((await chrome.tabs.create({ url: base + path, windowId: w, active: false })).id!);
+      return out;
+    }, [W, SITE] as [number, string]);
+    const [lazyId, movedId] = lateIds as [number, number];
+    await waitFor("late tabs loaded", async () => (await b.sw(async (ids: number[]) => Promise.all(ids.map(async (id) => (await chrome.tabs.get(id)).status)), lateIds)).every((st) => st === "complete"), 30_000);
+    await b.sw(async (ids: number[]) => void (await Promise.all(ids.map((id) => chrome.tabs.discard(id)))), lateIds);
+    await waitFor("late rows sleeping", async () => (await rows()).filter((r) => lateIds.includes(r.tabId)).every((r) => r.content === "sleeping"), 15_000);
+
+    await check("a page that renders its text after load is read again before it goes back to sleep, so its capture is complete", async () => {
+      await dom(`${BRIDGE_CALL}
+        const snap = await call("snapshot", {});
+        const tabs = snap.tabs.filter((t) => ${JSON.stringify(lateIds)}.includes(t.tabId)).map((t) => ({ tabId: t.tabId, tabInstanceId: t.tabInstanceId, documentRevision: t.documentRevision }));
+        return call("loadContent", { tabs });`);
+      const r = await awaitRun("late run done", "/lazy/1", 60_000);
+      const out = await dom<{ completeness: string; chars: number; markdown: string; reasons: string[] } | null>(`${BRIDGE_CALL}
+        const snap = await call("snapshot", {});
+        const t = snap.tabs.find((x) => x.tabId === ${lazyId});
+        const read = await call("capture", { tabs: [{ tabId: t.tabId, tabInstanceId: t.tabInstanceId, documentRevision: t.documentRevision }] });
+        return read.captures[0]?.capture ?? null;`);
+      const item = r.items.find((i: { docKey: string }) => i.docKey.includes("/lazy/1"));
+      const [lazy] = await b.sw(async (id: number) => [await chrome.tabs.get(id)], lazyId);
+      assert(item?.state === "done", `lazy item: ${JSON.stringify(item)}`);
+      assert(out?.completeness === "complete" && out.markdown.includes("LAZY-RENDERED"), `capture: ${JSON.stringify(out && { ...out, markdown: out.markdown.slice(0, 200) })}`);
+      assert(lazy!.discarded, "the lazy tab was left awake");
+      return `a page that renders its text 2.5 s after load (the loader's settle is 1 s) was read again: capture “complete”, ${out.chars} chars, with the late text; back asleep`;
+    });
+
+    await check("tabs that couldn't load can be shown on their own and selected", async () => {
+      const progress = `document.querySelector("[data-load-run]")`;
+      await waitFor("finished banner with a failure", () => dom<boolean>(`return /couldn't load/.test(${progress}?.textContent ?? "")`), 15_000).catch(explain("failed-banner"));
+      const text = await dom<string>(`return ${progress}.textContent.trim()`);
+      assert(!/awake/i.test(text), `banner still talks about awake tabs: “${text}”`);
+      await click(button("Show failed"));
+      await Bun.sleep(400);
+      const shown = await rows();
+      const toggle = await dom<{ label: string; pressed: string } | null>(`const el = document.querySelector('button[aria-label^="Show only tabs that couldn"]'); return el && { label: el.getAttribute("aria-label"), pressed: el.getAttribute("aria-pressed") };`);
+      assert(shown.length === 1 && shown[0]!.tabId === movedId && shown[0]!.load === "failed", `rows: ${JSON.stringify(shown)}`);
+      assert(toggle?.pressed === "true" && /\(1\)/.test(toggle.label), `header toggle: ${JSON.stringify(toggle)}`);
+      await click(`document.querySelector('[aria-label="Select all 1 tabs"]')`);
+      await waitFor("selection bar", () => dom<boolean>(`return !!${SELECTION}`), 5000);
+      await shot("32-failed-filter");
+      await click(`[...document.querySelectorAll("button")].find((e) => e.getAttribute("aria-label") === ${JSON.stringify("Remove couldn't load filter")})`);
+      return `banner: “${text.replace(/\s+/g, " ")}”; Show failed lists only the tab that went to a sign-in page (load state failed); header toggle “${toggle.label}” pressed; Select all selects it`;
+    });
+
+    await check("Settings sets how many tabs Load content wakes at once, kept by the extension across a worker restart", async () => {
+      const choice = (n: number) => `document.querySelector('[aria-label="${n} at once"]')`;
+      const chosen = () => dom<string | null>(`return document.querySelector('[aria-label$=" at once"][data-state="on"]')?.textContent.trim() ?? null`);
+      await dom(`location.assign("/settings?${LINKLOG}"); return true;`).catch(() => {});
+      await waitFor("concurrency choices", () => dom<boolean>(`return !!${choice(5)}`), 20_000).catch(explain("settings"));
+      const before = await chosen();
+      await click(choice(5));
+      await waitFor("5 chosen", async () => (await chosen()) === "5", 5000);
+      await shot("33-settings-concurrency");
+      const stored = await b.sw(async () => (await chrome.storage.local.get("loadSettings")).loadSettings ?? null, null);
+      await b.stopWorker();
+      await dom(`location.reload(); return true;`).catch(() => {});
+      await waitFor("choices after reload", () => dom<boolean>(`return !!${choice(5)}`), 20_000).catch(explain("settings-reload"));
+      const after = await chosen();
+      await click(choice(3));
+      await waitFor("3 chosen", async () => (await chosen()) === "3", 5000);
+      assert(before === "3", `default shown: ${before}`);
+      assert((stored as { concurrency?: number } | null)?.concurrency === 5, `storage.local: ${JSON.stringify(stored)}`);
+      assert(after === "5", `after a worker restart and reload Settings shows ${after}`);
+      return `default 3; chose 5 → storage.local loadSettings ${JSON.stringify(stored)}; after a worker restart and a reload Settings still shows 5; set back to 3`;
     });
   } finally {
     await b.close().catch(() => {});

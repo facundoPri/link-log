@@ -208,14 +208,23 @@ se abre la página **Connect**, donde se concede (o no) el acceso a contenido.
   sí pierde ese estado. Esta última caía antes en *Loading* para
   siempre; la sonda nativa lo reprodujo (`planning/fac-163/run.md`).
 - **Load content** (`apps/extension/src/background/loader.ts`): una sola corrida en el worker para
-  todas las páginas. Ventana deslizante de 3 pestañas despiertas, 30 s por pestaña. Cada una:
-  revalidar → `tabs.reload` sin activar → esperar `complete` + 1 s → capturar a la caché → `tabs.discard`.
+  todas las páginas. Ventana deslizante de N pestañas despiertas (Settings → Browser, 1–6, 3 por
+  defecto; `LOAD_CONCURRENCY`, comando `loadSettings`, guardado por navegador en `storage.local` del
+  worker, porque depende de la máquina), 30 s por pestaña. Cada una: revalidar → `tabs.reload` sin
+  activar → esperar `complete` + 1 s → capturar a la caché → `tabs.discard`. Si la lectura sale casi
+  vacía (`THIN_TEXT_REASON` del extractor: una app como YouTube está `complete` antes de dibujar su
+  texto, y más tarde aún en segundo plano), se relee con pausas crecientes (1, 2, 4 s; hasta 8 s) y se
+  guarda la última lectura, completa o parcial.
   Una congelada se descarta primero (los scripts no corren en una página congelada) y queda dormida.
   El estado vive en `storage.session` y marca `woke` antes de recargar: un worker reiniciado sigue sin
   recargar dos veces. Sólo duerme lo que despertó y si sigue siendo el mismo documento; una pestaña que
   el usuario activó, que suena o que navegó queda despierta. Si Chrome no deja dormirla, la corrida se
   pausa. Pausa, cancelar (duerme lo despertado) y reintentar fallidas. El progreso viaja en el
   snapshot/patch (`BrowserTab.load`, `WindowSnapshot.loadRun`). Nunca guarda en la biblioteca.
+- En la vista, un solo filtro de contenido a la vez (`CONTENT_FILTERS` en `src/browser/sleeping.ts`):
+  *Sleeping* y *Couldn't load* (las fallidas de la corrida), con su botón en la cabecera, su chip y su
+  botón en el banner (*Show sleeping*, *Show failed*). Seleccionarlas es *Select all* sobre la vista.
+  El banner dice el avance (`X of N tabs`) y al terminar `Loaded X of N tabs · F couldn't load`.
 - El contenido capturado queda en la caché de capturas (3 MB, se desaloja lo más viejo). Una pestaña
   dormida con captura de su documento es legible: inspector, previews y lentes la usan sin despertarla.
 - **Put to sleep** (`sleepTabs`): excluye la activa, las que suenan, las de Chrome y las ya dormidas; si
