@@ -1,0 +1,71 @@
+# PROTOTYPE (FAC-170 arena). Not production code; rewrite test-first.
+diff --git a/worker/http/app.ts b/worker/http/app.ts
+index 0822fab..7876c37 100644
+--- a/worker/http/app.ts
++++ b/worker/http/app.ts
+@@ -7,6 +7,7 @@ import { activityRoutes } from "../routes/activity";
+ import { browserRoutes } from "../routes/browser";
+ import { linkRoutes } from "../routes/links";
+ import { publicApiRoutes } from "../routes/public-api";
++import { slackRoutes } from "../routes/slack";
+ import { taxonomyRoutes } from "../routes/taxonomy";
+ import { usageSummaryRoutes } from "../routes/usage-summary";
+ import { HttpError, type AppEnv } from "./context";
+@@ -47,6 +48,8 @@ export function createApp() {
+   publicApi.route("/", publicApiRoutes);
+   publicApi.all("*", () => json({ error: "Not found." }, 404));
+   app.route(PUBLIC_API_BASE_PATH, publicApi);
++  // PROTOTYPE (FAC-170): Slack signs its requests; no session, no Bearer key.
++  app.route("/api/slack", slackRoutes);
+ 
+   const privateApi = new Hono<AppEnv>();
+   privateApi.use("*", sameOriginWrites, requireSession, writeQuotaAndBody);
+diff --git a/worker/http/middleware.ts b/worker/http/middleware.ts
+index c46419b..c373fe0 100644
+--- a/worker/http/middleware.ts
++++ b/worker/http/middleware.ts
+@@ -132,22 +132,30 @@ export const writeQuotaAndBody = createMiddleware<AppEnv>(async (c, next) => {
+  */
+ export const requireApiKey = createMiddleware<AppEnv>(async (c, next) => {
+   const key = /^Bearer\s+(\S+)$/i.exec(c.req.header("authorization") ?? "")?.[1];
+-  let verified;
+-  if (key) {
+-    try {
+-      verified = await c.get("auth").api.verifyApiKey({ body: { key } });
+-      if (!verified.valid && verified.error?.code === "INVALID_API_KEY" && (await findBySecret(c.env.DB, key))?.enabled) throw new Error("API key validation failed");
+-    } catch (error) {
+-      if (!isAPIError(error)) {
+-        console.error(JSON.stringify({ event: "api_key_lookup_failed", errorType: errorType(error) }));
+-        return json({ error: "Could not check the API key. Try again." }, 503);
+-      }
+-    }
+-  }
+-  if (!verified?.valid || !verified.key) {
++  const principal = key ? await apiKeyPrincipal(c, key) : null;
++  if (!principal) {
+     console.warn(JSON.stringify({ event: "api_key_rejected", reason: key ? "invalid" : "missing", method: c.req.method, path: c.req.path }));
+     return json({ error: "A valid API key is required." }, 401);
+   }
+-  c.set("principal", { kind: "apiKey", userId: verified.key.referenceId, keyId: verified.key.id, keyName: verified.key.name ?? "" });
++  c.set("principal", principal);
+   await next();
+ });
++
++/**
++ * PROTOTYPE (FAC-170) helper, extracted from requireApiKey: the API key Principal for a raw key, or
++ * null for a missing, invalid or Revoked key. A failed lookup throws HttpError 503 (retryable).
++ */
++export async function apiKeyPrincipal(c: AppContext, key: string) {
++  let verified;
++  try {
++    verified = await c.get("auth").api.verifyApiKey({ body: { key } });
++    if (!verified.valid && verified.error?.code === "INVALID_API_KEY" && (await findBySecret(c.env.DB, key))?.enabled) throw new Error("API key validation failed");
++  } catch (error) {
++    if (!isAPIError(error)) {
++      console.error(JSON.stringify({ event: "api_key_lookup_failed", errorType: errorType(error) }));
++      throw new HttpError(503, "Could not check the API key. Try again.");
++    }
++  }
++  if (!verified?.valid || !verified.key) return null;
++  return { kind: "apiKey" as const, userId: verified.key.referenceId, keyId: verified.key.id, keyName: verified.key.name ?? "" };
++}

@@ -1,0 +1,81 @@
+// PROTOTYPE (FAC-170 arena, Opus round 3): scenarios against a verify-linklog run with existing data.
+// usage: bun r3-scenarios.ts <runDir> <step>
+import { createHmac } from "node:crypto";
+import { readFileSync } from "node:fs";
+const [runDir, step] = process.argv.slice(2);
+const session = JSON.parse(readFileSync(`${runDir}/session.json`, "utf8"));
+const UI = "http://127.0.0.1:3470", COOKIE = session.accounts[0].cookie, KEY = "lk_SlackProtoKeyFromWorkerSecret0000000000000000000000";
+const SECRET = "proto-signing-secret", F = "https://article.qa.example/r3";
+
+async function slack(name: string, event: object, headers: Record<string, string> = {}) {
+  const body = JSON.stringify({ type: "event_callback", event_id: "Ev" + Math.random().toString(36).slice(2), event: { type: "message", channel: "C_RL", user: "U_OWNER", ts: "1764090000.000100", ...event } });
+  const ts = Math.floor(Date.now() / 1000);
+  const t0 = performance.now();
+  const r = await fetch(`${UI}/api/slack/events`, { method: "POST", headers: { "content-type": "application/json", "x-slack-request-timestamp": String(ts), "x-slack-signature": "v0=" + createHmac("sha256", SECRET).update(`v0:${ts}:${body}`).digest("hex"), ...headers }, body });
+  const ra = r.headers.get("retry-after");
+  console.log(`slack ${name} → ${r.status}${ra ? ` Retry-After:${ra}` : ""} ${await r.text()} (${Math.round(performance.now() - t0)} ms)`);
+  return body;
+}
+const web = (method: string, path: string, body?: object) =>
+  fetch(`${UI}/api${path}`, { method, headers: { Cookie: COOKIE, Origin: UI, "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) }).then(async (r) => ({ status: r.status, j: (await r.json()) as any }));
+const lib = async () => (await web("GET", "/library")).j;
+const mine = async (prefix: string) => (await lib()).links.filter((l: any) => l.url.startsWith(prefix)).map((l: any) => ({ id: l.id, url: l.url }));
+const usage = async () => { const m = (await web("GET", "/usage/summary")).j; return { quotaUsed: m.quotas.links.used, links: m.month.links, web: m.month.web, apiKeys: m.month.apiKeys.map((k: any) => `${k.name}:${k.links}`) }; };
+const batches = async () => (await lib()).batches.map((b: any) => `${b.kind}|${JSON.parse(b.config || "{}").apiKeyName ?? "web"}|${b.total}`);
+
+if (step === "s1") {
+  console.log("== S1 web-added link, then posted in Slack");
+  const a = await web("POST", "/links", { url: `${F}/web-first` });
+  console.log("web POST /api/links →", a.status, "duplicate:", a.j.duplicate);
+  await Bun.sleep(2000);
+  console.log("before:", JSON.stringify(await usage()), JSON.stringify(await batches()));
+  await slack("repost of web link", { text: `<${F}/web-first|article.qa.example/r3/web-first>` });
+  await Bun.sleep(2000);
+  console.log("after: ", JSON.stringify(await usage()), JSON.stringify(await batches()));
+}
+if (step === "s2") {
+  console.log("== S2 saved via Slack, deleted in Linklog, Slack redelivers");
+  const body = await slack("first delivery", { text: `<${F}/deleted>` });
+  await Bun.sleep(2000);
+  const [l] = await mine(`${F}/deleted`);
+  console.log("saved:", JSON.stringify(l), JSON.stringify(await usage()));
+  const d = await web("POST", "/links/delete", { ids: [l.id] });
+  console.log("web delete →", d.status, "deleted:", JSON.stringify(d.j.deleted));
+  console.log("after delete:", JSON.stringify(await mine(`${F}/deleted`)));
+  await slack("redelivery (retry-num 1)", JSON.parse(body).event, { "x-slack-retry-num": "1", "x-slack-retry-reason": "http_timeout" });
+  await Bun.sleep(2000);
+  console.log("after redelivery:", JSON.stringify(await mine(`${F}/deleted`)), JSON.stringify(await usage()));
+}
+if (step === "s3") {
+  console.log("== S3 one message with 150 distinct URLs");
+  const text = Array.from({ length: 150 }, (_, i) => `<${F}/many/${i}>`).join(" ");
+  await slack("150 urls", { text });
+  await Bun.sleep(3000);
+  console.log("saved:", (await mine(`${F}/many/`)).length, JSON.stringify(await usage()));
+}
+if (step === "s4") {
+  console.log("== S4 subtypes and a Hermes-like user-token thread reply");
+  await slack("thread_broadcast", { subtype: "thread_broadcast", thread_ts: "1764090000.000100", text: `<${F}/broadcast>` });
+  await slack("file_share", { subtype: "file_share", text: `mirá <${F}/fileshare>`, files: [{ id: "F1" }] });
+  await slack("hermes as user (thread)", { user: "U_HERMES", thread_ts: "1764090000.000100", text: `*Análisis*: ver <${F}/hermes/1|fuente 1>, <${F}/hermes/2> y <${F}/hermes/3|otra>` });
+  await slack("hermes as bot", { bot_id: "B_HERMES", thread_ts: "1764090000.000100", text: `<${F}/hermes/bot>` });
+  await Bun.sleep(2000);
+  console.log("saved:", JSON.stringify((await mine(F)).map((l: any) => l.url.slice(F.length)).filter((u: string) => !u.startsWith("/many/"))));
+}
+if (step === "s6") {
+  console.log("== S6 links quota exhausted (counter set to 500 in D1)");
+  await slack("links limited", { text: `<${F}/links-limited>` });
+  await Bun.sleep(1000);
+  console.log("saved:", (await mine(`${F}/links-limited`)).length);
+}
+if (step === "s7") {
+  console.log("== S7 writes quota: spend writes through the public API, then Slack");
+  let n = 0, last = 0;
+  for (let i = 0; i < 130; i++) {
+    const r = await fetch(`${UI}/api/v1/links`, { method: "POST", headers: { authorization: `Bearer ${KEY}`, "content-type": "application/json" }, body: JSON.stringify({ urls: [`${F}/web-first`] }) });
+    last = r.status; if (r.status === 202) n++; else break;
+  }
+  console.log(`public API writes accepted: ${n}, then ${last}`);
+  await slack("writes limited", { text: `<${F}/writes-limited2>` });
+  console.log("saved:", (await mine(`${F}/writes-limited2`)).length, "window second now:", new Date().getUTCSeconds());
+}
