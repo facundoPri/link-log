@@ -13,6 +13,7 @@ import {
 import { BridgeClient, BridgeTimeout, compatibleBrowser } from "./bridge";
 import { catalogQuery } from "./api";
 import { onSignedOut } from "../auth-client";
+import { extensionUpdate } from "./extensionVersion";
 
 export type Connection =
   | "checking"
@@ -39,6 +40,8 @@ export function useBrowser() {
   const client = useRef<BridgeClient | null>(null);
   const [connection, setConnection] = useState<Connection>("checking");
   const [hello, setHello] = useState<HelloAck | null>(null);
+  /** What the installed extension reported in its handshake, even when its protocol doesn't match. */
+  const [installedVersion, setInstalledVersion] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<WindowSnapshot | null>(null);
   const [catalog, setCatalog] = useState<BrowserCatalog | null>(null);
   const [backendError, setBackendError] = useState<string | null>(null);
@@ -46,6 +49,9 @@ export function useBrowser() {
   const snapshotRef = useRef<WindowSnapshot | null>(null);
   snapshotRef.current = snapshot;
   const connecting = useRef(false);
+  // An extension on another protocol still subscribes this page on hello and pushes events in its
+  // own shapes; nothing it sends is read until a handshake on PROTOCOL_VERSION succeeds.
+  const protocolMatched = useRef(false);
 
   if (!client.current && typeof window !== "undefined") client.current = new BridgeClient();
 
@@ -95,11 +101,15 @@ export function useBrowser() {
         return;
       }
       // The bridge is there; a cold service worker may take a few seconds to answer.
+      protocolMatched.current = false;
       const ack = await request("hello", { libraryScope: libraryScope(cat.libraryId) }, HELLO_TIMEOUT_MS);
-      if (ack.protocol !== PROTOCOL_VERSION) {
+      setInstalledVersion(typeof ack?.extensionVersion === "string" ? ack.extensionVersion : null);
+      if (ack?.protocol !== PROTOCOL_VERSION) {
+        setSnapshot(null);
         setConnection("outdated");
         return;
       }
+      protocolMatched.current = true;
       setHello(ack);
       setConnection("connected");
       setSnapshot(await request("snapshot", {}));
@@ -131,6 +141,7 @@ export function useBrowser() {
   useEffect(() => {
     const c = client.current!;
     const offEvents = c.onEvent((e) => {
+      if (!protocolMatched.current) return;
       if (e.event === "snapshot") setSnapshot(e.snapshot);
       else if (e.event === "patch") {
         const current = snapshotRef.current;
@@ -180,6 +191,9 @@ export function useBrowser() {
   return {
     connection,
     hello,
+    installedVersion,
+    /** Set when the extension speaks this protocol but is older than the version built with this page. */
+    update: connection === "connected" ? extensionUpdate(installedVersion) : null,
     snapshot,
     stale: connection !== "connected",
     catalog,

@@ -1,5 +1,6 @@
 import { CircleAlert, Globe, PlugZap, RefreshCw } from "lucide-react";
 import type { BrowserWorkspace } from "../../browser/useBrowserWorkspace";
+import { EXPECTED_EXTENSION_VERSION, LATEST_EXTENSION_URL } from "../../browser/extensionVersion";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -14,8 +15,20 @@ export function Banner({ icon, children, action }: { icon: React.ReactNode; chil
   );
 }
 
+/** A local checkout builds the extension from source; a deployed Linklog installs the published release. */
+const fromSource = () => ["localhost", "127.0.0.1"].includes(location.hostname);
+
+const updateSteps = [
+  <>Unzip it over the folder you loaded the extension from.</>,
+  <>
+    Open <Kbd>chrome://extensions</Kbd> and click ↻ on the Linklog card.
+  </>,
+  <>Reload this page.</>,
+];
+
 export function Connect({ ws }: { ws: BrowserWorkspace }) {
-  const { connection, backendError, retry } = ws.browser;
+  const { connection, backendError, retry, installedVersion } = ws.browser;
+  const local = fromSource();
   // Connected (or reconnecting) without a snapshot yet — e.g. right after the page moved
   // to another window — is loading, not a missing extension.
   if ((connection === "checking" || connection === "connected" || connection === "reconnecting") && !backendError)
@@ -57,26 +70,55 @@ export function Connect({ ws }: { ws: BrowserWorkspace }) {
           : connection === "outdated"
             ? {
                 icon: <CircleAlert className="size-5" />,
-                title: "The extension is out of date",
-                body: "Rebuild it with bun run extension:build, then reload it in chrome://extensions.",
-                steps: null,
+                title: "Update the Linklog extension",
+                body: `${installedVersion ? `The installed extension (${installedVersion})` : "The installed extension"} can't talk to this version of Linklog. Browser view needs extension ${EXPECTED_EXTENSION_VERSION}.`,
+                steps: local
+                  ? [
+                      <>
+                        Rebuild it: <Kbd>bun run extension:build</Kbd>
+                      </>,
+                      ...updateSteps.slice(1),
+                    ]
+                  : [
+                      <>
+                        <a className="font-medium underline underline-offset-2" href={LATEST_EXTENSION_URL} target="_blank" rel="noreferrer">
+                          Download the latest release
+                        </a>{" "}
+                        (the <Kbd>.zip</Kbd> under Assets).
+                      </>,
+                      ...updateSteps,
+                    ],
               }
             : {
                 icon: <PlugZap className="size-5" />,
                 title: "Connect the Linklog extension",
                 body: "Browser view shows the tabs and groups of this Chrome window. It needs the Linklog extension.",
-                steps: [
-                  <>
-                    Build it: <Kbd>bun run extension:build</Kbd>
-                  </>,
-                  <>
-                    Open <Kbd>chrome://extensions</Kbd> and turn on Developer mode.
-                  </>,
-                  <>
-                    Click Load unpacked and choose <Kbd>apps/extension/dist</Kbd>.
-                  </>,
-                  <>Come back here — Linklog connects on its own.</>,
-                ],
+                steps: local
+                  ? [
+                      <>
+                        Build it: <Kbd>bun run extension:build</Kbd>
+                      </>,
+                      <>
+                        Open <Kbd>chrome://extensions</Kbd> and turn on Developer mode.
+                      </>,
+                      <>
+                        Click Load unpacked and choose <Kbd>apps/extension/dist</Kbd>.
+                      </>,
+                      <>Come back here — Linklog connects on its own.</>,
+                    ]
+                  : [
+                      <>
+                        <a className="font-medium underline underline-offset-2" href={LATEST_EXTENSION_URL} target="_blank" rel="noreferrer">
+                          Download the latest release
+                        </a>{" "}
+                        and unzip it into a folder you'll keep.
+                      </>,
+                      <>
+                        Open <Kbd>chrome://extensions</Kbd> and turn on Developer mode.
+                      </>,
+                      <>Click Load unpacked and choose the unzipped folder.</>,
+                      <>Come back here — Linklog connects on its own.</>,
+                    ],
               };
   return (
     <div className="flex flex-1 items-center justify-center p-8">
