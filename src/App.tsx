@@ -629,8 +629,7 @@ export function App({
         setLibrary,
         async (chunk) => {
           // Only decides what was deleted; the cache refreshes through its query, so this read can't overwrite a newer write.
-          const lib = await apiRead<Library>("/library", new AbortController().signal);
-          void invalidateLibrary();
+          const lib = await apiRead<Library>("/library", new AbortController().signal).finally(() => void invalidateLibrary());
           const listed = new Set(lib.links.map((l) => l.id));
           return new Set(chunk.filter((id) => listed.has(id)));
         },
