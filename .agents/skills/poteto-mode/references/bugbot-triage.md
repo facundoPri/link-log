@@ -11,7 +11,7 @@ gh api --paginate "repos/<owner>/<repo>/pulls/<pr>/comments" \
   --jq '.[] | select(.user.login == "coderabbitai[bot]") | {id, path, line, finding: (.body | split("<details>")[0] | gsub("(?s)<picture>.*?</picture>|<!--.*?-->"; ""))}'
 ```
 
-Review bodies carry findings too: sections such as "Outside diff range comments", "Minor comments" and "Nitpick comments" sit inside `<details>` and have no thread, so the watcher never sees them. Read each review body whole, with the same strip, and triage those findings before reporting ready:
+Review bodies carry findings too: sections such as "Outside diff range comments", "Minor comments" and "Nitpick comments" sit inside `<details>` and have no thread, so the watcher never sees them. Read each review body whole, with the same strip, and triage those findings before reporting ready. With no thread to reply on, record each one's disposition (and its ticket link) in a single PR comment that names the finding by its title:
 
 ```bash
 gh api --paginate "repos/<owner>/<repo>/pulls/<pr>/reviews" \
