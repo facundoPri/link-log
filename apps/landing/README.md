@@ -12,10 +12,24 @@ bun run landing:preview   # serve the build
 | Variable         | Default                          | Use                                    |
 | ---------------- | -------------------------------- | -------------------------------------- |
 | `PUBLIC_APP_URL` | `https://linklog.facundopri.com` | Target of every "Start your library"   |
-| `LANDING_SITE`   | `https://linklog.facundopri.com` | Canonical URL, `og:url` and `og:image` |
+| `LANDING_SITE`   | `https://linklog.facundopri.com` | Canonical URL, `og:url` and `og:image` (CI sets the workers.dev URL) |
 
-`dist/` is a static folder: it can go on Cloudflare Pages or Workers Static Assets as is. It is not
-wired into the app's `wrangler.jsonc`, so deploying the app never touches it.
+## Deploy
+
+The landing is its own assets-only Worker, `linklog-landing` (`wrangler.jsonc` here), separate from
+the app's `wrangler.jsonc`: deploying one never touches the other.
+
+- **Production.** `.github/workflows/deploy-landing.yml` builds and runs `wrangler deploy` on every
+  push to main that changes `apps/landing/` (or a manual run). It is served at
+  https://linklog-landing.facundo-prieto321.workers.dev.
+- **Pull requests.** `.github/workflows/landing-preview.yml` publishes a Workers Preview named
+  `pr-<number>` for a same-repository PR that changes `apps/landing/`, and comments its URL on the
+  PR. The build runs without credentials; closing the PR deletes the preview.
+
+To serve it from your own domain: add
+`"routes": [{ "pattern": "<host>", "custom_domain": true }]` to `wrangler.jsonc` (the zone must be
+on the same Cloudflare account) and set the `LANDING_SITE` repository variable to `https://<host>`
+so canonical and social URLs follow. Never use the app's `linklog.facundopri.com`.
 
 ## Layout
 
