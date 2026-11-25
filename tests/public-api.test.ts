@@ -7,7 +7,7 @@ import { client, makeEnv } from "./support/env";
 import { testApiKey, testSession } from "./support/auth.test-instance";
 import { keyRoutes } from "./support/api-key-routes";
 import { libraryOf as library, quotaUsed } from "./support/library";
-import { expect429, setUsed, stayInsideWindow } from "./support/quota";
+import { expect429, setUsed, stayInsideWindows } from "./support/quota";
 
 type Result = { input: string; url: string; id: string; status: "created" | "duplicate" };
 type Submitted = { results: Result[]; rejected: { input: string; error: string }[]; batchId?: string };
@@ -469,10 +469,7 @@ describe("ownership", () => {
 describe("limits", () => {
   const one = () => submit(keyA.key, { urls: ["https://api.example/limited"] });
   // A test that starts just before a window resets would see its counters start over mid-test.
-  beforeEach(async () => {
-    await stayInsideWindow(60);
-    await stayInsideWindow(3600);
-  });
+  stayInsideWindows(60, 3600);
 
   const webWrite = () => call("/api/tags", { cookie: A.cookie, body: { name: "x" } });
   const counters = () => db.sqlite.query("SELECT key,window_start,count FROM app_rate_limits ORDER BY key").all();

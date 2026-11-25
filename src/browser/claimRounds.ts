@@ -11,12 +11,20 @@ type ClaimResult = Commands["claim"]["result"];
 export async function claimRounds(
   claim: (tabInstanceIds: string[] | undefined) => Promise<ClaimResult>,
   submit: (claim: ClaimResult) => Promise<void>,
-  tabInstanceIds?: string[],
-  maxRounds = 50,
+  {
+    tabInstanceIds,
+    maxRounds = 50,
+    cancelled = () => false,
+  }: {
+    tabInstanceIds?: string[];
+    maxRounds?: number;
+    /** The user cancelled the run: claim nothing more. */
+    cancelled?: () => boolean;
+  } = {},
 ) {
   let remaining = tabInstanceIds;
   for (let round = 0; round < maxRounds; round++) {
-    if (remaining && !remaining.length) return;
+    if ((remaining && !remaining.length) || cancelled()) return;
     const result = await claim(remaining);
     if (result.requestId) await submit(result);
     if (!result.skipped) return;

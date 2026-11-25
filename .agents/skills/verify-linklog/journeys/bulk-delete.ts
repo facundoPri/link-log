@@ -1,6 +1,7 @@
 // bulk-delete (FAC-46): selected links are deleted from the ⌘K palette (desktop) and the drawer (mobile) after a
 // confirmation with the count. Content and tag assignments go, tags stay, a link with a running job is deleted too and
-// its job shows in Activity as cancelled because the link was deleted, the list updates from the library the request
+// its job shows in Activity as cancelled because the link was deleted (as "Deleted link" once the cron forgot its title,
+// FAC-264), the list updates from the library the request
 // returns, and Demo B can't delete Demo A's links.
 import type { Journey } from "../scripts/journey";
 
@@ -106,6 +107,18 @@ export default (async ({ page, api, apiAs, fixture, step, check, shot, note }) =
     const j = detail.jobs[0];
     return detail.jobs.length === 1 && j && j.link_id === null && j.status === "failed" && j.step === "Cancelled" && j.error === "Cancelled: link deleted" && j.title && j;
   });
+  // Its batch has no other job, so the cron (every 30 s here) forgets the link's title (FAC-264).
+  const forgotten = await check(
+    "API: once the batch is finished, the job forgets the link's title and URL",
+    async () => {
+      const detail = (await api.get(`/batches/${slowBatch}`)) as { jobs: { title: string | null; link_title: string | null; error: string | null }[] };
+      const raw = JSON.stringify(detail.jobs);
+      const j = detail.jobs[0];
+      return j && j.title === "Deleted link" && j.link_title === null && j.error === "Cancelled: link deleted" && !raw.includes(running.title) && !raw.includes(new URL(slow).pathname) && j;
+    },
+    { timeout: 45_000 },
+  );
+  await note("forgotten-job", forgotten);
   await note("cancelled-job", cancelledJob);
   await check("API: the batch counts it as cancelled, not failed", async () => {
     const b = (await api.library()).batches.find((x) => x.id === slowBatch);
@@ -115,7 +128,8 @@ export default (async ({ page, api, apiAs, fixture, step, check, shot, note }) =
   await page.getByRole("button", { name: /^(Activity|Extracting)/ }).click();
   const sheet = page.getByRole("dialog", { name: "Activity" });
   await sheet.getByText("Extract context", { exact: true }).first().click();
-  await check("Sheet: the job is listed under the deleted link's title", () => sheet.getByText(cancelledJob.title!, { exact: true }).first().isVisible());
+  await check("Sheet: the job reads Deleted link", () => sheet.getByText("Deleted link", { exact: true }).first().isVisible());
+  await check("Sheet: the deleted link's title is gone", async () => !(await sheet.getByText(running.title, { exact: true }).count()));
   await check("Sheet: it says Cancelled: link deleted", () => sheet.getByText("Cancelled: link deleted", { exact: true }).first().isVisible());
   await snap("05-activity-cancelled");
   await page.keyboard.press("Escape");

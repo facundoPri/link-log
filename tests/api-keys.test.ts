@@ -7,13 +7,13 @@ import { TestD1 } from "./support/d1";
 import { client, makeEnv } from "./support/env";
 import { createTestAuth, testApiKey, testSession } from "./support/auth.test-instance";
 import { keyRoutes, type PluginKey } from "./support/api-key-routes";
-import { expect429, setUsed, stayInsideWindow } from "./support/quota";
+import { expect429, setUsed, stayInsideWindows } from "./support/quota";
 
 let db: TestD1, env: Env, call: ReturnType<typeof client>;
 let A: { userId: string; cookie: string }, B: { userId: string; cookie: string };
 
+stayInsideWindows(60);
 beforeEach(async () => {
-  await stayInsideWindow(60);
   db = await TestD1.migrated();
   ({ env } = makeEnv(db));
   call = client(env);

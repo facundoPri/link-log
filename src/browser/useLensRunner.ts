@@ -73,9 +73,9 @@ export function useLensRunner(browser: BrowserState, active: Lens[], allLenses: 
   /** Records an accepted request; its batch enters the library, so Activity and the sidebar show it. */
   const accepted = useCallback(
     async (requestId: string, status: { batchId: string; targets: { targetKey: string; jobId: string }[] }, run?: SessionRun) => {
-      // If the extension call throws, the batch still runs, just without a progress toast.
-      await request("accepted", { requestId, batchId: status.batchId, jobs: status.targets.map((t) => ({ targetKey: t.targetKey, jobId: t.jobId })) });
+      // Joins the run first, so a Cancel meanwhile (or a failed acknowledgement below) still covers this batch.
       run?.add(status.batchId);
+      await request("accepted", { requestId, batchId: status.batchId, jobs: status.targets.map((t) => ({ targetKey: t.targetKey, jobId: t.jobId })) });
       void invalidateLibrary();
     },
     [request, invalidateLibrary],
@@ -85,6 +85,8 @@ export function useLensRunner(browser: BrowserState, active: Lens[], allLenses: 
   const submit = useCallback(
     async (ref: LensRef, claim: ClaimResult, run?: SessionRun) => {
       if (!claim.requestId || !claim.targets.length || !catalog || !hello) return;
+      // Claimed before the user cancelled the run: release it as a cancelled batch's targets would end.
+      if (run?.cancelled) return void (await request("release", { requestId: claim.requestId, error: "Cancelled.", state: "failed" }));
       const body = {
         kind: "lens" as const,
         requestId: claim.requestId,
@@ -124,7 +126,7 @@ export function useLensRunner(browser: BrowserState, active: Lens[], allLenses: 
         await claimRounds(
           (tabInstanceIds) => request("claim", { ...extra, lens: ref, limit: 20, tabInstanceIds }, 120_000),
           (claim) => submit(ref, claim, run),
-          extra.tabInstanceIds,
+          { tabInstanceIds: extra.tabInstanceIds, cancelled: () => !!run?.cancelled },
         );
       } finally {
         run?.end();

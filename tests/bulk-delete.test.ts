@@ -4,6 +4,8 @@
 // flight does afterwards can write for a deleted link. Cross-owner attempts are covered in isolation.test.ts.
 import { afterEach, expect, test } from "bun:test";
 import { fakes, resetClock, setup } from "./worker-harness";
+import { DELETED_LINK, forgetDeletedLinkTitles } from "../worker/delete-links";
+import worker from "../worker/index";
 
 afterEach(resetClock);
 
@@ -257,4 +259,59 @@ test("unknown ids are ignored and duplicates count once", async () => {
   await drain(s);
   const res = await bulkDelete(s, [id, id, "missing"]);
   expect(res.data.deleted).toEqual([id]);
+});
+
+// FAC-264: a deleted link's title (or URL) stays on its jobs only while their batch still runs, so Activity can
+// say which link was cancelled; the cron's sweep then forgets it and Activity names the job "Deleted link".
+test("once its batch has no unfinished job, a deleted link's jobs forget its title and Activity still says why", async () => {
+  const s = await setup();
+  const id = await save(s, "https://example.com/forget-me");
+  const job = (s.db.query("SELECT id FROM jobs WHERE link_id=?").get(id) as { id: string }).id;
+  await bulkDelete(s, [id]);
+  expect(jobRow(s, job).link_title).toBeTruthy();
+
+  await forgetDeletedLinkTitles(s.env);
+  expect(jobRow(s, job)).toEqual({ link_id: null, link_title: null, status: "failed", step: "Cancelled", error: DELETED });
+  expect(await activityJob(s, batchOf(s, job), job)).toMatchObject({ title: DELETED_LINK, step: "Cancelled", error: DELETED });
+  const stored = JSON.stringify(s.db.query("SELECT * FROM jobs WHERE id=?").get(job));
+  expect(stored).not.toContain("forget-me");
+});
+
+test("a deleted link's title stays while its batch still runs, and goes once the batch finishes", async () => {
+  const s = await setup();
+  const imported = await s.api("/import", "POST", { urls: ["https://example.com/gone", "https://example.com/stays"] });
+  expect(imported.status).toBe(200);
+  const rows = s.db.query("SELECT j.id,j.link_id,l.url FROM jobs j JOIN links l ON l.id=j.link_id").all() as { id: string; link_id: string; url: string }[];
+  const gone = rows.find((r) => r.url.includes("/gone"))!;
+  const stays = rows.find((r) => r.url.includes("/stays"))!;
+  expect(batchOf(s, gone.id)).toBe(batchOf(s, stays.id));
+
+  await bulkDelete(s, [gone.link_id]);
+  await forgetDeletedLinkTitles(s.env);
+  const title = jobRow(s, gone.id).link_title;
+  expect(title).toBeTruthy();
+  expect((await activityJob(s, batchOf(s, gone.id), gone.id))?.title).toBe(title);
+  // A job waiting behind another batch's job on its link still counts as unfinished.
+  s.db.query("UPDATE jobs SET status='waiting' WHERE id=?").run(stays.id);
+  await forgetDeletedLinkTitles(s.env);
+  expect(jobRow(s, gone.id).link_title).toBe(title);
+  s.db.query("UPDATE jobs SET status='queued' WHERE id=?").run(stays.id);
+
+  await drain(s);
+  expect(jobRow(s, stays.id).status).toBe("done");
+  await forgetDeletedLinkTitles(s.env);
+  expect(jobRow(s, gone.id).link_title).toBeNull();
+  expect((await activityJob(s, batchOf(s, gone.id), gone.id))?.title).toBe(DELETED_LINK);
+  expect((await activityJob(s, batchOf(s, stays.id), stays.id))?.title).not.toBe(DELETED_LINK);
+});
+
+test("the cron runs the sweep", async () => {
+  const s = await setup();
+  const id = await save(s, "https://example.com/by-cron");
+  const job = (s.db.query("SELECT id FROM jobs WHERE link_id=?").get(id) as { id: string }).id;
+  await bulkDelete(s, [id]);
+  const waits: Promise<unknown>[] = [];
+  await worker.scheduled!({} as ScheduledController, s.env, { waitUntil: (p: Promise<unknown>) => waits.push(p) } as unknown as ExecutionContext);
+  await Promise.allSettled(waits);
+  expect(jobRow(s, job).link_title).toBeNull();
 });

@@ -85,6 +85,26 @@ function requireScope(c: Connection): string {
   return c.scope ?? fail("Connect first.");
 }
 
+/**
+ * Scope changes per connection (sign-outs and account switches): a binding taken before one is stale even if
+ * the connection returns to the same account.
+ */
+const rebinds = new WeakMap<Connection, number>();
+
+function bindScope(c: Connection, scope: string | null) {
+  if (c.scope === scope) return;
+  c.scope = scope;
+  rebinds.set(c, (rebinds.get(c) ?? 0) + 1);
+}
+
+/** The account a request started under, and whether that same binding still holds. */
+function binding(c: Connection) {
+  const scope = requireScope(c);
+  const at = rebinds.get(c) ?? 0;
+  return { scope, bound: () => c.scope === scope && (rebinds.get(c) ?? 0) === at };
+}
+type Binding = ReturnType<typeof binding>;
+
 function isWebUrl(url: string) {
   try {
     const { protocol } = new URL(url);
@@ -106,13 +126,13 @@ async function groupInWindow(groupId: number, windowId: number) {
   return group!;
 }
 
-async function groupOpened(target: MoveTarget, ledger: OpenRecord, windowId: number, scope: string, s: Services): Promise<OpenGroupOutcome> {
+async function groupOpened(target: MoveTarget, ledger: OpenRecord, windowId: number, b: Binding, s: Services): Promise<OpenGroupOutcome> {
   const previous = ledger.groupId();
   const reuse = previous !== null && (await chrome.tabGroups.get(previous).catch(() => null))?.windowId === windowId;
   try {
     const into: MoveTarget = reuse ? { kind: "group", groupId: previous! } : target;
     // The destination first: the pin read below must be the last await before Chrome groups.
-    const dest = await destinationGroup(into, windowId, scope, s);
+    const dest = await destinationGroup(into, windowId, b.scope, s);
     const live = await Promise.all(ledger.tabIds().map((id) => chrome.tabs.get(id).catch(() => null)));
     // A retry leaves alone the tabs the user grouped elsewhere since the first attempt.
     const tabIds = live
@@ -120,7 +140,7 @@ async function groupOpened(target: MoveTarget, ledger: OpenRecord, windowId: num
       .filter((t) => t?.windowId === windowId && !t.pinned && ((t.groupId ?? -1) < 0 || t.groupId === previous))
       .map((t) => t!.id!);
     if (!tabIds.length) return { ok: false, error: "No new tab was opened, so nothing was grouped." };
-    const groupId = await groupTabs(into, dest, tabIds as [number, ...number[]], windowId, scope, s);
+    const groupId = await groupTabs(into, dest, tabIds as [number, ...number[]], windowId, b, s);
     await ledger.recordGroup(groupId);
     return { ok: true, groupId, grouped: tabIds.length };
   } catch (error) {
@@ -140,15 +160,18 @@ async function destinationGroup(target: MoveTarget, windowId: number, scope: str
 }
 
 /** Moves the tabs into `dest` (from destinationGroup), or into a new group for the target. Returns the group's id. */
-async function groupTabs(target: MoveTarget, dest: number | null, tabIds: [number, ...number[]], windowId: number, scope: string, s: Services) {
+async function groupTabs(target: MoveTarget, dest: number | null, tabIds: [number, ...number[]], windowId: number, b: Binding, s: Services) {
   if (dest !== null) return chrome.tabs.group({ groupId: dest, tabIds });
   if (target.kind === "group") return fail("The group is not in this window any more.");
   const groupId = await chrome.tabs.group({ tabIds, createProperties: { windowId } });
   await chrome.tabGroups.update(groupId, { title: target.title, color: target.color });
+  // Signed out meanwhile (forget unbinds before it cleans): the group stays, its metadata isn't written for
+  // the forgotten account. Checked in the same tick as set queues behind forget's cleanup.
+  if (!b.bound()) return groupId;
   await s.groups.set(
     groupId,
     { description: target.description, pinnedId: target.kind === "pinned" ? target.pinnedId : null },
-    scope,
+    b.scope,
   );
   return groupId;
 }
@@ -171,7 +194,7 @@ function sleepProblem(tab: chrome.tabs.Tab): string | null {
 
 const handlers: { [K in keyof Commands]: Handler<K> } = {
   async hello(args, { c, windowId, s }) {
-    c.scope = args.libraryScope;
+    bindScope(c, args.libraryScope);
     c.windowId = windowId;
     return {
       protocol: PROTOCOL_VERSION,
@@ -185,10 +208,18 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
   },
   async forget(_args, { c, s }) {
     const scope = requireScope(c);
-    const result = await s.cache.forget(scope);
-    await s.groups.forget(scope);
-    c.scope = null;
-    return result;
+    // Unbind first, and every page of the account (its other tabs are signed out too): a request that took its
+    // binding earlier finds it stale, even if the account connects again, so nothing is written after the cleanup.
+    for (const other of [...s.hub.connections.values(), c]) if (other.scope === scope) bindScope(other, null);
+    try {
+      const result = await s.cache.forget(scope);
+      await s.groups.forget(scope);
+      return result;
+    } finally {
+      // The run belongs to the browser, not the account; signing out ends it like Cancel, even if the cleanup
+      // above failed, and its captures stay (owner's decision on FAC-265).
+      await s.loader.control("cancel");
+    }
   },
   async snapshot(_args, { c, s }) {
     requireScope(c);
@@ -207,7 +238,7 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
     };
   },
   async claim(args, { c, windowId, s }) {
-    const scope = requireScope(c);
+    const { scope, bound } = binding(c);
     const source = args.source ?? "dom";
     const snap = await s.hub.snapshot(windowId, c.scope);
     const explicit = args.tabInstanceIds ? new Set(args.tabInstanceIds) : null;
@@ -234,6 +265,7 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
       force: args.force && explicit ? explicit : undefined,
       limit: args.limit ?? 20,
       resumeRequestId: args.resumeRequestId,
+      bound,
     });
     if (!requestId) return { requestId: null, targets: [], skipped, attempted: [] };
     const targets: ClaimTarget[] = [];
@@ -411,7 +443,7 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
     return { items };
   },
   async moveToGroup(args, { c, windowId, s }) {
-    const scope = requireScope(c);
+    const b = binding(c);
     const { ok, items } = await each(args.tabs, windowId, s, (tab) =>
       tab.pinned
         ? PINNED_KEPT
@@ -421,7 +453,7 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
           : null,
     );
     if (!ok.length) return { items, groupId: null };
-    const dest = await destinationGroup(args.target, windowId, scope, s);
+    const dest = await destinationGroup(args.target, windowId, b.scope, s);
     // Chrome unpins a tab it groups: re-read every pin (and, for Autogroup, every group) together, as the
     // last read before the mutation.
     const fresh = await Promise.all(ok.map((tab) => chrome.tabs.get(tab.id!).catch(() => null)));
@@ -440,7 +472,7 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
     }
     const tabIds = ok.map((t) => t.id!) as [number, ...number[]];
     if (!tabIds.length) return { items, groupId: null };
-    const groupId = await groupTabs(args.target, dest, tabIds, windowId, scope, s);
+    const groupId = await groupTabs(args.target, dest, tabIds, windowId, b, s);
     s.hub.schedule(0);
     return { items, groupId };
   },
@@ -482,8 +514,8 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
     return {};
   },
   async openTabs(args, { c, windowId, s }) {
-    const scope = requireScope(c);
-    const result = await s.opens.run(scope, args.operationId, async (ledger) => {
+    const b = binding(c);
+    const result = await s.opens.run(b.scope, args.operationId, async (ledger) => {
       const present = new Set(
         (await chrome.tabs.query({ windowId })).map((t) => documentKey(t.url || t.pendingUrl || "")),
       );
@@ -512,12 +544,13 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
         }
       }
       if (!args.target) return { items };
-      return { items, group: await groupOpened(args.target, ledger, windowId, scope, s) };
+      return { items, group: await groupOpened(args.target, ledger, windowId, b, s) };
     });
     s.hub.schedule(0);
     return result;
   },
-  async loadContent(args, { windowId, s }) {
+  async loadContent(args, { c, windowId, s }) {
+    const { bound } = binding(c);
     const snap = await s.hub.snapshot(windowId, null);
     const add: Parameters<LoadQueue["add"]>[0] = [];
     const { items } = await each(args.tabs, windowId, s, (tab, ref) => {
@@ -530,6 +563,8 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
       add.push({ tabInstanceId: dto.tabInstanceId, windowId, documentRevision: dto.documentRevision, url: tab.url || dto.url, reason: dto.sleep });
       return null;
     });
+    // Signed out while the tabs were checked: forget already cancelled the run, so don't start another.
+    if (!bound()) fail("Connect first.");
     if (add.length) await s.loader.add(add);
     return { items, loadRun: s.loader.runView(windowId) };
   },

@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { TestD1 } from "./support/d1";
 import { client, makeEnv } from "./support/env";
 import { testApiKey, testSession } from "./support/auth.test-instance";
-import { stayInsideWindow } from "./support/quota";
+import { stayInsideWindows } from "./support/quota";
 import { keyRoutes } from "./support/api-key-routes";
 
 type Quota = { used: number; max: number; windowSeconds: number; resetsAt: string };
@@ -14,10 +14,9 @@ let db: TestD1, env: Env, call: ReturnType<typeof client>;
 let A: { userId: string; cookie: string }, B: { userId: string; cookie: string };
 let keyA: { id: string; key: string }, keyA2: { id: string; key: string };
 
+// The hour and month a test reads must be the ones it wrote in.
+stayInsideWindows(3600, "month");
 beforeEach(async () => {
-  // The hour and month a test reads must be the ones it wrote in.
-  await stayInsideWindow(3600);
-  await stayInsideWindow("month");
   db = await TestD1.migrated();
   ({ env } = makeEnv(db));
   call = client(env);

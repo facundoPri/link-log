@@ -100,9 +100,12 @@ export class ResultCache {
     force?: Set<string>;
     limit: number;
     resumeRequestId?: string;
+    /** Checked under the lock: false once the scope was forgotten (sign-out) after the caller checked it. */
+    bound: () => boolean;
   }): Promise<{ requestId: string | null; claimed: Claimed[]; skipped: number }> {
     return this.mutex.run(async () => {
       const { scope, session, lens } = input;
+      if (!input.bound()) return { requestId: null, claimed: [], skipped: 0 };
       if (input.resumeRequestId) {
         const req = await this.kv.get<RequestRecord>(REQ + input.resumeRequestId);
         if (!req || req.batchId) return { requestId: null, claimed: [], skipped: 0 };

@@ -21,7 +21,7 @@ function setup() {
 const tabs = (count: number, from = 0): Candidate[] =>
   Array.from({ length: count }, (_, i) => ({ tabInstanceId: `t${from + i}`, documentRevision: 0, eligible: true }));
 const claim = (cache: ResultCache, lens = lensA, candidates = tabs(20), extra = {}) =>
-  cache.claim({ scope, session, lens, candidates, limit: 100, ...extra });
+  cache.claim({ scope, session, lens, candidates, limit: 100, bound: () => true, ...extra });
 async function finish(cache: ResultCache, requestId: string, keys: string[], rev = () => 0) {
   await cache.accepted(requestId, "batch", keys.map((k, i) => ({ targetKey: k, jobId: `job${i}` })));
   return cache.deposit(
@@ -62,7 +62,7 @@ describe("result cache", () => {
     const pending = await cache.pending(scope);
     expect(pending.map((p) => p.requestId)).toEqual([c.requestId!]);
     expect(pending[0]!.targets.every((t) => t.state === "submitting")).toBe(true);
-    const resumed = await cache.claim({ scope, session, lens: lensA, candidates: tabs(2), limit: 20, resumeRequestId: c.requestId! });
+    const resumed = await cache.claim({ scope, session, lens: lensA, candidates: tabs(2), limit: 20, resumeRequestId: c.requestId!, bound: () => true });
     expect(resumed.requestId).toBe(c.requestId);
     expect(resumed.claimed).toHaveLength(2);
     // no other page can claim them meanwhile
@@ -135,7 +135,7 @@ describe("result cache", () => {
     expect(await cache.getCapture("c7", 0, "dom")).not.toBeNull();
     const tiny = memoryKV(2000);
     const small = new ResultCache(tiny, new Mutex(), () => 1, uuid);
-    await expect(small.claim({ scope, session, lens: lensA, candidates: tabs(30), limit: 30 })).rejects.toBeInstanceOf(QuotaError);
+    await expect(small.claim({ scope, session, lens: lensA, candidates: tabs(30), limit: 30, bound: () => true })).rejects.toBeInstanceOf(QuotaError);
     void kv;
   });
 });

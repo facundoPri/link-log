@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { documentKey, LOADING_BOUND_MS, type BrowserTab, type PageRequest, type WindowSnapshot } from "@linklog/browser-protocol";
 import { fakeChrome } from "./fake-chrome";
 import { ResultCache } from "../src/background/cache";
@@ -78,6 +78,17 @@ function sleepingTabs(count: number, reason: "unloaded" | "frozen" | "not-loaded
   const ids = Array.from({ length: count }, (_, i) => i + 1);
   for (const id of ids) fake.addSleeping(id, site(id), reason);
   return ids;
+}
+
+/** Holds the next window read until `release`, so a request can be caught before its binding check. */
+function holdNextTabQuery() {
+  const gate = Promise.withResolvers<void>();
+  const query = chrome.tabs.query.bind(chrome.tabs);
+  spyOn(chrome.tabs, "query").mockImplementationOnce(async (info: chrome.tabs.QueryInfo) => {
+    await gate.promise;
+    return query(info);
+  });
+  return gate.resolve;
 }
 
 beforeEach(() => {
@@ -291,6 +302,63 @@ describe("Load content", () => {
     expect(final.loadRun!.skipped).toBeGreaterThan(0);
     const done = final.tabs.filter((t) => t.load?.state === "done");
     expect(done.every((t) => !!t.capturedAt)).toBe(true);
+    expect(snap.loadRun!.status).toBe("cancelled");
+  });
+
+  // FAC-265 (owner's decision): signing out cancels a running Load content run like Cancel does; captures stay.
+  test("sign-out cancels a running Load content run, keeping what it captured", async () => {
+    await setup();
+    const ids = sleepingTabs(8);
+    fake.loadMs = 30;
+    await run("loadContent", { tabs: await refs(ids) });
+    await until("one done", async () => ((await snapshot()).loadRun?.done ?? 0) >= 1);
+    await run("forget", {});
+    await run("hello", { libraryScope: "local:lib" });
+    const snap = await settled(["cancelled"]);
+    await until("everything asleep", () => ids.every((id) => fake.tabs.get(id)!.discarded));
+    expect(snap.loadRun!.status).toBe("cancelled");
+    const final = await snapshot();
+    expect(final.loadRun!.skipped).toBeGreaterThan(0);
+    expect(final.tabs.filter((t) => t.load?.state === "done").every((t) => !!t.capturedAt)).toBe(true);
+    expect(ids.reduce((n, id) => n + fake.count("reload", id), 0)).toBeLessThan(8);
+  });
+
+  test("a Load content request still on its way when sign-out runs wakes nothing", async () => {
+    await setup();
+    const ids = sleepingTabs(3);
+    const load = run("loadContent", { tabs: await refs(ids) }).catch((e: Error) => e);
+    await run("forget", {});
+    const result = await load;
+    await Bun.sleep(50);
+    expect(result).toBeInstanceOf(Error);
+    expect(ids.reduce((n, id) => n + fake.count("reload", id), 0)).toBe(0);
+  });
+
+  test("a Load content request still on its way when sign-out runs wakes nothing, even if the account connects again", async () => {
+    await setup();
+    const ids = sleepingTabs(3);
+    const tabs = await refs(ids);
+    const release = holdNextTabQuery();
+    const load = run("loadContent", { tabs }).catch((e: Error) => e);
+    await run("forget", {});
+    await run("hello", { libraryScope: "local:lib" });
+    release();
+    const result = await load;
+    await Bun.sleep(50);
+    expect(result).toBeInstanceOf(Error);
+    expect(ids.reduce((n, id) => n + fake.count("reload", id), 0)).toBe(0);
+  });
+
+  test("sign-out cancels the Load content run even when clearing the account's data fails", async () => {
+    await setup();
+    const ids = sleepingTabs(8);
+    fake.loadMs = 30;
+    await run("loadContent", { tabs: await refs(ids) });
+    await until("one done", async () => ((await snapshot()).loadRun?.done ?? 0) >= 1);
+    s.cache.forget = () => Promise.reject(new Error("storage failed"));
+    await expect(run("forget", {})).rejects.toThrow("storage failed");
+    await run("hello", { libraryScope: "local:lib" });
+    const snap = await settled(["cancelled"]);
     expect(snap.loadRun!.status).toBe("cancelled");
   });
 

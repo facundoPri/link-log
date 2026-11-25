@@ -221,6 +221,8 @@ se abre la página **Connect**, donde se concede (o no) el acceso a contenido.
   el usuario activó, que suena o que navegó queda despierta. Si Chrome no deja dormirla, la corrida se
   pausa. Pausa, cancelar (duerme lo despertado) y reintentar fallidas. El progreso viaja en el
   snapshot/patch (`BrowserTab.load`, `WindowSnapshot.loadRun`). Nunca guarda en la biblioteca.
+- Cerrar sesión (`forget`) cancela la corrida de Load content en curso, como Cancel, aunque la haya
+  empezado otra cuenta: la corrida es del navegador. Las capturas quedan (decisión del dueño en FAC-265).
 - En la vista, un solo filtro de contenido a la vez (`CONTENT_FILTERS` en `src/browser/sleeping.ts`):
   *Sleeping* y *Couldn't load* (las fallidas de la corrida), con su botón en la cabecera, su chip y su
   botón en el banner (*Show sleeping*, *Show failed*). Seleccionarlas es *Select all* sobre la vista.
