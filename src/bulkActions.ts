@@ -185,7 +185,7 @@ export function actionState<T, C>(action: SelectionAction<T, never, C>, selected
     action,
     availability,
     disabled: !!blocked || !selected.length,
-    reason: blocked ?? (skipped.length ? (action.partial?.(skipped.length, selected.length) ?? `${skipped.length} skipped`) : (action.hint ?? null)),
+    reason: blocked ?? (skipped.length ? [action.partial?.(skipped.length, selected.length) ?? `${skipped.length} skipped`, action.hint].filter(Boolean).join(". ") : (action.hint ?? null)),
     badge: !blocked && eligible.length < selected.length ? `${eligible.length}/${selected.length}` : null,
   };
 }

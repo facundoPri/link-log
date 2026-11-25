@@ -108,6 +108,23 @@ describe("Sleeping tabs", () => {
     expect((await tabOf(1)).content).toBe("stalled");
   });
 
+  test("a page sees a tab turn stalled when the loading bound passes, without another browser event", async () => {
+    await setup();
+    const timers: { fn: () => void; ms: number }[] = [];
+    s.hub.later = (fn, ms) => timers.push({ fn, ms });
+    const sent: { snapshot?: WindowSnapshot; patch?: { tabs?: BrowserTab[] } }[] = [];
+    c.port = { postMessage: (m: never) => void sent.push(m) } as unknown as chrome.runtime.Port;
+    fake.addTab(1, site(1), 1, { status: "loading" });
+    let now = 1_000_000;
+    s.hub.now = () => now;
+    expect((await tabOf(1)).content).toBe("loading");
+    const bound = timers.find((t) => t.ms >= LOADING_BOUND_MS);
+    expect(bound).toBeDefined();
+    now += LOADING_BOUND_MS + 1;
+    bound!.fn();
+    await until("a pushed update with the tab stalled", () => JSON.stringify(sent).includes('"stalled"'));
+  });
+
   test("connecting, snapshots, lenses and previews never wake a tab", async () => {
     await setup();
     sleepingTabs(3, "not-loaded");
@@ -147,6 +164,20 @@ describe("Load content", () => {
     expect(read.captures[0].capture.markdown).toBe("# Captured while awake");
     const claim = await run("claim", { lens: { id: "lens", fingerprint: "fp" }, limit: 20 });
     expect(claim.targets.map((t: { tabId: number }) => t.tabId)).toEqual([1]);
+    expect(fake.count("reload", 1)).toBe(1);
+  });
+
+  test("a lens waits for a tab Load content is still on, then reads its capture", async () => {
+    await setup();
+    sleepingTabs(1);
+    fake.loadMs = 40;
+    await run("loadContent", { tabs: await refs([1]) });
+    await until("tab awake and loaded", () => fake.tabs.get(1)!.status === "complete" && !fake.tabs.get(1)!.discarded);
+    const during = await run("claim", { lens: { id: "lens", fingerprint: "fp" }, limit: 20 });
+    expect(during.targets).toEqual([]);
+    await settled();
+    const after = await run("claim", { lens: { id: "lens", fingerprint: "fp" }, limit: 20 });
+    expect(after.targets.map((t: { tabId: number }) => t.tabId)).toEqual([1]);
     expect(fake.count("reload", 1)).toBe(1);
   });
 
@@ -391,6 +422,20 @@ describe("Load content", () => {
     expect(fake.count("reload")).toBeLessThan(6);
   });
 
+  test("a tab Chrome kept awake after a failed put-back counts against the awake limit after Resume", async () => {
+    await setup();
+    const ids = sleepingTabs(6);
+    fake.discardErrors.set(1, "Cannot discard tab");
+    await run("loadContent", { tabs: await refs(ids) });
+    await settled(["paused"]);
+    fake.loadMs = 30;
+    await run("loadControl", { action: "resume" });
+    await until("run finished or paused", async () => ["done", "paused"].includes((await snapshot()).loadRun!.status));
+    const awake = () => ids.filter((id) => !fake.tabs.get(id)!.discarded).length;
+    expect(fake.maxAwakeByReload()).toBeLessThanOrEqual(N);
+    expect((await snapshot()).loadRun!.awake).toBe(awake());
+  });
+
   test("a second request, from another Linklog page too, joins the running run", async () => {
     await setup();
     const ids = sleepingTabs(6);
@@ -428,6 +473,8 @@ describe("Load content", () => {
     const result = await run("loadContent", { tabs: await refs([1, 2, 3]) });
     expect(result.items.map((i: { ok: boolean }) => i.ok)).toEqual([true, false, false]);
     expect(result.items[1].error).toMatch(/already loaded/i);
+    // The admitted tab finishes here, not in the next test's browser.
+    await settled();
   });
 
   test("wakes and sleeps keep pin, pinned order, group and window", async () => {
@@ -504,6 +551,22 @@ describe("Pinned tabs", () => {
     expect(result.items[0].error).toMatch(/Pinned/);
     expect([1, 3].map((id) => fake.tabs.get(id)!.pinned)).toEqual([true, true]);
     expect(fake.count("group")).toBe(1);
+  });
+
+  test("Autogroup keeps a tab the user grouped after it was checked", async () => {
+    await setup();
+    fake.addTab(1, site(1));
+    fake.addTab(2, site(2));
+    const r = await refs([1, 2]);
+    const get = chrome.tabs.get;
+    let reads = 0;
+    (chrome.tabs as { get: unknown }).get = async (id: number) => {
+      if (id === 2 && ++reads === 2) fake.tabs.get(2)!.groupId = 42;
+      return get(id);
+    };
+    const result = await run("moveToGroup", { tabs: r, onlyIfUngrouped: true, target: { kind: "new", title: "Research", color: "blue", description: "" } });
+    expect(result.items.map((i: { ok: boolean }) => i.ok)).toEqual([true, false]);
+    expect(fake.tabs.get(2)!.groupId).toBe(42);
   });
 
   test("a selection of only pinned tabs creates no group", async () => {

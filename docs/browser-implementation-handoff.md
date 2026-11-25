@@ -201,9 +201,11 @@ se abre la página **Connect**, donde se concede (o no) el acceso a contenido.
   la opción explícita **Use title** (sólo título y URL, marcada como tal).
 
 ### Pestañas dormidas, Load content y pestañas fijadas (FAC-163)
-- **Sleeping tab** (ver `GLOSSARY.md`): Chrome no tiene la página cargada. El motivo es un detalle
-  (`SleepReason`: `unloaded` = descartada, `frozen`, `not-loaded` = restaurada al iniciar y nunca
-  cargada, `status: "unloaded"` con `discarded: false`). Esta última caía antes en *Loading* para
+- **Sleeping tab** (ver `GLOSSARY.md`): Chrome no deja leer la página ahora. El motivo es un detalle
+  (`SleepReason`): `unloaded` = descartada (la página no está en memoria), `not-loaded` = restaurada al
+  iniciar y nunca cargada (`status: "unloaded"` con `discarded: false`), y `frozen` = congelada: la
+  página sigue en memoria pero sus tareas están suspendidas, así que ningún script la lee; descartarla
+  sí pierde ese estado. Esta última caía antes en *Loading* para
   siempre; la sonda nativa lo reprodujo (`planning/fac-163/run.md`).
 - **Load content** (`apps/extension/src/background/loader.ts`): una sola corrida en el worker para
   todas las páginas. Ventana deslizante de 3 pestañas despiertas, 30 s por pestaña. Cada una:

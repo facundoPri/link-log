@@ -286,8 +286,10 @@ export function TabRow({
             <DropdownMenuItem onClick={onLoad} disabled={!!cantLoad}>
               Load content
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={onSleep} disabled={!!cantSleep} title={cantSleep ?? SLEEP_WARNING}>
+            <DropdownMenuItem onClick={onSleep} disabled={!!cantSleep} className="flex-col items-start gap-0.5">
               Put to sleep
+              {/* Visible before choosing it (a title is not, by keyboard or touch). */}
+              {!cantSleep && <span className="max-w-56 text-2xs text-muted-foreground">{SLEEP_WARNING}</span>}
             </DropdownMenuItem>
             {(cantLoad || cantSleep) && (
               <DropdownMenuLabel className="max-w-56 text-2xs font-normal text-muted-foreground">

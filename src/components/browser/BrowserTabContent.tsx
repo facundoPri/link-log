@@ -173,14 +173,17 @@ export function ContentPanel({
             </TooltipTrigger>
             <TooltipContent>Copy markdown</TooltipContent>
           </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon-sm" aria-label="Read page again" onClick={onReload}>
-                <RotateCw className="size-3.5" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Read again</TooltipContent>
-          </Tooltip>
+          {/* A fresh read needs the page loaded: a sleeping tab only has its capture. */}
+          {tab.content === "available" && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="icon-sm" aria-label="Read page again" onClick={onReload}>
+                  <RotateCw className="size-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Read again</TooltipContent>
+            </Tooltip>
+          )}
         </div>
       </div>
       <div className={cn("relative mt-2", !expanded && "max-h-96 overflow-hidden")} data-capture-markdown>

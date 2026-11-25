@@ -27,7 +27,8 @@ export const canLoad = (t: BrowserTab) => t.content === "sleeping" || t.content 
 
 /** Why Put to sleep would skip this tab, or null. Mirrors the extension's check. */
 export function sleepBlocked(t: BrowserTab): string | null {
-  if (t.content === "sleeping") return "Already asleep";
+  // Chrome's own state: a sleeping tab without content access still reads "no-permission".
+  if (t.sleep || t.content === "sleeping") return "Already asleep";
   if (t.content === "restricted") return "Chrome doesn't allow putting this page to sleep";
   if (t.active) return "It's the active tab";
   if (t.audible) return "It's playing audio or video";
@@ -38,6 +39,7 @@ export function sleepBlocked(t: BrowserTab): string | null {
 export function loadBlocked(t: BrowserTab): string | null {
   if (t.content === "restricted") return "Chrome doesn't let extensions read this page";
   if (t.content === "no-permission") return "Allow page content access first";
+  if (t.content === "loading") return "Still loading";
   if (!canLoad(t)) return "Already loaded";
   return null;
 }

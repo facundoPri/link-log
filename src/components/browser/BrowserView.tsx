@@ -323,7 +323,7 @@ export function BrowserView({
             )}
           </div>
           <div className="ml-auto flex shrink-0 items-center gap-2">
-            {sleepingCount > 0 && (
+            {(sleepingCount > 0 || sleepingOnly) && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button

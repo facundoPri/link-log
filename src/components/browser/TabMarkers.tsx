@@ -38,6 +38,8 @@ export function ContentBadge({ tab }: { tab: BrowserTab }) {
       <TooltipTrigger asChild>
         <Badge
           variant="outline"
+          // Focusable so the reason and any load error open by keyboard too.
+          tabIndex={0}
           className={failed?.state === "failed" ? "gap-1 font-normal text-destructive" : "gap-1 font-normal text-muted-foreground"}
           data-content={tab.content}
         >
@@ -54,8 +56,9 @@ export function ContentBadge({ tab }: { tab: BrowserTab }) {
         </Badge>
       </TooltipTrigger>
       <TooltipContent className="max-w-64 space-y-1 text-left">
-        <div>{access.hint}</div>
-        {tab.sleep && <div className="opacity-80">{SLEEP_DETAIL[tab.sleep]}</div>}
+        {/* A sleeping tab says why it sleeps; "can't read it" only when nothing was captured. */}
+        {tab.content === "sleeping" && tab.sleep ? <div>{SLEEP_DETAIL[tab.sleep]}</div> : <div>{access.hint}</div>}
+        {tab.content === "sleeping" && tab.sleep && !tab.capturedAt && <div className="opacity-80">{access.hint}</div>}
         {tab.capturedAt && <div className="opacity-80">Content captured {relativeTime(tab.capturedAt)} is still readable.</div>}
         {failed?.error && <div className="opacity-80">{failed.error}</div>}
         {load?.note && <div className="opacity-80">{load.note}</div>}

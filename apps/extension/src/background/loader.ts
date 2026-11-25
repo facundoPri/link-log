@@ -40,6 +40,7 @@ type Item = {
 type Run = { status: LoadRunStatus; pauseReason?: string; items: Item[] };
 
 const KEY = "loadRun";
+const CLEANUP_PAUSE = "Linklog couldn't put a tab back to sleep, so loading paused. Put it to sleep or close it, then resume.";
 const IN_SLOT: LoadState[] = ["loading", "capturing", "putting-to-sleep"];
 const AWAKE_NOTE = {
   active: "You opened this tab, so it stays awake.",
@@ -104,7 +105,8 @@ export class LoadQueue {
       ...(this.run.pauseReason ? { pauseReason: this.run.pauseReason } : {}),
       total: items.length,
       queued: count("queued"),
-      awake: items.filter((i) => i.woke && IN_SLOT.includes(i.state)).length,
+      // A failed tab the run couldn't put back to sleep is still awake.
+      awake: items.filter((i) => i.woke && (IN_SLOT.includes(i.state) || i.state === "failed")).length,
       done: count("done"),
       failed: count("failed"),
       skipped: count("skipped"),
@@ -190,11 +192,20 @@ export class LoadQueue {
     const next = () =>
       run.items.find((i) => IN_SLOT.includes(i.state) && free(i)) ??
       (run.status === "running" ? run.items.find((i) => i.state === "queued" && free(i)) : undefined);
-    while (this.slots.size < this.opts.concurrency) {
+    // Tabs this run woke and couldn't put back (failed, `woke`) are still awake: they take capacity too.
+    const stuck = run.items.filter((i) => i.woke && i.state === "failed" && free(i)).length;
+    while (this.slots.size + stuck < this.opts.concurrency) {
       const item = next();
       if (!item) break;
       this.slots.add(item.tabInstanceId);
       void this.slot(item);
+    }
+    if (run.status === "running" && !this.slots.size && stuck >= this.opts.concurrency && run.items.some((i) => i.state === "queued")) {
+      // Every slot is a tab Chrome kept awake: waking more would pass the limit.
+      run.status = "paused";
+      run.pauseReason = CLEANUP_PAUSE;
+      void this.save();
+      return;
     }
     if (run.status === "running" && !this.slots.size && !run.items.some((i) => i.state === "queued" || IN_SLOT.includes(i.state))) {
       run.status = "done";
@@ -211,7 +222,7 @@ export class LoadQueue {
         Object.assign(item, { state: "failed", error: error.message });
         if (this.run && this.run.status === "running") {
           this.run.status = "paused";
-          this.run.pauseReason = "Linklog couldn't put a tab back to sleep, so loading paused. Put it to sleep or close it, then resume.";
+          this.run.pauseReason = CLEANUP_PAUSE;
         }
       } else if (error instanceof Skip) Object.assign(item, { state: "skipped", error: error.message, woke: false });
       else {

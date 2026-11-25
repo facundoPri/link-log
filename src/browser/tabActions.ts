@@ -30,6 +30,11 @@ export type TabRunners = {
 export type TabAction = SelectionAction<BrowserTab, TabRunners, TabContext>;
 
 const BUSY = "Another tab action is running";
+/** One reason shared by every skipped tab (e.g. no content access) says itself; mixed ones get `general`. */
+const sharedReason = (skipped: { reason: string }[], general: string) => {
+  const reasons = new Set(skipped.map((x) => x.reason));
+  return reasons.size === 1 ? [...reasons][0]! : general;
+};
 const grouped = (t: BrowserTab) => t.groupId !== null;
 
 export const TAB_ACTIONS: TabAction[] = [
@@ -111,7 +116,7 @@ export const TAB_ACTIONS: TabAction[] = [
     availability: (ts, ctx) => {
       const eligible = ts.filter((t) => !loadBlocked(t));
       const skipped = ts.filter((t) => loadBlocked(t)).map((item) => ({ item, reason: loadBlocked(item)! }));
-      return { eligible, skipped, blocked: !eligible.length ? "None of the selected tabs is sleeping" : ctx.busy ? BUSY : null };
+      return { eligible, skipped, blocked: !eligible.length ? sharedReason(skipped, "None of the selected tabs is sleeping") : ctx.busy ? BUSY : null };
     },
     partial: (n, total) => `${n} of ${total} aren't sleeping or can't be read`,
     run: (h, eligible) => h.load(eligible),
@@ -129,7 +134,7 @@ export const TAB_ACTIONS: TabAction[] = [
       return {
         eligible,
         skipped,
-        blocked: !eligible.length ? "Already asleep, active, playing audio or a browser page" : ctx.busy ? BUSY : null,
+        blocked: !eligible.length ? sharedReason(skipped, "Already asleep, active, playing audio or a browser page") : ctx.busy ? BUSY : null,
       };
     },
     partial: (n, total) => `${n} of ${total} are asleep, active, playing audio or a browser page`,

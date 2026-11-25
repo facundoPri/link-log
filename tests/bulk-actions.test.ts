@@ -297,14 +297,19 @@ describe("tab actions", () => {
     const s = tabState("load", [t(1, "sleeping"), t(2, "stalled"), t(3, "available"), t(4, "restricted")]);
     expect(s.availability.eligible.map((x) => x.tabId)).toEqual([1, 2]);
     expect(s.availability.skipped.map((x) => x.reason)).toEqual(["Already loaded", "Chrome doesn't let extensions read this page"]);
-    expect(tabState("load", [t(3, "available")]).reason).toBe("None of the selected tabs is sleeping");
+    expect(tabState("load", [t(3, "available")]).reason).toBe("Already loaded");
+    expect(tabState("load", [t(3, "available"), t(4, "restricted")]).reason).toBe("None of the selected tabs is sleeping");
+    expect(tabState("load", [t(5, "no-permission"), t(6, "no-permission")]).reason).toBe("Allow page content access first");
+    expect(tabState("load", [t(7, "loading")]).reason).toBe("Still loading");
   });
 
   test("put to sleep skips asleep, active and audible tabs and always warns about unsaved changes", () => {
     const t = (id: number, over: Partial<BrowserTab>) => ({ ...tab(id), content: "available", ...over }) as BrowserTab;
     const s = tabState("sleep", [t(1, {}), t(2, { content: "sleeping" }), t(3, { active: true }), t(4, { audible: true })]);
     expect(s.availability.eligible.map((x) => x.tabId)).toEqual([1]);
-    expect(s.reason).toBe("3 of 4 are asleep, active, playing audio or a browser page");
+    // A mixed selection shows the skip count and still the warning.
+    expect(s.reason).toBe(`3 of 4 are asleep, active, playing audio or a browser page. ${SLEEP_WARNING}`);
+    expect(tabState("sleep", [t(5, { content: "no-permission", sleep: "unloaded" })]).reason).toBe("Already asleep");
     expect(tabState("sleep", [t(1, {})]).reason).toBe(SLEEP_WARNING);
     expect(tabState("sleep", [t(2, { content: "sleeping" })]).disabled).toBe(true);
   });

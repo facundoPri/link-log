@@ -132,14 +132,19 @@ export async function sleepingChecks(ctx: Ctx) {
     });
 
     await check("the Sleeping filter lists only sleeping tabs and shows their count", async () => {
-      await click(`document.querySelector('button[aria-label^="Show only sleeping tabs"]')`);
-      await Bun.sleep(400);
-      const shown = await rows();
-      const label = await dom<string>(`return document.querySelector('button[aria-label^="Show only sleeping tabs"]').getAttribute("aria-label")`);
-      assert(shown.length === neverLoaded.length && shown.every((r) => r.content === "sleeping"), `filtered rows: ${shown.length}`);
-      await shot("21-sleeping-filter");
-      await click(`document.querySelector('button[aria-label^="Show only sleeping tabs"]')`);
-      return `${shown.length} rows, all Sleeping; ${label}`;
+      const toggle = `document.querySelector('button[aria-label^="Show only sleeping tabs"]')`;
+      await click(toggle);
+      try {
+        await Bun.sleep(400);
+        const shown = await rows();
+        const label = await dom<string>(`return ${toggle}.getAttribute("aria-label")`);
+        assert(shown.length === neverLoaded.length && shown.every((r) => r.content === "sleeping"), `filtered rows: ${shown.length}`);
+        await shot("21-sleeping-filter");
+        return `${shown.length} rows, all Sleeping; ${label}`;
+      } finally {
+        // Later checks need the awake tabs listed again, also after a failure here.
+        if (await dom<boolean>(`return ${toggle}?.getAttribute("aria-pressed") === "true"`).catch(() => false)) await click(toggle);
+      }
     });
 
     await check("entering Browser, filtering and selecting never wake a tab", async () => {
@@ -323,6 +328,12 @@ export async function sleepingChecks(ctx: Ctx) {
       await shot("29-lens-bar-sleeping");
       await click(button("Load content", bar));
       await awaitRun("lens run", "/lens/", 60000);
+      // Each of the six tabs ends with a verdict, not just out of Sleeping (Waiting, Evaluating and Failed don't count).
+      const cells = () =>
+        dom<string[]>(`return ${JSON.stringify(qIds)}.map((id) => document.querySelector('[data-tab-id="' + id + '"] [data-lens-cell="${lens.id}"]')?.innerText.trim() ?? "missing")`);
+      await waitFor("a verdict on every loaded tab", async () => (await cells()).every((t) => !!t && !/missing|Waiting|Evaluating|Queued|Failed|Expired|Sleeping|Not evaluated|Use title|Load content/.test(t)), 60000).catch(async (error: Error) => {
+        throw new Error(`${error.message}; cells: ${JSON.stringify(await cells().catch(() => null))}`);
+      });
       await waitFor("lens finished on loaded tabs", () => dom<boolean>(`return !/sleeping/.test(${bar}?.innerText ?? "sleeping")`), 60000);
       const done = await dom<string>(`return ${bar}.innerText`);
       await shot("30-lens-bar-done");
@@ -358,23 +369,30 @@ export async function sleepingChecks(ctx: Ctx) {
         }
       })();
       const t0 = performance.now();
-      await click(button("Load content", `document.querySelector("[data-sleeping-count]").closest("div").parentElement`));
-      // Stop the worker mid-run: work must remain, and a different worker instance must finish it.
-      const workerId = () => b.sw(async () => ((globalThis as { __workerId?: string }).__workerId ??= crypto.randomUUID()), null);
-      const doneOf = (r: any) => ((r?.items ?? []) as { state: string; docKey: string }[]).filter((i) => i.docKey.includes("/q/") && i.state === "done").length;
-      await waitFor("100 done", async () => doneOf(await run()) >= 100, 300_000);
-      const before = await workerId();
-      const atStop = await run();
-      await b.stopWorker();
-      const restartedAt = doneOf(atStop);
-      assert(atStop?.status === "running" && restartedAt < QUEUE, `nothing left to resume at the stop: ${atStop?.status}, ${restartedAt}/${QUEUE} done`);
-      await waitFor("progress after the restart", async () => doneOf(await run()) > restartedAt, 120_000);
-      const after = await workerId();
-      assert(before !== after, "the worker was not replaced");
-      const r = await awaitRun("queue done", "/q/", 900_000);
-      const ms = performance.now() - t0;
-      sampling = false;
-      await sampler;
+      // The sampler stops (and is joined) whether the queue check passes or throws.
+      let r: any;
+      let ms = 0;
+      let restartedAt = 0;
+      try {
+        await click(button("Load content", `document.querySelector("[data-sleeping-count]").closest("div").parentElement`));
+        // Stop the worker mid-run: work must remain, and a different worker instance must finish it.
+        const workerId = () => b.sw(async () => ((globalThis as { __workerId?: string }).__workerId ??= crypto.randomUUID()), null);
+        const doneOf = (r: any) => ((r?.items ?? []) as { state: string; docKey: string }[]).filter((i) => i.docKey.includes("/q/") && i.state === "done").length;
+        await waitFor("100 done", async () => doneOf(await run()) >= 100, 300_000);
+        const before = await workerId();
+        const atStop = await run();
+        await b.stopWorker();
+        restartedAt = doneOf(atStop);
+        assert(atStop?.status === "running" && restartedAt < QUEUE, `nothing left to resume at the stop: ${atStop?.status}, ${restartedAt}/${QUEUE} done`);
+        await waitFor("progress after the restart", async () => doneOf(await run()) > restartedAt, 120_000);
+        const after = await workerId();
+        assert(before !== after, "the worker was not replaced");
+        r = await awaitRun("queue done", "/q/", 900_000);
+        ms = performance.now() - t0;
+      } finally {
+        sampling = false;
+        await sampler.catch(() => {});
+      }
       const native = await tabsOf(`${SITE}/q/`);
       const loads = hits("/q/");
       const twice = loads.filter(([, n]) => n > 1);

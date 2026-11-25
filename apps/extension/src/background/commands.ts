@@ -108,16 +108,19 @@ async function groupInWindow(groupId: number, windowId: number) {
 
 async function groupOpened(target: MoveTarget, ledger: OpenRecord, windowId: number, scope: string, s: Services): Promise<OpenGroupOutcome> {
   const previous = ledger.groupId();
-  const live = await Promise.all(ledger.tabIds().map((id) => chrome.tabs.get(id).catch(() => null)));
-  // A retry leaves alone the tabs the user grouped elsewhere since the first attempt.
-  const tabIds = live
-    // Pinned tabs too: Chrome would unpin them (e.g. a tab the user pinned between attempts).
-    .filter((t) => t?.windowId === windowId && !t.pinned && ((t.groupId ?? -1) < 0 || t.groupId === previous))
-    .map((t) => t!.id!);
-  if (!tabIds.length) return { ok: false, error: "No new tab was opened, so nothing was grouped." };
   const reuse = previous !== null && (await chrome.tabGroups.get(previous).catch(() => null))?.windowId === windowId;
   try {
-    const groupId = await groupInto(reuse ? { kind: "group", groupId: previous! } : target, tabIds as [number, ...number[]], windowId, scope, s);
+    const into: MoveTarget = reuse ? { kind: "group", groupId: previous! } : target;
+    // The destination first: the pin read below must be the last await before Chrome groups.
+    const dest = await destinationGroup(into, windowId, scope, s);
+    const live = await Promise.all(ledger.tabIds().map((id) => chrome.tabs.get(id).catch(() => null)));
+    // A retry leaves alone the tabs the user grouped elsewhere since the first attempt.
+    const tabIds = live
+      // Pinned tabs too: Chrome would unpin them (e.g. a tab the user pinned between attempts).
+      .filter((t) => t?.windowId === windowId && !t.pinned && ((t.groupId ?? -1) < 0 || t.groupId === previous))
+      .map((t) => t!.id!);
+    if (!tabIds.length) return { ok: false, error: "No new tab was opened, so nothing was grouped." };
+    const groupId = await groupTabs(into, dest, tabIds as [number, ...number[]], windowId, scope, s);
     await ledger.recordGroup(groupId);
     return { ok: true, groupId, grouped: tabIds.length };
   } catch (error) {
@@ -125,22 +128,21 @@ async function groupOpened(target: MoveTarget, ledger: OpenRecord, windowId: num
   }
 }
 
-/** Moves the tabs into the target group, creating it in this window when needed. Returns the group's id. */
-async function groupInto(target: MoveTarget, tabIds: [number, ...number[]], windowId: number, scope: string, s: Services) {
-  if (target.kind === "group") {
-    await groupInWindow(target.groupId, windowId);
-    return chrome.tabs.group({ groupId: target.groupId, tabIds });
-  }
+/** The existing group the target resolves to in this window, or null when a new group must be created. */
+async function destinationGroup(target: MoveTarget, windowId: number, scope: string, s: Services): Promise<number | null> {
+  if (target.kind === "group") return (await groupInWindow(target.groupId, windowId)).id;
+  if (target.kind !== "pinned") return null;
   // A pinned destination reuses its binding in this window; names never merge groups.
-  const bound =
-    target.kind === "pinned"
-      ? (
-          await Promise.all(
-            s.groups.groupsBoundTo(target.pinnedId, scope).map((id) => chrome.tabGroups.get(id).catch(() => null)),
-          )
-        ).find((g) => g?.windowId === windowId)
-      : null;
-  if (bound) return chrome.tabs.group({ groupId: bound.id, tabIds });
+  const bound = (
+    await Promise.all(s.groups.groupsBoundTo(target.pinnedId, scope).map((id) => chrome.tabGroups.get(id).catch(() => null)))
+  ).find((g) => g?.windowId === windowId);
+  return bound?.id ?? null;
+}
+
+/** Moves the tabs into `dest` (from destinationGroup), or into a new group for the target. Returns the group's id. */
+async function groupTabs(target: MoveTarget, dest: number | null, tabIds: [number, ...number[]], windowId: number, scope: string, s: Services) {
+  if (dest !== null) return chrome.tabs.group({ groupId: dest, tabIds });
+  if (target.kind === "group") return fail("The group is not in this window any more.");
   const groupId = await chrome.tabs.group({ tabIds, createProperties: { windowId } });
   await chrome.tabGroups.update(groupId, { title: target.title, color: target.color });
   await s.groups.set(
@@ -156,6 +158,7 @@ const previewCache = new Map<string, TabPreview>();
 const PREVIEW_CACHE_MAX = 500;
 
 const PINNED_KEPT = "Pinned — kept in place.";
+const LOADER_BUSY = ["queued", "loading", "capturing", "putting-to-sleep"];
 
 /** Why Put to sleep leaves this tab alone, or null. */
 function sleepProblem(tab: chrome.tabs.Tab): string | null {
@@ -217,8 +220,11 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
         (!explicit || explicit.has(t.tabInstanceId)) &&
         (source === "metadata"
           ? !!explicit && t.status !== "loading"
-          : // A Sleeping tab is read only through what Load content captured for this document.
-            t.content === "available" || (t.content === "sleeping" && !!t.capturedAt)),
+          : // A Sleeping tab is read only through what Load content captured for this document. A tab a
+            // Load content run is still on waits for that capture: read now, the run could put it back
+            // to sleep mid-read and the lens would record it as unreadable.
+            !(t.load && LOADER_BUSY.includes(t.load.state)) &&
+            (t.content === "available" || (t.content === "sleeping" && !!t.capturedAt))),
     }));
     const { requestId, claimed, skipped } = await s.cache.claim({
       scope,
@@ -265,7 +271,8 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
         summaries.set(claim.targetKey, capture);
         targets.push(target);
       } catch (error) {
-        failures.set(claim.targetKey, error instanceof CaptureError ? error.message : "The page could not be read.");
+        // CommandError keeps a deliberate message, e.g. "The tab is sleeping. Load content to read it."
+        failures.set(claim.targetKey, error instanceof CaptureError || error instanceof CommandError ? error.message : "The page could not be read.");
       }
     }
     await s.cache.recordCapture(
@@ -413,17 +420,27 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
           ? "Already in a group — kept."
           : null,
     );
-    // Chrome unpins a tab it groups: re-read every pin together right before the mutation.
+    if (!ok.length) return { items, groupId: null };
+    const dest = await destinationGroup(args.target, windowId, scope, s);
+    // Chrome unpins a tab it groups: re-read every pin (and, for Autogroup, every group) together, as the
+    // last read before the mutation.
     const fresh = await Promise.all(ok.map((tab) => chrome.tabs.get(tab.id!).catch(() => null)));
     for (const [i, tab] of [...ok].entries()) {
       const now = fresh[i];
-      if (now && !now.pinned) continue;
+      const problem = !now
+        ? "The tab is already closed."
+        : now.pinned
+          ? PINNED_KEPT
+          : args.onlyIfUngrouped && now.groupId !== undefined && now.groupId >= 0
+            ? "Already in a group — kept."
+            : null;
+      if (!problem) continue;
       ok.splice(ok.indexOf(tab), 1);
-      Object.assign(items.find((i) => i.tabId === tab.id)!, { ok: false, error: now ? PINNED_KEPT : "The tab is already closed." });
+      Object.assign(items.find((i) => i.tabId === tab.id)!, { ok: false, error: problem });
     }
     const tabIds = ok.map((t) => t.id!) as [number, ...number[]];
     if (!tabIds.length) return { items, groupId: null };
-    const groupId = await groupInto(args.target, tabIds, windowId, scope, s);
+    const groupId = await groupTabs(args.target, dest, tabIds, windowId, scope, s);
     s.hub.schedule(0);
     return { items, groupId };
   },
@@ -508,6 +525,7 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
       if (!dto) return "The tab is no longer in this window.";
       if (dto.content === "restricted") return "Chrome doesn't let extensions read this page.";
       if (dto.content === "no-permission") return "Allow page content access first.";
+      if (dto.content === "loading") return "Still loading.";
       if (dto.content !== "sleeping" && dto.content !== "stalled") return "Already loaded.";
       add.push({ tabInstanceId: dto.tabInstanceId, windowId, documentRevision: dto.documentRevision, url: tab.url || dto.url, reason: dto.sleep });
       return null;

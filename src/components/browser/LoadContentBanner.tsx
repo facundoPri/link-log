@@ -52,6 +52,12 @@ export function LoadContentBanner({
                 Retry {r.failed} failed
               </Button>
             )}
+            {/* A finished run with failures doesn't hide Load content for the view's other sleeping tabs. */}
+            {!runActive(r) && sleeping.length > 0 && (
+              <Button size="sm" variant="outline" className={small} onClick={onLoad}>
+                Load content
+              </Button>
+            )}
             {runActive(r) && (
               <Button size="sm" variant="ghost" className={small} onClick={() => onControl("cancel")}>
                 <X className="size-3.5" />
@@ -62,9 +68,15 @@ export function LoadContentBanner({
         }
       >
         <span role="status" aria-label="Load content progress" data-load-run={r.status}>
-          {r.status === "paused" ? "Loading paused" : r.status === "done" ? "Content loaded" : "Loading content"}
+          {r.status === "paused"
+            ? "Loading paused"
+            : r.status === "done"
+              ? r.failed > 0
+                ? "Load run finished"
+                : "Content loaded"
+              : "Loading content"}
           {" · "}
-          {r.awake} awake now · {finished} of {r.total} done
+          {r.awake} awake now · {finished} of {r.total} processed
           {r.failed > 0 && ` · ${r.failed} couldn't load`}
           {r.skipped > 0 && ` · ${r.skipped} skipped`}
           {r.pauseReason && <span className="block text-muted-foreground">{r.pauseReason}</span>}
@@ -79,7 +91,7 @@ export function LoadContentBanner({
       action={
         <div className="flex shrink-0 items-center gap-1">
           <Button size="sm" variant="ghost" className={small} aria-pressed={sleepingOnly} onClick={onToggleFilter}>
-            {sleepingOnly ? "Show all tabs" : "Show sleeping"}
+            Show sleeping
           </Button>
           <Button size="sm" variant="outline" className={small} onClick={onLoad}>
             Load content

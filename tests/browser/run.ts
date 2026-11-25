@@ -14,7 +14,9 @@ import { sleepingChecks } from "./sleeping";
 // docs/browser-validation is the committed evidence and only an explicit value writes there.
 const EVIDENCE = resolve(ROOT, process.env.LINKLOG_BROWSER_EVIDENCE ?? ".cache/browser-validation");
 // LINKLOG_BROWSER_ONLY=sleeping runs only the native Sleeping-tab checks (FAC-163).
-const ONLY = process.env.LINKLOG_BROWSER_ONLY;
+const ONLY = process.env.LINKLOG_BROWSER_ONLY || undefined;
+// Any other value would fall through to the full suite without its setup checks.
+if (ONLY !== undefined && ONLY !== "sleeping") throw new Error(`LINKLOG_BROWSER_ONLY must be "sleeping" or unset, not "${ONLY}".`);
 type Check = { area: string; name: string; ok: boolean; detail: string; ms: number };
 const checks: Check[] = [];
 const meta: Record<string, unknown> = { startedAt: new Date().toISOString() };
@@ -268,7 +270,7 @@ async function finish(name: string, close: () => Promise<unknown>) {
   process.exit(failed.length ? 1 : 0);
 }
 const QUEUE_LABEL = "Load content queue";
-meta.build = (await Bun.$`git -C ${ROOT} rev-parse --short HEAD`.text()).trim() + ((await Bun.$`git -C ${ROOT} status --porcelain -- apps packages`.text()).trim() ? " + uncommitted changes" : "");
+meta.build = (await Bun.$`git -C ${ROOT} rev-parse --short HEAD`.text()).trim() + ((await Bun.$`git -C ${ROOT} status --porcelain -- apps packages src`.text()).trim() ? " + uncommitted changes" : "");
 
 /** An error thrown outside `check()` is a failed check: `finish()` must not report the run as passed. */
 function crashed(what: string, error: unknown) {

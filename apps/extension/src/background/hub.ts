@@ -74,6 +74,8 @@ export class Hub {
   private settleTimer: ReturnType<typeof setTimeout> | null = null;
   /** First time each tab was seen loading; in memory, so a worker restart restarts the bound. */
   private loadingSince = new Map<number, number>();
+  /** Timer for the loading-bound reconciliation; tests replace it. */
+  later: (fn: () => void, ms: number) => unknown = (fn, ms) => setTimeout(fn, ms);
   now: () => number = Date.now;
   cache: ResultCache | null = null;
   loader: LoadQueue | null = null;
@@ -132,7 +134,11 @@ export class Hub {
       instance = this.registry.get(tab.id)!;
     }
     if (tab.status === "loading") {
-      if (!this.loadingSince.has(tab.id)) this.loadingSince.set(tab.id, now);
+      if (!this.loadingSince.has(tab.id)) {
+        this.loadingSince.set(tab.id, now);
+        // Nothing else may happen in the window: reconcile once the bound passes so pages see "stalled".
+        this.later(() => this.schedule(0), LOADING_BOUND_MS + 100);
+      }
     } else this.loadingSince.delete(tab.id);
     const content = contentAccess(tab, instance, this.grants, now, this.loadingSince.get(tab.id));
     const capture = captured.get(instance.tabInstanceId);

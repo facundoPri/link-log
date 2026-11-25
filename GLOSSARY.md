@@ -55,5 +55,5 @@ _Avoid_: Revoked key
 ## Browser
 
 **Sleeping tab**:
-An open browser tab whose page Chrome does not currently have loaded, so its content cannot be read until it loads again. The reason (unloaded to save memory, frozen, or restored but never loaded) is a detail, not a separate concept.
+An open browser tab whose page Linklog cannot read until Chrome loads or wakes it again. The reason is a detail, not a separate concept: unloaded to save memory or restored but never loaded (the page is not in memory), or frozen (the page is in memory but its tasks are suspended).
 _Avoid_: Hibernated tab, discarded tab, unloaded tab

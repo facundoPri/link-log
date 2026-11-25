@@ -134,7 +134,7 @@ const validators: { [K in CommandName]: (a: Obj) => boolean } = {
   openPermissions: () => true,
   forget: () => true,
   loadContent: (a) => tabRefs(a.tabs),
-  loadControl: (a) => ["pause", "resume", "cancel", "retry"].includes(String(a.action)),
+  loadControl: (a) => typeof a.action === "string" && ["pause", "resume", "cancel", "retry"].includes(a.action),
   sleepTabs: (a) => tabRefs(a.tabs),
 };
 

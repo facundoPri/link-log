@@ -15,6 +15,8 @@ export function fakeChrome() {
   const discardErrors = new Map<number, string>();
   /** Every lifecycle mutation in order, e.g. "reload:3", "discard:3", "group:4". */
   const ops: string[] = [];
+  /** Per-tab load generation: a reload or discard invalidates the pending completion of the previous load. */
+  const loads = new Map<number, number>();
   let scripts = 0;
   let nextTabId = 1000;
   let nextGroupId = 1;
@@ -55,6 +57,9 @@ export function fakeChrome() {
         const t = tabs.get(id);
         if (!t) throw new Error(`No tab with id: ${id}`);
         ops.push(`reload:${id}`);
+        // A timer from an earlier load of this tab must not complete this one.
+        const generation = (loads.get(id) ?? 0) + 1;
+        loads.set(id, generation);
         t.discarded = false;
         t.frozen = false;
         t.status = "loading";
@@ -62,7 +67,7 @@ export function fakeChrome() {
         if (plan.hang) return;
         setTimeout(() => {
           const now = tabs.get(id);
-          if (!now || now.status !== "loading") return;
+          if (!now || now.status !== "loading" || loads.get(id) !== generation) return;
           if (plan.redirectTo) {
             now.url = plan.redirectTo;
             pages.get(id)!.url = plan.redirectTo;
@@ -76,6 +81,7 @@ export function fakeChrome() {
         const error = discardErrors.get(id);
         if (error) throw new Error(error);
         ops.push(`discard:${id}`);
+        loads.set(id, (loads.get(id) ?? 0) + 1);
         t.discarded = true;
         t.frozen = false;
         t.status = "unloaded";
