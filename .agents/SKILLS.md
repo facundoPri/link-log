@@ -11,4 +11,6 @@ Pstack's `tdd` and `teach` are installed as `pstack-tdd` and `pstack-teach` to k
 
 `skills-sources.json` records the pinned source commits, original paths, local aliases, and SHA-256 hashes of installed files. It is a provenance manifest, not a skills CLI lockfile. Review these aliases before updating either collection.
 
+`code-review` and `pr` carry Linklog edits on top of their upstream versions (the issue-tracker contract, the session-tracing spec brief, Merge Danger for separately shipped parts). Keep them when re-syncing from upstream; their hashes in `skills-sources.json` no longer match the installed files.
+
 Installation does not run setup workflows. Invoke `setup-matt-pocock-skills` or `setup-pstack` when you want to configure their workflows.
