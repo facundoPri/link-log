@@ -287,4 +287,19 @@ describe("review bot report on exit", () => {
       reviewBot: [{ pr: 1, state: "unknown" }],
     });
   });
+
+  it("still prints the verdict when gh fails to start for the activity read", async () => {
+    const reader = fakeReader();
+    const harness = testRuntime({
+      ...reader,
+      async reviewBotActivity() {
+        throw new Error("spawn gh ENOENT");
+      },
+    });
+    expect(await main(argv, harness.runtime)).toBe(0);
+    expect(JSON.parse(harness.stdout.at(-1) ?? "")).toMatchObject({
+      kind: "READY",
+      reviewBot: [{ pr: 1, state: "unknown" }],
+    });
+  });
 });

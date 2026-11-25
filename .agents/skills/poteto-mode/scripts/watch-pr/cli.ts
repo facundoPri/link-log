@@ -164,8 +164,9 @@ async function reviewBotHeads(
       const activity = await reader.reviewBotActivity(context);
       head = activity.headOid;
       state = reviewBotHeadState(activity);
-    } catch (error) {
-      if (!(error instanceof WatcherQueryError)) throw error;
+    } catch {
+      // Any failed read, a gh that never started included, reports unknown so
+      // the terminal verdict and its exit code still reach the caller.
     }
     heads.push({ pr: context.number, bot: REVIEW_BOT_LOGIN, head, state });
   }

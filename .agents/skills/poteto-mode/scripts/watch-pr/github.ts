@@ -458,6 +458,10 @@ function graphqlArgs(
 export const REVIEW_BOT_LOGIN = "coderabbitai[bot]";
 // A thread reply is stored as a review with an empty body, and a pass that
 // found nothing to read still says so, so neither proves the head was read.
+// A real review can quote the skip phrase, so its own markers win.
+const isSkipNotice = (body: string): boolean =>
+  /no files to review/i.test(body) &&
+  !/actionable comments posted|files selected for processing/i.test(body);
 export function reviewBotHeadState(
   activity: T.ReviewBotActivity
 ): Exclude<T.ReviewBotHeadState, "unknown"> {
@@ -466,7 +470,7 @@ export function reviewBotHeadState(
       (review) =>
         review.commitId === activity.headOid &&
         review.body.trim() !== "" &&
-        !/no files to review/i.test(review.body)
+        !isSkipNotice(review.body)
     )
   )
     return "reviewed";

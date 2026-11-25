@@ -482,6 +482,21 @@ describe("review bot on the head commit", () => {
     ).toBe("not-reviewed");
   });
 
+  it("counts a real review that quotes the skip phrase", () => {
+    expect(
+      reviewBotHeadState(
+        activity({
+          reviews: [
+            {
+              commitId: head,
+              body: "**Actionable comments posted: 1**\nrejects any body containing \u201cNo files to review.\u201d",
+            },
+          ],
+        })
+      )
+    ).toBe("reviewed");
+  });
+
   it("reports the quota when the bot hit a rate limit after the head commit", () => {
     expect(
       reviewBotHeadState(
