@@ -34,29 +34,24 @@ export async function putLinkContent(env: Env, linkId: string, key: string, mark
 
 /**
  * Removes the R2 objects of deleted links, under the owner-scoped prefix and the legacy one used before FAC-41.
- * It runs after the rows are gone. A failure is logged and never brings a link back.
+ * It runs after the rows are gone, inside waitUntil's post-response budget, so each listed page is deleted at once
+ * and a few prefixes are swept at a time. A failure is logged and never brings a link back.
  */
 export async function deleteLinkContent(env: Env, userId: string, linkIds: string[]) {
-  const keys: string[] = [];
-  for (const linkId of linkIds) {
-    for (const prefix of [contentPrefix(userId, linkId), `links/${linkId}/`]) {
+  const prefixes = linkIds.flatMap((id) => [contentPrefix(userId, id), `links/${id}/`]);
+  const sweep = async () => {
+    for (let prefix = prefixes.shift(); prefix !== undefined; prefix = prefixes.shift()) {
       try {
         let cursor: string | undefined;
         do {
           const page = await env.CONTENT.list({ prefix, cursor });
-          keys.push(...page.objects.map((o) => o.key));
+          if (page.objects.length) await env.CONTENT.delete(page.objects.map((o) => o.key));
           cursor = page.truncated ? page.cursor : undefined;
         } while (cursor);
       } catch (error) {
-        console.error(JSON.stringify({ event: "link_content_cleanup_failed", link_id: linkId, legacy: prefix.startsWith("links/"), detail: String(error).slice(0, 300) }));
+        console.error(JSON.stringify({ event: "link_content_cleanup_failed", link_id: prefix.split("/").at(-2), legacy: prefix.startsWith("links/"), detail: String(error).slice(0, 300) }));
       }
     }
-  }
-  for (let i = 0; i < keys.length; i += 1000) {
-    try {
-      await env.CONTENT.delete(keys.slice(i, i + 1000));
-    } catch (error) {
-      console.error(JSON.stringify({ event: "link_content_cleanup_failed", objects: Math.min(1000, keys.length - i), detail: String(error).slice(0, 300) }));
-    }
-  }
+  };
+  await Promise.all(Array.from({ length: 6 }, sweep));
 }
