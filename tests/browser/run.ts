@@ -713,13 +713,18 @@ try {
   });
   await check("Cancel on a run's progress toast cancels every batch of the run", async () => {
     const rowsBefore = await rowCount(L);
+    // FAC-265: this setup once timed out. Its 21 slow evaluations queued behind the Jev work earlier checks left
+    // draining (the local queue runs one consumer batch at a time), all inside one fixed 90 s. Drain that work
+    // first, then give the 21 × 4 s evaluations (and a retry each) their own budget.
+    await waitFor("earlier runs drained", async () =>
+      (await api<{ batches: { active: number }[] }>("/library")).batches.every((b) => b.active === 0), 90000);
     const slow = await createTabs(ctx, W1, Array.from({ length: 21 }, (_, i) => art(300 + i, "jev:slow=4000 jev:fail")));
     const failedBefore = (await cacheStats(ctx, lensB.id)).failed;
     // The 21 new tabs are evaluated automatically and fail after 4 s.
     await waitFor("the slow tabs failed", async () => {
       const s = await cacheStats(ctx, lensB.id);
       return s.failed >= failedBefore + 21 && s.inflight === 0;
-    }, 90000);
+    }, 21 * 4000 * 2 + 30000);
     const batchIds = async () => (await api<{ batches: { id: string; kind: string }[] }>("/library")).batches.filter((b) => b.kind === "browser-lens").map((b) => b.id);
     const before = await batchIds();
     const cancelled: string[] = [];
