@@ -204,18 +204,23 @@ export class LoadQueue {
     const run = this.run;
     if (!run || this.stopped) return;
     const free = (i: Item) => !this.slots.has(i.tabInstanceId);
+    // Awake because of this run without a slot: failed tabs it couldn't put back, and woken tabs requeued
+    // by Retry. Slots plus these never pass the limit; recounted each pick, so a picked one counts once.
+    const owed = () => run.items.filter((i) => free(i) && i.woke && (i.state === "failed" || i.state === "queued")).length;
     const next = () =>
+      // Mid-way tabs (a previous worker's) and already-woken queued ones first: picking them wakes nothing new.
       run.items.find((i) => IN_SLOT.includes(i.state) && free(i)) ??
-      (run.status === "running" ? run.items.find((i) => i.state === "queued" && free(i)) : undefined);
-    // Tabs this run woke and couldn't put back (failed, `woke`) are still awake: they take capacity too.
-    const stuck = run.items.filter((i) => i.woke && i.state === "failed" && free(i)).length;
-    while (this.slots.size + stuck < this.opts.concurrency) {
+      (run.status === "running" ? run.items.find((i) => i.state === "queued" && i.woke && free(i)) : undefined) ??
+      (run.status === "running" && this.slots.size + owed() < this.opts.concurrency
+        ? run.items.find((i) => i.state === "queued" && !i.woke && free(i))
+        : undefined);
+    while (this.slots.size < this.opts.concurrency) {
       const item = next();
       if (!item) break;
       this.slots.add(item.tabInstanceId);
       void this.slot(item);
     }
-    if (run.status === "running" && !this.slots.size && stuck >= this.opts.concurrency && run.items.some((i) => i.state === "queued")) {
+    if (run.status === "running" && !this.slots.size && owed() >= this.opts.concurrency && run.items.some((i) => i.state === "queued")) {
       // Every slot is a tab Chrome kept awake: waking more would pass the limit.
       run.status = "paused";
       run.pauseReason = CLEANUP_PAUSE;

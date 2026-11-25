@@ -995,11 +995,17 @@ try {
     await L.locator("#group-description").fill("Papers and articles for the thesis");
     await L.getByText("Pin to library").click();
     await L.getByRole("button", { name: "Create group" }).click();
-    const groups = await waitFor("native group", async () => {
+    // The group, its title and the pinned entry land in separate steps: wait for all three.
+    let catalog: { groups: any[] } = { groups: [] };
+    const groups = await waitFor("native group, titled and pinned", async () => {
       const g = await inSw(ctx, async (w: number) => chrome.tabGroups.query({ windowId: w }), W1);
-      return g.length === 1 ? g : null;
+      if (g.length !== 1 || g[0]!.title !== "Research") return null;
+      catalog = await api<{ groups: any[] }>("/browser/catalog");
+      return catalog.groups.length === 1 ? g : null;
+    }).catch(async (error: Error) => {
+      const g = await inSw(ctx, async (w: number) => chrome.tabGroups.query({ windowId: w }), W1).catch(() => null);
+      throw new Error(`${error.message}; groups ${JSON.stringify(g?.map((x: any) => x.title))}, catalog ${catalog.groups.length}`);
     });
-    const catalog = await api<{ groups: any[] }>("/browser/catalog");
     pinnedId = catalog.groups[0]?.id;
     assert(groups[0]!.title === "Research" && catalog.groups.length === 1, "group/pin missing");
     await shot(L, "09-groups");

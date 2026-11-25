@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { LOADING_BOUND_MS, type BrowserTab, type PageRequest, type WindowSnapshot } from "@linklog/browser-protocol";
+import { documentKey, LOADING_BOUND_MS, type BrowserTab, type PageRequest, type WindowSnapshot } from "@linklog/browser-protocol";
 import { fakeChrome } from "./fake-chrome";
 import { ResultCache } from "../src/background/cache";
 import { handle, type Services } from "../src/background/commands";
@@ -479,6 +479,48 @@ describe("Load content", () => {
     const snap = await settled();
     expect(snap.loadRun).toMatchObject({ status: "done", done: 3, failed: 3, awake: 0 });
     expect(ids.every((id) => fake.tabs.get(id)!.discarded)).toBe(true);
+  });
+
+  test("Retry of a kept-awake tab doesn't wake another past the limit, nor wake it twice", async () => {
+    await setup();
+    fake.loadMs = 20;
+    const ids = sleepingTabs(9);
+    fake.discardErrors.set(3, "Cannot discard tab");
+    await run("loadContent", { tabs: await refs(ids) });
+    await settled(["paused"]);
+    fake.discardErrors.delete(3);
+    // Retry while new tabs are also asked for: the woken tab 3 must take its slot before any new wake.
+    await run("loadControl", { action: "retry" });
+    await run("loadContent", { tabs: await refs(ids) });
+    const snap = await settled();
+    expect(fake.maxAwakeByReload()).toBeLessThanOrEqual(N);
+    expect(fake.count("reload", 3)).toBe(1);
+    expect(snap.loadRun).toMatchObject({ awake: 0, failed: 0 });
+    expect(ids.every((id) => fake.tabs.get(id)!.discarded)).toBe(true);
+  });
+
+  test("a woken requeued tab takes a slot before an unwoken one is woken", async () => {
+    await setup();
+    fake.addTab(1, site(1));
+    fake.addTab(2, site(2));
+    fake.addSleeping(3, site(3));
+    fake.addTab(4, site(4));
+    const [x, y, a, b] = await refs([1, 2, 3, 4]);
+    // A previous worker left: 1 and 2 mid-way (awake), 3 queued (asleep), then 4 queued but already woken.
+    const item = (r: typeof x, state: string, woke: boolean) => ({ tabInstanceId: r!.tabInstanceId, windowId: 1, documentRevision: r!.documentRevision, docKey: documentKey(site(r!.tabId)), reason: null, state, woke });
+    await kv.set({ loadRun: { status: "running", items: [item(x, "loading", true), item(y, "loading", true), item(a, "queued", false), item(b, "queued", true)] } });
+    let awakeAtWake = 0;
+    const reload = chrome.tabs.reload;
+    (chrome.tabs as { reload: unknown }).reload = async (id: number) => {
+      if (id === 3) awakeAtWake = [1, 2, 4].filter((t) => !fake.tabs.get(t)!.discarded).length + 1;
+      return reload(id);
+    };
+    s.loader.stop();
+    await boot();
+    await settled();
+    expect(awakeAtWake).toBeGreaterThan(0);
+    expect(awakeAtWake).toBeLessThanOrEqual(N);
+    expect([1, 2, 3, 4].every((id) => fake.tabs.get(id)!.discarded)).toBe(true);
   });
 
   test("a second request, from another Linklog page too, joins the running run", async () => {
