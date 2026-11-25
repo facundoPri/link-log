@@ -15,10 +15,22 @@ let chromeFake: ReturnType<typeof fakeChrome>;
 let s: Services;
 let c: Connection;
 let seq = 0;
+let kv: ReturnType<typeof memoryKV>;
+
+/** Result entries and requests kept for a library scope, as the browser suite counts them after sign-out. */
+async function kept(scope: string) {
+  const all = await kv.getMany([...(await kv.keys("res:")), ...(await kv.keys("req:"))]);
+  let n = 0;
+  for (const [k, v] of Object.entries(all)) {
+    if (k.startsWith("res:")) n += Object.keys((v as { entries: Record<string, unknown> }).entries).filter((e) => e.startsWith(`${scope}/`)).length;
+    else if ((v as { scope: string }).scope === scope) n++;
+  }
+  return n;
+}
 
 async function setup(count: number, markdown?: (i: number) => string) {
   chromeFake = fakeChrome();
-  const kv = memoryKV();
+  kv = memoryKV();
   const mutex = new Mutex();
   const registry = new TabRegistry(kv, () => `inst${++seq}`, () => 0);
   const groups = new GroupMetaStore(kv, mutex);
@@ -78,6 +90,36 @@ describe("bridge commands", () => {
     await run("hello", { libraryScope: "local:other" });
     expect((await run("pending", {})).requests.map((r: { requestId: string }) => r.requestId)).toEqual([theirs.requestId]);
     expect((await run("hello", { libraryScope: "local:other" })).capabilities).toContain("forget");
+  });
+
+  // FAC-265: the browser suite once found 105 entries left in the signed-out account's scope.
+  test("a claim already past its scope check when forget runs leaves nothing in the forgotten scope", async () => {
+    await setup(3);
+    await hello();
+    // The counter sees what a claim writes, so a 0 below is not a blind spot.
+    await run("claim", { lens, limit: 20 });
+    expect(await kept("local:lib")).toBeGreaterThan(0);
+    await run("forget", {});
+    await hello();
+    const claim = run("claim", { lens, limit: 20 }).catch((e: Error) => e);
+    await run("forget", {});
+    await claim;
+    expect(await kept("local:lib")).toBe(0);
+  });
+
+  test("forget ends the handshake of every connection of that account, not only the one that signed out", async () => {
+    await setup(3);
+    await hello();
+    const mine = c;
+    const other: Connection = { ...mine, id: "c2", scope: "local:lib" };
+    const foreign: Connection = { ...mine, id: "c3", scope: "local:other" };
+    s.hub.connections.set(other.id, other);
+    s.hub.connections.set(foreign.id, foreign);
+    await run("forget", {});
+    c = other;
+    await expect(run("claim", { lens, limit: 20 })).rejects.toThrow("Connect first.");
+    expect(await kept("local:lib")).toBe(0);
+    expect(foreign.scope).toBe("local:other");
   });
 
   test("a pinned group's Linklog metadata is only visible to the account that wrote it", async () => {

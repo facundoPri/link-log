@@ -185,9 +185,12 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
   },
   async forget(_args, { c, s }) {
     const scope = requireScope(c);
+    // Unbind first, and every page of the account (its other tabs are signed out too): a claim that checked the
+    // scope earlier finds it unbound under the cache lock, so nothing is written after the cleanup below.
+    for (const other of s.hub.connections.values()) if (other.scope === scope) other.scope = null;
+    c.scope = null;
     const result = await s.cache.forget(scope);
     await s.groups.forget(scope);
-    c.scope = null;
     return result;
   },
   async snapshot(_args, { c, s }) {
@@ -234,6 +237,7 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
       force: args.force && explicit ? explicit : undefined,
       limit: args.limit ?? 20,
       resumeRequestId: args.resumeRequestId,
+      bound: () => c.scope === scope,
     });
     if (!requestId) return { requestId: null, targets: [], skipped, attempted: [] };
     const targets: ClaimTarget[] = [];
