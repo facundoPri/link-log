@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { EXPECTED_EXTENSION_VERSION, extensionUpdate, isOlderVersion } from "../src/browser/extensionVersion";
+import { EXPECTED_EXTENSION_VERSION, extensionDownloadUrl, extensionUpdate, isOlderVersion, LATEST_EXTENSION_URL } from "../src/browser/extensionVersion";
 import extensionPackage from "../apps/extension/package.json" with { type: "json" };
 
 describe("isOlderVersion", () => {
@@ -29,5 +29,29 @@ describe("extensionUpdate", () => {
 
   test("expects the version the extension package declares", () => {
     expect(EXPECTED_EXTENSION_VERSION).toBe(extensionPackage.version);
+  });
+});
+
+describe("extensionDownloadUrl", () => {
+  const answer = (status: number) => async () => ({ status });
+
+  test("links the expected version's release when it exists", async () => {
+    const asked: string[] = [];
+    const fetchRelease = async (url: string) => (asked.push(url), { status: 200 });
+    expect(await extensionDownloadUrl("0.3.0", fetchRelease)).toBe("https://github.com/facundoPri/link-log/releases/tag/extension-v0.3.0");
+    expect(asked).toEqual(["https://api.github.com/repos/facundoPri/link-log/releases/tags/extension-v0.3.0"]);
+  });
+
+  test("falls back to the latest release only when GitHub has no release for that version", async () => {
+    expect(await extensionDownloadUrl("0.3.0", answer(404))).toBe(LATEST_EXTENSION_URL);
+  });
+
+  test("keeps the expected version's release when GitHub can't say (rate limit, outage, offline)", async () => {
+    const tag = "https://github.com/facundoPri/link-log/releases/tag/extension-v0.3.0";
+    for (const status of [403, 429, 500]) expect(await extensionDownloadUrl("0.3.0", answer(status))).toBe(tag);
+    const offline = async (): Promise<{ status: number }> => {
+      throw new TypeError("Failed to fetch");
+    };
+    expect(await extensionDownloadUrl("0.3.0", offline)).toBe(tag);
   });
 });

@@ -37,3 +37,6 @@ jobs:
       - run: bun test
       - name: Extension version raised when the extension changes
         run: bun scripts/extension-version.ts HEAD^1
+      # Another PR may have released the same version since this one raised it (FAC-282).
+      - name: Extension version not already released from other code
+        run: bun scripts/extension-released.ts

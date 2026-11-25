@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import {
   CircleAlert,
-  Download,
   ExternalLink,
   Globe,
   ListChecks,
@@ -23,8 +22,7 @@ import { useSavedLookup } from "../../browser/saved";
 import type { useBrowserActions } from "../../browser/useBrowserActions";
 import { cn } from "../../lib/utils";
 import { GROUP_STYLE, groupTitle } from "./groups";
-import { Banner, Connect } from "./BrowserConnect";
-import { LATEST_EXTENSION_URL } from "../../browser/extensionVersion";
+import { Banner, Connect, UpdateBanner } from "./BrowserConnect";
 import { DomainChip, DomainFilter } from "../DomainFilter";
 import { TabRow } from "./TabRow";
 import { LensFilterBar } from "./LensFilterBar";
@@ -391,21 +389,7 @@ export function BrowserView({
             Reconnecting to the extension… showing the last tabs it reported.
           </Banner>
         )}
-        {browser.update && (
-          <Banner
-            icon={<Download className="size-3.5" />}
-            action={
-              <Button size="sm" variant="outline" className="h-7" asChild>
-                <a href={LATEST_EXTENSION_URL} target="_blank" rel="noreferrer">
-                  Download update
-                </a>
-              </Button>
-            }
-          >
-            Linklog extension {browser.update.installed} is older than this Linklog expects ({browser.update.expected}). Unzip the new
-            release over its folder and click ↻ in chrome://extensions.
-          </Banner>
-        )}
+        {browser.update && <UpdateBanner update={browser.update} />}
         {snapshot && browser.hello && !browser.hello.contentAccess && (
           <Banner
             icon={<Lock className="size-3.5" />}

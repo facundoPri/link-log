@@ -1,6 +1,7 @@
-import { CircleAlert, Globe, PlugZap, RefreshCw } from "lucide-react";
+import { CircleAlert, Download, Globe, PlugZap, RefreshCw } from "lucide-react";
 import type { BrowserWorkspace } from "../../browser/useBrowserWorkspace";
-import { EXPECTED_EXTENSION_VERSION, LATEST_EXTENSION_URL } from "../../browser/extensionVersion";
+import { useQuery } from "@tanstack/react-query";
+import { EXPECTED_EXTENSION_VERSION, extensionDownloadUrl, extensionReleaseUrl, type ExtensionUpdate } from "../../browser/extensionVersion";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -15,11 +16,44 @@ export function Banner({ icon, children, action }: { icon: React.ReactNode; chil
   );
 }
 
-const download = (
-  <a className="font-medium underline underline-offset-2" href={LATEST_EXTENSION_URL} target="_blank" rel="noreferrer">
-    Download the latest release
-  </a>
-);
+/** The expected version's release page, or /latest once GitHub says that release doesn't exist. */
+function useExtensionDownloadUrl(): string {
+  const { data } = useQuery({
+    queryKey: ["extension-download", EXPECTED_EXTENSION_VERSION],
+    queryFn: () => extensionDownloadUrl(EXPECTED_EXTENSION_VERSION),
+    staleTime: Infinity,
+    gcTime: Infinity,
+    retry: false,
+  });
+  return data ?? extensionReleaseUrl(EXPECTED_EXTENSION_VERSION);
+}
+
+export function UpdateBanner({ update }: { update: ExtensionUpdate }) {
+  const href = useExtensionDownloadUrl();
+  return (
+    <Banner
+      icon={<Download className="size-3.5" />}
+      action={
+        <Button size="sm" variant="outline" className="h-7" asChild>
+          <a href={href} target="_blank" rel="noreferrer">
+            Download update
+          </a>
+        </Button>
+      }
+    >
+      Linklog extension {update.installed} is older than this Linklog expects ({update.expected}). Unzip the new release over its
+      folder and click ↻ in chrome://extensions.
+    </Banner>
+  );
+}
+
+function DownloadLink() {
+  return (
+    <a className="font-medium underline underline-offset-2" href={useExtensionDownloadUrl()} target="_blank" rel="noreferrer">
+      Download extension {EXPECTED_EXTENSION_VERSION}
+    </a>
+  );
+}
 
 export function Connect({ ws }: { ws: BrowserWorkspace }) {
   const { connection, backendError, retry, installedVersion } = ws.browser;
@@ -67,7 +101,7 @@ export function Connect({ ws }: { ws: BrowserWorkspace }) {
                 title: "Update the Linklog extension",
                 body: `${installedVersion ? `The installed extension (${installedVersion})` : "The installed extension"} can't talk to this version of Linklog. Browser view needs extension ${EXPECTED_EXTENSION_VERSION}.`,
                 steps: [
-                  <>{download} (the .zip under Assets).</>,
+                  <><DownloadLink /> (the .zip under Assets).</>,
                   <>Unzip it over the folder you loaded the extension from.</>,
                   <>
                     Open <Kbd>chrome://extensions</Kbd> and click ↻ on the Linklog card.
@@ -81,7 +115,7 @@ export function Connect({ ws }: { ws: BrowserWorkspace }) {
                 title: "Connect the Linklog extension",
                 body: "Browser view shows the tabs and groups of this Chrome window. It needs the Linklog extension.",
                 steps: [
-                  <>{download} and unzip it into a folder you'll keep.</>,
+                  <><DownloadLink /> and unzip it into a folder you'll keep.</>,
                   <>
                     Open <Kbd>chrome://extensions</Kbd> and turn on Developer mode.
                   </>,

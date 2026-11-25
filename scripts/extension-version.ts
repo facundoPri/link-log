@@ -4,7 +4,7 @@
 import { $ } from "bun";
 import { isOlderVersion, parseVersion } from "../src/browser/extensionVersion";
 
-const SHIPPED = ["apps/extension/", "packages/browser-protocol/"];
+export const SHIPPED = ["apps/extension/", "packages/browser-protocol/"];
 const PACKAGE = "apps/extension/package.json";
 
 export function versionBumpProblem(changed: string[], base: string, head: string): string | null {

@@ -59,9 +59,11 @@ In Chrome stable: `chrome://extensions` → Developer mode → **Load unpacked**
 a push to `main` that changes the extension publishes `extension-v<version>` (the version in
 `apps/extension/package.json`) when that release doesn't exist yet, built with the origins in the
 `EXTENSION_ORIGINS` repository variable. Every PR that changes `apps/extension/` or
-`packages/browser-protocol/` raises that version; CI fails otherwise. Linklog expects the version
-from its own commit: an older extension on the same protocol gets an update banner, one on another
-protocol is blocked with a link to the latest release. The extension finds Linklog on `http://localhost` / `http://127.0.0.1`
+`packages/browser-protocol/` raises that version; CI fails otherwise, and also when that version
+was already released from other extension code (two PRs raising to the same version). Linklog
+expects the version from its own commit: an older extension on the same protocol gets an update
+banner, one on another protocol is blocked. Both link that version's release, or the latest
+release when GitHub has none for it. The extension finds Linklog on `http://localhost` / `http://127.0.0.1`
 on **any port** (the page identifies itself with `<meta name="linklog-app">`; other local apps
 get no bridge). For another origin, e.g. a deployed Linklog, build with
 `LINKLOG_ORIGINS=https://linklog.example bun run extension:build`. The extension asks for
