@@ -35,3 +35,35 @@ test("a failed request stops; its ids and the ones after it are untouched", asyn
   expect(out.untouched).toEqual(ids(250).slice(100));
   expect(out.error?.message).toBe("Network down");
 });
+
+test("a request whose answer was lost is checked against the library before it is reported", async () => {
+  let calls = 0;
+  const out = await deleteInChunks(
+    ids(250),
+    async (chunk) => {
+      if (++calls === 2) throw new Error("Network down");
+      return { deleted: chunk, running: [] };
+    },
+    () => {},
+    // The server committed the second chunk except for l150, then the response was lost.
+    async () => new Set(["l150", ...ids(250).slice(200)]),
+  );
+  expect(out.deleted.length).toBe(199);
+  expect(out.untouched).toEqual(["l150", ...ids(250).slice(200)]);
+  expect(out.error?.message).toBe("Network down");
+});
+
+test("when the check fails too, the failed chunk stays unconfirmed", async () => {
+  const out = await deleteInChunks(
+    ids(10),
+    async () => {
+      throw new Error("Network down");
+    },
+    () => {},
+    async () => {
+      throw new Error("Still down");
+    },
+  );
+  expect(out.deleted).toEqual([]);
+  expect(out.untouched).toEqual(ids(10));
+});

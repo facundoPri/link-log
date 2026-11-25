@@ -46,24 +46,29 @@ export const BATCH_WORDS: Record<Batch["kind"], { running: string; verb: string;
 
 export type DeleteReply = { deleted: string[]; running: string[] };
 /**
- * Sends a selection to POST /api/links/delete in chunks of 100 (FAC-46). The first failed request stops the run:
- * its ids and the ones after it are `untouched`, so the caller can say exactly what was and wasn't deleted.
+ * Sends a selection to POST /api/links/delete in chunks of 100 (FAC-46). The first failed request stops the run.
+ * Its answer may only have been lost after the server committed, so `present` reads which of its links still exist
+ * before they are reported; when that read fails too, they count as not deleted. Links not deleted are `untouched`.
  */
 export async function deleteInChunks<T extends DeleteReply>(
   ids: string[],
   send: (chunk: string[]) => Promise<T>,
   onChunk: (reply: T) => void = () => {},
+  present: (chunk: string[]) => Promise<Set<string>> = async (chunk) => new Set(chunk),
 ) {
   const deleted: string[] = [],
     running: string[] = [];
   for (let offset = 0; offset < ids.length; offset += 100) {
+    const chunk = ids.slice(offset, offset + 100);
     try {
-      const reply = await send(ids.slice(offset, offset + 100));
+      const reply = await send(chunk);
       onChunk(reply);
       deleted.push(...reply.deleted);
       running.push(...reply.running);
     } catch (e) {
-      return { deleted, running, untouched: ids.slice(offset), error: e as Error };
+      const still = await present(chunk).catch(() => new Set(chunk));
+      deleted.push(...chunk.filter((id) => !still.has(id)));
+      return { deleted, running, untouched: [...chunk.filter((id) => still.has(id)), ...ids.slice(offset + 100)], error: e as Error };
     }
   }
   return { deleted, running, untouched: [] as string[], error: null };

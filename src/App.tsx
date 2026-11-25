@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link2, ListChecks, Plus } from "lucide-react";
 import { toast } from "sonner";
-import { api, type WriteMethod } from "./api";
+import { api, apiRead, type WriteMethod } from "./api";
 import type { Batch, Lens, LensResult, LensScope, Library, Link, Tag } from "./types";
 import { jevUnavailable, needsAttention } from "./attention";
 import { clipboardUrls } from "./url";
@@ -626,6 +626,12 @@ export function App({
         ids,
         (chunk) => api<Library & DeleteReply>("/links/delete", "POST", { ids: chunk }),
         setLibrary,
+        async (chunk) => {
+          const lib = await apiRead<Library>("/library", new AbortController().signal);
+          setLibrary(lib);
+          const listed = new Set(lib.links.map((l) => l.id));
+          return new Set(chunk.filter((id) => listed.has(id)));
+        },
       );
     } finally {
       setDeleting(false);
@@ -633,7 +639,8 @@ export function App({
     const sent = new Set(ids);
     const left = new Set([...out.running, ...out.untouched]);
     setPicked((cur) => cur.filter((id) => left.has(id) || !sent.has(id)));
-    if (activeId && out.deleted.includes(activeId)) setActiveId(null);
+    const gone = new Set(out.deleted);
+    setActiveId((cur) => (cur && gone.has(cur) ? null : cur));
     const skipped = out.running.length ? `${out.running.length} still processing, skipped.` : "";
     if (out.error)
       toast.error(`Deleted ${out.deleted.length} of ${plural(ids.length, "link")}`, {

@@ -19,7 +19,7 @@ A user selects saved links and deletes them, with everything they own: extracted
 
 Preconditions:
 
-- The baseline from `README.md`. `journeys/bulk-delete.ts` is the reference and covers every sub-feature except `delete-chunks`, which `tests/delete-chunks.test.ts` covers.
+- The baseline from `README.md`. `journeys/bulk-delete.ts` is the reference: it drives `⌘K` and `More` on desktop and the drawer on mobile, and covers every sub-feature except `delete-chunks`, which `tests/delete-chunks.test.ts` covers.
 
 - **Confirm and cancel.** Select two links, `ControlOrMeta+k`, click the `Delete` option. `getByRole("alertdialog", { name: "Delete 2 links?" })` opens. Click `Cancel`: both links stay (`api.link(url)`), the bar still reads "2 selected".
 - **Delete.** Confirm with `Delete 2 links`. Check the API first (`api.link(url)` is null, `GET /links/:id/content` throws with `→ 404`, `api.library().tags` still lists the tag), then the rows, the "Deleted 2 links" toast and the bar disappearing. No `GET /api/library` follows: the list updates from the returned library.

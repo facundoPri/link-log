@@ -45,8 +45,9 @@ export default (async ({ page, api, apiAs, fixture, step, check, shot, note }) =
   await confirm.getByRole("button", { name: "Cancel" }).click();
   await check("Cancel keeps both links and the selection", async () => !!(await api.link(one)) && !!(await api.link(two)) && /2 selected/.test((await bar.textContent()) ?? ""));
 
-  await step("Desktop: confirm the delete");
-  await page.keyboard.press("ControlOrMeta+k");
+  await step("Desktop: confirm the delete, reached through More this time");
+  await bar.getByRole("button", { name: /^More/ }).click();
+  await check("More opens the palette", () => palette.isVisible());
   await palette.getByRole("option", { name: /^Delete/ }).click();
   const gets: string[] = [];
   const countGets = (r: { url(): string; method(): string }) => {
@@ -58,7 +59,8 @@ export default (async ({ page, api, apiAs, fixture, step, check, shot, note }) =
   await check("API: the deleted link's content is gone", async () => (await content(a.id)) === null);
   await check("API: the tag definition stays with no links", async () => (await api.library()).tags.some((t) => t.name === tag));
   await check("Rows disappear", async () => (await page.getByText(a.title, { exact: true }).count()) === 0 && (await page.getByText(b.title, { exact: true }).count()) === 0);
-  await check("Toast says Deleted 2 links", async () => (await page.locator("[data-sonner-toast]").filter({ hasText: "Deleted 2 links" }).count()) > 0);
+  const toast = (text: string) => page.locator("[data-sonner-toast]").filter({ hasText: text }).first();
+  await check("Toast says Deleted 2 links", () => toast("Deleted 2 links").isVisible());
   await check("Selection cleared: the bar is gone", async () => !(await bar.isVisible()));
   await page.waitForTimeout(1500);
   page.off("request", countGets);
@@ -94,7 +96,7 @@ export default (async ({ page, api, apiAs, fixture, step, check, shot, note }) =
   await palette.getByRole("option", { name: /^Delete/ }).click();
   await confirm.getByRole("button", { name: "Delete 2 links" }).click();
   await check("API: the idle link is gone, the running one stays", async () => !(await api.link(keep)) && (await api.library()).links.some((l) => l.id === slowId));
-  await check("Toast says 1 still processing, skipped", async () => (await page.locator("[data-sonner-toast]").filter({ hasText: "1 still processing, skipped" }).count()) > 0);
+  await check("Toast says 1 still processing, skipped", () => toast("1 still processing, skipped").isVisible());
   await check("The running link stays selected", async () => /1 selected/.test((await bar.textContent()) ?? ""));
   await snap("04-skipped-running");
   await bar.getByRole("button", { name: "Clear selection" }).click();
@@ -129,7 +131,14 @@ export default (async ({ page, api, apiAs, fixture, step, check, shot, note }) =
     const l = await api.link(slow);
     return l && !l.processing && !!l.content_key;
   }, { timeout: 60_000 });
-  const retry = (await api.send("POST", "/links/delete", { ids: [slowId] })) as { deleted: string[]; running: string[] };
-  await check("API: deleted this time, nothing running", () => retry.deleted[0] === slowId && retry.running.length === 0);
+  await page.reload();
+  await check(`Row "${running.title}" is listed`, () => box(running.title).isVisible());
+  await box(running.title).click();
+  await bar.getByRole("button", { name: /^Actions/ }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Delete 1 link" }).click();
+  await mobileConfirm.getByRole("button", { name: "Delete 1 link" }).click();
+  await check("API: the link is gone this time", async () => !(await api.library()).links.some((l) => l.id === slowId));
   await check("API: its content is gone", async () => (await content(slowId)) === null);
+  await check("Row disappears", async () => (await page.getByText(running.title, { exact: true }).count()) === 0);
+  await check("Toast says Deleted 1 link", () => toast("Deleted 1 link").isVisible());
 }) satisfies Journey;
