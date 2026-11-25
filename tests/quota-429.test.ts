@@ -6,7 +6,7 @@ import { TestD1 } from "./support/d1";
 import { client, makeEnv } from "./support/env";
 import { testApiKey, testSession } from "./support/auth.test-instance";
 import { libraryOf, quotaUsed } from "./support/library";
-import { expect429, setUsed, stayInsideWindow } from "./support/quota";
+import { expect429, setUsed, stayInsideWindows } from "./support/quota";
 
 let db: TestD1, env: Env, queued: { id: string }[], call: ReturnType<typeof client>;
 let A: { userId: string; cookie: string };
@@ -17,9 +17,8 @@ const nothingSaved = async () => {
   expect(queued).toHaveLength(0);
 };
 
+stayInsideWindows(3600, 60);
 beforeEach(async () => {
-  await stayInsideWindow(3600);
-  await stayInsideWindow(60);
   db = await TestD1.migrated();
   ({ env, queued } = makeEnv(db, { JEV_PROVIDER: "fixture", ALLOW_FIXTURE_JEV: "1" }));
   call = client(env);
