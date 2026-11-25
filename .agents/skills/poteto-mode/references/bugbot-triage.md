@@ -2,12 +2,21 @@
 
 Use this reference when the Babysit playbook (`../playbooks/babysit.md`) handles comments from Bugbot, CodeRabbit, or any other review bot. "Bugbot" below stands for whichever bot commented. The goal is not to ignore Bugbot by default. The goal is to stop treating every comment as a required code change.
 
+## Reading CodeRabbit comments
+
+A CodeRabbit body is mostly `<details>` blocks (a fix prompt, suggestions) and HTML comments. The finding is the text before the first `<details>`: the severity line, the bold title, and the paragraph under it. Read just that:
+
+```bash
+gh api --paginate "repos/<owner>/<repo>/pulls/<pr>/comments" \
+  --jq '.[] | select(.user.login == "coderabbitai[bot]") | {id, path, line, finding: (.body | split("<details>")[0] | gsub("<[^>]*>"; ""))}'
+```
+
 ## Decision rubric
 
 Classify each review-bot thread before acting:
 
 - `fix`: The comment identifies a plausible correctness, security, privacy, data loss, auth, billing, migration, idempotency, race, or shipped-behavior issue. Fix it in the lowest owning PR, then reply with the commit SHA and resolve the thread.
-- `ticket`: The comment is real but pre-existing: the base branch has the same problem, and this diff neither introduced nor worsened it. Open a ticket in the repo's issue tracker, reply with its link, and resolve the thread. The PR keeps its scope.
+- `ticket`: The comment is real but pre-existing (the base branch has the same problem, and this diff neither introduced nor worsened it), or real and deliberately deferred. Open a ticket in the repo's issue tracker, reply with its link, and resolve the thread. The PR keeps its scope.
 - `dismiss`: The comment matches a documented low-risk noisy pattern, and the current code/context proves the concern does not need a code change. Reply with a short reason and resolve the thread.
 - `ask`: The comment is novel, high-severity, security/privacy/data-related, or ambiguous. Ask the user instead of guessing.
 
