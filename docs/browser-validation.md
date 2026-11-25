@@ -149,7 +149,7 @@ Límites medidos:
   predicción para sitios reales (que tienen el límite de 30 s por pestaña).
 - **Captura de pantalla, cámara o micrófono**: `chrome.tabs` no la expone; se detecta sólo cuando
   Chrome rechaza el descarte, y se informa por pestaña. No verificado de forma nativa.
-- El detalle del check de lente en `sleeping-run.md` muestra sólo la primera línea de la barra; el
+- El detalle del check de lente en `run.md` muestra sólo la primera línea de la barra; el
   texto completo de arriba sale de las capturas 29 y 30 (el runner ya imprime la barra entera).
 
 ## Lo que no se pudo verificar aquí

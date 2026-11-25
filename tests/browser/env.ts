@@ -1,5 +1,6 @@
 // Isolated environment for real-extension tests: its own ports, D1/R2 state,
 // Chromium profiles and a deterministic Jev provider. Never touches your data.
+import { existsSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { chromium, type BrowserContext, type Worker } from "playwright-core";
@@ -15,7 +16,8 @@ export const UI = `http://127.0.0.1:${UI_PORT}`;
 export const API = `http://127.0.0.1:${API_PORT}/api`;
 export const SITE = `http://127.0.0.1:${SITE_PORT}`;
 export const EXTENSION = resolve(OUT, "extension");
-const EXE = process.env.CHROME_PATH ?? "/opt/pw-browsers/chromium";
+// Cloud sandboxes ship Chromium at /opt/pw-browsers; elsewhere, Playwright's own download (as cdp.ts uses).
+const EXE = process.env.CHROME_PATH ?? (existsSync("/opt/pw-browsers/chromium") ? "/opt/pw-browsers/chromium" : chromium.executablePath());
 
 async function run(cmd: string[], env: Record<string, string> = {}) {
   const p = Bun.spawn(cmd, { cwd: ROOT, env: { ...process.env, ...env }, stdout: "pipe", stderr: "pipe" });
