@@ -18,10 +18,9 @@ export const ACCESS_LABEL: Record<Exclude<BrowserTab["content"], "available">, {
  * same protocol version can still send one this app doesn't know: show it as unreadable, never crash.
  */
 export function accessOf(content: BrowserTab["content"]): { label: string; hint: string } {
-  return (ACCESS_LABEL as Record<string, { label: string; hint: string } | undefined>)[content] ?? {
-    label: "Can't read",
-    hint: "Linklog can't read this tab right now. Updating the Linklog extension may fix it.",
-  };
+  // Own keys only: an inherited name such as "constructor" is not a state either.
+  if (content !== "available" && Object.hasOwn(ACCESS_LABEL, content)) return ACCESS_LABEL[content];
+  return { label: "Can't read", hint: "Linklog can't read this tab right now. Updating the Linklog extension may fix it." };
 }
 
 /** A Sleeping tab with nothing captured: lenses wait for Load content. */

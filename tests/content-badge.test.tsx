@@ -11,7 +11,7 @@ const tab = (content: string) =>
   ({ tabId: 1, tabInstanceId: "i1", documentRevision: 1, url: "https://example.com/", title: "T", content, sleep: null, load: null, capturedAt: null }) as unknown as BrowserTab;
 
 describe("Browser tab content states from the extension", () => {
-  for (const content of ["discarded", "frozen", undefined as unknown as string])
+  for (const content of ["discarded", "frozen", "constructor", undefined as unknown as string])
     test(`an unknown state (${content}) renders a generic badge instead of crashing`, () => {
       const html = renderToStaticMarkup(
         <TooltipProvider>
@@ -23,6 +23,7 @@ describe("Browser tab content states from the extension", () => {
 
   test("the inspector and lens cells get the same fallback, and known states keep their own label", () => {
     expect(accessOf("discarded" as BrowserTab["content"]).label).toBe("Can't read");
+    expect(accessOf("constructor" as BrowserTab["content"]).label).toBe("Can't read");
     expect(accessOf("sleeping").label).toBe("Sleeping");
   });
 });
