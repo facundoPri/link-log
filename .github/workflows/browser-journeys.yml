@@ -1,0 +1,69 @@
+name: Browser journeys
+
+# A PR that touches the extension, the protocol it shares with the web app, or the web app's
+# Browser view runs every verify-linklog journey that fakes the extension bridge (those importing
+# @linklog/browser-protocol), so a protocol change can't silently break one (#34 broke bulk-open).
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - apps/extension/**
+      - packages/browser-protocol/**
+      - src/browser/**
+      - src/components/browser/**
+      - .agents/skills/verify-linklog/**
+      - qa/video/**
+      - .github/workflows/browser-journeys.yml
+
+concurrency:
+  group: browser-journeys-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  WRANGLER_SEND_METRICS: 'false'
+  CI: 'true'
+
+jobs:
+  journeys:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      V: .agents/skills/verify-linklog/scripts/verify.ts
+      # The runner image ships Chrome; Playwright drives it instead of downloading Chromium.
+      CHROME_PATH: /usr/bin/google-chrome
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - run: bun "$V" up
+      - name: Run the Browser journeys
+        run: |
+          journeys=$(grep -l '@linklog/browser-protocol' .agents/skills/verify-linklog/journeys/*.ts || true)
+          if [ -z "$journeys" ]; then echo "No journey imports @linklog/browser-protocol; the selection is broken." >&2; exit 1; fi
+          failed=""
+          for journey in $journeys; do
+            echo "::group::$journey"
+            bun "$V" run "$journey" || failed="$failed $journey"
+            echo "::endgroup::"
+          done
+          if [ -n "$failed" ]; then echo "Failed:$failed" >&2; exit 1; fi
+      - name: Stop the instance
+        if: always()
+        run: bun "$V" down || true
+      # Screenshots, video and logs of the failed journey. The instance (and its sessions) is gone by now.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: failure()
+        with:
+          name: browser-journeys-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .cache/verify-linklog/*/evidence/
+            .cache/verify-linklog/*/logs/
+          if-no-files-found: ignore
+          retention-days: 7

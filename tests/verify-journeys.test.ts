@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test";
 import { Glob } from "bun";
 
-// Journeys aren't run in CI, so a fake extension bridge that answers hello with a literal protocol
-// rots silently when PROTOCOL_VERSION moves (bulk-open did after #34). Import it instead.
+// A fake extension bridge that answers hello with a literal protocol rots silently when
+// PROTOCOL_VERSION moves (bulk-open did after #34), and CI runs only the journeys that import it
+// (browser-journeys.yml). Import it instead.
 test("no verify-linklog journey answers with a literal protocol number", async () => {
   const offenders: string[] = [];
   let scanned = 0;
