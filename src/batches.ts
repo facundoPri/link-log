@@ -1,4 +1,6 @@
-import type { Batch } from "./types";
+import { api } from "./api";
+import { plural } from "./lib/format";
+import type { Batch, Library } from "./types";
 
 // Sends a selection to POST /api/batches in chunks of 100. For auto-tag and lenses, a chunk whose links all lack
 // content is refused with the links it skipped; that only leaves those links out and the other chunks still run.
@@ -45,6 +47,14 @@ export const BATCH_WORDS: Record<Batch["kind"], { running: string; verb: string;
 };
 
 export type DeleteReply = { deleted: string[]; cancelled: number };
+/** What a delete toast adds when jobs still processing the deleted links were cancelled with them (ADR 0003). */
+export const cancelledNote = (cancelled: number, links: number) =>
+  cancelled ? `Cancelled ${plural(cancelled, "job")} still processing ${links === 1 ? "it" : "them"}.` : undefined;
+/** DELETE /api/links/:id, the Inspector's and a row's single delete: the same cleanup and cancel as a bulk delete. */
+export async function deleteLink(id: string) {
+  const reply = await api<Library & { cancelled: number }>(`/links/${id}`, "DELETE");
+  return { library: reply, note: cancelledNote(reply.cancelled, 1) };
+}
 /**
  * Sends a selection to POST /api/links/delete in chunks of 100 (FAC-46). The first failed request stops the run.
  * Its answer may only have been lost after the server committed, so `present` reads which of its links still exist

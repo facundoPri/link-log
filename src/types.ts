@@ -152,6 +152,8 @@ export type Batch = {
   total: number;
   done: number;
   failed: number;
+  /** Failed jobs whose link still exists: what Retry failed can resubmit. A deleted link's job is failed but not here. */
+  retryable_failed: number;
   /** Jobs cancelled before they finished (not counted as failed). */
   cancelled: number;
   /** Queued, running or waiting jobs; `waiting` counts the last ones. */

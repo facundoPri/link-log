@@ -359,7 +359,7 @@ export function ActivitySheet({ open, onOpenChange }: { open: boolean; onOpenCha
                         <CircleAlert className="size-3" />
                         {b.failed} failed
                       </Badge>
-                      {retriable(b) && (
+                      {retriable(b) && b.retryable_failed > 0 && (
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <Button

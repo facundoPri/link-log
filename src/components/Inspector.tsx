@@ -20,6 +20,7 @@ import {
   X,
 } from "lucide-react";
 import { api } from "../api";
+import { deleteLink } from "../batches";
 import { useLinkContent } from "../entities";
 import type { Lens, Library, Link, Tag, ContentDetails, MediaItem } from "../types";
 import { canRetryPreview } from "../attention";
@@ -1002,8 +1003,9 @@ export function Inspector({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete this link?</AlertDialogTitle>
-            <AlertDialogDescription className="truncate">
-              {link.title}
+            <AlertDialogDescription>
+              <span className="block truncate">{link.title}</span>
+              Anything still processing it is cancelled. This can't be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -1011,8 +1013,9 @@ export function Inspector({
             <AlertDialogAction
               onClick={async () => {
                 try {
-                  onChange(await api(`/links/${link.id}`, "DELETE"));
-                  toast.success("Link deleted");
+                  const { library: next, note } = await deleteLink(link.id);
+                  onChange(next);
+                  toast.success("Link deleted", { description: note });
                   onDeleted();
                 } catch (e) {
                   toast.error((e as Error).message);

@@ -206,11 +206,43 @@ test("the Inspector's single delete cancels a running job the same way", async (
   const { jobId, finish } = await runningExtraction(s, id);
   const res = await s.api(`/links/${id}`, "DELETE");
   expect(res.status).toBe(200);
-  expect(res.data.links).toEqual([]);
+  expect(res.data).toMatchObject({ links: [], cancelled: 1 });
   expect(jobRow(s, jobId)).toMatchObject({ link_id: null, status: "failed", error: DELETED });
   await finish("# late");
   expect(objectsOf(s, id)).toEqual([]);
   expect((await s.api(`/links/${id}`, "DELETE")).status).toBe(404);
+});
+
+test("a job waiting on the deleted link's extraction is cancelled too and never starts", async () => {
+  const s = await setup({ placeholder: true });
+  Object.assign(s.env as unknown as Record<string, unknown>, { JEV_PROVIDER: "fixture", ALLOW_FIXTURE_JEV: "1" });
+  await s.api("/tags", "POST", { name: "topic" });
+  const id = await save(s, "https://example.com/waits");
+  const { jobId, finish } = await runningExtraction(s, id);
+  const tag = (await s.api("/batches", "POST", { kind: "autotag", ids: [id] })).data.batchId as string;
+  const waiting = (s.db.query("SELECT id,status FROM jobs WHERE batch_id=?").get(tag)) as { id: string; status: string };
+  expect(waiting.status).toBe("waiting");
+  const res = await bulkDelete(s, [id]);
+  expect(res.data.cancelled).toBe(2);
+  for (const j of [jobId, waiting.id]) expect(jobRow(s, j)).toMatchObject({ link_id: null, status: "failed", step: "Cancelled", error: DELETED });
+  await finish("# late");
+  await drain(s);
+  expect(s.jevSent).toEqual([]);
+  expect(jobRow(s, waiting.id).step).toBe("Cancelled");
+  expect(res.data.batches.find((b: { id: string }) => b.id === tag)).toMatchObject({ cancelled: 1, active: 0, failed: 0 });
+});
+
+test("a job that failed before its link was deleted still counts as failed, but there is nothing to retry", async () => {
+  const s = await setup();
+  const id = await save(s, "https://example.com/failed");
+  await drain(s);
+  const { batch } = s.db.query("SELECT batch_id batch FROM jobs WHERE link_id=?").get(id) as { batch: string };
+  s.db.query("UPDATE jobs SET status='failed',step='Extracting content',error='Boom' WHERE link_id=?").run(id);
+  const before = (await s.api("/library")).data.batches.find((b: { id: string }) => b.id === batch);
+  expect(before).toMatchObject({ failed: 1, retryable_failed: 1 });
+  const res = await bulkDelete(s, [id]);
+  expect(res.data.cancelled).toBe(0);
+  expect(res.data.batches.find((b: { id: string }) => b.id === batch)).toMatchObject({ failed: 1, retryable_failed: 0 });
 });
 
 test("rejects a malformed selection", async () => {

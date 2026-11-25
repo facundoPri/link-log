@@ -21,7 +21,7 @@ CREATE TABLE usage_events_next (
   user_id TEXT REFERENCES "user"(id) ON DELETE CASCADE,
   batch_id TEXT REFERENCES batches(id) ON DELETE SET NULL,
   job_id TEXT REFERENCES jobs_next(id) ON DELETE SET NULL,
-  link_id TEXT REFERENCES links(id) ON DELETE CASCADE,
+  link_id TEXT REFERENCES links(id) ON DELETE SET NULL,
   provider TEXT NOT NULL, service TEXT NOT NULL, model TEXT,
   operation TEXT NOT NULL, status TEXT NOT NULL,
   input_tokens INTEGER, output_tokens INTEGER, browser_ms INTEGER,

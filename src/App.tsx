@@ -27,7 +27,7 @@ import { openUnavailable, useOpenLinks } from "./browser/openLinks";
 import { BrowserInspector } from "./components/browser/BrowserInspector";
 import { BrowserDialogs } from "./components/browser/BrowserDialogs";
 import { useBrowserActions } from "./browser/useBrowserActions";
-import { BATCH_WORDS, deleteInChunks, submitInChunks, type BatchReply, type DeleteReply } from "./batches";
+import { BATCH_WORDS, cancelledNote, deleteInChunks, deleteLink as deleteOneLink, submitInChunks, type BatchReply, type DeleteReply } from "./batches";
 import { actionStates, BULK_ACTIONS, lacksContent, runAction, type BulkRunners } from "./bulkActions";
 import { copyLinks } from "./lib/copy-links";
 import { isInput, overlayOpen } from "./lib/overlay";
@@ -643,7 +643,7 @@ export function App({
     setPicked((cur) => cur.filter((id) => left.has(id) || !sent.has(id)));
     const gone = new Set(out.deleted);
     setActiveId((cur) => (cur && gone.has(cur) ? null : cur));
-    const cancelled = out.cancelled ? `Cancelled ${plural(out.cancelled, "job")} still processing them.` : undefined;
+    const cancelled = cancelledNote(out.cancelled, out.deleted.length);
     if (out.error)
       toast.error(`Deleted ${out.deleted.length} of ${plural(ids.length, "link")}`, {
         description: [out.error.message, cancelled, "The rest stay selected."].filter(Boolean).join(" "),
@@ -1210,8 +1210,9 @@ export function App({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete this link?</AlertDialogTitle>
-            <AlertDialogDescription className="truncate">
-              {deleteLink?.title}
+            <AlertDialogDescription>
+              <span className="block truncate">{deleteLink?.title}</span>
+              Anything still processing it is cancelled. This can't be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -1220,8 +1221,9 @@ export function App({
               onClick={async () => {
                 if (!deleteLink) return;
                 try {
-                  await mutate(`/links/${deleteLink.id}`, "DELETE");
-                  toast.success("Link deleted");
+                  const { library: next, note } = await deleteOneLink(deleteLink.id);
+                  setLibrary(next);
+                  toast.success("Link deleted", { description: note });
                   if (activeId === deleteLink.id) setActiveId(null);
                 } catch (e) {
                   toast.error((e as Error).message);

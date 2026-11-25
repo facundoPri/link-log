@@ -154,8 +154,8 @@ export const linkRoutes = new Hono<AppEnv>()
   })
   .delete("/links/:id", async (c) => {
     const env = c.env, userId = ownerOf(c);
-    const { deleted } = await deleteLinks(env, userId, [c.req.param("id")]);
+    const { deleted, cancelled } = await deleteLinks(env, userId, [c.req.param("id")]);
     if (!deleted.length) throw notFound();
     c.executionCtx.waitUntil(deleteLinkContent(env, userId, deleted));
-    return json(await library(env, userId));
+    return json({ ...(await library(env, userId)), cancelled });
   });
