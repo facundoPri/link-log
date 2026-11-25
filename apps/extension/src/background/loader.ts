@@ -1,6 +1,7 @@
 import {
   documentKey,
   LOAD_CONCURRENCY,
+  type Capture,
   type LoadAction,
   type LoadItemView,
   type LoadRunStatus,
@@ -13,6 +14,7 @@ import { captureTab, CaptureError } from "./capture";
 import { sleepReason, type Hub } from "./hub";
 import type { KV, Mutex } from "./kv";
 import type { TabRegistry } from "./registry";
+import { THIN_TEXT_REASON } from "../extract/reasons";
 
 export type LoadOptions = {
   /** Most tabs this run keeps awake at once. */
@@ -21,10 +23,12 @@ export type LoadOptions = {
   readyTimeoutMs: number;
   /** Time a loaded page gets to render before it is read. */
   settleMs: number;
+  /** How long a woken page that read as almost empty is read again, for an app that renders after load. */
+  renderWaitMs: number;
   pollMs: number;
 };
 // N and the bound come from the FAC-163 probe (planning/fac-163/run.md).
-export const LOAD_DEFAULTS: LoadOptions = { concurrency: LOAD_CONCURRENCY.default, readyTimeoutMs: 30_000, settleMs: 1_000, pollMs: 250 };
+export const LOAD_DEFAULTS: LoadOptions = { concurrency: LOAD_CONCURRENCY.default, readyTimeoutMs: 30_000, settleMs: 1_000, renderWaitMs: 8_000, pollMs: 250 };
 const SETTINGS_KEY = "loadSettings";
 
 type Item = {
@@ -390,6 +394,22 @@ export class LoadQueue {
   }
 
   private async capture(item: Item, tab: chrome.tabs.Tab) {
+    let capture = await this.read(item, tab);
+    // An app such as YouTube is "complete" before it renders its text, and later still in a background tab:
+    // a page this run woke that read as almost empty is read again, with growing pauses, until it has text.
+    const deadline = Date.now() + (item.woke ? this.opts.renderWaitMs : 0);
+    for (let pause = this.opts.pollMs * 4; thin(capture) && Date.now() + pause <= deadline; pause *= 2) {
+      await wait(pause);
+      this.alive();
+      if (this.cancelled()) throw new Skip("Cancelled.");
+      capture = await this.read(item, await this.current(item));
+    }
+    if (!(await this.cache.putCapture(item.tabInstanceId, item.documentRevision, "dom", capture)))
+      throw new Fail("There is no room to keep this page, so nothing was captured.");
+  }
+
+  /** One bounded, cancellable read of the page, checked against the document the run was given. */
+  private async read(item: Item, tab: chrome.tabs.Tab): Promise<Capture> {
     // Chrome may never answer a page that froze after loading: bound the wait (same bound as loading) and
     // let a cancel end it. A late answer is dropped: nothing below runs for it.
     const read = captureTab(tab.id!).then(
@@ -412,8 +432,7 @@ export class LoadQueue {
     const now = await this.current(item);
     if (!this.sameDocument(item, now) || (capture.url && documentKey(capture.url) !== item.docKey))
       throw new Fail("The page went to another address (maybe a sign-in page), so it wasn't captured. It stays awake.", true);
-    if (!(await this.cache.putCapture(item.tabInstanceId, item.documentRevision, "dom", capture)))
-      throw new Fail("There is no room to keep this page, so nothing was captured.");
+    return capture;
   }
 
   /** Cancelled mid-way: whatever the run woke goes back to sleep; the tab is skipped. */
@@ -447,3 +466,5 @@ export class LoadQueue {
 }
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Read before the page rendered its text: the extractor found almost none. */
+const thin = (capture: Capture) => capture.reasons.includes(THIN_TEXT_REASON);

@@ -29,7 +29,7 @@ async function boot() {
   const hub = new Hub(kv, registry, groups);
   hub.grants = ["http://*/*", "https://*/*"];
   const cache = new ResultCache(kv, mutex);
-  const loader = new LoadQueue(kv, mutex, registry, cache, hub, { concurrency: N, readyTimeoutMs: 150, settleMs: 0, pollMs: 2 }, local);
+  const loader = new LoadQueue(kv, mutex, registry, cache, hub, { concurrency: N, readyTimeoutMs: 150, settleMs: 0, renderWaitMs: 60, pollMs: 2 }, local);
   hub.cache = cache;
   hub.loader = loader;
   s = { registry, cache, groups, hub, opens: new OpenLedger(kv), loader, ids: { installationId: "inst", browserSessionId: "sess" } };
@@ -153,6 +153,30 @@ describe("Load content", () => {
     expect(ids.every((id) => fake.tabs.get(id)!.discarded)).toBe(true);
     expect(snap.loadRun).toMatchObject({ status: "done", total: 10, done: 10, failed: 0, awake: 0 });
     expect(snap.tabs.filter((t) => ids.includes(t.tabId)).every((t) => t.content === "sleeping" && !!t.capturedAt && t.load?.state === "done")).toBe(true);
+  });
+
+  test("a page that renders after load is read again until its text is there, before it goes back to sleep", async () => {
+    await setup();
+    sleepingTabs(1);
+    Object.assign(fake.pages.get(1)!, { markdown: "# Video\n\nThe description, rendered late.", thinReads: 2 });
+    await run("loadContent", { tabs: await refs([1]) });
+    const snap = await settled();
+    const read = await run("capture", { tabs: [ref(snap.tabs.find((t) => t.tabId === 1)!)] });
+    expect(read.captures[0].capture).toMatchObject({ completeness: "complete", markdown: "# Video\n\nThe description, rendered late." });
+    expect(fake.tabs.get(1)!.discarded).toBe(true);
+    expect(fake.count("reload", 1)).toBe(1);
+  });
+
+  test("a page that stays thin is kept as a partial capture once the wait runs out", async () => {
+    await setup();
+    sleepingTabs(1);
+    Object.assign(fake.pages.get(1)!, { thinReads: 1000 });
+    await run("loadContent", { tabs: await refs([1]) });
+    const snap = await settled();
+    expect(snap.loadRun).toMatchObject({ done: 1, failed: 0 });
+    const read = await run("capture", { tabs: [ref(snap.tabs.find((t) => t.tabId === 1)!)] });
+    expect(read.captures[0].capture.completeness).toBe("partial");
+    expect(fake.tabs.get(1)!.discarded).toBe(true);
   });
 
   test("captured content stays readable and lenses can use it while the tab sleeps", async () => {

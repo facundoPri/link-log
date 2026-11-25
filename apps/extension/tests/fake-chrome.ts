@@ -1,3 +1,4 @@
+import { THIN_TEXT_REASON } from "../src/extract/reasons";
 // Just enough of the chrome.* API for command tests. Tabs live in one window unless moved.
 type Tab = chrome.tabs.Tab & { frozen?: boolean };
 
@@ -8,7 +9,8 @@ export function fakeChrome() {
   const tabs = new Map<number, Tab>();
   const groups = new Map<number, chrome.tabGroups.TabGroup>();
   /** What the injected extractor returns per tab (page content). */
-  const pages = new Map<number, { url: string; markdown: string; title?: string }>();
+  const pages = new Map<number, { url: string; markdown: string; title?: string; thinReads?: number }>();
+  /** `thinReads`: how many reads see only the page shell, as with an app that renders after load. */
   const createErrors = new Map<string, string>();
   const loadPlans = new Map<number, LoadPlan>();
   /** Tabs Chrome refuses to discard, with the error it throws. */
@@ -107,6 +109,7 @@ export function fakeChrome() {
         if (files) return [{ result: undefined }];
         const page = pages.get(target.tabId);
         if (!page) throw new Error("Cannot access contents of the page");
+        const thin = !!page.thinReads && page.thinReads-- > 0;
         return [
           {
             result: {
@@ -116,9 +119,9 @@ export function fakeChrome() {
               description: "desc",
               siteName: "",
               image: "",
-              markdown: page.markdown,
-              completeness: "complete",
-              reasons: [],
+              markdown: thin ? `# ${page.title ?? "T"}` : page.markdown,
+              completeness: thin ? "partial" : "complete",
+              reasons: thin ? [THIN_TEXT_REASON] : [],
               facts: [],
             },
           },

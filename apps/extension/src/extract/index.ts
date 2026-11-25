@@ -9,6 +9,7 @@
 import { Readability, isProbablyReaderable } from "@mozilla/readability";
 import TurndownService from "turndown";
 import { gfm } from "turndown-plugin-gfm";
+import { THIN_TEXT_REASON } from "./reasons";
 
 type Fact = { key: string; label: string; value: string };
 type Extracted = {
@@ -263,8 +264,7 @@ function extract(maxChars: number): Extracted | Unavailable {
   let markdown = parts.join("\n").trim();
 
   if (truncated) reasons.push(`The page is very large; reading stopped after ${MAX_ELEMENTS.toLocaleString("en")} elements.`);
-  if (text.length < 200)
-    reasons.push("Very little text was loaded; the page may render content lazily or need you to open it.");
+  if (text.length < 200) reasons.push(THIN_TEXT_REASON);
   if (markdown.length > maxChars) {
     markdown = markdown.slice(0, maxChars);
     reasons.push(`Trimmed to ${maxChars.toLocaleString("en")} characters.`);
