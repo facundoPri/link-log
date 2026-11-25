@@ -11,6 +11,7 @@ import {
   resolveChecks,
   resolveContext,
   resolveReviewThreads,
+  reviewBotHeadState,
 } from "./github.ts";
 import {
   fakeReader,
@@ -18,6 +19,7 @@ import {
   passingCheck,
   pendingCheck,
 } from "./fakes.test-helper.ts";
+import type { ReviewBotActivity } from "./types.ts";
 import { parsePrNumber } from "./types.ts";
 
 const context = {
@@ -432,5 +434,81 @@ describe("context and stack discovery", () => {
       },
     ]);
     expect(ordered.map((item) => Number(item.number))).toEqual([41, 42, 43]);
+  });
+});
+
+describe("review bot on the head commit", () => {
+  const head = "head-sha";
+  const activity = (
+    overrides: Partial<ReviewBotActivity> = {}
+  ): ReviewBotActivity => ({
+    headOid: head,
+    headCommittedAt: "2026-11-25T18:00:00Z",
+    reviews: [],
+    comments: [],
+    ...overrides,
+  });
+
+  it("counts a review whose commit_id is the head", () => {
+    expect(
+      reviewBotHeadState(
+        activity({
+          reviews: [{ commitId: head, body: "**Actionable comments posted: 2**" }],
+        })
+      )
+    ).toBe("reviewed");
+  });
+
+  it("does not count a thread reply, which is an empty-bodied review on the head", () => {
+    expect(
+      reviewBotHeadState(
+        activity({
+          reviews: [
+            { commitId: "older", body: "**Actionable comments posted: 1**" },
+            { commitId: head, body: "" },
+          ],
+        })
+      )
+    ).toBe("not-reviewed");
+  });
+
+  it("does not count a No files to review pass", () => {
+    expect(
+      reviewBotHeadState(
+        activity({
+          reviews: [{ commitId: head, body: "No files to review." }],
+        })
+      )
+    ).toBe("not-reviewed");
+  });
+
+  it("reports the quota when the bot hit a rate limit after the head commit", () => {
+    expect(
+      reviewBotHeadState(
+        activity({
+          comments: [
+            {
+              body: "### Rate Limit Exceeded",
+              updatedAt: "2026-11-25T18:10:00Z",
+            },
+          ],
+        })
+      )
+    ).toBe("rate-limited");
+  });
+
+  it("ignores a rate limit that predates the head commit", () => {
+    expect(
+      reviewBotHeadState(
+        activity({
+          comments: [
+            {
+              body: "### Rate Limit Exceeded",
+              updatedAt: "2026-11-25T17:00:00Z",
+            },
+          ],
+        })
+      )
+    ).toBe("not-reviewed");
   });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { type CliRuntime, main, parseArgs } from "./cli.ts";
 import { fakeReader, passingCheck } from "./fakes.test-helper.ts";
+import { WatcherQueryError } from "./github.ts";
 import { renderJson, renderPretty } from "./render.ts";
 import type { GitHubReader, WatcherVerdict } from "./types.ts";
 import { parsePrNumber } from "./types.ts";
@@ -220,5 +221,70 @@ describe("main", () => {
     expect(await main(["--help"], harness.runtime)).toBe(0);
     expect(harness.stdout.join("")).toContain("JSON (NDJSON while polling)");
     expect(reader.calls).toEqual([]);
+  });
+});
+
+describe("review bot report on exit", () => {
+  const argv = ["--owner", "owner", "--repo", "repo", "--pr", "1"];
+
+  it("says in the JSON verdict whether the review bot reviewed the head", async () => {
+    const harness = testRuntime(
+      fakeReader({
+        reviewBotActivity: {
+          headOid: "head",
+          headCommittedAt: "2026-11-25T18:00:00Z",
+          reviews: [{ commitId: "head", body: "**Actionable comments posted: 1**" }],
+          comments: [],
+        },
+      })
+    );
+    expect(await main(argv, harness.runtime)).toBe(0);
+    expect(JSON.parse(harness.stdout.at(-1) ?? "")).toMatchObject({
+      kind: "READY",
+      reviewBot: [{ pr: 1, bot: "coderabbitai[bot]", head: "head", state: "reviewed" }],
+    });
+  });
+
+  it("prints yes, no or no quota in pretty mode", async () => {
+    const cases = [
+      [[{ commitId: "head", body: "Actionable comments posted: 1" }], [], "yes"],
+      [[{ commitId: "head", body: "" }], [], "no"],
+      [[], [{ body: "Rate Limit Exceeded", updatedAt: "2026-11-25T19:00:00Z" }], "no quota"],
+    ] as const;
+    for (const [reviews, comments, answer] of cases) {
+      const harness = testRuntime(
+        fakeReader({
+          reviewBotActivity: {
+            headOid: "head",
+            headCommittedAt: "2026-11-25T18:00:00Z",
+            reviews,
+            comments,
+          },
+        })
+      );
+      await main([...argv, "--pretty"], harness.runtime);
+      expect(harness.stdout.join("")).toContain(
+        `reviewBot: #1 coderabbitai[bot] reviewed head head: ${answer}`
+      );
+    }
+  });
+
+  it("keeps the verdict's exit code when the bot activity cannot be read", async () => {
+    const reader = fakeReader();
+    const harness = testRuntime({
+      ...reader,
+      async reviewBotActivity() {
+        throw new WatcherQueryError({
+          kind: "command-exit",
+          retryable: true,
+          code: 1,
+          detail: "boom",
+        });
+      },
+    });
+    expect(await main(argv, harness.runtime)).toBe(0);
+    expect(JSON.parse(harness.stdout.at(-1) ?? "")).toMatchObject({
+      reviewBot: [{ pr: 1, state: "unknown" }],
+    });
   });
 });

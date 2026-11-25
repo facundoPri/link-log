@@ -455,6 +455,52 @@ function graphqlArgs(
   ];
 }
 
+export const REVIEW_BOT_LOGIN = "coderabbitai[bot]";
+// A thread reply is stored as a review with an empty body, and a pass that
+// found nothing to read still says so, so neither proves the head was read.
+export function reviewBotHeadState(
+  activity: T.ReviewBotActivity
+): Exclude<T.ReviewBotHeadState, "unknown"> {
+  if (
+    activity.reviews.some(
+      (review) =>
+        review.commitId === activity.headOid &&
+        review.body.trim() !== "" &&
+        !/no files to review/i.test(review.body)
+    )
+  )
+    return "reviewed";
+  const since =
+    activity.headCommittedAt === null ? 0 : Date.parse(activity.headCommittedAt);
+  return activity.comments.some(
+    (comment) =>
+      /rate limit/i.test(comment.body) && Date.parse(comment.updatedAt) >= since
+  )
+    ? "rate-limited"
+    : "not-reviewed";
+}
+async function botItems(path: string, fields: string): Promise<unknown[]> {
+  const result = await run([
+    "gh",
+    "api",
+    "--paginate",
+    path,
+    "--jq",
+    `.[] | select(.user.login == "${REVIEW_BOT_LOGIN}") | {${fields}}`,
+  ]);
+  if (result.code !== 0)
+    throw new WatcherQueryError({
+      kind: "command-exit",
+      retryable: true,
+      code: result.code,
+      detail: firstLine(result.stderr) || `gh api ${path} exited ${result.code}`,
+    });
+  return result.stdout
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .map((line) => parseJson(line, `gh api ${path}`));
+}
+
 export class GhGitHubReader implements T.GitHubReader {
   async originRepo(): Promise<T.Repository | null> {
     const result = await run(["git", "remote", "get-url", "origin"]);
@@ -604,6 +650,57 @@ export class GhGitHubReader implements T.GitHubReader {
               ),
       };
     });
+  }
+  async reviewBotActivity(
+    context: T.PrContext
+  ): Promise<T.ReviewBotActivity> {
+    const repo = `repos/${context.owner}/${context.repo}`;
+    const pr = record(
+      await runJson([
+        "gh",
+        "pr",
+        "view",
+        String(context.number),
+        "--repo",
+        `${context.owner}/${context.repo}`,
+        "--json",
+        "headRefOid,commits",
+      ]),
+      "pull request"
+    );
+    const headOid = optionalString(pr.headRefOid, "pull request.headRefOid");
+    const head = list(pr.commits, "pull request.commits")
+      .map((commit, index) => record(commit, `commits[${index}]`))
+      .find((commit) => commit.oid === headOid);
+    const reviews = await botItems(
+      `${repo}/pulls/${context.number}/reviews`,
+      "commit_id, body"
+    );
+    const comments = await botItems(
+      `${repo}/issues/${context.number}/comments`,
+      "body, updated_at"
+    );
+    return {
+      headOid,
+      headCommittedAt:
+        head === undefined
+          ? null
+          : string(head.committedDate, "commit.committedDate"),
+      reviews: reviews.map((item, index) => {
+        const review = record(item, `reviews[${index}]`);
+        return {
+          commitId: typeof review.commit_id === "string" ? review.commit_id : "",
+          body: typeof review.body === "string" ? review.body : "",
+        };
+      }),
+      comments: comments.map((item, index) => {
+        const comment = record(item, `comments[${index}]`);
+        return {
+          body: string(comment.body, "comment.body"),
+          updatedAt: string(comment.updated_at, "comment.updated_at"),
+        };
+      }),
+    };
   }
 }
 
