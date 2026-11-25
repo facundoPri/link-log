@@ -1,6 +1,7 @@
 // bulk-delete (FAC-46): selected links are deleted from the ⌘K palette (desktop) and the drawer (mobile) after a
-// confirmation with the count. Content and tag assignments go, tags stay, a link with a running job is skipped and
-// stays selected, the list updates from the library the request returns, and Demo B can't delete Demo A's links.
+// confirmation with the count. Content and tag assignments go, tags stay, a link with a running job is deleted too and
+// its job shows in Activity as cancelled because the link was deleted, the list updates from the library the request
+// returns, and Demo B can't delete Demo A's links.
 import type { Journey } from "../scripts/journey";
 
 export default (async ({ page, api, apiAs, fixture, step, check, shot, note }) => {
@@ -68,17 +69,18 @@ export default (async ({ page, api, apiAs, fixture, step, check, shot, note }) =
   await check("The list updated from the returned library, with no GET /api/library", () => gets.length === 0);
   await snap("03-after-delete");
 
-  await step("Desktop: a link with a running job is skipped and stays selected");
+  await step("Desktop: a link with a running job is deleted and its job cancelled");
   const slow = fixture("slow-ok", "running");
   const slowId = ((await api.send("POST", "/links", { url: slow })) as { id: string }).id;
-  await check(
+  const slowBatch = await check(
     "API: its extraction job is running",
     async () => {
       const lib = await api.library();
-      const batch = lib.batches.find((x) => x.active > 0 && x.kind === "extract");
-      if (!batch) return false;
-      const detail = (await api.get(`/batches/${batch.id}`)) as { jobs: { link_id: string; status: string }[] };
-      return detail.jobs.some((j) => j.link_id === slowId && j.status === "running");
+      for (const batch of lib.batches.filter((x) => x.active > 0 && x.kind === "extract")) {
+        const detail = (await api.get(`/batches/${batch.id}`)) as { jobs: { link_id: string; status: string }[] };
+        if (detail.jobs.some((j) => j.link_id === slowId && j.status === "running")) return batch.id;
+      }
+      return false;
     },
     { timeout: 20_000 },
   );
@@ -94,18 +96,35 @@ export default (async ({ page, api, apiAs, fixture, step, check, shot, note }) =
   await check("Bar says 2 selected", async () => /2 selected/.test((await bar.textContent()) ?? ""));
   await page.keyboard.press("ControlOrMeta+k");
   await palette.getByRole("option", { name: /^Delete/ }).click();
+  await check("Confirmation says processing is cancelled", async () => /still processing them is cancelled/.test((await confirm.textContent()) ?? ""));
   await confirm.getByRole("button", { name: "Delete 2 links" }).click();
-  await check("API: the idle link is gone, the running one stays", async () => !(await api.link(keep)) && (await api.library()).links.some((l) => l.id === slowId));
-  await check("Toast says 1 still processing, skipped", () => toast("1 still processing, skipped").isVisible());
-  await check("The running link stays selected", async () => /1 selected/.test((await bar.textContent()) ?? ""));
-  await snap("04-skipped-running");
-  await bar.getByRole("button", { name: "Clear selection" }).click();
+  await check("API: both links are gone, the running one too", async () => !(await api.link(keep)) && !(await api.library()).links.some((l) => l.id === slowId));
+  await check("Toast says Deleted 2 links and the job it cancelled", () => toast("Cancelled 1 job still processing them").isVisible());
+  await check("Selection cleared: the bar is gone", async () => !(await bar.isVisible()));
+  const cancelledJob = await check("API: Activity keeps the job, cancelled because the link was deleted", async () => {
+    const detail = (await api.get(`/batches/${slowBatch}`)) as { jobs: { link_id: string | null; status: string; step: string; error: string | null; title: string | null }[] };
+    const j = detail.jobs[0];
+    return detail.jobs.length === 1 && j && j.link_id === null && j.status === "failed" && j.step === "Cancelled" && j.error === "Cancelled: link deleted" && j.title && j;
+  });
+  await note("cancelled-job", cancelledJob);
+  await check("API: the batch counts it as cancelled, not failed", async () => {
+    const b = (await api.library()).batches.find((x) => x.id === slowBatch);
+    return b && b.active === 0 && b.failed === 0 && b.cancelled === 1;
+  });
+  await snap("04-deleted-running");
+  await page.getByRole("button", { name: /^(Activity|Extracting)/ }).click();
+  const sheet = page.getByRole("dialog", { name: "Activity" });
+  await sheet.getByText("Extract context", { exact: true }).first().click();
+  await check("Sheet: the job is listed under the deleted link's title", () => sheet.getByText(cancelledJob.title!, { exact: true }).first().isVisible());
+  await check("Sheet: it says Cancelled: link deleted", () => sheet.getByText("Cancelled: link deleted", { exact: true }).first().isVisible());
+  await snap("05-activity-cancelled");
+  await page.keyboard.press("Escape");
 
   await step("Demo B can't delete Demo A's link");
   const asB = apiAs(1);
-  const foreign = (await asB.send("POST", "/links/delete", { ids: [m.id] })) as { deleted: string[]; running: string[] };
-  await note("demo-b-delete", { deleted: foreign.deleted, running: foreign.running });
-  await check("Demo B's request deletes nothing", () => foreign.deleted.length === 0 && foreign.running.length === 0);
+  const foreign = (await asB.send("POST", "/links/delete", { ids: [m.id] })) as { deleted: string[]; cancelled: number };
+  await note("demo-b-delete", { deleted: foreign.deleted, cancelled: foreign.cancelled });
+  await check("Demo B's request deletes and cancels nothing", () => foreign.deleted.length === 0 && foreign.cancelled === 0);
   await check("API: Demo A's link is intact", async () => !!(await api.link(mobile)));
 
   await step("Mobile 390x844: Delete from the drawer");
@@ -116,29 +135,15 @@ export default (async ({ page, api, apiAs, fixture, step, check, shot, note }) =
   await bar.getByRole("button", { name: /^Actions/ }).click();
   const drawerDelete = page.getByRole("dialog").getByRole("button", { name: "Delete 1 link" });
   await check("Drawer shows Delete 1 link", () => drawerDelete.isVisible());
-  await snap("05-mobile-drawer");
+  await snap("06-mobile-drawer");
   await drawerDelete.click();
   const mobileConfirm = page.getByRole("alertdialog", { name: "Delete 1 link?" });
   await check("Confirmation opens", () => mobileConfirm.isVisible());
-  await snap("06-mobile-confirm");
+  await snap("07-mobile-confirm");
   await mobileConfirm.getByRole("button", { name: "Delete 1 link" }).click();
   await check("API: the link is gone", async () => !(await api.link(mobile)));
   await check("Row disappears", async () => (await page.getByText(m.title, { exact: true }).count()) === 0);
-  await snap("07-mobile-after");
+  await snap("08-mobile-after");
 
-  await step("The skipped link deletes once its extraction finished");
-  await check("API: the skipped link finished with content", async () => {
-    const l = await api.link(slow);
-    return l && !l.processing && !!l.content_key;
-  }, { timeout: 60_000 });
-  await page.reload();
-  await check(`Row "${running.title}" is listed`, () => box(running.title).isVisible());
-  await box(running.title).click();
-  await bar.getByRole("button", { name: /^Actions/ }).click();
-  await page.getByRole("dialog").getByRole("button", { name: "Delete 1 link" }).click();
-  await mobileConfirm.getByRole("button", { name: "Delete 1 link" }).click();
-  await check("API: the link is gone this time", async () => !(await api.library()).links.some((l) => l.id === slowId));
-  await check("API: its content is gone", async () => (await content(slowId)) === null);
-  await check("Row disappears", async () => (await page.getByText(running.title, { exact: true }).count()) === 0);
   await check("Toast says Deleted 1 link", () => toast("Deleted 1 link").isVisible());
 }) satisfies Journey;

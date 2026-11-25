@@ -1,0 +1,9 @@
+# Deleting links keeps tag definitions and cancels their jobs
+
+Deleting links removes everything a link owns: its extracted content and previews in R2, its tag associations and tag evaluations, its lens results, media and hidden related links. Tag definitions stay, even when no link uses them any more: a tag is part of the owner's taxonomy and a candidate for auto-tag, not a property of one link. Lenses, batches and usage events stay for the same reason; a usage event keeps its cost with no link attached.
+
+A link is deleted even while something is processing it. Its queued, waiting and running jobs are cancelled the way Activity's Cancel does it: a running workflow is stopped, a Jev answer still in flight is discarded, and the job ends as Cancelled with "Cancelled: link deleted" (plus "Jev was already called (may have been billed)" when the call went out). Every write a job makes requires it to be running, so a cancelled job stores no content, verdict, tag or lens result, and content a workflow stores after its link was deleted is removed again at write time. A workflow that can't be stopped doesn't block the delete.
+
+Jobs outlive their link so Activity can say why they stopped: since migration 0029, `jobs.link_id` is `ON DELETE SET NULL` and `jobs.link_title` keeps the title Activity shows. Finished jobs stay too. Deleting a batch still deletes its jobs.
+
+Bulk delete (the selection) and the Inspector's single delete behave the same. Deleting asks for confirmation with the count and cannot be undone. Decided by the owner in FAC-46 (2026-11-24; running jobs cancelled instead of skipped on 2026-11-25).
