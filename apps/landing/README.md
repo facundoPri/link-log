@@ -29,7 +29,8 @@ the app's `wrangler.jsonc`: deploying one never touches the other.
 To serve it from your own domain: add
 `"routes": [{ "pattern": "<host>", "custom_domain": true }]` to `wrangler.jsonc` (the zone must be
 on the same Cloudflare account) and set the `LANDING_SITE` repository variable to `https://<host>`
-so canonical and social URLs follow. Never use the app's `linklog.facundopri.com`.
+so canonical and social URLs follow. Set the variable before pushing the route, or rerun
+Deploy landing afterwards: the pages are built at deploy time. Never use the app's `linklog.facundopri.com`.
 
 ## Layout
 

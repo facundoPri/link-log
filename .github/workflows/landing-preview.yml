@@ -48,7 +48,8 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # Holds the token: installs only pinned Wrangler (no lifecycle scripts) and uploads static files.
+  # Holds the token: runs no PR code, only pinned Wrangler (no lifecycle scripts) uploading the
+  # built files with the config below.
   deploy:
     needs: build
     runs-on: ubuntu-latest
@@ -62,15 +63,20 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_PREVIEW_ACCOUNT_ID }}
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-          sparse-checkout: apps/landing/wrangler.jsonc
-          sparse-checkout-cone-mode: false
+      # Never load the PR's wrangler config here: it could add a build command or a script.
+      # Keep in step with apps/landing/wrangler.jsonc (name, compatibility date, 404 page).
+      - name: Write assets-only config
+        run: |
+          mkdir -p "$RUNNER_TEMP/landing"
+          cat > "$RUNNER_TEMP/landing/wrangler.json" <<'JSON'
+          {"name": "linklog-landing", "compatibility_date": "2026-09-21",
+           "assets": {"directory": "./dist", "not_found_handling": "404-page"},
+           "workers_dev": true, "preview_urls": true, "previews": {}}
+          JSON
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: landing-${{ github.run_id }}-${{ github.run_attempt }}
-          path: apps/landing/dist
+          path: ${{ runner.temp }}/landing/dist
       - name: Install pinned Wrangler (no lifecycle scripts)
         run: npm install --prefix "$RUNNER_TEMP/tools" --ignore-scripts --no-audit --no-fund wrangler@4.136.1
       - name: Publish preview
@@ -78,7 +84,7 @@ jobs:
         env:
           SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          "$RUNNER_TEMP/tools/node_modules/.bin/wrangler" preview --config apps/landing/wrangler.jsonc \
+          "$RUNNER_TEMP/tools/node_modules/.bin/wrangler" preview --config "$RUNNER_TEMP/landing/wrangler.json" \
             --name "pr-$PR_NUMBER" --tag "${SHA::7}" --message "PR #$PR_NUMBER" --json > preview.json || { cat preview.json; exit 1; }
           cat preview.json
           # Wrangler prints upload logs before the JSON, so match the alias URL in the text.
@@ -110,14 +116,19 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PREVIEW_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_PREVIEW_ACCOUNT_ID }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-          sparse-checkout: apps/landing/wrangler.jsonc
-          sparse-checkout-cone-mode: false
+      # Never load the PR's wrangler config here: it could add a build command or a script.
+      # Keep in step with apps/landing/wrangler.jsonc (name, compatibility date, 404 page).
+      - name: Write assets-only config
+        run: |
+          mkdir -p "$RUNNER_TEMP/landing"
+          cat > "$RUNNER_TEMP/landing/wrangler.json" <<'JSON'
+          {"name": "linklog-landing", "compatibility_date": "2026-09-21",
+           "assets": {"directory": "./dist", "not_found_handling": "404-page"},
+           "workers_dev": true, "preview_urls": true, "previews": {}}
+          JSON
       - name: Install pinned Wrangler (no lifecycle scripts)
         run: npm install --prefix "$RUNNER_TEMP/tools" --ignore-scripts --no-audit --no-fund wrangler@4.136.1
       - name: Delete preview
         run: |
-          "$RUNNER_TEMP/tools/node_modules/.bin/wrangler" preview delete --config apps/landing/wrangler.jsonc \
+          "$RUNNER_TEMP/tools/node_modules/.bin/wrangler" preview delete --config "$RUNNER_TEMP/landing/wrangler.json" \
             --name "pr-$PR_NUMBER" --skip-confirmation
