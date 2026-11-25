@@ -1,4 +1,4 @@
-const BATCH_KINDS = ["extract", "preview", "autotag", "lens", "query", "browser-lens", "browser-autogroup"] as const;
+export const BATCH_KINDS = ["extract", "preview", "autotag", "lens", "query", "browser-lens", "browser-autogroup"] as const;
 /** The kind of the batch a job belongs to (`batches.kind`). */
 export type BatchKind = (typeof BATCH_KINDS)[number];
 /** A `batches.kind` read from D1. Throws on a kind this code does not know. */

@@ -145,6 +145,31 @@ test("recovery skips and logs a job whose batch kind is unknown, and still resen
   expect(statuses(s, good)).toEqual(["done"]);
 });
 
+test("a full recovery window of jobs with an unknown kind never keeps a known job from being resent", async () => {
+  const { s, ids } = await ready(100);
+  await s.api("/import", "POST", { urls: ["https://jq.example/extra"] });
+  ids.push((s.db.query("SELECT id FROM links WHERE url=?").get("https://jq.example/extra") as { id: string }).id);
+  await s.runQueued();
+  provider();
+  const send = s.env.JEV_JOBS.sendBatch;
+  (s.env.JEV_JOBS as any).sendBatch = async () => { throw new Error("Queue send failed"); };
+  const good = (await s.api("/batches", "POST", { kind: "autotag", ids: [ids[100]] })).data.batchId as string;
+  const bad = (await s.api("/batches", "POST", { kind: "autotag", ids: ids.slice(0, 100) })).data.batchId as string;
+  (s.env.JEV_JOBS as any).sendBatch = send;
+  // Left by another deploy: the 100 oldest open jobs belong to a kind this code does not know.
+  s.db.query("UPDATE batches SET kind='retired-kind' WHERE id=?").run(bad);
+  s.db.query("UPDATE jobs SET status='queued',created_at='2000-01-01T00:00:00.000Z' WHERE batch_id=?").run(bad);
+  const spy = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    await recover(s.env);
+  } finally {
+    spy.mockRestore();
+  }
+  expect(s.jevSent).toHaveLength(1);
+  await s.runQueued();
+  expect(statuses(s, good)).toEqual(["done"]);
+});
+
 test("a failure after the settlement commits is logged as such, not as a failed settlement; recovery starts the next job", async () => {
   const { s, ids } = await ready(1);
   const calls = provider();

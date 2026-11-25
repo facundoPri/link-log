@@ -1,5 +1,5 @@
 import type { JobConfig, Pool } from "./handlers";
-import { parseBatchKind, runsInJevQueue, sendJobs, type BatchKind } from "./job-routing";
+import { BATCH_KINDS, parseBatchKind, runsInJevQueue, sendJobs, type BatchKind } from "./job-routing";
 import { badRequest } from "./http/context";
 import { capabilities, parseLensDefinition } from "./store";
 import { jevUnavailable } from "../src/attention";
@@ -264,8 +264,9 @@ export async function recover(env: Env) {
   const rows = await env.DB.prepare(
     // Unassigned legacy batches stay untouched until adjudicated; they have no owner to run as.
     // A running job the consumer never started (no started_at) belongs to a Workflow.
-    "SELECT j.id,b.kind,j.status='running' AND j.started_at IS NULL AS in_workflow FROM jobs j JOIN batches b ON b.id=j.batch_id WHERE b.user_id IS NOT NULL AND j.status IN ('queued','running') ORDER BY j.created_at LIMIT 100",
-  ).all<{ id: string; kind: string; in_workflow: number }>();
+    // Known kinds come first, so jobs of a kind this code does not know can't fill the window and starve the rest.
+    `SELECT j.id,b.kind,j.status='running' AND j.started_at IS NULL AS in_workflow FROM jobs j JOIN batches b ON b.id=j.batch_id WHERE b.user_id IS NOT NULL AND j.status IN ('queued','running') ORDER BY b.kind NOT IN (${BATCH_KINDS.map(() => "?").join(",")}),j.created_at LIMIT 100`,
+  ).bind(...BATCH_KINDS).all<{ id: string; kind: string; in_workflow: number }>();
   // A row with a kind this code does not know is skipped and logged, so it never blocks recovering the rest.
   const jobs = rows.results.flatMap((r) => {
     try {
