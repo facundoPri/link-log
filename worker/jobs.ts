@@ -89,7 +89,7 @@ export async function startNext(env: Env, linkIds: (string | null)[]) {
 export class JobFinished extends Error {}
 // Stops a running job's workflow. An instance that already ended (or never existed) has nothing to stop;
 // anything else unknown keeps the job running rather than cancelling it under a live workflow.
-async function stopWorkflow(env: Env, id: string) {
+export async function stopWorkflow(env: Env, id: string) {
   try {
     await (await env.PROCESS_LINK.get(id)).terminate();
   } catch (error) {

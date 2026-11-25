@@ -167,8 +167,8 @@ export const BULK_ACTIONS: BulkAction[] = [
     availability: (ls) => everyItem(ls, null),
     run: (h, eligible) => h.copy(eligible, true),
   },
-  // FAC-46. No single-key shortcut for a destructive action; ⌘K finds it by name. The server skips links with a
-  // running job and says so; the selection can't tell running from queued, so nothing is skipped up front.
+  // FAC-46. No single-key shortcut for a destructive action; ⌘K finds it by name. Every link is eligible: the server
+  // cancels whatever is still processing it, and Activity shows those jobs as cancelled because the link was deleted.
   {
     id: "delete",
     label: "Delete",

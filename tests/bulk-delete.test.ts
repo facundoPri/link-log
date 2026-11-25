@@ -1,7 +1,7 @@
-// FAC-46: bulk delete removes the selected links and everything they own (content and previews in R2, tag
-// associations, tag evaluations, lens results, media, hidden related links, pending jobs). Tag definitions stay
-// (ADR 0003). A link with a running job is skipped and reported, so in-flight processing can never write
-// content for a link that no longer exists. Cross-owner attempts are covered in isolation.test.ts.
+// FAC-46: deleting links removes them with everything they own (content and previews in R2, tag associations, tag
+// evaluations, lens results, media, hidden related links). Tag definitions stay (ADR 0003). Their unfinished jobs,
+// running ones included, are cancelled as "Cancelled: link deleted" and stay in Activity, and nothing a job still in
+// flight does afterwards can write for a deleted link. Cross-owner attempts are covered in isolation.test.ts.
 import { afterEach, expect, test } from "bun:test";
 import { fakes, resetClock, setup } from "./worker-harness";
 
@@ -48,7 +48,7 @@ test("deletes the selected links with everything they own and keeps the rest", a
   const res = await bulkDelete(s, [a, b]);
   expect(res.status).toBe(200);
   expect(res.data.deleted.sort()).toEqual([a, b].sort());
-  expect(res.data.running).toEqual([]);
+  expect(res.data.cancelled).toBe(0);
   expect(res.data.links.map((l: { id: string }) => l.id)).toEqual([keep]);
 
   for (const id of [a, b]) {
@@ -74,15 +74,34 @@ test("a tag left without links is kept", async () => {
   expect(res.data.tags.map((t: { name: string }) => t.name)).toEqual(["lonely"]);
 });
 
-test("pending jobs go with their links and never run afterwards", async () => {
+const DELETED = "Cancelled: link deleted";
+const jobRow = (s: S, id: string) =>
+  s.db.query("SELECT link_id,link_title,status,step,error FROM jobs WHERE id=?").get(id) as Record<string, string | null>;
+const activityJob = async (s: S, batchId: string, jobId: string) =>
+  ((await s.api(`/batches/${batchId}`)).data.jobs as { id: string; title: string | null; step: string; error: string | null }[]).find((j) => j.id === jobId);
+const batchOf = (s: S, jobId: string) => (s.db.query("SELECT batch_id b FROM jobs WHERE id=?").get(jobId) as { b: string }).b;
+/** Holds the link's extraction inside its content step; `release` lets it store `markdown`. */
+async function runningExtraction(s: S, linkId: string) {
+  let release!: (markdown: string) => void;
+  fakes.content = { wait: new Promise<string>((r) => (release = r)) };
+  const jobId = s.sent.splice(0).map((m) => m.body.id).find((j) => (s.db.query("SELECT link_id FROM jobs WHERE id=?").get(j) as { link_id: string }).link_id === linkId)!;
+  const before = fakes.calls.content;
+  const run = s.runJob(jobId);
+  for (let i = 0; i < 200 && fakes.calls.content === before; i++) await Bun.sleep(1);
+  expect(jobRow(s, jobId).status).toBe("running");
+  return { jobId, finish: async (markdown: string) => (release(markdown), await run) };
+}
+
+test("a queued job is cancelled because its link was deleted, stays in Activity and never runs", async () => {
   const s = await setup();
   const id = await save(s, "https://example.com/queued");
-  const job = s.db.query("SELECT id,status FROM jobs WHERE link_id=?").get(id) as { id: string; status: string };
-  expect(job.status).toBe("queued");
+  const { title } = s.db.query("SELECT title FROM links WHERE id=?").get(id) as { title: string };
+  const job = s.db.query("SELECT id FROM jobs WHERE link_id=?").get(id) as { id: string };
   const res = await bulkDelete(s, [id]);
   expect(res.data.deleted).toEqual([id]);
-  expect(s.db.query("SELECT 1 FROM jobs WHERE id=?").get(job.id)).toBeNull();
-  // The queue message still arrives: nothing runs, nothing is stored, the link does not come back.
+  expect(jobRow(s, job.id)).toEqual({ link_id: null, link_title: title, status: "failed", step: "Cancelled", error: DELETED });
+  expect(await activityJob(s, batchOf(s, job.id), job.id)).toMatchObject({ title, step: "Cancelled", error: DELETED });
+  expect(res.data.batches.find((b: { id: string }) => b.id === batchOf(s, job.id))).toMatchObject({ cancelled: 1, active: 0 });
   const before = fakes.calls.content;
   await drain(s);
   expect(fakes.calls.content).toBe(before);
@@ -90,33 +109,108 @@ test("pending jobs go with their links and never run afterwards", async () => {
   expect(s.db.query("SELECT 1 FROM links WHERE id=?").get(id)).toBeNull();
 });
 
-test("a link with a running job is skipped and reported; it can be deleted once the job settles", async () => {
+test("a finished job keeps its row and its link's title in Activity", async () => {
+  const s = await setup();
+  const id = await save(s, "https://example.com/done");
+  await drain(s);
+  const job = s.db.query("SELECT id,status FROM jobs WHERE link_id=?").get(id) as { id: string; status: string };
+  expect(job.status).toBe("done");
+  await bulkDelete(s, [id]);
+  expect(jobRow(s, job.id)).toMatchObject({ link_id: null, status: "done", error: null });
+  expect((await activityJob(s, batchOf(s, job.id), job.id))?.title).toBeTruthy();
+});
+
+test("a running extraction is stopped and cancelled, and its link is deleted anyway", async () => {
   const s = await setup();
   const running = await save(s, "https://example.com/running");
   const idle = await save(s, "https://example.com/idle");
-  // Hold the running link's extraction inside its content step.
-  let release!: (markdown: string) => void;
-  fakes.content = { wait: new Promise<string>((r) => (release = r)) };
-  const jobId = s.sent.splice(0).map((m) => m.body.id).find((j) => (s.db.query("SELECT link_id FROM jobs WHERE id=?").get(j) as { link_id: string }).link_id === running)!;
-  const before = fakes.calls.content;
-  const run = s.runJob(jobId);
-  for (let i = 0; i < 200 && fakes.calls.content === before; i++) await Bun.sleep(1);
-  expect((s.db.query("SELECT status FROM jobs WHERE id=?").get(jobId) as { status: string }).status).toBe("running");
+  const { jobId, finish } = await runningExtraction(s, running);
 
   const res = await bulkDelete(s, [running, idle]);
   expect(res.status).toBe(200);
-  expect(res.data.deleted).toEqual([idle]);
-  expect(res.data.running).toEqual([running]);
-  expect(res.data.links.map((l: { id: string }) => l.id)).toEqual([running]);
+  expect(res.data.deleted.sort()).toEqual([running, idle].sort());
+  expect(res.data.cancelled).toBe(2);
+  expect(res.data.links).toEqual([]);
+  expect(s.workflows.terminated).toEqual([jobId]);
+  expect(jobRow(s, jobId)).toMatchObject({ link_id: null, status: "failed", step: "Cancelled", error: DELETED });
 
-  release("# finished");
-  await run;
-  const link = s.db.query("SELECT content_key FROM links WHERE id=?").get(running) as { content_key: string };
-  expect(s.r2.get(link.content_key)).toBe("# finished");
-
-  const again = await bulkDelete(s, [running]);
-  expect(again.data.deleted).toEqual([running]);
+  await finish("# finished");
   expect(objectsOf(s, running)).toEqual([]);
+  expect(jobRow(s, jobId)).toMatchObject({ status: "failed", step: "Cancelled", error: DELETED });
+});
+
+test("a workflow that keeps running after its link was deleted stores nothing", async () => {
+  const s = await setup();
+  const id = await save(s, "https://example.com/late");
+  const { jobId, finish } = await runningExtraction(s, id);
+  // A terminate that came too late: the workflow carries on.
+  s.workflows.terminate = "ignore";
+  expect((await bulkDelete(s, [id])).data.deleted).toEqual([id]);
+  await finish("# late");
+  expect(objectsOf(s, id)).toEqual([]);
+  expect(jobRow(s, jobId)).toMatchObject({ status: "failed", error: DELETED });
+});
+
+test("a workflow that can't be stopped doesn't block the delete", async () => {
+  const s = await setup();
+  const id = await save(s, "https://example.com/stuck");
+  const { jobId, finish } = await runningExtraction(s, id);
+  s.workflows.terminate = "throw";
+  expect((await bulkDelete(s, [id])).data.deleted).toEqual([id]);
+  await finish("# late");
+  expect(objectsOf(s, id)).toEqual([]);
+  expect(jobRow(s, jobId)).toMatchObject({ status: "failed", error: DELETED });
+});
+
+const realFetch = globalThis.fetch;
+afterEach(() => void (globalThis.fetch = realFetch));
+for (const kind of ["autotag", "lens"] as const) {
+  test(`a running ${kind} job is cancelled with its link: its answer is discarded and nothing is written`, async () => {
+    const s = await setup({ placeholder: true });
+    const id = await save(s, "https://example.com/jev");
+    await drain(s);
+    await s.api("/tags", "POST", { name: "topic" });
+    const lens = kind === "lens" ? (await s.api("/lenses", "POST", { name: "Useful", type: "noul", question: "Useful?" })).data.lenses[0].id : undefined;
+    Object.assign(s.env as unknown as Record<string, unknown>, { JEV_PROVIDER: "typesafe", TYPESAFE_API_KEY: "test-only" });
+    let reply!: () => void;
+    const replied = new Promise<void>((r) => (reply = r));
+    let calls = 0;
+    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+      calls++;
+      const questions = JSON.parse(String(init?.body)).questions as Record<string, unknown>;
+      await replied;
+      return Response.json({ model: "jev-test", answers: Object.fromEntries(Object.keys(questions).map((k) => [k, { type: "noul", noul: 0.9 }])), usage: { input_tokens: 100, output_tokens: 5 } });
+    }) as typeof fetch;
+    await s.api("/batches", "POST", { kind, ids: [id], lensId: lens });
+    const jobId = s.jevSent.splice(0)[0]!.body.id;
+    const run = s.runJob(jobId);
+    for (let i = 0; i < 200 && !calls; i++) await Bun.sleep(1);
+    expect(calls).toBe(1);
+
+    expect((await bulkDelete(s, [id])).data.deleted).toEqual([id]);
+    expect(jobRow(s, jobId)).toMatchObject({ status: "failed", step: "Cancelled", error: `${DELETED}. Jev was already called (may have been billed).` });
+    // Usage keeps the call (it may be billed) as soon as the delete lands.
+    expect(s.db.query("SELECT status FROM usage_events WHERE service='jev'").all()).toEqual([{ status: "failed" }]);
+    reply();
+    await run;
+    for (const table of ["tag_evaluations", "link_tags", "lens_results"])
+      expect([table, (s.db.query(`SELECT count(*) n FROM ${table}`).get() as { n: number }).n]).toEqual([table, 0]);
+    expect(s.db.query("SELECT count(*) n FROM usage_events WHERE service='jev'").get()).toEqual({ n: 1 });
+    expect(jobRow(s, jobId).step).toBe("Cancelled");
+  });
+}
+
+test("the Inspector's single delete cancels a running job the same way", async () => {
+  const s = await setup();
+  const id = await save(s, "https://example.com/single");
+  const { jobId, finish } = await runningExtraction(s, id);
+  const res = await s.api(`/links/${id}`, "DELETE");
+  expect(res.status).toBe(200);
+  expect(res.data.links).toEqual([]);
+  expect(jobRow(s, jobId)).toMatchObject({ link_id: null, status: "failed", error: DELETED });
+  await finish("# late");
+  expect(objectsOf(s, id)).toEqual([]);
+  expect((await s.api(`/links/${id}`, "DELETE")).status).toBe(404);
 });
 
 test("rejects a malformed selection", async () => {
@@ -131,23 +225,4 @@ test("unknown ids are ignored and duplicates count once", async () => {
   await drain(s);
   const res = await bulkDelete(s, [id, id, "missing"]);
   expect(res.data.deleted).toEqual([id]);
-  expect(res.data.running).toEqual([]);
-});
-
-test("content a cancelled workflow stores after its link was deleted is removed again", async () => {
-  const s = await setup();
-  const id = await save(s, "https://example.com/late");
-  let release!: (markdown: string) => void;
-  fakes.content = { wait: new Promise<string>((r) => (release = r)) };
-  const jobId = s.sent.splice(0).map((m) => m.body.id)[0]!;
-  const before = fakes.calls.content;
-  const run = s.runJob(jobId);
-  for (let i = 0; i < 200 && fakes.calls.content === before; i++) await Bun.sleep(1);
-  // A terminate that came too late: the workflow carries on after its job was cancelled.
-  s.workflows.terminate = "ignore";
-  expect((await s.api(`/jobs/${jobId}`, "DELETE")).status).toBe(200);
-  expect((await bulkDelete(s, [id])).data.deleted).toEqual([id]);
-  release("# late");
-  await run;
-  expect(objectsOf(s, id)).toEqual([]);
 });

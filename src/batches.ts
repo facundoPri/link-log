@@ -44,11 +44,12 @@ export const BATCH_WORDS: Record<Batch["kind"], { running: string; verb: string;
   "browser-autogroup": { running: "Autogrouping", verb: "Autogrouping", done: "Suggested groups for", noun: "tab" },
 };
 
-export type DeleteReply = { deleted: string[]; running: string[] };
+export type DeleteReply = { deleted: string[]; cancelled: number };
 /**
  * Sends a selection to POST /api/links/delete in chunks of 100 (FAC-46). The first failed request stops the run.
  * Its answer may only have been lost after the server committed, so `present` reads which of its links still exist
  * before they are reported; when that read fails too, they count as not deleted. Links not deleted are `untouched`.
+ * `cancelled` counts the jobs that were still processing the deleted links and were cancelled with them.
  */
 export async function deleteInChunks<T extends DeleteReply>(
   ids: string[],
@@ -56,20 +57,20 @@ export async function deleteInChunks<T extends DeleteReply>(
   onChunk: (reply: T) => void = () => {},
   present: (chunk: string[]) => Promise<Set<string>> = async (chunk) => new Set(chunk),
 ) {
-  const deleted: string[] = [],
-    running: string[] = [];
+  const deleted: string[] = [];
+  let cancelled = 0;
   for (let offset = 0; offset < ids.length; offset += 100) {
     const chunk = ids.slice(offset, offset + 100);
     try {
       const reply = await send(chunk);
       onChunk(reply);
       deleted.push(...reply.deleted);
-      running.push(...reply.running);
+      cancelled += reply.cancelled;
     } catch (e) {
       const still = await present(chunk).catch(() => new Set(chunk));
       deleted.push(...chunk.filter((id) => !still.has(id)));
-      return { deleted, running, untouched: [...chunk.filter((id) => still.has(id)), ...ids.slice(offset + 100)], error: e as Error };
+      return { deleted, cancelled, untouched: [...chunk.filter((id) => still.has(id)), ...ids.slice(offset + 100)], error: e as Error };
     }
   }
-  return { deleted, running, untouched: [] as string[], error: null };
+  return { deleted, cancelled, untouched: [] as string[], error: null };
 }

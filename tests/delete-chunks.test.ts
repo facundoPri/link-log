@@ -1,5 +1,5 @@
 // FAC-46: the client sends a selection to POST /api/links/delete 100 ids at a time and reports what happened to
-// every id: deleted, skipped because a job is running, or left untouched because a request failed.
+// every id: deleted, or left untouched because a request failed, with the jobs cancelled on the deleted ones.
 import { expect, test } from "bun:test";
 import { deleteInChunks, type DeleteReply } from "../src/batches";
 
@@ -12,14 +12,14 @@ test("sends 100 ids per request and sums the replies", async () => {
     ids(250),
     async (chunk) => {
       sent.push(chunk);
-      return { deleted: chunk.filter((id) => id !== "l7"), running: chunk.filter((id) => id === "l7") };
+      return { deleted: chunk, cancelled: chunk.includes("l7") ? 2 : 0 };
     },
     (r) => replies.push(r),
   );
   expect(sent.map((c) => c.length)).toEqual([100, 100, 50]);
   expect(replies.length).toBe(3);
-  expect(out.deleted.length).toBe(249);
-  expect(out.running).toEqual(["l7"]);
+  expect(out.deleted.length).toBe(250);
+  expect(out.cancelled).toBe(2);
   expect(out.untouched).toEqual([]);
   expect(out.error).toBeNull();
 });
@@ -28,7 +28,7 @@ test("a failed request stops; its ids and the ones after it are untouched", asyn
   let calls = 0;
   const out = await deleteInChunks(ids(250), async (chunk) => {
     if (++calls === 2) throw new Error("Network down");
-    return { deleted: chunk, running: [] };
+    return { deleted: chunk, cancelled: 0 };
   });
   expect(calls).toBe(2);
   expect(out.deleted).toEqual(ids(100));
@@ -42,7 +42,7 @@ test("a request whose answer was lost is checked against the library before it i
     ids(250),
     async (chunk) => {
       if (++calls === 2) throw new Error("Network down");
-      return { deleted: chunk, running: [] };
+      return { deleted: chunk, cancelled: 0 };
     },
     () => {},
     // The server committed the second chunk except for l150, then the response was lost.

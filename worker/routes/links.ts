@@ -154,10 +154,8 @@ export const linkRoutes = new Hono<AppEnv>()
   })
   .delete("/links/:id", async (c) => {
     const env = c.env, userId = ownerOf(c);
-    const link = await getOwnedLink(env.DB, userId, c.req.param("id"));
-    if (!link) throw notFound();
-    await assertNoActiveJob(env.DB, link.id);
-    await env.DB.prepare("DELETE FROM links WHERE id=? AND user_id=?").bind(link.id, userId).run();
-    c.executionCtx.waitUntil(deleteLinkContent(env, userId, [link.id]));
+    const { deleted } = await deleteLinks(env, userId, [c.req.param("id")]);
+    if (!deleted.length) throw notFound();
+    c.executionCtx.waitUntil(deleteLinkContent(env, userId, deleted));
     return json(await library(env, userId));
   });

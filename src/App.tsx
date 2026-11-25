@@ -637,23 +637,19 @@ export function App({
     } finally {
       setDeleting(false);
     }
+    // Only links a failed request left untouched stay selected.
     const sent = new Set(ids);
-    const left = new Set([...out.running, ...out.untouched]);
+    const left = new Set(out.untouched);
     setPicked((cur) => cur.filter((id) => left.has(id) || !sent.has(id)));
     const gone = new Set(out.deleted);
     setActiveId((cur) => (cur && gone.has(cur) ? null : cur));
-    const skipped = out.running.length ? `${out.running.length} still processing, skipped.` : "";
+    const cancelled = out.cancelled ? `Cancelled ${plural(out.cancelled, "job")} still processing them.` : undefined;
     if (out.error)
       toast.error(`Deleted ${out.deleted.length} of ${plural(ids.length, "link")}`, {
-        description: [out.error.message, skipped, "The rest stay selected."].filter(Boolean).join(" "),
+        description: [out.error.message, cancelled, "The rest stay selected."].filter(Boolean).join(" "),
       });
-    else if (!out.deleted.length)
-      toast("No links deleted", { description: skipped ? `${skipped} Try again when they finish.` : "They were already deleted." });
-    else if (skipped)
-      toast(`Deleted ${plural(out.deleted.length, "link")}`, {
-        description: `${skipped} ${out.running.length === 1 ? "It stays" : "They stay"} selected.`,
-      });
-    else toast.success(`Deleted ${plural(out.deleted.length, "link")}`);
+    else if (!out.deleted.length) toast("No links deleted", { description: "They were already deleted." });
+    else toast.success(`Deleted ${plural(out.deleted.length, "link")}`, { description: cancelled });
   };
 
   const manualTagged = pickedLinks.filter((l) =>
@@ -1394,7 +1390,7 @@ export function App({
             <AlertDialogTitle>Delete {plural(confirmDelete?.length ?? 0, "link")}?</AlertDialogTitle>
             <AlertDialogDescription>
               Their extracted content, previews, tag assignments and lens results are deleted with them. Your tags and
-              lenses stay. Links still processing are skipped. This can't be undone.
+              lenses stay. Anything still processing them is cancelled. This can't be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
