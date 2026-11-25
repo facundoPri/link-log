@@ -29,6 +29,12 @@ A bot reviewed the head only when one of its reviews has a `commit_id` equal to 
 
 When the bot ran out of quota (a "Rate limit exceeded" comment after the head commit), the head is unreviewed. Say so in the report instead of treating the PR as reviewed.
 
+CodeRabbit's other signals:
+
+- **Paused.** A `skipping` CodeRabbit check plus a "Reviews paused … Last reviewed commit: <sha>" comment means it stopped after several reviewed commits on this PR. The head is unreviewed, so run the review the brief names for that case.
+- **Old text.** Its summary comment is edited in place and can keep an old "Rate limit exceeded" notice. Read only comments newer than the head commit or your request.
+- **Quota.** Thread replies and `@coderabbitai review` use its hourly chat quota, as pushes use the review quota. Post one round's replies together, and save a manual `@coderabbitai review` for the final head.
+
 ## Decision rubric
 
 Classify each review-bot thread before acting:

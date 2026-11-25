@@ -175,3 +175,7 @@ Describe whether it's a one-way or two-way door. You can walk back through two-w
 The blast radius is the potential impact or scope of the changes introduced by this PR. Consider all possibilities. Examples are layout shift, breakages for consumers, mobile responsiveness, etc.
 
 When the PR spans parts that ship separately (the web app and the extension release), say how users recover if either one ships first, fails to publish, or is rolled back.
+
+## After you open the PR
+
+If your brief makes you own this PR until it is ready, open poteto-mode's `playbooks/babysit.md` now and run its `drive` mode with `scripts/watch-pr/watch-pr`. Don't wrap it in your own Monitor or `sleep` loop. A hand-rolled loop counts your own thread replies as bot reviews and misses a paused or rate-limited bot.
