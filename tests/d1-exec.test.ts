@@ -17,11 +17,15 @@ CREATE TABLE t(a TEXT DEFAULT 'x;y'); /* block; comment */
 CREATE TRIGGER tr BEFORE INSERT ON t WHEN NEW.a = ';'
 BEGIN SELECT RAISE(ABORT, 'no;'); END;
 INSERT INTO t VALUES("q;"); PRAGMA foreign_keys = ON;
+CREATE TABLE [a;b](x);
+CREATE/**/TRIGGER tr2 AFTER INSERT ON t BEGIN SELECT CASE WHEN NEW.a IS NULL THEN 0 ELSE 1 END; END;
 `;
-  expect(statements(sql).map((s) => s.replace(/--[^\n]*|\/\*[\s\S]*?\*\//g, "").trim().split(/\s+/).slice(0, 2).join(" "))).toEqual([
+  expect(statements(sql).map((s) => s.replace(/--[^\n]*|\/\*[\s\S]*?\*\//g, " ").trim().split(/\s+/).slice(0, 2).join(" "))).toEqual([
     "CREATE TABLE",
     "CREATE TRIGGER",
     "INSERT INTO",
     "PRAGMA foreign_keys",
+    "CREATE TABLE",
+    "CREATE TRIGGER",
   ]);
 });

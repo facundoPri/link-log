@@ -16,26 +16,34 @@ const returnsRows = (sql: string) => /^\s*(select|with|pragma)\b/i.test(sql) || 
 /**
  * Splits a script into statements. bun:sqlite's exec() on a multi-statement string reports a runtime error
  * (a failed constraint) only when the last statement fails; an earlier one fails silently and the rest still run,
- * where D1 rejects the script. Like sqlite3_complete, a `;` ends a statement outside quotes and comments, and a
- * CREATE TRIGGER only at `END;`.
+ * where D1 rejects the script. A `;` ends a statement outside quotes, brackets and comments, and a CREATE TRIGGER
+ * only at the `END;` that closes its body, not one that closes a CASE inside it.
  */
+// Comments become a space, so `CREATE/**/TRIGGER` keeps its token boundary. Used only to classify a statement.
+const withoutComments = (sql: string) => sql.replace(/--[^\n]*|\/\*[\s\S]*?\*\//g, " ");
+
 export function statements(sql: string) {
   const out: string[] = [];
   let start = 0;
   for (let i = 0; i < sql.length; i++) {
     const c = sql[i]!;
-    if (c === "'" || c === '"' || c === "`") i = sql.indexOf(c, i + 1) < 0 ? sql.length : sql.indexOf(c, i + 1);
+    if (c === "'" || c === '"' || c === "`" || c === "[") {
+      const close = sql.indexOf(c === "[" ? "]" : c, i + 1);
+      i = close < 0 ? sql.length : close;
+    }
     else if (c === "-" && sql[i + 1] === "-") i = sql.indexOf("\n", i) < 0 ? sql.length : sql.indexOf("\n", i);
     else if (c === "/" && sql[i + 1] === "*") i = sql.indexOf("*/", i + 2) < 0 ? sql.length : sql.indexOf("*/", i + 2) + 1;
     else if (c === ";") {
       const stmt = sql.slice(start, i + 1);
-      const code = stmt.replace(/--[^\n]*|\/\*[\s\S]*?\*\//g, "");
-      if (/^\s*CREATE\s+(TEMP\w*\s+)?TRIGGER\b/i.test(code) && !/\bEND\s*;$/i.test(code.trimEnd())) continue;
+      const code = withoutComments(stmt);
+      const words = (re: RegExp) => code.replace(/'[^']*'|"[^"]*"|`[^`]*`|\[[^\]]*\]/g, " ").match(re)?.length ?? 0;
+      const trigger = /^\s*CREATE\s+(TEMP\w*\s+)?TRIGGER\b/i.test(code);
+      if (trigger && !(/\bEND\s*;$/i.test(code.trimEnd()) && words(/\bEND\b/gi) > words(/\bCASE\b/gi))) continue;
       if (code.trim() !== ";") out.push(stmt);
       start = i + 1;
     }
   }
-  if (sql.slice(start).replace(/--[^\n]*|\/\*[\s\S]*?\*\//g, "").trim()) out.push(sql.slice(start));
+  if (withoutComments(sql.slice(start)).trim()) out.push(sql.slice(start));
   return out;
 }
 

@@ -6,8 +6,8 @@ How a migration in `migrations/` reaches production, and what to check before wr
 
 `.github/workflows/deploy-production.yml` records a D1 Time Travel bookmark, applies the migrations, then deploys the Worker. Two consequences:
 
-- The previous Worker serves requests on the new schema until `wrangler deploy` finishes, and for good if the deploy step fails. Old code must keep working on the new schema: a new column it never writes stays NULL, a changed foreign key acts on its deletes.
-- The first way back is `wrangler d1 time-travel restore` to that bookmark, which the step logs. It also drops every write made after it.
+- The previous Worker serves requests on the new schema until `wrangler deploy` finishes, and for good if the deploy step fails. Old code must keep working on the new schema: a new column it never writes takes its `DEFAULT` (NULL without one), so a `NOT NULL` column it never writes needs a `DEFAULT`, and a changed foreign key acts on its deletes.
+- The first way back is `wrangler d1 time-travel restore` to that bookmark, which the step logs. It also drops every write made after it. If the deploy already succeeded, also redeploy the previous Worker version (`wrangler deployments list --env production`, then `wrangler rollback`), so new code doesn't run on the old schema.
 
 ## Changing a table
 
