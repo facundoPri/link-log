@@ -78,7 +78,12 @@ It ran on the adopted prototype and on the **real released 0.2.1 ZIP**, updated 
 
 ## test:browser
 
-<!-- filled below by the moderator's clean run -->
+**No clean run exists yet.** The moderator ran the suite once on the adopted prototype (A's worktree), after round 2. The machine was shared with other sessions, and the load average rose from ~20 at the start to ~709. The run hit its 1-hour limit in "Save and Close" and was stopped.
+
+- Result: 29 ✓ and 9 ✗. Every failure was a timeout or a wait, in lens, Activity, inspector, domain filter and bridge-security checks.
+- The same lanes passed in A's round-1 run of the nearly identical prototype: 66 ✓, 0 ✗.
+- So this run neither proves nor refutes the change. No privacy check (sign-out forget, account isolation) failed in any of the three runs.
+- **Still owed** before FAC-305/306 go to review: one `test:browser` run on a quiet machine, on the implementation PR, with the new unseeded consent check.
 
 ## Owner questions (product, UX, legal-business)
 
