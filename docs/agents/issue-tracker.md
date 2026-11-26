@@ -15,7 +15,8 @@ Use the connected Linear tools. If using Orca's CLI, first load the `orca-linear
 - When the owner decides something in conversation that changes a ticket's scope or behaviour, record it as a ticket comment, quoting their words, before implementing it. A review's spec is the description plus those comments.
 - List issues scoped to the Linklog project. Project-search results alone do not establish whether it has tickets.
 - When a skill says to publish an issue or spec, create an issue in this project and team. Check for an existing ticket first.
-- Apply the label names in `docs/agents/triage-labels.md`. Read the existing labels before editing and preserve unrelated labels.
+- Apply the label names in `docs/agents/triage-labels.md`, including exactly one type label (`Feature`, `Bug` or `Improvement`) on every open ticket. Read the existing labels before editing and preserve unrelated labels.
+- Write each ticket so it stands alone: context (why it exists and where it came from), what to do, a verifiable "Done when" list, and links. Put agent-only detail in a collapsible `+++ Agent notes` section at the end.
 - Read available team statuses before changing workflow state. Triage labels and workflow statuses are separate fields.
 - Represent parent/child work and blocking relationships with Linear's native issue relationships.
 - After a write, read the ticket back and report its identifier and URL. Confirm completion from the successful read.

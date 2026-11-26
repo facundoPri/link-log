@@ -25,7 +25,7 @@ Track Linklog issues and specs in the existing Linear project. Before starting t
 
 ### Triage labels
 
-Use the five default triage labels. Before triaging or changing triage labels, read `docs/agents/triage-labels.md`.
+Use the five default triage labels, plus exactly one type label (`Feature`, `Bug` or `Improvement`) on each open ticket. Before triaging, creating a ticket or changing labels, read `docs/agents/triage-labels.md`.
 
 ### Domain docs
 
