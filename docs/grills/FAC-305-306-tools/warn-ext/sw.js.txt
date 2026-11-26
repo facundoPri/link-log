@@ -1,0 +1,1 @@
+self.probe=(m)=>new Promise(r=>chrome.management.getPermissionWarningsByManifest(JSON.stringify(m),r));

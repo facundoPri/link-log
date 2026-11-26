@@ -1,0 +1,505 @@
+diff --git a/apps/extension/package.json b/apps/extension/package.json
+index 12bf4a0..f542811 100644
+--- a/apps/extension/package.json
++++ b/apps/extension/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@linklog/extension",
+-  "version": "0.2.1",
++  "version": "0.3.0",
+   "private": true,
+   "type": "module",
+   "scripts": {
+diff --git a/apps/extension/scripts/build.ts b/apps/extension/scripts/build.ts
+index d863ed5..8111d55 100644
+--- a/apps/extension/scripts/build.ts
++++ b/apps/extension/scripts/build.ts
+@@ -1,7 +1,8 @@
+ // Builds the unpacked extension into dist/. Flags: --watch, --package.
+-// The bridge content script matches http://localhost and http://127.0.0.1 on any port
+-// (it only activates on pages marked as Linklog); LINKLOG_ORIGINS adds other origins,
+-// e.g. a deployed Linklog. LINKLOG_UI_PORT decides where "Open Linklog" goes.
++// The bridge content script matches LINKLOG_ORIGINS (e.g. a deployed Linklog) and, except in a
++// packaged build, http://localhost and http://127.0.0.1 on any port (it only activates on pages
++// marked as Linklog). --package (the store and GitHub ZIP, one artifact) needs LINKLOG_ORIGINS and
++// drops the local matches; those origins must be https. LINKLOG_UI_PORT decides where "Open Linklog" goes.
+ import { cp, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
+ import { watch } from "node:fs";
+ import { join, relative, resolve } from "node:path";
+@@ -15,14 +16,16 @@ const root = resolve(import.meta.dir, "..");
+ const dist = process.env.LINKLOG_EXTENSION_OUT ? resolve(process.env.LINKLOG_EXTENSION_OUT) : join(root, "dist");
+ const extraHosts = (process.env.LINKLOG_EXTRA_HOSTS ?? "").split(",").map((h) => h.trim()).filter(Boolean);
+ const pkg = await Bun.file(join(root, "package.json")).json();
++const packaged = process.argv.includes("--package");
+ 
+-export function manifest(origins: string[], version: string, extra: string[] = []) {
+-  const patterns = [...LOCAL_BRIDGE_MATCHES, ...origins.map((o) => `${o}/*`)];
++export function manifest(origins: string[], version: string, extra: string[] = [], local = true) {
++  const patterns = [...(local ? LOCAL_BRIDGE_MATCHES : []), ...origins.map((o) => `${o}/*`)];
+   return {
+     manifest_version: 3,
+     name: "Linklog",
+     version,
+-    description: "Connects Linklog's Browser view to the tabs and groups of its Chrome window.",
++    // The store's short description (132 characters at most) comes from here.
++    description: "Review, group and save your open Chrome tabs in Linklog. It reads tab URLs and titles only after you accept.",
+     minimum_chrome_version: "116",
+     icons: { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png" },
+     action: { default_title: "Linklog", default_popup: "popup.html", default_icon: { "16": "icons/16.png", "32": "icons/32.png" } },
+@@ -55,18 +58,23 @@ function chunk(type: string, data: Uint8Array) {
+   view.setUint32(8 + data.length, crc32(out.subarray(4, 8 + data.length)));
+   return out;
+ }
+-function icon(size: number) {
++// `pad` transparent pixels per side: the store wants 96×96 art on the 128 canvas.
++function icon(size: number, pad = 0) {
+   const px = new Uint8Array(size * (size * 4 + 1));
+-  const r = size * 0.22;
++  const art = size - 2 * pad;
++  const r = art * 0.22;
+   const inside = (x: number, y: number) => {
+-    const cx = Math.min(Math.max(x, r), size - r),
+-      cy = Math.min(Math.max(y, r), size - r);
++    x -= pad;
++    y -= pad;
++    if (x < 0 || y < 0 || x > art || y > art) return false;
++    const cx = Math.min(Math.max(x, r), art - r),
++      cy = Math.min(Math.max(y, r), art - r);
+     return (x - cx) ** 2 + (y - cy) ** 2 <= r * r;
+   };
+   // Two rounded "links" joined by a bar, like lucide's link-2.
+   const glyph = (x: number, y: number) => {
+-    const u = x / size,
+-      v = y / size,
++    const u = (x - pad) / art,
++      v = (y - pad) / art,
+       t = 0.075;
+     const ring = (cx: number) => {
+       const d = Math.hypot((u - cx) * 1.35, v - 0.5);
+@@ -112,12 +120,15 @@ function icon(size: number) {
+ async function build() {
+   const started = performance.now();
+   const origins = linklogOrigins();
++  if (packaged && (!origins.length || origins.some((o) => !o.startsWith("https://"))))
++    throw new Error(`A packaged build bridges only LINKLOG_ORIGINS, which must be https (got: ${origins.join(", ") || "none"}).`);
+   await rm(dist, { recursive: true, force: true });
+   await mkdir(join(dist, "icons"), { recursive: true });
+   const define = {
+     __LINKLOG_ORIGINS__: JSON.stringify(origins),
+     __LINKLOG_URL__: JSON.stringify(linklogUrl()),
+     __EXTENSION_VERSION__: JSON.stringify(pkg.version),
++    __LINKLOG_LOCAL_BRIDGE__: JSON.stringify(!packaged),
+     "process.env.NODE_ENV": '"production"',
+   };
+   const jobs = [
+@@ -143,10 +154,12 @@ async function build() {
+     await Bun.write(join(dist, `${job.out}.js`), await result.outputs[0]!.text());
+   }
+   for (const file of ["connect.html", "popup.html", "ui.css"]) await cp(join(root, "src/pages", file), join(dist, file));
+-  for (const size of [16, 32, 48, 128]) await Bun.write(join(dist, "icons", `${size}.png`), icon(size));
+-  await writeFile(join(dist, "manifest.json"), JSON.stringify(manifest(origins, pkg.version, extraHosts), null, 2) + "\n");
++  for (const size of [16, 32, 48]) await Bun.write(join(dist, "icons", `${size}.png`), icon(size));
++  await Bun.write(join(dist, "icons", "128.png"), icon(128, 16));
++  const m = manifest(origins, pkg.version, extraHosts, !packaged);
++  await writeFile(join(dist, "manifest.json"), JSON.stringify(m, null, 2) + "\n");
+   console.log(
+-    `Linklog extension ${pkg.version} → ${relative(process.cwd(), dist) || "dist"} (${Math.round(performance.now() - started)} ms)\n  bridge: ${manifest(origins, pkg.version).content_scripts[0]!.matches.join(", ")} (pages marked as Linklog only)`,
++    `Linklog extension ${pkg.version} → ${relative(process.cwd(), dist) || "dist"} (${Math.round(performance.now() - started)} ms)\n  bridge: ${m.content_scripts[0]!.matches.join(", ")} (pages marked as Linklog only)`,
+   );
+ }
+ 
+diff --git a/apps/extension/src/background/commands.ts b/apps/extension/src/background/commands.ts
+index 1867d22..35bcebd 100644
+--- a/apps/extension/src/background/commands.ts
++++ b/apps/extension/src/background/commands.ts
+@@ -594,17 +594,22 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
+     s.hub.schedule(0);
+     return { items };
+   },
+-  async openPermissions(_args, { c, windowId }) {
+-    const tab = await chrome.tabs.get(c.tabId).catch(() => null);
+-    await chrome.tabs.create({
+-      url: chrome.runtime.getURL("connect.html"),
+-      windowId,
+-      index: tab ? tab.index + 1 : undefined,
+-    });
++  async openPermissions(_args, { c }) {
++    await openConnectPage(c.tabId);
+     return {};
+   },
+ };
+ 
++/** Opens the Connect page next to the Linklog tab that asked; also allowed before consent. */
++export async function openConnectPage(linklogTabId: number) {
++  const tab = await chrome.tabs.get(linklogTabId).catch(() => null);
++  await chrome.tabs.create({
++    url: chrome.runtime.getURL("connect.html"),
++    windowId: tab?.windowId,
++    index: tab ? tab.index + 1 : undefined,
++  });
++}
++
+ export async function handle(request: PageRequest, c: Connection, s: Services) {
+   // Nothing but the handshake is accepted before a successful hello on this connection.
+   if (request.command !== "hello") requireScope(c);
+diff --git a/apps/extension/src/background/index.ts b/apps/extension/src/background/index.ts
+index c4a6f22..5368c76 100644
+--- a/apps/extension/src/background/index.ts
++++ b/apps/extension/src/background/index.ts
+@@ -1,7 +1,7 @@
+-import { BRIDGE_PORT, LOCAL_BRIDGE_MATCHES, parsePageRequest } from "@linklog/browser-protocol";
+-import { CONTENT_ORIGINS, EXTENSION_VERSION, LINKLOG_ORIGINS } from "../config";
++import { BRIDGE_PORT, CONSENT_REQUIRED, LOCAL_BRIDGE_MATCHES, parsePageRequest } from "@linklog/browser-protocol";
++import { CONSENT_KEY, CONTENT_ORIGINS, EXTENSION_VERSION, LINKLOG_ORIGINS } from "../config";
+ import { ResultCache } from "./cache";
+-import { handle, type Services } from "./commands";
++import { handle, openConnectPage, type Services } from "./commands";
+ import { GroupMetaStore } from "./groups";
+ import { Hub, type Connection } from "./hub";
+ import { chromeKV, Mutex } from "./kv";
+@@ -78,11 +78,24 @@ async function init(): Promise<Services> {
+   await loader.resume();
+   return { registry, cache, groups, hub, opens, loader, ids: { installationId, browserSessionId } };
+ }
+-const ready = init().then((s) => (services = s));
++// Consent (FAC-305): until the user accepts on the Connect page, which stores CONSENT_KEY in
++// storage.local, init() doesn't run, tab events do nothing and the bridge answers every request
++// but openPermissions with CONSENT_REQUIRED. No tab is read, stored or sent before that.
++let consented = false;
++let accept!: () => void;
++const accepted = new Promise<void>((resolve) => (accept = resolve));
++const consentKnown = local.get<boolean>(CONSENT_KEY).then((value) => {
++  if (value === true) (consented = true), accept();
++});
++chrome.storage.onChanged.addListener((changes, area) => {
++  if (area === "local" && changes[CONSENT_KEY]?.newValue === true) (consented = true), accept();
++});
++const ready = accepted.then(init).then((s) => (services = s));
+ 
++/** Runs a task once the extension is started; before consent it is dropped. */
+ function run(task: () => Promise<unknown>) {
+-  void ready
+-    .then(task)
++  void consentKnown
++    .then(() => (consented ? ready.then(task) : undefined))
+     .catch((error) => console.warn("Linklog:", error));
+ }
+ 
+@@ -145,7 +158,7 @@ for (const event of [
+   event.addListener(() => run(async () => hub.schedule()));
+ for (const event of [chrome.tabGroups.onCreated, chrome.tabGroups.onUpdated] as chrome.events.Event<() => void>[])
+   event.addListener(() => {
+-    hub.schedule();
++    run(async () => hub.schedule());
+     syncGroups();
+   });
+ chrome.tabGroups.onRemoved.addListener((group) =>
+@@ -172,11 +185,14 @@ chrome.runtime.onConnect.addListener((port) => {
+     last: null,
+   };
+   hub.connections.set(c.id, c);
+-  // This tab is Linklog: drop it from every list right away, and remember its origin.
+-  run(async () => {
+-    await hub.learnOrigin(port.sender?.tab?.url);
+-    hub.schedule(0);
+-  });
++  // This tab is Linklog: drop it from every list right away, and remember its origin
++  // (once consent is given, also for a page that connected before it).
++  void ready
++    .then(async () => {
++      await hub.learnOrigin(port.sender?.tab?.url);
++      hub.schedule(0);
++    })
++    .catch((error) => console.warn("Linklog:", error));
+   port.onDisconnect.addListener(() => {
+     hub.connections.delete(c.id);
+     hub.schedule();
+@@ -189,6 +205,13 @@ chrome.runtime.onConnect.addListener((port) => {
+       if (typeof id === "string") hub.send(c, { id, ok: false, error: "Invalid request." });
+       return;
+     }
++    void consentKnown.then(async () => {
++      if (consented) return;
++      // Before consent the page can only open the Connect page; it learns nothing about tabs.
++      if (request.command !== "openPermissions") return hub.send(c, { id: request.id, ok: false, error: CONSENT_REQUIRED });
++      await openConnectPage(c.tabId).catch(() => {});
++      hub.send(c, { id: request.id, ok: true, result: {} });
++    });
+     run(async () => {
+       try {
+         const result = await handle(request, c, services!);
+@@ -204,13 +227,15 @@ chrome.runtime.onConnect.addListener((port) => {
+ chrome.runtime.onMessage.addListener((message, sender, reply) => {
+   if (!isExtensionPage(sender, chrome.runtime.id, chrome.runtime.getURL(""))) return false;
+   if (message?.type !== "status") return false;
+-  ready
+-    .then(async (s) => {
++  consentKnown
++    .then(async () => {
++      const s = consented ? await ready : null;
+       reply({
+         version: EXTENSION_VERSION,
+-        installationId: s.ids.installationId,
+-        browserSessionId: s.ids.browserSessionId,
+-        contentAccess: hub.granted,
++        consent: consented,
++        installationId: s?.ids.installationId,
++        browserSessionId: s?.ids.browserSessionId,
++        contentAccess: s ? hub.granted : await chrome.permissions.contains({ origins: CONTENT_ORIGINS }),
+         connectedPages: hub.connections.size,
+         linklogTabs: [...new Set([...hub.connections.values()].map((c) => c.tabId))],
+         origins: LINKLOG_ORIGINS,
+diff --git a/apps/extension/src/config.ts b/apps/extension/src/config.ts
+index a703b3a..ad1f011 100644
+--- a/apps/extension/src/config.ts
++++ b/apps/extension/src/config.ts
+@@ -6,5 +6,9 @@ export const LINKLOG_URL: string =
+   typeof __LINKLOG_URL__ === "undefined" ? "http://127.0.0.1:3000" : __LINKLOG_URL__;
+ export const EXTENSION_VERSION: string =
+   typeof __EXTENSION_VERSION__ === "undefined" ? "0.0.0" : __EXTENSION_VERSION__;
++/** storage.local key set to true when the user accepts on the Connect page (FAC-305). */
++export const CONSENT_KEY = "consent";
++/** Built with the localhost/127.0.0.1 bridge (dev and test builds); packaged builds aren't. */
++export const LOCAL_BRIDGE: boolean = typeof __LINKLOG_LOCAL_BRIDGE__ === "undefined" ? true : __LINKLOG_LOCAL_BRIDGE__;
+ /** Broad content access requested explicitly from the connect page. */
+ export const CONTENT_ORIGINS = ["http://*/*", "https://*/*"];
+diff --git a/apps/extension/src/env.d.ts b/apps/extension/src/env.d.ts
+index 941340f..dc80752 100644
+--- a/apps/extension/src/env.d.ts
++++ b/apps/extension/src/env.d.ts
+@@ -3,3 +3,5 @@ declare const __LINKLOG_ORIGINS__: readonly string[];
+ /** Where "Open Linklog" goes when no Linklog tab is open. */
+ declare const __LINKLOG_URL__: string;
+ declare const __EXTENSION_VERSION__: string;
++/** False in packaged builds: the bridge only matches LINKLOG_ORIGINS. */
++declare const __LINKLOG_LOCAL_BRIDGE__: boolean;
+diff --git a/apps/extension/src/pages/connect.html b/apps/extension/src/pages/connect.html
+index e569190..5e6f7a7 100644
+--- a/apps/extension/src/pages/connect.html
++++ b/apps/extension/src/pages/connect.html
+@@ -10,6 +10,8 @@
+       header.card-head { padding: 20px 16px 16px; display: flex; flex-direction: column; gap: 6px; border-bottom: 1px solid var(--border); }
+       footer.card-foot { padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border-top: 1px solid var(--border); background: var(--sidebar); border-radius: 0 0 12px 12px; }
+       .note { padding: 0 4px; }
++      .disclosure { padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
++      .disclosure ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
+     </style>
+   </head>
+   <body>
+@@ -18,7 +20,30 @@
+         <span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 1 1 0 10h-2"/><line x1="8" x2="16" y1="12" y2="12"/></svg></span>
+         Linklog
+       </div>
+-      <section class="card">
++      <section class="card hidden" id="consent">
++        <header class="card-head">
++          <h1>Before Linklog reads your tabs</h1>
++          <p class="muted">This extension shows your open tabs in Linklog's Browser view. It reads nothing until you accept.</p>
++        </header>
++        <div class="disclosure">
++          <p>If you accept, the extension:</p>
++          <ul>
++            <li><b>Reads the address (URL) and title of every open tab, in every Chrome window, and your tab groups.</b> The tab list stays in Chrome's memory until Chrome closes; the name and color of groups you link to Linklog stay on this device so they can be linked again after a restart.</li>
++            <li><b>Sends the tabs of Linklog's window</b> (URLs, titles, icons, groups) to the Linklog page when you open Browser view.</li>
++            <li>Only if you also allow page content: <b>reads the text and preview of open pages</b>. When a lens you turned on evaluates a tab, its URL and text go to your Linklog library, whose server sends them to a remote AI provider for the answer.</li>
++            <li>When you save a tab, sends only its URL; Linklog's server then fetches the page and extracts its content with a remote extraction service, like any link you add.</li>
++          </ul>
++          <p class="muted">Never cookies, passwords or form fields. Your data isn't sold or used for ads. The providers we use are named in the <a href="https://linklog.facundopri.com/privacy" target="_blank" rel="noreferrer">privacy policy</a>.</p>
++        </div>
++        <footer class="card-foot">
++          <span class="muted small" id="declined"></span>
++          <span style="display:flex;gap:8px;margin-left:auto">
++            <button class="outline" id="decline" type="button">Not now</button>
++            <button class="brand-button" id="accept" type="button">Accept and connect</button>
++          </span>
++        </footer>
++      </section>
++      <section class="card hidden" id="permissions">
+         <header class="card-head">
+           <h1>Connect Linklog to Chrome</h1>
+           <p class="muted">Browser view shows the tabs and groups of the window where Linklog is open. Page text goes only to your own Linklog library, and only when an active lens needs it.</p>
+diff --git a/apps/extension/src/pages/connect.ts b/apps/extension/src/pages/connect.ts
+index 2f3e505..50e3a06 100644
+--- a/apps/extension/src/pages/connect.ts
++++ b/apps/extension/src/pages/connect.ts
+@@ -1,7 +1,11 @@
++import { CONSENT_KEY, LOCAL_BRIDGE } from "../config";
+ import { $, openLinklog, requestContent, revokeContent, status } from "./shared";
+ 
+ async function render() {
+   const s = await status();
++  // Consent first (FAC-305): the permissions card only makes sense once the extension runs.
++  $("consent").classList.toggle("hidden", !s || s.consent);
++  $("permissions").classList.toggle("hidden", !s?.consent);
+   const granted = !!s?.contentAccess;
+   const badge = $("content-badge");
+   badge.className = `badge ${granted ? "ok" : "warn"}`;
+@@ -10,10 +14,18 @@ async function render() {
+   $("revoke").classList.toggle("hidden", !granted);
+   $("content-hint").classList.toggle("hidden", granted);
+   $("status").textContent = s
+-    ? `Extension ${s.version} · ${s.connectedPages ? `${s.connectedPages} Linklog page${s.connectedPages === 1 ? "" : "s"} connected` : "no Linklog page open"} · works with Linklog on localhost / 127.0.0.1 (any port)${s.origins.length ? ` and ${s.origins.join(", ")}` : ""}`
++    ? `Extension ${s.version} · ${s.connectedPages ? `${s.connectedPages} Linklog page${s.connectedPages === 1 ? "" : "s"} connected` : "no Linklog page open"} · works with Linklog on ${[...(LOCAL_BRIDGE ? ["localhost / 127.0.0.1 (any port)"] : []), ...s.origins].join(" and ")}`
+     : "";
+ }
+ 
++$("accept").addEventListener("click", async () => {
++  // The background starts when it sees this key (chrome.storage.onChanged).
++  await chrome.storage.local.set({ [CONSENT_KEY]: true });
++  await render();
++});
++$("decline").addEventListener("click", () => {
++  $("declined").textContent = "Not connected. Linklog reads nothing; accept here whenever you want (toolbar button → Permissions).";
++});
+ $("grant").addEventListener("click", async () => {
+   await requestContent();
+   await render();
+diff --git a/apps/extension/src/pages/popup.ts b/apps/extension/src/pages/popup.ts
+index 76291fd..541c5a4 100644
+--- a/apps/extension/src/pages/popup.ts
++++ b/apps/extension/src/pages/popup.ts
+@@ -5,8 +5,11 @@ async function render() {
+   if (!s) return;
+   $("version").textContent = `v${s.version}`;
+   const pages = $("pages");
+-  pages.className = `badge ${s.connectedPages ? "ok" : ""}`;
+-  pages.innerHTML = s.connectedPages ? `<span class="dot"></span>${s.connectedPages} connected` : "Not open";
++  pages.className = `badge ${s.connectedPages && s.consent ? "ok" : s.consent ? "" : "warn"}`;
++  pages.innerHTML = !s.consent
++    ? `<span class="dot"></span>Not connected`
++    : s.connectedPages ? `<span class="dot"></span>${s.connectedPages} connected` : "Not open";
++  $("permissions").textContent = s.consent ? "Permissions" : "Review and connect";
+   const content = $("content");
+   content.className = `badge ${s.contentAccess ? "ok" : "warn"}`;
+   content.innerHTML = `<span class="dot"></span>${s.contentAccess ? "Allowed" : "Not allowed"}`;
+diff --git a/apps/extension/src/pages/shared.ts b/apps/extension/src/pages/shared.ts
+index 2f87377..e50b89a 100644
+--- a/apps/extension/src/pages/shared.ts
++++ b/apps/extension/src/pages/shared.ts
+@@ -2,6 +2,8 @@ import { CONTENT_ORIGINS, LINKLOG_URL } from "../config";
+ 
+ export type Status = {
+   version: string;
++  /** The user accepted the disclosure (FAC-305); nothing about tabs is read before. */
++  consent: boolean;
+   contentAccess: boolean;
+   connectedPages: number;
+   /** Tabs with a connected Linklog page. */
+diff --git a/packages/browser-protocol/src/browser.ts b/packages/browser-protocol/src/browser.ts
+index 91c0e2f..37b8d69 100644
+--- a/packages/browser-protocol/src/browser.ts
++++ b/packages/browser-protocol/src/browser.ts
+@@ -9,6 +9,11 @@ export const BRIDGE_CHANNEL = "linklog-bridge";
+ export const BRIDGE_PORT = "linklog-bridge";
+ /** `<meta name="linklog-app">` marks a page as Linklog; the bridge stays inert elsewhere. */
+ export const LINKLOG_APP_META = "linklog-app";
++/**
++ * The extension's answer to every page request (but openPermissions) until the user
++ * accepts on its Connect page: until then it reads no tab data (FAC-305).
++ */
++export const CONSENT_REQUIRED = "Accept on the Linklog extension's Connect page so it can read your tabs.";
+ 
+ export type GroupColor =
+   | "grey"
+diff --git a/src/browser/openLinks.ts b/src/browser/openLinks.ts
+index ff18f86..75243f2 100644
+--- a/src/browser/openLinks.ts
++++ b/src/browser/openLinks.ts
+@@ -13,6 +13,8 @@ export function openUnavailable({ connection, hello }: Pick<BrowserState, "conne
+       return "Install or enable the Linklog extension to open links";
+     case "outdated":
+       return "Update the Linklog extension to open links";
++    case "consent":
++      return "Accept on the Linklog extension's Connect page to open links";
+     case "reload":
+       return "Reload this page to reconnect the extension";
+     case "checking":
+diff --git a/src/browser/useBrowser.ts b/src/browser/useBrowser.ts
+index c17efda..fa075d3 100644
+--- a/src/browser/useBrowser.ts
++++ b/src/browser/useBrowser.ts
+@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
+ import { useQueryClient } from "@tanstack/react-query";
+ import {
+   applyPatch,
++  CONSENT_REQUIRED,
+   libraryScope,
+   PROTOCOL_VERSION,
+   type BrowserCatalog,
+@@ -19,6 +20,7 @@ export type Connection =
+   | "checking"
+   | "unsupported" // not desktop Chromium
+   | "missing" // extension not installed / not enabled for this origin
++  | "consent" // installed, but the user hasn't accepted on its Connect page yet
+   | "outdated" // protocol mismatch
+   | "connected"
+   | "reconnecting" // worker restarted; last snapshot kept but stale
+@@ -117,6 +119,7 @@ export function useBrowser() {
+       setResultsVersion((v) => v + 1);
+     } catch (error) {
+       if (error instanceof BridgeTimeout) setConnection("reconnecting");
++      else if ((error as Error).message === CONSENT_REQUIRED) setConnection("consent");
+       else if (/reloaded/.test((error as Error).message)) setConnection("reload");
+       else setConnection((c) => (c === "connected" ? "reconnecting" : "missing"));
+     } finally {
+diff --git a/src/components/browser/BrowserConnect.tsx b/src/components/browser/BrowserConnect.tsx
+index bc17315..44f46b6 100644
+--- a/src/components/browser/BrowserConnect.tsx
++++ b/src/components/browser/BrowserConnect.tsx
+@@ -1,4 +1,4 @@
+-import { CircleAlert, Download, Globe, PlugZap, RefreshCw } from "lucide-react";
++import { CircleAlert, Download, Globe, Lock, PlugZap, RefreshCw } from "lucide-react";
+ import type { BrowserWorkspace } from "../../browser/useBrowserWorkspace";
+ import { useQuery } from "@tanstack/react-query";
+ import { EXPECTED_EXTENSION_VERSION, extensionDownloadUrl, extensionReleaseUrl, type ExtensionUpdate } from "../../browser/extensionVersion";
+@@ -88,6 +88,13 @@ export function Connect({ ws }: { ws: BrowserWorkspace }) {
+             body: "It reads tabs through the Linklog extension, which runs in Chrome or another Chromium browser on desktop.",
+             steps: null,
+           }
++        : connection === "consent"
++          ? {
++              icon: <Lock className="size-5" />,
++              title: "Not connected yet",
++              body: "The Linklog extension reads nothing until you accept on its Connect page. Accept there and Linklog connects on its own.",
++              steps: null,
++            }
+         : connection === "reload"
+           ? {
+               icon: <RefreshCw className="size-5" />,
+@@ -149,6 +156,10 @@ export function Connect({ ws }: { ws: BrowserWorkspace }) {
+           <Button size="sm" onClick={() => location.reload()}>
+             Reload page
+           </Button>
++        ) : connection === "consent" ? (
++          <Button size="sm" onClick={() => void ws.browser.request("openPermissions", {}).catch(() => {})}>
++            Open Connect page
++          </Button>
+         ) : (
+           connection !== "unsupported" && (
+             <Button variant="ghost" size="sm" onClick={retry}>
+diff --git a/tests/browser/env.ts b/tests/browser/env.ts
+index ce99204..6fc7585 100644
+--- a/tests/browser/env.ts
++++ b/tests/browser/env.ts
+@@ -183,6 +183,8 @@ export async function launch(name: string, extension = true): Promise<{ context:
+   let sw: Worker | null = null;
+   if (extension) {
+     sw = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker", { timeout: 15000 }));
++    // The user's accept on the Connect page (FAC-305); the background starts when it sees the key.
++    await sw.evaluate(() => chrome.storage.local.set({ consent: true }));
+   }
+   const version = context.browser()?.version() ?? (await run([EXE, "--version"])).trim();
+   return { context, sw, version };
+diff --git a/tests/browser/sleeping.ts b/tests/browser/sleeping.ts
+index afb2acb..1a95309 100644
+--- a/tests/browser/sleeping.ts
++++ b/tests/browser/sleeping.ts
+@@ -45,6 +45,8 @@ export async function sleepingChecks(ctx: Ctx) {
+   const launch = (fresh: boolean, args: string[] = []) =>
+     launchRaw({ profile, extension: EXTENSION, fresh, args, cookie: cookie && { ...cookie, domain: "127.0.0.1" } });
+   let b: RawBrowser = await launch(true);
++  // The user's accept on the Connect page (FAC-305); it stays in the profile across the restart below.
++  await b.sw(async () => chrome.storage.local.set({ consent: true }), null);
+ 
+   const dom = <R = unknown>(js: string) => b.page<R>(LINKLOG, `(async () => { ${js} })()`);
+   const click = (finder: string) => dom(`const el = ${finder}; if (!el) throw new Error("not found: " + ${JSON.stringify(finder)}); el.click(); return true;`);

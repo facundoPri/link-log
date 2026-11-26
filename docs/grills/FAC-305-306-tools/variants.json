@@ -1,0 +1,235 @@
+{
+ "A_current_release_0.2.1": {
+  "manifest_version": 3,
+  "name": "Linklog",
+  "version": "0.2.1",
+  "description": "Connects Linklog's Browser view to the tabs and groups of its Chrome window.",
+  "minimum_chrome_version": "116",
+  "icons": {
+   "16": "icons/16.png",
+   "32": "icons/32.png",
+   "48": "icons/48.png",
+   "128": "icons/128.png"
+  },
+  "action": {
+   "default_title": "Linklog",
+   "default_popup": "popup.html",
+   "default_icon": {
+    "16": "icons/16.png",
+    "32": "icons/32.png"
+   }
+  },
+  "background": {
+   "service_worker": "background.js",
+   "type": "module"
+  },
+  "permissions": [
+   "storage",
+   "scripting",
+   "tabGroups",
+   "tabs"
+  ],
+  "host_permissions": [],
+  "optional_host_permissions": [
+   "http://*/*",
+   "https://*/*"
+  ],
+  "content_scripts": [
+   {
+    "matches": [
+     "http://localhost/*",
+     "http://127.0.0.1/*",
+     "https://linklog.facundopri.com/*"
+    ],
+    "js": [
+     "bridge.js"
+    ],
+    "run_at": "document_start",
+    "all_frames": false
+   }
+  ],
+  "content_security_policy": {
+   "extension_pages": "script-src 'self'; object-src 'self'"
+  }
+ },
+ "B_store_prod_only_bridge": {
+  "manifest_version": 3,
+  "name": "Linklog",
+  "version": "0.2.1",
+  "description": "Connects Linklog's Browser view to the tabs and groups of its Chrome window.",
+  "minimum_chrome_version": "116",
+  "icons": {
+   "16": "icons/16.png",
+   "32": "icons/32.png",
+   "48": "icons/48.png",
+   "128": "icons/128.png"
+  },
+  "action": {
+   "default_title": "Linklog",
+   "default_popup": "popup.html",
+   "default_icon": {
+    "16": "icons/16.png",
+    "32": "icons/32.png"
+   }
+  },
+  "background": {
+   "service_worker": "background.js",
+   "type": "module"
+  },
+  "permissions": [
+   "storage",
+   "scripting",
+   "tabGroups",
+   "tabs"
+  ],
+  "host_permissions": [],
+  "optional_host_permissions": [
+   "http://*/*",
+   "https://*/*"
+  ],
+  "content_scripts": [
+   {
+    "matches": [
+     "https://linklog.facundopri.com/*"
+    ],
+    "js": [
+     "bridge.js"
+    ],
+    "run_at": "document_start",
+    "all_frames": false
+   }
+  ],
+  "content_security_policy": {
+   "extension_pages": "script-src 'self'; object-src 'self'"
+  }
+ },
+ "C_permissions_only_no_bridge": {
+  "manifest_version": 3,
+  "name": "Linklog",
+  "version": "0.2.1",
+  "description": "Connects Linklog's Browser view to the tabs and groups of its Chrome window.",
+  "minimum_chrome_version": "116",
+  "icons": {
+   "16": "icons/16.png",
+   "32": "icons/32.png",
+   "48": "icons/48.png",
+   "128": "icons/128.png"
+  },
+  "action": {
+   "default_title": "Linklog",
+   "default_popup": "popup.html",
+   "default_icon": {
+    "16": "icons/16.png",
+    "32": "icons/32.png"
+   }
+  },
+  "background": {
+   "service_worker": "background.js",
+   "type": "module"
+  },
+  "permissions": [
+   "storage",
+   "scripting",
+   "tabGroups",
+   "tabs"
+  ],
+  "host_permissions": [],
+  "optional_host_permissions": [
+   "http://*/*",
+   "https://*/*"
+  ],
+  "content_security_policy": {
+   "extension_pages": "script-src 'self'; object-src 'self'"
+  }
+ },
+ "D_without_tabs": {
+  "manifest_version": 3,
+  "name": "Linklog",
+  "version": "0.2.1",
+  "description": "Connects Linklog's Browser view to the tabs and groups of its Chrome window.",
+  "minimum_chrome_version": "116",
+  "icons": {
+   "16": "icons/16.png",
+   "32": "icons/32.png",
+   "48": "icons/48.png",
+   "128": "icons/128.png"
+  },
+  "action": {
+   "default_title": "Linklog",
+   "default_popup": "popup.html",
+   "default_icon": {
+    "16": "icons/16.png",
+    "32": "icons/32.png"
+   }
+  },
+  "background": {
+   "service_worker": "background.js",
+   "type": "module"
+  },
+  "permissions": [
+   "storage",
+   "scripting",
+   "tabGroups"
+  ],
+  "host_permissions": [],
+  "optional_host_permissions": [
+   "http://*/*",
+   "https://*/*"
+  ],
+  "content_scripts": [
+   {
+    "matches": [
+     "https://linklog.facundopri.com/*"
+    ],
+    "js": [
+     "bridge.js"
+    ],
+    "run_at": "document_start",
+    "all_frames": false
+   }
+  ],
+  "content_security_policy": {
+   "extension_pages": "script-src 'self'; object-src 'self'"
+  }
+ },
+ "E_grant_all_sites (Allow page content dialog)": {
+  "manifest_version": 3,
+  "name": "x",
+  "version": "1",
+  "host_permissions": [
+   "http://*/*",
+   "https://*/*"
+  ]
+ },
+ "F_grant_one_site": {
+  "manifest_version": 3,
+  "name": "x",
+  "version": "1",
+  "host_permissions": [
+   "https://github.com/*"
+  ]
+ },
+ "G_grant_four_sites": {
+  "manifest_version": 3,
+  "name": "x",
+  "version": "1",
+  "host_permissions": [
+   "https://github.com/*",
+   "https://news.ycombinator.com/*",
+   "https://example.org/*",
+   "https://a.com/*"
+  ]
+ },
+ "H_tabs_plus_all_sites": {
+  "manifest_version": 3,
+  "name": "x",
+  "version": "1",
+  "permissions": [
+   "tabs"
+  ],
+  "host_permissions": [
+   "http://*/*",
+   "https://*/*"
+  ]
+ }
+}
