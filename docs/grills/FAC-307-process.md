@@ -1,0 +1,7 @@
+# FAC-307 arena: process log
+
+FAC-307 ran in the same arena as FAC-175 on 2026-11-26. The full log (rounds, changes of mind, cost) is in [FAC-175-process.md](FAC-175-process.md). This file keeps only the policy-specific steps.
+
+- **Location of the policy.** Both debaters built `/privacy` in their own worktree and served it with `wrangler dev` and the real `assets` block. Round 1 tried two variants: Sonnet used a second Bun entrypoint and Opus used a copy step. In round 2 both measured both variants. The copy step leaves `index.html` and the app chunks byte-identical (`shasum`), and the page has no script. The second entrypoint adds an empty chunk, a source map and a `<script>`. Both chose the copy step.
+- **Policy text.** Opus wrote the base draft. Sonnet added the D1 backup window, the line that lenses run on signed-in pages, the sleeping-tab reload and TypeSafe's own statement that it does not train on input. Round 2 changed the Limited Use paragraph: it keeps Google's sentence verbatim (Sonnet's argument: it meets the rule and any literal check) and adds the four Limited Use exceptions. Round 3 checked every factual sentence against the code; see the FAC-175 log.
+- **Privacy tab.** The debaters swapped positions, and the moderator decided with the owner's word "consistencia" (5 boxes; round 3 then showed the same rule gives 6, adding Personal communications). The answers are in [FAC-307.md](FAC-307.md#privacy-tab-answers-for-fac-310-consistent-with-the-draft).
