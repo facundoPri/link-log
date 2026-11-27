@@ -107,7 +107,7 @@ One entry per permission in the 0.3.0 manifest: the four `permissions`, the two 
 **`tabs`**
 
 ```
-Browser view lists the user's open tabs so they can review them. The extension needs "tabs" to read each tab's URL, title and icon, and to group, move, open, put to sleep and close the tabs the user selects. Nothing is read until the user accepts the disclosure on the extension's Connect page. Tab URLs and titles are shown to the user's Linklog page. They leave the browser only when the user turns on a lens, auto-groups tabs or saves a tab: then the URL goes to the user's Linklog library, and for lenses and auto-grouping so do the title and the page text.
+Browser view lists the user's open tabs so they can review them. The extension needs "tabs" to read each tab's URL, title and icon, and to group, move, open, put to sleep and close the tabs the user selects. Nothing is read until the user accepts the disclosure on the extension's Connect page. Tab URLs, titles, icons and groups are shown to the user's Linklog page. They leave the browser only when the user turns on a lens, auto-groups tabs or saves a tab: then the URL goes to the user's Linklog library, and for lenses and auto-grouping so do the title and the page text.
 ```
 
 **`tabGroups`**
@@ -125,7 +125,7 @@ To run code bundled in the package (the extractor extract.js and a small functio
 **`storage`**
 
 ```
-chrome.storage.session holds the open-tab registry, lens results per tab and the load queue, cleared when Chrome closes. chrome.storage.local holds the user's consent, an installation id, the look of linked tab groups (title, color, description and the library that linked them) and the chosen load concurrency.
+chrome.storage.session holds the open-tab registry, group bindings and descriptions, lens results per tab, the log of opened tabs and the load queue, cleared when Chrome closes. chrome.storage.local holds the user's consent, an installation id, the look of linked tab groups (title, color, description and the library that linked them) and the chosen load concurrency.
 ```
 
 **Optional host permissions `http://*/*` and `https://*/*`**
