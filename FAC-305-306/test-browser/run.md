@@ -2,17 +2,17 @@
 
 - Chromium: 153.0.8010.12
 - Extension: ncmhkfglnngpobhmpajcbemebgiddkhh v0.3.0
-- Build: d706645
-- Started: 2026-11-27T18:17:10.323Z · finished: 2026-11-27T18:29:11.995Z
+- Build: 099ff27
+- Started: 2026-11-27T18:54:41.940Z · finished: 2026-11-27T19:08:33.967Z
 - Fixture Jev calls (mock provider, not paid): 318
-- Load content queue: {"tabs":450,"ms":242429,"tabsPerSec":1.86,"maxAwake":3,"rssBeforeMb":57488,"rssPeakMb":58567,"restartedAfterDone":100}
+- Load content queue: {"tabs":450,"ms":315466,"tabsPerSec":1.43,"maxAwake":3,"rssBeforeMb":56173,"rssPeakMb":58745,"restartedAfterDone":100}
 
 | Area | Check | Result | Detail |
 | --- | --- | --- | --- |
 | Setup | 0010 applies on a real local D1 with existing rows | pass | links 1, jobs 2, usage_events.job_id kept (j1), leases 1 |
 | Connection | without the extension Browser shows connect/install steps | pass |  |
 | Connection | before Accept on Connect the extension stores nothing; after it Browser lists the tabs without a reload | pass | before: {"session":{},"local":{}}; after: 4 rows, local keys consent, installationId |
-| Connection | lists only the tabs of Linklog's window (20 here, 3 in the other window) | pass | window 270508823: 20 rows; window 270508829 tabs hidden |
+| Connection | lists only the tabs of Linklog's window (20 here, 3 in the other window) | pass | window 243981394: 20 rows; window 243981400 tabs hidden |
 | Lenses and cache | activating lens A evaluates all 20 tabs once | pass | 20 Jev calls (fixture provider) |
 | Lenses and cache | activating lens A shows its run live: sidebar indicator, one progress toast, Activity row (no reload) | pass | sidebar Applying lens; toast Applying lens to 20 tabs…0 of 20CancelActivity → Applying lens to 20 tabs…1 of 20CancelActivity → Lens applied to 20 tabsActivity; toast progress while running: 0 of 20 |
 | Lenses and cache | toggling lens A off and on reuses results (0 new calls) | pass |  |
@@ -22,7 +22,7 @@
 | Lenses and cache | two active lenses: AND across lenses, OR within a lens | pass | Yes∧Article = 3; Yes∧(Article∨Reference) = 9; Yes∧(any option) = 12 |
 | Lenses and cache | classifying tabs never creates saved links | pass | 0 links before and after 48 evaluations |
 | Lifecycle and recovery | closing and reopening Linklog keeps done results (0 new calls) | pass |  |
-| Lifecycle and recovery | real service-worker suspension keeps session and results | pass | worker stopped and restarted; session 02370eb0… unchanged; 0 new calls |
+| Lifecycle and recovery | real service-worker suspension keeps session and results | pass | worker stopped and restarted; session a973a045… unchanged; 0 new calls |
 | Lifecycle and recovery | API outage: stored answers stay visible, nothing is emptied | pass | banner shown; recovered by request id; 2 new calls (A, B) for the new tab |
 | Lifecycle and recovery | response lost after the POST was accepted: same job, no duplicate | pass | 2 responses dropped; reconciled by GET; 2 batches, 2 calls |
 | Lifecycle and recovery | queue redelivery / recovery sweeps don't repeat evaluations; polling stays calm | pass | 4 recovery sweeps during running jobs; 4 calls for 2 tabs × 2 lenses; 7 status polls in 7.7 s |
@@ -48,35 +48,35 @@
 | Bridge security | bridge rejects malformed commands and ids from another window | pass | unknown command dropped by the bridge; other-window tab refused and still open |
 | Save and Close | Save adds links through the normal library pipeline (extraction queued) | pass | 2 links from URLs only; 1 normal extract batch queued; re-save = duplicate, tags kept |
 | Save and Close | Close closes only the selected tabs, after revalidation | pass | 2 closed; 2 saved links untouched |
-| Save and Close | Open creates background tabs once per operation, even when the request is repeated | pass | 2 background tabs in window 270508823; repeating the operation opened none |
-| Groups | create a pinned group from the selection | pass | native group 18785962 bound to pinned 71e83b60… |
-| Groups | pinned group appears in another window without tabs and materializes on use | pass | created group 1437632305 in window 270508829 bound to the same definition |
+| Save and Close | Open creates background tabs once per operation, even when the request is repeated | pass | 2 background tabs in window 243981394; repeating the operation opened none |
+| Groups | create a pinned group from the selection | pass | native group 1966984498 bound to pinned 2ae4f5eb… |
+| Groups | pinned group appears in another window without tabs and materializes on use | pass | created group 1388321880 in window 243981400 bound to the same definition |
 | Groups | same name never merges groups | pass | two native 'Research' groups in window 1, one pinned definition |
-| Groups | Autogroup keeps tabs grouped meanwhile and moves the rest after review | pass | 1 Activity batch, 2 calls; tab kept in “Manual”; other moved to pinned Research (18785962 = 18785962); live in the sidebar and Activity, one toast, then “Suggested groups for 2 tabsActivity” |
-| Groups | Move to group changes a grouped tab; Ungroup keeps it open | pass | tab 270508840 open and ungrouped |
+| Groups | Autogroup keeps tabs grouped meanwhile and moves the rest after review | pass | 1 Activity batch, 2 calls; tab kept in “Manual”; other moved to pinned Research (1966984498 = 1966984498); live in the sidebar and Activity, one toast, then “Suggested groups for 2 tabsActivity” |
+| Groups | Move to group changes a grouped tab; Ungroup keeps it open | pass | tab 243981411 open and ungrouped |
 | Groups | group filters: one group, several groups (union), ungrouped | pass | Ungrouped = 31 rows; Ungrouped ∪ Manual shown together |
 | Two pages, moves and a second profile | two Linklog pages in one window share results without duplicate jobs | pass | 33 tabs, 33 calls from two concurrent activations |
 | Two pages, moves and a second profile | moving a tab to another window keeps its cached result | pass | row left window 1, appeared in window 2, cache unchanged |
 | Two pages, moves and a second profile | moving the Linklog page switches its scope to the new window | pass | patch stream re-scoped after onAttached |
-| Two pages, moves and a second profile | second profile shares pinned definitions, not tabs | pass | installation 2f55eed1… vs acc83225… |
+| Two pages, moves and a second profile | second profile shares pinned definitions, not tabs | pass | installation 576e6640… vs ecfc0568… |
 | Two pages, moves and a second profile | Unpin keeps real groups and their metadata | pass | 3 native “Research” groups still open; definition removed |
 | Commands and Open links | ⌘K opens one Commands palette with 0, 1 and 2 tabs selected; G and C run tab actions | pass | 0: 2 rows · 1: 11 rows · 2: 11 rows; G → group picker; C → 2 copied, library unchanged |
 | Commands and Open links | narrow chip and phone drawer are the same surface as All links | pass | 900 px: Actions chip; 390 px: phone bar, drawer tiles with Close 2 tabs and the group picker in place |
-| Commands and Open links | Open links opens tabs in Linklog's window into a new group, and saves nothing | pass | 2 tabs in new group “Later” (1402462808) in window 270508823; the already-open one kept its place; window 270508829 unchanged; 0 library writes |
+| Commands and Open links | Open links opens tabs in Linklog's window into a new group, and saves nothing | pass | 2 tabs in new group “Later” (1301816450) in window 243981394; the already-open one kept its place; window 243981400 unchanged; 0 library writes |
 | Commands and Open links | pasting URLs in Browser opens the links page with them; nothing is saved | pass | links page lists it; Escape: 0 tabs opened, library unchanged |
 | Activity | browser evaluations appear in Activity with their usage | pass |  |
 | Accounts | sign-out makes the extension forget this account; the next account sees none of it | pass | refused sign-out (503) kept 105 cached entries, metadata {"meta":2,"hints":2} and the bridge; retry: forgotten, old cookie 401; second account: new library id, 0 groups, 0 lens cells, none of 3 lenses |
 | Sleeping tabs (native) | restored-but-never-loaded tabs show as Sleeping, never as an endless Loading | pass | 26 of 30 restored tabs have Chrome status "unloaded" with discarded false; all 26 rows say Sleeping, 0 say Loading after 20 s; banner counts 26 |
 | Sleeping tabs (native) | the Sleeping filter lists only sleeping tabs and shows their count | pass | 26 rows, all Sleeping; Show only sleeping tabs (26) |
 | Sleeping tabs (native) | entering Browser, filtering and selecting never wake a tab | pass | 0 page loads of the restored tabs |
-| Sleeping tabs (native) | banner Load content wakes in the background, captures, and puts every tab back to sleep | pass | 26/26 done; 26 pages loaded once each; every one done with a capture; at most 3 awake at once (588 samples); active tab 1678350227 unchanged; all 26 discarded again (26 Sleeping rows with captured content) |
+| Sleeping tabs (native) | banner Load content wakes in the background, captures, and puts every tab back to sleep | pass | 26/26 done; 26 pages loaded once each; every one done with a capture; at most 3 awake at once (605 samples); active tab 1384356464 unchanged; all 26 discarded again (26 Sleeping rows with captured content) |
 | Sleeping tabs (native) | a Sleeping tab with captured content shows it in the inspector | pass | inspector: “The tab is sleeping. This is the content captured …”, page text shown, no wake |
 | Sleeping tabs (native) | a frozen tab is loaded, put to sleep instead, and the UI says so | pass | frozen: true → discarded: true, frozen: false; note “It was frozen; Linklog put it to sleep instead.” |
 | Sleeping tabs (native) | Put to sleep from the selection sleeps eligible tabs and reports the rest | pass | bar: 3 selected · Save 3S · Move to groupG · AutogroupA · More⌘K; palette row “Put to sleep1 of 3 are asleep, active, playing audio or a browser page. Frees memory. A page with unsaved changes, such as a half-filled form, may lose them.2/3”; toast “Put to sleep 2 tabs Frees memory. A page with unsaved changes, such as a half-filled form, may lose them.” |
-| Sleeping tabs (native) | pinned tabs show a marker and keep pin, order, group and window through Put to sleep and Load content | pass | [id, pinned, index, group, window] unchanged: [[1678350230,true,0,-1,1678350159],[1678350231,true,1,-1,1678350159]] |
-| Sleeping tabs (native) | Move to group keeps pinned tabs in place, including one pinned after it was selected | pass | grouped 1678350232; kept 1678350233 (pinned after selection) and 1678350230: “Pinned — kept in place.”; native [id, pinned, group] [[1678350232,false,776870914],[1678350233,true,-1],[1678350230,true,-1]] |
+| Sleeping tabs (native) | pinned tabs show a marker and keep pin, order, group and window through Put to sleep and Load content | pass | [id, pinned, index, group, window] unchanged: [[1384356467,true,0,-1,1384356396],[1384356468,true,1,-1,1384356396]] |
+| Sleeping tabs (native) | Move to group keeps pinned tabs in place, including one pinned after it was selected | pass | grouped 1384356469; kept 1384356470 (pinned after selection) and 1384356467: “Pinned — kept in place.”; native [id, pinned, group] [[1384356469,false,651455786],[1384356470,true,-1],[1384356467,true,-1]] |
 | Sleeping tabs (native) | a lens over sleeping tabs splits waiting from sleeping and finishes after Load content | pass | before: “Sleepy 0/46 · 34 waiting · 8 sleeping · 4 unreadable Load content Yes 0 Unsure 0 No 0”; after Load content: “Sleepy 42/46 · 4 unreadable Yes 7 Unsure 14 No 21” |
-| Sleeping tabs (native) | a 450-tab queue keeps at most 3 awake, wakes each tab once across a worker restart, and leaks none | pass | 450/450 done in 242 s (1.86 tabs/s); max 3 awake (sampled every 100 ms); worker stopped after 100 done and a new worker instance resumed the same run; each page loaded exactly once; 0 left awake; browser process tree RSS 57488 → peak 58567 MB (sampled every 100 ms) |
+| Sleeping tabs (native) | a 450-tab queue keeps at most 3 awake, wakes each tab once across a worker restart, and leaks none | pass | 450/450 done in 315 s (1.43 tabs/s); max 3 awake (sampled every 100 ms); worker stopped after 100 done and a new worker instance resumed the same run; each page loaded exactly once; 0 left awake; browser process tree RSS 56173 → peak 58745 MB (sampled every 100 ms) |
 | Sleeping tabs (native) | a page that renders its text after load is read again before it goes back to sleep, so its capture is complete | pass | a page that renders its text 2.5 s after load (the loader's settle is 1 s) was read again: capture “complete”, 1007 chars, with the late text; back asleep |
 | Sleeping tabs (native) | tabs that couldn't load can be shown on their own and selected | pass | banner: “Loaded 1 of 2 tabs · 1 couldn't load”; Show failed lists only the tab that went to a sign-in page (load state failed); header toggle “Show only tabs that couldn't load (1)” pressed; Select all selects it |
 | Sleeping tabs (native) | Settings sets how many tabs Load content wakes at once, kept by the extension across a worker restart | pass | default 3; chose 5 → storage.local loadSettings {"concurrency":5}; after a worker restart and a reload Settings still shows 5; set back to 3 |
