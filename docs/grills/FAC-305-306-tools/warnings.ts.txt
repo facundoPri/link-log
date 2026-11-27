@@ -1,0 +1,25 @@
+// Usage: bun warnings.ts <probe-ext-dir> <variants.json> <unpacked-ext-dir>
+// Prints Chrome's install warnings (getPermissionWarningsByManifest) per manifest variant,
+// and the chrome://extensions details text of the real unpacked build.
+import { chromium } from "playwright-core";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+const [probe, variantsPath, real] = process.argv.slice(2);
+const variants = await Bun.file(variantsPath!).json();
+const ctx = await chromium.launchPersistentContext(mkdtempSync(join(process.env.SCRATCH ?? tmpdir(), "prof-")), {
+  headless: false, executablePath: process.env.CHROME_PATH,
+  args: [`--disable-extensions-except=${probe},${real}`, `--load-extension=${probe},${real}`],
+});
+let sw = ctx.serviceWorkers().find((w) => w.url().includes("sw.js")) ?? (await ctx.waitForEvent("serviceworker", (w) => w.url().includes("sw.js")));
+for (const [name, m] of Object.entries(variants)) {
+  const w = await sw.evaluate((m) => (self as any).probe(m), m);
+  console.log(`## ${name}\n${(w as string[]).map((x) => "- " + x).join("\n") || "- (no warnings)"}`);
+}
+const page = await ctx.newPage();
+console.log("browser", ctx.browser()?.version() ?? (await page.evaluate(() => navigator.userAgent)));
+await page.goto("chrome://extensions");
+await page.waitForTimeout(1500);
+const ids: { id: string; name: string }[] = await page.evaluate(async () => (await (chrome as any).developerPrivate.getExtensionsInfo()).map((e: any) => ({ id: e.id, name: e.name, perms: e.permissions })));
+console.log(JSON.stringify(ids, null, 1));
+await ctx.close();

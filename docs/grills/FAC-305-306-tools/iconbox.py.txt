@@ -1,0 +1,15 @@
+# Usage: python3 -I iconbox.py <png>  -> size and bounding box of non-transparent pixels (RGBA, filter 0 only)
+import sys, zlib, struct
+d = open(sys.argv[1], 'rb').read()
+w, h = struct.unpack('>II', d[16:24]); i = 8; idat = b''
+while i < len(d):
+    n = struct.unpack('>I', d[i:i+4])[0]; t = d[i+4:i+8]
+    if t == b'IDAT': idat += d[i+8:i+8+n]
+    i += 12 + n
+raw = zlib.decompress(idat); stride = w*4+1
+xs=[];ys=[]
+for y in range(h):
+    assert raw[y*stride]==0
+    for x in range(w):
+        if raw[y*stride+1+x*4+3] > 0: xs.append(x); ys.append(y)
+print(f"{w}x{h} art bbox x={min(xs)}..{max(xs)} y={min(ys)}..{max(ys)} -> {max(xs)-min(xs)+1}x{max(ys)-min(ys)+1}, margin left={min(xs)} top={min(ys)}")

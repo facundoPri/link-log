@@ -1,0 +1,1 @@
+{"manifest_version":3,"name":"warn-probe","version":"1.0","permissions":["management"],"background":{"service_worker":"sw.js"}}

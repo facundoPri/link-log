@@ -1,0 +1,75 @@
+// Usage: SCRATCH=<dir> CHROME_PATH=... bun a-consent-probe.ts <unpacked-ext-dir> <shots-dir>
+// Fresh profile. Phase 1: no consent. Opens ordinary tabs and a fake Linklog page on the
+// production origin (served by Playwright routing), asks the bridge for hello/snapshot/openPermissions,
+// and dumps the extension's storage. Phase 2: clicks "Accept and connect" on the Connect page,
+// then repeats.
+import { chromium, type Page } from "playwright-core";
+import { mkdtempSync } from "node:fs";
+import { join } from "node:path";
+const [ext, shots] = process.argv.slice(2) as [string, string];
+const ctx = await chromium.launchPersistentContext(mkdtempSync(join(process.env.SCRATCH!, "prof-")), {
+  headless: false, executablePath: process.env.CHROME_PATH, viewport: { width: 1280, height: 800 },
+  args: [`--disable-extensions-except=${ext}`, `--load-extension=${ext}`],
+});
+const requests: string[] = [];
+ctx.on("request", (r) => { if (r.frame()?.url().startsWith("chrome-extension://") || r.serviceWorker()) requests.push(r.url()); });
+await ctx.route("https://linklog.facundopri.com/**", (route) =>
+  route.fulfill({ contentType: "text/html", body: `<!doctype html><html><head><meta name="linklog-app" content="1"><title>Linklog (fake)</title></head><body>fake linklog</body></html>` }));
+await ctx.route("https://secret.example/**", (route) =>
+  route.fulfill({ contentType: "text/html", body: `<title>Secret page title</title>secret` }));
+const sw = ctx.serviceWorkers()[0] ?? (await ctx.waitForEvent("serviceworker"));
+await new Promise((r) => setTimeout(r, 1500));
+const pagesAtStart = ctx.pages().map((p) => p.url());
+const s1 = await ctx.newPage(); await s1.goto("https://secret.example/path?q=private#frag");
+const a = await ctx.newPage(); await a.goto("data:text/html,<title>Secret A</title>a");
+const ll = await ctx.newPage(); await ll.goto("https://linklog.facundopri.com/browser");
+await ll.waitForFunction(() => document.documentElement.dataset.linklogBridge !== undefined, null, { timeout: 5000 });
+
+async function ask(page: Page, command: string, args: object = {}) {
+  return page.evaluate(({ command, args }) => new Promise((resolve) => {
+    const id = crypto.randomUUID();
+    const t = setTimeout(() => resolve({ timeout: true }), 6000);
+    addEventListener("message", function on(e) {
+      const r = (e.data as any)?.response;
+      if ((e.data as any)?.channel === "linklog-bridge" && r?.id === id) { clearTimeout(t); removeEventListener("message", on); resolve(r); }
+    });
+    postMessage({ channel: "linklog-bridge", from: "page", request: { id, command, args } }, location.origin);
+  }), { command, args });
+}
+const storage = () => sw.evaluate(async () => ({ session: await chrome.storage.session.get(null), local: await chrome.storage.local.get(null) }));
+const summarize = (snap: any) => snap?.ok ? { ok: true, tabs: snap.result.tabs?.map((t: any) => ({ url: t.url, title: t.title })) } : snap;
+
+const before = {
+  pagesAtStart,
+  hello: await ask(ll, "hello", { libraryScope: "local:probe" }),
+  snapshot: await ask(ll, "snapshot"),
+  storage: await storage(),
+};
+const pagesBeforeOpen = ctx.pages().length;
+const openPermissions = await ask(ll, "openPermissions");
+await new Promise((r) => setTimeout(r, 800));
+const connectTabs = ctx.pages().filter((p) => p.url().endsWith("/connect.html"));
+const connect = connectTabs[0]!;
+await connect.bringToFront();
+await connect.screenshot({ path: join(shots, "connect-before-consent.png"), fullPage: true });
+const popupUrl = connect.url().replace("connect.html", "popup.html");
+const popup = await ctx.newPage(); await popup.setViewportSize({ width: 300, height: 220 }); await popup.goto(popupUrl);
+await popup.waitForTimeout(500);
+await popup.screenshot({ path: join(shots, "popup-before-consent.png") });
+const popupText = await popup.evaluate(() => document.body.innerText);
+await connect.bringToFront();
+await connect.click("#decline");
+const declinedText = await connect.textContent("#declined");
+await connect.click("#accept");
+await new Promise((r) => setTimeout(r, 2000));
+await connect.screenshot({ path: join(shots, "connect-after-consent.png"), fullPage: true });
+const after = {
+  connectVisible: await connect.evaluate(() => ({ consent: !document.getElementById("consent")!.classList.contains("hidden"), permissions: !document.getElementById("permissions")!.classList.contains("hidden") })),
+  hello: await ask(ll, "hello", { libraryScope: "local:probe" }),
+  snapshot: summarize(await ask(ll, "snapshot")),
+  storageInstances: Object.values(((await storage()).session as any).instances ?? {}).map((i: any) => i.docKey),
+  localKeys: Object.keys((await storage()).local),
+};
+// Worker restart keeps consent: stop the worker via a reload of the extension? Simpler: check consent key persists.
+console.log(JSON.stringify({ before: { ...before, snapshot: summarize(before.snapshot) }, openPermissions, connectTabsOpened: connectTabs.length, pagesBeforeOpen, popupText, declinedText, after, extensionNetworkRequests: requests }, null, 1));
+await ctx.close();

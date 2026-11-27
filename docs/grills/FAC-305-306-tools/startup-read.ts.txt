@@ -1,0 +1,26 @@
+// Usage: bun startup-read.ts <unpacked-ext-dir>
+// Fresh profile: open two ordinary tabs, install nothing else, never open Linklog.
+// Reports what the extension holds about those tabs before any consent or Linklog page.
+import { chromium } from "playwright-core";
+import { mkdtempSync } from "node:fs";
+import { join } from "node:path";
+const ext = process.argv[2]!;
+const ctx = await chromium.launchPersistentContext(mkdtempSync(join(process.env.SCRATCH!, "prof-")), {
+  headless: false, executablePath: process.env.CHROME_PATH,
+  args: [`--disable-extensions-except=${ext}`, `--load-extension=${ext}`],
+});
+const sw = ctx.serviceWorkers()[0] ?? (await ctx.waitForEvent("serviceworker"));
+await new Promise((r) => setTimeout(r, 1500));
+const pagesAtStart = ctx.pages().map((p) => p.url());
+const requests: string[] = [];
+ctx.on("request", (r) => { if (r.frame()?.url().startsWith("chrome-extension://") || r.serviceWorker()) requests.push(r.url()); });
+const a = await ctx.newPage(); await a.goto("data:text/html,<title>Secret A</title>a");
+const b = await ctx.newPage(); await b.goto("about:blank#private-b");
+await b.evaluate(() => history.replaceState(null, "", "about:blank?q=private-query#frag"));
+await new Promise((r) => setTimeout(r, 1500));
+const stored = await sw.evaluate(async () => ({
+  session: await chrome.storage.session.get(null),
+  local: await chrome.storage.local.get(null),
+}));
+console.log(JSON.stringify({ pagesAtStart, stored, extensionNetworkRequests: requests }, null, 1));
+await ctx.close();
