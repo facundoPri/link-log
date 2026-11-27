@@ -1,17 +1,17 @@
 {
  "oldVersion": "0.2.1",
  "link": {
-  "id": "c8dd98a7-a9e5-4bd8-90a4-6f15069b0a3b",
+  "id": "356c5b6b-219b-45ac-aef6-431c032c5628",
   "ok": true,
   "result": {}
  },
  "oldLocal": {
-  "installationId": "bf9724d7-f243-410f-bf70-81e824ba6a9b",
+  "installationId": "f3a4549d-8f33-4f2e-8a33-cd3bf408b16f",
   "pinnedHints": {
-   "305840009": {
+   "1283359118": {
     "color": "blue",
     "description": "",
-    "groupId": 305840009,
+    "groupId": 1283359118,
     "pinnedId": "pinned-1",
     "scope": "local:probe",
     "title": "Research"
@@ -22,21 +22,21 @@
   "version": "0.3.0",
   "connectTabs": 1,
   "restoredTabs": [
-   "https://linklog.facundopri.com/browser",
-   "about:blank",
    "about:blank",
    "chrome-error://chromewebdata/",
+   "https://linklog.facundopri.com/browser",
+   "about:blank",
    "chrome-extension://cbnidenhkidaofgdfhdhlaljkaakjffc/connect.html"
   ],
   "storage": {
    "session": {},
    "local": {
-    "installationId": "bf9724d7-f243-410f-bf70-81e824ba6a9b",
+    "installationId": "f3a4549d-8f33-4f2e-8a33-cd3bf408b16f",
     "pinnedHints": {
-     "305840009": {
+     "1283359118": {
       "color": "blue",
       "description": "",
-      "groupId": 305840009,
+      "groupId": 1283359118,
       "pinnedId": "pinned-1",
       "scope": "local:probe",
       "title": "Research"
@@ -47,19 +47,19 @@
  },
  "popupText": "Linklog\nv0.3.0\nLinklog pages\nNot connected\nPage content\nNot allowed\nSession cache\n0 KB of 10.0 MB\nReview and connect\nOpen Linklog",
  "helloBefore": {
-  "id": "5e294899-1e32-4ebd-9e25-7cd29c8a429c",
+  "id": "9cba8d97-f1bf-4b64-95f2-85df057132ac",
   "ok": false,
   "error": "Accept on the Linklog extension's Connect page so it can read your tabs."
  },
  "storageBeforeAccept": {
   "session": {},
   "local": {
-   "installationId": "bf9724d7-f243-410f-bf70-81e824ba6a9b",
+   "installationId": "f3a4549d-8f33-4f2e-8a33-cd3bf408b16f",
    "pinnedHints": {
-    "305840009": {
+    "1283359118": {
      "color": "blue",
      "description": "",
-     "groupId": 305840009,
+     "groupId": 1283359118,
      "pinnedId": "pinned-1",
      "scope": "local:probe",
      "title": "Research"
@@ -70,12 +70,12 @@
  "helloAfter": {
   "ok": true,
   "version": "0.3.0",
-  "installationId": "bf9724d7-f243-410f-bf70-81e824ba6a9b"
+  "installationId": "f3a4549d-8f33-4f2e-8a33-cd3bf408b16f"
  },
  "groupsAfter": [
   {
-   "groupId": 210472582,
-   "windowId": 1387103230,
+   "groupId": 253066749,
+   "windowId": 250973920,
    "title": "Research",
    "color": "blue",
    "collapsed": false,

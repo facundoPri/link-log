@@ -5,12 +5,12 @@
    "chrome-extension://egljdcadjjgplgcfndhaelcnnkilhcek/connect.html"
   ],
   "hello": {
-   "id": "04d21cfd-b242-4df8-8c3d-558bec97b0c7",
+   "id": "da25c37e-377d-4878-9217-77c4ec8aebb1",
    "ok": false,
    "error": "Accept on the Linklog extension's Connect page so it can read your tabs."
   },
   "snapshot": {
-   "id": "5c00afa6-aec5-4ae7-a63f-c2616d792588",
+   "id": "47fbb3e3-924b-4357-b265-1ced5dbc8ecc",
    "ok": false,
    "error": "Accept on the Linklog extension's Connect page so it can read your tabs."
   },
@@ -20,7 +20,7 @@
   }
  },
  "openPermissions": {
-  "id": "dc47bf0b-6648-4176-a3f1-fdc995eb69cf",
+  "id": "2e1e0f08-a229-4c68-86a5-a2a8a52c3c8f",
   "ok": true,
   "result": {}
  },
@@ -34,14 +34,14 @@
    "permissions": true
   },
   "hello": {
-   "id": "e1d53bd2-8806-40b6-aa83-c7c9473ed72a",
+   "id": "ee4c1bef-3279-4074-846a-3adb438aa5e7",
    "ok": true,
    "result": {
     "protocol": 3,
     "extensionVersion": "0.3.0",
-    "installationId": "89dcfa0b-f497-499f-ac66-36146d908a79",
-    "browserSessionId": "afc8edc3-0721-42b2-ba73-e09c6fc0286e",
-    "windowId": 328710207,
+    "installationId": "64c1dfab-e942-4753-9c70-327d3bfefd98",
+    "browserSessionId": "44fbbb13-01ff-4d77-a73d-eb10be4e5a17",
+    "windowId": 1986083610,
     "capabilities": [
      "tabs",
      "groups",
