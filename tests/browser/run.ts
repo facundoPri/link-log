@@ -331,6 +331,40 @@ try {
     }
   });
 
+  await check("before Accept on Connect the extension stores nothing; after it Browser lists the tabs without a reload", async () => {
+    const fresh = await launch("consent", true, false);
+    try {
+      const stored = () =>
+        fresh.sw!.evaluate(async () => ({ session: await chrome.storage.session.get(null), local: await chrome.storage.local.get(null) }));
+      const page = await fresh.context.newPage();
+      await page.goto(`${SITE}/consent/0`);
+      const linklog = await fresh.context.newPage();
+      await linklog.goto(UI);
+      await linklog.locator("aside").getByRole("button", { name: /^Browser/ }).click();
+      await waitFor("consent card", async () => (await linklog.getByText("Not connected yet").count()) > 0, 15000);
+      await shot(linklog, "01b-consent-required");
+      const before = await stored();
+      assert(JSON.stringify(before) === JSON.stringify({ session: {}, local: {} }), `storage before Accept: ${JSON.stringify(before)}`);
+      const opened = fresh.context.waitForEvent("page", { predicate: (p) => p.url().endsWith("/connect.html"), timeout: 10000 });
+      await linklog.getByRole("button", { name: "Open Connect page" }).click();
+      const connect = await opened;
+      await connect.waitForSelector("#accept", { state: "visible" });
+      await shot(connect, "01c-connect-before-accept");
+      await connect.click("#accept");
+      await connect.waitForSelector("#permissions", { state: "visible" });
+      await shot(connect, "01d-connect-after-accept");
+      await waitFor("tabs listed after Accept", async () => (await rowCount(linklog)) > 0, 20000);
+      const text = await linklog.locator("main").innerText();
+      assert(text.includes("/consent/0"), "the fixture tab is not listed after Accept");
+      await shot(linklog, "01e-consent-accepted");
+      const after = await stored();
+      assert(after.local.consent === true, `consent flag after Accept: ${JSON.stringify(after.local)}`);
+      return `before: ${JSON.stringify(before)}; after: ${await rowCount(linklog)} rows, local keys ${Object.keys(after.local).join(", ")}`;
+    } finally {
+      await fresh.context.close();
+    }
+  });
+
   const L1 = await openLinklog(ctx, "L1");
   home = L1;
   const l1Tab = (await tabOf(ctx, "p=L1"))!;

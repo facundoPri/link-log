@@ -13,6 +13,8 @@ export function openUnavailable({ connection, hello }: Pick<BrowserState, "conne
       return "Install or enable the Linklog extension to open links";
     case "outdated":
       return "Update the Linklog extension to open links";
+    case "consent":
+      return "Accept on the Linklog extension's Connect page to open links";
     case "reload":
       return "Reload this page to reconnect the extension";
     case "checking":

@@ -29,8 +29,8 @@ jobs:
     permissions:
       contents: write
     env:
-      # Deployed Linklog origins the bridge should reach besides localhost/127.0.0.1,
-      # comma-separated (repository variable; empty builds a local-only extension).
+      # The only origins the packaged bridge reaches (no localhost), comma-separated and https
+      # (repository variable). The package step fails when it is empty or not https.
       LINKLOG_ORIGINS: ${{ vars.EXTENSION_ORIGINS }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -112,9 +112,10 @@ jobs:
           1. Download \`linklog-extension-$VERSION.zip\` below and unzip it into a folder you'll keep.
           2. Open \`chrome://extensions\` and turn on **Developer mode** (top right).
           3. Click **Load unpacked** and choose the unzipped folder.
-          4. Open Linklog and go to **Browser**; grant page access from the extension's Connect page for lenses and previews.
+          4. On the extension's Connect page, read what it reads and click **Accept and connect**. Until you accept, the extension reads no tab and Linklog's Browser view says "Not connected yet".
+          5. Open Linklog and go to **Browser**; grant page access from the Connect page for lenses and previews.
 
-          To update: unzip the new version over the same folder and click ↻ on the Linklog card in \`chrome://extensions\`.
+          To update: unzip the new version over the same folder and click ↻ on the Linklog card in \`chrome://extensions\`. Updating from 0.2.x: the extension stays idle until you accept on its Connect page (toolbar button → **Review and connect**).
           EOF
           gh release create "extension-v$VERSION" "apps/extension/linklog-extension-$VERSION.zip" \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest \

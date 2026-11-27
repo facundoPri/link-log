@@ -2,6 +2,8 @@ import { CONTENT_ORIGINS, LINKLOG_URL } from "../config";
 
 export type Status = {
   version: string;
+  /** The user accepted the disclosure (FAC-305); nothing about tabs is read before. */
+  consent: boolean;
   contentAccess: boolean;
   connectedPages: number;
   /** Tabs with a connected Linklog page. */

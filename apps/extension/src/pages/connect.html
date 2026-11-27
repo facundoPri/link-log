@@ -10,6 +10,9 @@
       header.card-head { padding: 20px 16px 16px; display: flex; flex-direction: column; gap: 6px; border-bottom: 1px solid var(--border); }
       footer.card-foot { padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border-top: 1px solid var(--border); background: var(--sidebar); border-radius: 0 0 12px 12px; }
       .note { padding: 0 4px; }
+      .disclosure { padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
+      .choices { display: flex; gap: 8px; margin-left: auto; flex-shrink: 0; white-space: nowrap; }
+      .disclosure ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
     </style>
   </head>
   <body>
@@ -18,10 +21,33 @@
         <span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 1 1 0 10h-2"/><line x1="8" x2="16" y1="12" y2="12"/></svg></span>
         Linklog
       </div>
-      <section class="card">
+      <section class="card hidden" id="consent">
+        <header class="card-head">
+          <h1>Before Linklog reads your tabs</h1>
+          <p class="muted">This extension shows your open tabs in Linklog's Browser view. It reads nothing until you accept.</p>
+        </header>
+        <div class="disclosure">
+          <p>If you accept, the extension:</p>
+          <ul>
+            <li><b>Reads the address (URL) and title of every open tab, in every Chrome window, and your tab groups.</b> The tab list stays in Chrome's memory until Chrome closes. The name, color and description of groups you link to Linklog, and which Linklog library linked them, stay on this device, so they can be linked again after a restart.</li>
+            <li><b>Sends the tabs of Linklog's window</b> (URLs, titles, icons, groups) to the Linklog page when you open Browser view.</li>
+            <li>Only if you also allow page content: <b>reads the text and preview of open pages</b>. When a lens you turned on evaluates a tab, or when you auto-group tabs, its URL, title and text go to your Linklog library, whose server sends them to a remote AI provider for the answer. Auto-grouping also sends the names and descriptions of the groups you chose.</li>
+            <li>When you save a tab, sends only its URL. Linklog's server then fetches the page and extracts its content with a remote extraction service, like any link you add.</li>
+          </ul>
+          <p class="muted">Never cookies, passwords or form fields. Your data isn't sold or used for ads. The providers we use are named in the <a href="https://linklog.facundopri.com/privacy" target="_blank" rel="noreferrer">privacy policy</a>.</p>
+        </div>
+        <footer class="card-foot">
+          <span class="muted small" id="declined">Not connected. Linklog reads nothing; accept here whenever you want.</span>
+          <span class="choices">
+            <button class="outline" id="decline" type="button">Not now</button>
+            <button class="brand-button" id="accept" type="button">Accept and connect</button>
+          </span>
+        </footer>
+      </section>
+      <section class="card hidden" id="permissions">
         <header class="card-head">
           <h1>Connect Linklog to Chrome</h1>
-          <p class="muted">Browser view shows the tabs and groups of the window where Linklog is open. Page text goes only to your own Linklog library, and only when an active lens needs it.</p>
+          <p class="muted">Browser view shows the tabs and groups of the window where Linklog is open. Page text goes to your Linklog library, and from there to its AI provider, only when an active lens or auto-grouping needs it.</p>
         </header>
         <div class="row">
           <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="M2 8h20"/><path d="M6 4v4"/></svg></span>
@@ -35,7 +61,7 @@
           <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 13H8"/><path d="M16 17H8"/><path d="M16 13h-2"/></svg></span>
           <div class="grow">
             <p class="title">Page content</p>
-            <p class="muted">Show a preview and the content of your open pages in Linklog, and let lenses read them. Previews (description and image) are read for every tab Linklog may access; preview images load from each site's own servers, like the page itself. Everything is read locally from what the tab already loaded — never cookies, passwords, form fields or history, and pages are never reloaded or scrolled. Page text leaves the browser only when a lens evaluates a tab; saving a tab sends just its URL, which your library then fetches like any added link.</p>
+            <p class="muted">Show a preview and the content of your open pages in Linklog, and let lenses read them. Previews (description and image) are read for every tab Linklog may access; preview images load from each site's own servers, like the page itself. Everything is read locally from what the tab already loaded — never cookies, passwords, form fields or history. Linklog reloads a tab (Load content) or puts it to sleep (Sleep) only when you ask. Page text leaves the browser only when a lens evaluates a tab or you auto-group tabs; saving a tab sends just its URL, which your library then fetches like any added link.</p>
             <p class="muted small" id="content-hint" style="margin-top:6px">Chrome will describe this as “read and change all your data on all websites”. Linklog only reads.</p>
           </div>
           <span class="badge warn" id="content-badge"><span class="dot"></span>Not allowed</span>

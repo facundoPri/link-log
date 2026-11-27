@@ -594,16 +594,23 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
     s.hub.schedule(0);
     return { items };
   },
-  async openPermissions(_args, { c, windowId }) {
-    const tab = await chrome.tabs.get(c.tabId).catch(() => null);
-    await chrome.tabs.create({
-      url: chrome.runtime.getURL("connect.html"),
-      windowId,
-      index: tab ? tab.index + 1 : undefined,
-    });
+  async openPermissions(_args, { c }) {
+    await openConnectPage((await chrome.tabs.get(c.tabId).catch(() => null)) ?? c.port.sender?.tab);
     return {};
   },
 };
+
+/**
+ * Opens the Connect page next to the Linklog tab that asked. Before consent it gets the tab Chrome
+ * attached to the bridge port, so it reads no tab itself.
+ */
+export async function openConnectPage(tab: { windowId: number; index: number } | undefined) {
+  const url = chrome.runtime.getURL("connect.html");
+  // The sender's window may be gone (the tab was dragged out and the old window closed).
+  await chrome.tabs
+    .create({ url, windowId: tab?.windowId, index: tab ? tab.index + 1 : undefined })
+    .catch(() => chrome.tabs.create({ url }));
+}
 
 export async function handle(request: PageRequest, c: Connection, s: Services) {
   // Nothing but the handshake is accepted before a successful hello on this connection.

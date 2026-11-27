@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   applyPatch,
+  CONSENT_REQUIRED,
   libraryScope,
   PROTOCOL_VERSION,
   type BrowserCatalog,
@@ -19,6 +20,7 @@ export type Connection =
   | "checking"
   | "unsupported" // not desktop Chromium
   | "missing" // extension not installed / not enabled for this origin
+  | "consent" // installed, but the user hasn't accepted on its Connect page yet
   | "outdated" // protocol mismatch
   | "connected"
   | "reconnecting" // worker restarted; last snapshot kept but stale
@@ -117,6 +119,7 @@ export function useBrowser() {
       setResultsVersion((v) => v + 1);
     } catch (error) {
       if (error instanceof BridgeTimeout) setConnection("reconnecting");
+      else if ((error as Error).message === CONSENT_REQUIRED) setConnection("consent");
       else if (/reloaded/.test((error as Error).message)) setConnection("reload");
       else setConnection((c) => (c === "connected" ? "reconnecting" : "missing"));
     } finally {

@@ -6,5 +6,7 @@ export const LINKLOG_URL: string =
   typeof __LINKLOG_URL__ === "undefined" ? "http://127.0.0.1:3000" : __LINKLOG_URL__;
 export const EXTENSION_VERSION: string =
   typeof __EXTENSION_VERSION__ === "undefined" ? "0.0.0" : __EXTENSION_VERSION__;
+/** storage.local key set to true when the user accepts on the Connect page (FAC-305). */
+export const CONSENT_KEY = "consent";
 /** Broad content access requested explicitly from the connect page. */
 export const CONTENT_ORIGINS = ["http://*/*", "https://*/*"];
