@@ -605,11 +605,11 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
  * attached to the bridge port, so it reads no tab itself.
  */
 export async function openConnectPage(tab: { windowId: number; index: number } | undefined) {
-  await chrome.tabs.create({
-    url: chrome.runtime.getURL("connect.html"),
-    windowId: tab?.windowId,
-    index: tab ? tab.index + 1 : undefined,
-  });
+  const url = chrome.runtime.getURL("connect.html");
+  // The sender's window may be gone (the tab was dragged out and the old window closed).
+  await chrome.tabs
+    .create({ url, windowId: tab?.windowId, index: tab ? tab.index + 1 : undefined })
+    .catch(() => chrome.tabs.create({ url }));
 }
 
 export async function handle(request: PageRequest, c: Connection, s: Services) {
