@@ -595,14 +595,16 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
     return { items };
   },
   async openPermissions(_args, { c }) {
-    await openConnectPage(c.tabId);
+    await openConnectPage((await chrome.tabs.get(c.tabId).catch(() => null)) ?? c.port.sender?.tab);
     return {};
   },
 };
 
-/** Opens the Connect page next to the Linklog tab that asked; also allowed before consent. */
-export async function openConnectPage(linklogTabId: number) {
-  const tab = await chrome.tabs.get(linklogTabId).catch(() => null);
+/**
+ * Opens the Connect page next to the Linklog tab that asked. Before consent it gets the tab Chrome
+ * attached to the bridge port, so it reads no tab itself.
+ */
+export async function openConnectPage(tab: { windowId: number; index: number } | undefined) {
   await chrome.tabs.create({
     url: chrome.runtime.getURL("connect.html"),
     windowId: tab?.windowId,

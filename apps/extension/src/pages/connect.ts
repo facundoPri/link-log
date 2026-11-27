@@ -31,9 +31,6 @@ $("accept").addEventListener("click", async () => {
   await chrome.storage.local.set({ [CONSENT_KEY]: true });
   await render();
 });
-$("decline").addEventListener("click", () => {
-  $("declined").textContent = "Not connected. Linklog reads nothing; accept here whenever you want.";
-});
 $("grant").addEventListener("click", async () => {
   await requestContent();
   await render();

@@ -11,6 +11,7 @@
       footer.card-foot { padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border-top: 1px solid var(--border); background: var(--sidebar); border-radius: 0 0 12px 12px; }
       .note { padding: 0 4px; }
       .disclosure { padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
+      .choices { display: flex; gap: 8px; margin-left: auto; }
       .disclosure ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
     </style>
   </head>
@@ -36,8 +37,8 @@
           <p class="muted">Never cookies, passwords or form fields. Your data isn't sold or used for ads. The providers we use are named in the <a href="https://linklog.facundopri.com/privacy" target="_blank" rel="noreferrer">privacy policy</a>.</p>
         </div>
         <footer class="card-foot">
-          <span class="muted small" id="declined"></span>
-          <span style="display:flex;gap:8px;margin-left:auto">
+          <span class="muted small" id="declined">Not connected. Linklog reads nothing; accept here whenever you want.</span>
+          <span class="choices">
             <button class="outline" id="decline" type="button">Not now</button>
             <button class="brand-button" id="accept" type="button">Accept and connect</button>
           </span>

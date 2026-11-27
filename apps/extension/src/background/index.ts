@@ -84,11 +84,13 @@ async function init(): Promise<Services> {
 let consented = false;
 let accept!: () => void;
 const accepted = new Promise<void>((resolve) => (accept = resolve));
-const consentKnown = local.get<boolean>(CONSENT_KEY).then((value) => {
-  if (value === true) (consented = true), accept();
-});
+const grant = () => ((consented = true), accept());
+const consentKnown = local.get<boolean>(CONSENT_KEY).then(
+  (value) => void (value === true && grant()),
+  (error) => console.warn("Linklog: could not read consent", error),
+);
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && changes[CONSENT_KEY]?.newValue === true) (consented = true), accept();
+  if (area === "local" && changes[CONSENT_KEY]?.newValue === true) grant();
 });
 const ready = accepted.then(init).then((s) => (services = s));
 
@@ -209,7 +211,7 @@ chrome.runtime.onConnect.addListener((port) => {
       if (consented) return;
       // Before consent the page can only open the Connect page; it learns nothing about tabs.
       if (request.command !== "openPermissions") return hub.send(c, { id: request.id, ok: false, error: CONSENT_REQUIRED });
-      await openConnectPage(c.tabId).catch(() => {});
+      await openConnectPage(port.sender?.tab).catch(() => {});
       hub.send(c, { id: request.id, ok: true, result: {} });
     });
     run(async () => {
@@ -229,6 +231,8 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
   if (message?.type !== "status") return false;
   consentKnown
     .then(async () => {
+      // Connect asks right after writing the key, possibly before onChanged reaches this worker.
+      if (!consented && (await local.get<boolean>(CONSENT_KEY)) === true) grant();
       const s = consented ? await ready : null;
       reply({
         version: EXTENSION_VERSION,

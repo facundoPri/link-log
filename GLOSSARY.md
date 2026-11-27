@@ -61,3 +61,7 @@ _Avoid_: Slack integration, Slack account, installation
 **Sleeping tab**:
 An open browser tab whose page Linklog cannot read until Chrome loads or wakes it again. The reason is a detail, not a separate concept: unloaded to save memory or restored but never loaded (the page is not in memory), or frozen (the page is in memory but its tasks are suspended).
 _Avoid_: Hibernated tab, discarded tab, unloaded tab
+
+**Consent**:
+The user's **Accept and connect** on the extension's Connect page, after its disclosure. Until then the extension reads no tab, URL, title or group, and Linklog's Browser view shows "Not connected yet" (ADR 0005). Granting page content is a separate, later step.
+_Avoid_: Opt-in, permission (Chrome's permissions are a different thing)
