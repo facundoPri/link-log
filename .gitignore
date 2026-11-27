@@ -44,6 +44,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 !/docs/browser-validation/
 !/docs/upload-api.md
 !/docs/chrome-web-store-listing.md
+!/docs/store/
 !/docs/agents/
 !/docs/agents/issue-tracker.md
 !/docs/agents/triage-labels.md

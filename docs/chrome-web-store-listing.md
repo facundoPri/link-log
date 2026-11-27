@@ -24,7 +24,7 @@ Sections: [Store listing tab](#store-listing-tab) · [Privacy practices tab](#pr
 | Mature content (not in the accepted table; the dashboard default) | Off |
 | Store icon | 128×128, from the packaged build (`icons/128.png`, FAC-306) |
 | Promo tiles, video | None for the Unlisted submission |
-| Screenshots | 1 to 5 at 1280×800. Taken in Part 2, from the packaged 0.3.0 build. See [Screenshots](#screenshots) |
+| Screenshots | The five files in `docs/store/`, see [Screenshots](#screenshots) |
 
 ### Detailed description
 
@@ -71,15 +71,24 @@ Differences from the accepted draft, so the text says what the Connect page of 0
 
 ### Screenshots
 
-1280×800, 1 to 5, from the packaged 0.3.0 build against production, with a demo account and neutral tabs (no fixtures, no test profiles). Planned set:
+Five PNGs, each 1280×800 (checked with `sips`), in [`docs/store/`](store/). Upload them in this order (Graphic assets, Screenshots). Taken on 2026-11-27 from the packaged 0.3.0 build (the `linklog-extension-0.3.0.zip` of the GitHub release `extension-v0.3.0`, loaded in a fresh Chrome for Testing 153 profile) against `https://linklog.facundopri.com`, signed in to a demo account with an empty library. The seven open tabs are public Wikipedia, MDN, Python docs and Standard Ebooks pages. No fixtures, no test profiles, no localhost.
 
-1. Browser view with the tab list and previews.
-2. A lens sorting the tabs (Yes / Unsure / No).
-3. Grouping selected tabs.
-4. The Connect page consent card.
-5. Optional: Browser view's "Not connected yet" state.
+| File | Shows |
+| --- | --- |
+| `01-connect-consent.png` | The Connect page's consent card ("Before Linklog reads your tabs"), before accepting. |
+| `02-browser-not-connected.png` | Browser view's "Not connected yet" state. |
+| `03-browser-tabs.png` | Browser view with the seven tabs and their previews, and the domain filter open. |
+| `04-lens.png` | A lens ("About the sea") sorting the tabs: Yes 2, Unsure 0, No 5. No tab landed on Unsure. |
+| `05-group.png` | Three selected tabs and the New group dialog (not created). |
 
-Part 2 adds the files under `docs/store/`. None yet.
+How they were made:
+
+- The sidebar footer of the Linklog app shows the account's email. Before each capture the page's text for the email and the avatar letter was replaced in the DOM with "Demo account" and "D", so the email appears in no image. Nothing else on the pages was edited.
+- Nothing was saved to the library: the demo library still has 0 links. The demo account does hold the lens "About the sea".
+- The captures use CSS pixels (the window's device scale factor was 2).
+- Planned page 7 (`gutenberg.org`) was down for maintenance and was replaced by `standardebooks.org`. The MDN URL redirects to `/Web/CSS/Reference/Properties/grid`.
+
+There are no promo tiles for the Unlisted submission.
 
 ## Privacy practices tab
 
