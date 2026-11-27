@@ -36,7 +36,7 @@ test("the SPA build refuses demo fixtures and ships none", () => {
 test("the build ships the static privacy policy: titled, script-free and without third-party requests", () => {
   const html = readFileSync("dist/privacy.html", "utf8");
   expect(html).toContain("<title>Linklog Privacy Policy</title>");
-  expect(html).not.toContain("<script");
-  expect(html).not.toContain("googleapis");
+  expect(html).not.toMatch(/<script/i);
+  expect(html).not.toMatch(/https?:\/\//);
   expect(html).not.toContain("TODO");
 });
