@@ -1,0 +1,49 @@
+## released_0.2.1
+- Read and change your data on 127.0.0.1, linklog.facundopri.com, and localhost
+- Read your browsing history
+- View and manage your tab groups
+## packaged_0.3.0 (this PR)
+- Read and change your data on linklog.facundopri.com
+- Read your browsing history
+- View and manage your tab groups
+browser 153.0.8010.12
+[
+ {
+  "id": "gkbdphjnhdhbgpeoahkjnfhahcjkmjff",
+  "name": "warn-probe",
+  "perms": {
+   "simplePermissions": [
+    {
+     "message": "Manage your apps, extensions, and themes",
+     "submessages": []
+    }
+   ]
+  }
+ },
+ {
+  "id": "egljdcadjjgplgcfndhaelcnnkilhcek",
+  "name": "Linklog",
+  "perms": {
+   "runtimeHostPermissions": {
+    "hasAllHosts": false,
+    "hostAccess": "ON_ALL_SITES",
+    "hosts": [
+     {
+      "granted": true,
+      "host": "https://linklog.facundopri.com/*"
+     }
+    ]
+   },
+   "simplePermissions": [
+    {
+     "message": "Read your browsing history",
+     "submessages": []
+    },
+    {
+     "message": "View and manage your tab groups",
+     "submessages": []
+    }
+   ]
+  }
+ }
+]

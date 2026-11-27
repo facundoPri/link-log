@@ -1,0 +1,113 @@
+{
+ "before": {
+  "pagesAtStart": [
+   "about:blank",
+   "chrome-extension://egljdcadjjgplgcfndhaelcnnkilhcek/connect.html"
+  ],
+  "hello": {
+   "id": "04d21cfd-b242-4df8-8c3d-558bec97b0c7",
+   "ok": false,
+   "error": "Accept on the Linklog extension's Connect page so it can read your tabs."
+  },
+  "snapshot": {
+   "id": "5c00afa6-aec5-4ae7-a63f-c2616d792588",
+   "ok": false,
+   "error": "Accept on the Linklog extension's Connect page so it can read your tabs."
+  },
+  "storage": {
+   "session": {},
+   "local": {}
+  }
+ },
+ "openPermissions": {
+  "id": "dc47bf0b-6648-4176-a3f1-fdc995eb69cf",
+  "ok": true,
+  "result": {}
+ },
+ "connectTabsOpened": 2,
+ "pagesBeforeOpen": 5,
+ "popupText": "Linklog\nv0.3.0\nLinklog pages\nNot connected\nPage content\nNot allowed\nSession cache\n0 KB of 10.0 MB\nReview and connect\nOpen Linklog",
+ "declinedText": "Not connected. Linklog reads nothing; accept here whenever you want.",
+ "after": {
+  "connectVisible": {
+   "consent": false,
+   "permissions": true
+  },
+  "hello": {
+   "id": "e1d53bd2-8806-40b6-aa83-c7c9473ed72a",
+   "ok": true,
+   "result": {
+    "protocol": 3,
+    "extensionVersion": "0.3.0",
+    "installationId": "89dcfa0b-f497-499f-ac66-36146d908a79",
+    "browserSessionId": "afc8edc3-0721-42b2-ba73-e09c6fc0286e",
+    "windowId": 328710207,
+    "capabilities": [
+     "tabs",
+     "groups",
+     "lenses",
+     "capture",
+     "save",
+     "close",
+     "open",
+     "open-group",
+     "forget",
+     "load",
+     "sleep",
+     "load-settings"
+    ],
+    "contentAccess": false
+   }
+  },
+  "snapshot": {
+   "ok": true,
+   "tabs": [
+    {
+     "url": "about:blank",
+     "title": "about:blank"
+    },
+    {
+     "url": "chrome-extension://egljdcadjjgplgcfndhaelcnnkilhcek/connect.html",
+     "title": "Connect Linklog"
+    },
+    {
+     "url": "https://secret.example/path?q=private#frag",
+     "title": "Secret page title"
+    },
+    {
+     "url": "data:text/html,<title>Secret A</title>a",
+     "title": "Secret A"
+    },
+    {
+     "url": "chrome-extension://egljdcadjjgplgcfndhaelcnnkilhcek/connect.html",
+     "title": "Connect Linklog"
+    },
+    {
+     "url": "chrome-extension://egljdcadjjgplgcfndhaelcnnkilhcek/popup.html",
+     "title": "Linklog"
+    }
+   ]
+  },
+  "storageInstances": [
+   "about:blank",
+   "chrome-extension://egljdcadjjgplgcfndhaelcnnkilhcek/connect.html",
+   "https://secret.example/path?q=private",
+   "data:text/html,<title>Secret A</title>a",
+   "https://linklog.facundopri.com/browser",
+   "chrome-extension://egljdcadjjgplgcfndhaelcnnkilhcek/connect.html",
+   "chrome-extension://egljdcadjjgplgcfndhaelcnnkilhcek/popup.html"
+  ],
+  "localKeys": [
+   "consent",
+   "installationId"
+  ]
+ },
+ "extensionNetworkRequests": [
+  "chrome-extension://egljdcadjjgplgcfndhaelcnnkilhcek/ui.css",
+  "chrome-extension://egljdcadjjgplgcfndhaelcnnkilhcek/connect.js",
+  "chrome-extension://egljdcadjjgplgcfndhaelcnnkilhcek/ui.css",
+  "chrome-extension://egljdcadjjgplgcfndhaelcnnkilhcek/connect.js",
+  "chrome-extension://egljdcadjjgplgcfndhaelcnnkilhcek/ui.css",
+  "chrome-extension://egljdcadjjgplgcfndhaelcnnkilhcek/popup.js"
+ ]
+}
