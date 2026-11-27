@@ -32,3 +32,11 @@ test("the SPA build refuses demo fixtures and ships none", () => {
   const assets = readdirSync("dist").filter((f) => f.endsWith(".js")).map((f) => readFileSync(join("dist", f), "utf8")).join("\n");
   for (const needle of ["demo-a@linklog.test", "linklog-demo-a-password", "testUtils"]) expect([needle, assets.includes(needle)]).toEqual([needle, false]);
 }, 120000);
+
+test("the build ships the static privacy policy: titled, script-free and without third-party requests", () => {
+  const html = readFileSync("dist/privacy.html", "utf8");
+  expect(html).toContain("<title>Linklog Privacy Policy</title>");
+  expect(html).not.toMatch(/<script/i);
+  expect(html).not.toMatch(/https?:\/\//);
+  expect(html).not.toContain("TODO");
+});
