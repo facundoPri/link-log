@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Linklog Privacy Policy</title>
+<style>
+  :root { --bg: #fff; --fg: #1a1a1a; --muted: #5c5c5c; --line: #dcdcdc; --link: #1d4ed8; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #141414; --fg: #ececec; --muted: #a3a3a3; --line: #333; --link: #8ab4ff; } }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 44rem; margin: 0 auto; padding: 2rem 1rem 4rem; }
+  h1 { font-size: 1.9rem; line-height: 1.2; margin: 0 0 .25rem; }
+  h2 { font-size: 1.25rem; margin: 2.25rem 0 .5rem; }
+  p, ul, ol { margin: .75rem 0; }
+  li { margin: .35rem 0; }
+  a { color: var(--link); }
+  .muted { color: var(--muted); }
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; min-width: 34rem; }
+  th, td { border: 1px solid var(--line); padding: .5rem .65rem; text-align: left; vertical-align: top; }
+  th { font-weight: 600; }
+  code { font-size: .92em; }
+</style>
+</head>
+<body>
+<main>
+<h1>Linklog Privacy Policy</h1>
+<p class="muted">Last updated: 2026-11-27</p>
+
+<p>This policy covers the Linklog web app at linklog.facundopri.com, its upload API, and the Linklog extension for Chrome. It says what data Linklog handles, where it goes, how long it is kept, and how you can see, fix or delete it.</p>
+
+<h2>Who is responsible</h2>
+<p>Linklog is run by LinkLog, in Argentina. LinkLog is responsible for your data (the "responsable" under Argentine Law 25.326). Contact: [TODO: contact email]. Linklog is in beta.</p>
+
+<h2>What Linklog does</h2>
+<p>Linklog is a link library. You save links, Linklog fetches and extracts their content, and AI tags and lenses help you sort them. With the extension, Linklog's Browser view shows the tabs of the Chrome window where Linklog is open, so you can review, group, evaluate and save them. During the beta, the extension is not offered in the European Economic Area, the United Kingdom or Switzerland.</p>
+
+<h2>Data we handle and why</h2>
+<p><strong>Your account.</strong> Email address, name, a password hash (if you use a password), whether your email is verified, and account dates. We use them to sign you in and to send sign-in, verification and password-reset emails. Linklog sends no newsletters or marketing email.</p>
+<p><strong>Sign-in sessions.</strong> Each session records the IP address and browser user agent it was created from. A session ends after 7 days without use; using Linklog extends it. To limit abuse, Linklog counts sign-in and account requests per IP address (kept up to 24 hours) and writes, new links and sign-in emails per account (kept up to 2 days; the email counter stores only a hash of the address).</p>
+<p><strong>Your library.</strong> The links you save or send through the upload API, their titles, descriptions, preview images and favicons, the extracted content (page text, YouTube transcripts, text read from images in social media posts), your tags and lenses with their questions, and the AI answers about your links.</p>
+<p><strong>API keys.</strong> If you create one, we keep a hashed copy, its first nine characters (so you can recognise it), its name and when it was used.</p>
+<p><strong>Activity and usage records.</strong> For each job (fetching a link, extracting content, an AI evaluation) we keep its status, errors, the provider and model used, token counts and an estimated cost, to show you Activity and Usage and to run and fix the service.</p>
+<!-- TODO: owner to decide whether "in the Chrome window where Linklog is open" becomes "in every Chrome window" (FAC-305 Connect says every window). -->
+<p><strong>Data from the extension.</strong> The extension reads no tab data until you accept this in Connect. After you accept, the extension reads, in the Chrome window where Linklog is open:</p>
+<ul>
+<li>the URL, title, favicon and group of each tab, through Chrome's <code>tabs</code> and <code>tabGroups</code> permissions;</li>
+<li>if you allow page content (Chrome's optional access to all sites), a preview of each page (description, image, site name) and its text as already loaded in the tab.</li>
+</ul>
+<p>The extension never reads cookies, passwords, form fields or your browsing history, and never scrolls pages. When you ask it to load the content of tabs Chrome has put to sleep, it reloads those tabs and puts them back to sleep.</p>
+<p>The extension passes this data only to the Linklog page open in the same window; it sends nothing to any server itself. From that page, data reaches Linklog's servers in three cases only:</p>
+<ol>
+<li><strong>Evaluating tabs with a lens</strong> (or auto-grouping tabs) sends, for each tab, its URL, title, page description, site name, short page facts and page text (up to 160,000 characters) to Linklog, which passes up to about 24,000 characters of it to the AI provider below. While a lens is on in Browser view, it evaluates every open tab of that window it can read, including pages you are signed in to, and new tabs as they open. Linklog has no list of sites it skips: turn the lens off, or don't allow page content, to stop it.</li>
+<li><strong>Saving a tab</strong> sends only its URL. Your library then fetches the page itself, like any link you add.</li>
+<li><strong>Pinned groups</strong> send the group's name, description and color, never its tabs.</li>
+</ol>
+<p>Listing, grouping, moving and closing tabs stays in your browser. The extension keeps settings and short-lived results in Chrome's extension storage on your device.</p>
+
+<h2>Where data goes</h2>
+<p>Linklog does not sell your data, does not use it for advertising, and does not share it with data brokers. It goes only to these providers, and only to run Linklog:</p>
+<div class="scroll">
+<table>
+<thead><tr><th>Recipient</th><th>What it receives</th><th>Why</th></tr></thead>
+<tbody>
+<tr><td><strong>Cloudflare, Inc.</strong> (United States, global network)</td><td>All the data above: hosting (Workers), database (D1), file storage (R2), queues and workflows; Browser Rendering, which opens the pages you save to read them; Workers AI, which reads text in images of saved posts; email delivery for sign-in emails; DNS lookups of the sites you save; error logs and traces</td><td>Running Linklog</td></tr>
+<tr><td><strong>TypeSafe</strong> (typesafe.ai, United States)</td><td>For each AI tag or lens evaluation: the link's or tab's URL, title, site, description and text (up to about 24,000 characters), and your tag or lens questions (for auto-grouping, the names and descriptions of the groups you chose)</td><td>Answering your tags and lenses. TypeSafe states that it does not train models on this input.</td></tr>
+<tr><td><strong>The websites you save</strong> (including YouTube, X and Instagram)</td><td>A request from Linklog's servers (not from your IP) for the page, video page, transcript or media you saved</td><td>Fetching the content you asked for</td></tr>
+</tbody>
+</table>
+</div>
+<p>While you use the web app, your browser also connects directly to <strong>Google Fonts</strong> (the app's font; it sees your IP address), <strong>GitHub</strong> (to check the current extension version), <strong>YouTube</strong> (video thumbnails, and its embedded player when you open a saved video) and <strong>the sites in your library and tabs</strong> (their own favicons and preview images). Those requests follow those services' own policies.</p>
+<p>We may also disclose data when Argentine law or a court order requires it, or to protect users and the service against fraud or abuse.</p>
+
+<h2>International transfers</h2>
+<p>Linklog's providers store and process data outside Argentina, mainly in the United States, which Argentina's data protection authority does not list as a country with adequate protection. When you create an account or sign in for the first time you consent to this transfer, which is needed to provide the service.</p>
+
+<h2>How long we keep data</h2>
+<div class="scroll">
+<table>
+<thead><tr><th>Data</th><th>Kept</th></tr></thead>
+<tbody>
+<tr><td>Account, library, tags, lenses, API keys</td><td>Until you delete them or your account is deleted</td></tr>
+<tr><td>A link you delete</td><td>Its database rows and stored content are deleted promptly. Its title can stay in Activity and Usage until the next 5-minute cleanup after its batch finishes; then they show "Deleted link". Usage keeps provider, model and token counts without the link.</td></tr>
+<tr><td>Page text sent for a tab evaluation</td><td>Deleted as soon as the evaluation finishes; a cleanup every 5 minutes removes any left behind, and unconfirmed ones after 7 days</td></tr>
+<tr><td>Tab results the extension never confirmed</td><td>7 days</td></tr>
+<tr><td>URL, title, description, site name and up to 20 short page facts of each tab you evaluated, and the lens answer</td><td>Until your account is deleted</td></tr>
+<tr><td>Sessions</td><td>7 days after last use</td></tr>
+<tr><td>Abuse-limit counters</td><td>Up to 24 hours (per IP) and 2 days (per account)</td></tr>
+<tr><td>Server logs and traces (without query strings)</td><td>Up to 7 days [TODO: confirm Cloudflare plan]</td></tr>
+<tr><td>Database backups</td><td>Deleted data can stay restorable for up to 30 days</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2>Your rights</h2>
+<p>You can ask us to tell you what data we hold about you (we answer within 10 calendar days; access is free at intervals of six months or more, unless you show a legitimate interest), to correct or update it, or to delete it, including your whole account and its stored content (within 5 business days). You can delete links, tags and lenses yourself in the app. Account deletion is not in the app yet: email [TODO: contact email] from your account's address and we will delete your account and everything in it within 5 business days. We may need to confirm the request comes from you.</p>
+<p lang="es">LA AGENCIA DE ACCESO A LA INFORMACIÓN PÚBLICA, en su carácter de Órgano de Control de la Ley N° 25.326, tiene la atribución de atender las denuncias y reclamos que interpongan quienes resulten afectados en sus derechos por incumplimiento de las normas vigentes en materia de protección de datos personales.</p>
+<p class="muted">(In English: the Agencia de Acceso a la Información Pública, the authority under Law 25.326, handles complaints from anyone whose personal data rights have been affected.)</p>
+
+<h2>Chrome Web Store Limited Use</h2>
+<p>The use of information received from Google APIs will adhere to the Chrome Web Store User Data Policy, including the Limited Use requirements. This covers what the Linklog extension receives through Chrome's extension APIs: tab URLs, titles and page content. Linklog uses that data only to provide the Browser view features you use, transfers it only to the providers listed above to provide those features, and never sells it, uses it for advertising or uses it to determine creditworthiness. No person at Linklog reads it, except with your explicit consent for specific data (for example a support request), to investigate abuse or protect security, to comply with the law, or in aggregated, anonymized form for internal operations.</p>
+
+<h2>Security</h2>
+<p>All traffic between your browser, the extension's page and Linklog uses HTTPS. Passwords and API keys are stored only as hashes.</p>
+
+<h2>Cookies and local storage</h2>
+<p>Linklog sets only its own sign-in cookies (names starting with <code>linklog.</code>), needed to keep you signed in, and keeps interface preferences in your browser's local storage. Linklog has no analytics, no ads and no tracking cookies.</p>
+
+<h2>Changes</h2>
+<p>We will update this page when Linklog's data practices change, and change the date at the top. If a change gives Linklog new uses for data you already gave us, or makes the extension read new kinds of data, we will tell you by email or in the app before it applies.</p>
+
+<h2>Contact</h2>
+<p>[TODO: contact email]</p>
+</main>
+</body>
+</html>

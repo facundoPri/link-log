@@ -29,3 +29,5 @@ for (const log of result.logs) {
 if (!result.success) {
   process.exit(1);
 }
+
+await Bun.write("dist/privacy.html", Bun.file("src/privacy.html"));

@@ -254,6 +254,15 @@ export function AuthScreen({ onSignedIn }: { onSignedIn: () => void }) {
           </Button>
         )}
         <Submit busy={busy}>{copy.submit}</Submit>
+        {(mode === "sign-up" || mode === "magic") && (
+          <p className="mt-3 text-center text-[13px] leading-5 text-muted-foreground">
+            By continuing you agree to the{" "}
+            <a href="/privacy" target="_blank" rel="noopener" className="rounded-sm font-medium text-foreground underline underline-offset-2">
+              Privacy Policy
+            </a>
+            , including the transfer and processing of your data by our providers in the United States.
+          </p>
+        )}
       </form>
 
       {mode !== "forgot" && (
