@@ -45,6 +45,8 @@ export async function sleepingChecks(ctx: Ctx) {
   const launch = (fresh: boolean, args: string[] = []) =>
     launchRaw({ profile, extension: EXTENSION, fresh, args, cookie: cookie && { ...cookie, domain: "127.0.0.1" } });
   let b: RawBrowser = await launch(true);
+  // The user's accept on the Connect page (FAC-305); it stays in the profile across the restart below.
+  await b.sw(async () => chrome.storage.local.set({ consent: true }), null);
 
   const dom = <R = unknown>(js: string) => b.page<R>(LINKLOG, `(async () => { ${js} })()`);
   const click = (finder: string) => dom(`const el = ${finder}; if (!el) throw new Error("not found: " + ${JSON.stringify(finder)}); el.click(); return true;`);

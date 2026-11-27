@@ -1,7 +1,8 @@
 // Builds the unpacked extension into dist/. Flags: --watch, --package.
-// The bridge content script matches http://localhost and http://127.0.0.1 on any port
-// (it only activates on pages marked as Linklog); LINKLOG_ORIGINS adds other origins,
-// e.g. a deployed Linklog. LINKLOG_UI_PORT decides where "Open Linklog" goes.
+// The bridge content script matches LINKLOG_ORIGINS (e.g. a deployed Linklog) and, except in a
+// packaged build, http://localhost and http://127.0.0.1 on any port (it only activates on pages
+// marked as Linklog). --package (the store and GitHub ZIP, one artifact) needs LINKLOG_ORIGINS and
+// drops the local matches; those origins must be https. LINKLOG_UI_PORT decides where "Open Linklog" goes.
 import { cp, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { watch } from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -15,14 +16,16 @@ const root = resolve(import.meta.dir, "..");
 const dist = process.env.LINKLOG_EXTENSION_OUT ? resolve(process.env.LINKLOG_EXTENSION_OUT) : join(root, "dist");
 const extraHosts = (process.env.LINKLOG_EXTRA_HOSTS ?? "").split(",").map((h) => h.trim()).filter(Boolean);
 const pkg = await Bun.file(join(root, "package.json")).json();
+const packaged = process.argv.includes("--package");
 
-export function manifest(origins: string[], version: string, extra: string[] = []) {
-  const patterns = [...LOCAL_BRIDGE_MATCHES, ...origins.map((o) => `${o}/*`)];
+export function manifest(origins: string[], version: string, extra: string[] = [], local = true) {
+  const patterns = [...(local ? LOCAL_BRIDGE_MATCHES : []), ...origins.map((o) => `${o}/*`)];
   return {
     manifest_version: 3,
     name: "Linklog",
     version,
-    description: "Connects Linklog's Browser view to the tabs and groups of its Chrome window.",
+    // The store's short description (132 characters at most) comes from here.
+    description: "Review, group and save your open Chrome tabs in Linklog. It reads tab URLs and titles only after you accept.",
     minimum_chrome_version: "116",
     icons: { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png" },
     action: { default_title: "Linklog", default_popup: "popup.html", default_icon: { "16": "icons/16.png", "32": "icons/32.png" } },
@@ -55,18 +58,23 @@ function chunk(type: string, data: Uint8Array) {
   view.setUint32(8 + data.length, crc32(out.subarray(4, 8 + data.length)));
   return out;
 }
-function icon(size: number) {
+// `pad` transparent pixels per side: the store wants 96×96 art on the 128 canvas.
+function icon(size: number, pad = 0) {
   const px = new Uint8Array(size * (size * 4 + 1));
-  const r = size * 0.22;
+  const art = size - 2 * pad;
+  const r = art * 0.22;
   const inside = (x: number, y: number) => {
-    const cx = Math.min(Math.max(x, r), size - r),
-      cy = Math.min(Math.max(y, r), size - r);
+    x -= pad;
+    y -= pad;
+    if (x < 0 || y < 0 || x > art || y > art) return false;
+    const cx = Math.min(Math.max(x, r), art - r),
+      cy = Math.min(Math.max(y, r), art - r);
     return (x - cx) ** 2 + (y - cy) ** 2 <= r * r;
   };
   // Two rounded "links" joined by a bar, like lucide's link-2.
   const glyph = (x: number, y: number) => {
-    const u = x / size,
-      v = y / size,
+    const u = (x - pad) / art,
+      v = (y - pad) / art,
       t = 0.075;
     const ring = (cx: number) => {
       const d = Math.hypot((u - cx) * 1.35, v - 0.5);
@@ -112,6 +120,8 @@ function icon(size: number) {
 async function build() {
   const started = performance.now();
   const origins = linklogOrigins();
+  if (packaged && (!origins.length || origins.some((o) => !o.startsWith("https://"))))
+    throw new Error(`A packaged build bridges only LINKLOG_ORIGINS, which must be https (got: ${origins.join(", ") || "none"}).`);
   await rm(dist, { recursive: true, force: true });
   await mkdir(join(dist, "icons"), { recursive: true });
   const define = {
@@ -143,10 +153,12 @@ async function build() {
     await Bun.write(join(dist, `${job.out}.js`), await result.outputs[0]!.text());
   }
   for (const file of ["connect.html", "popup.html", "ui.css"]) await cp(join(root, "src/pages", file), join(dist, file));
-  for (const size of [16, 32, 48, 128]) await Bun.write(join(dist, "icons", `${size}.png`), icon(size));
-  await writeFile(join(dist, "manifest.json"), JSON.stringify(manifest(origins, pkg.version, extraHosts), null, 2) + "\n");
+  for (const size of [16, 32, 48]) await Bun.write(join(dist, "icons", `${size}.png`), icon(size));
+  await Bun.write(join(dist, "icons", "128.png"), icon(128, 16));
+  const m = manifest(origins, pkg.version, extraHosts, !packaged);
+  await writeFile(join(dist, "manifest.json"), JSON.stringify(m, null, 2) + "\n");
   console.log(
-    `Linklog extension ${pkg.version} → ${relative(process.cwd(), dist) || "dist"} (${Math.round(performance.now() - started)} ms)\n  bridge: ${manifest(origins, pkg.version).content_scripts[0]!.matches.join(", ")} (pages marked as Linklog only)`,
+    `Linklog extension ${pkg.version} → ${relative(process.cwd(), dist) || "dist"} (${Math.round(performance.now() - started)} ms)\n  bridge: ${m.content_scripts[0]!.matches.join(", ")} (pages marked as Linklog only)`,
   );
 }
 

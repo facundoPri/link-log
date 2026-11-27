@@ -1,4 +1,4 @@
-import { CircleAlert, Download, Globe, PlugZap, RefreshCw } from "lucide-react";
+import { CircleAlert, Download, Globe, Lock, PlugZap, RefreshCw } from "lucide-react";
 import type { BrowserWorkspace } from "../../browser/useBrowserWorkspace";
 import { useQuery } from "@tanstack/react-query";
 import { EXPECTED_EXTENSION_VERSION, extensionDownloadUrl, extensionReleaseUrl, type ExtensionUpdate } from "../../browser/extensionVersion";
@@ -88,6 +88,13 @@ export function Connect({ ws }: { ws: BrowserWorkspace }) {
             body: "It reads tabs through the Linklog extension, which runs in Chrome or another Chromium browser on desktop.",
             steps: null,
           }
+        : connection === "consent"
+          ? {
+              icon: <Lock className="size-5" />,
+              title: "Not connected yet",
+              body: "The Linklog extension reads nothing until you accept on its Connect page. Accept there and Linklog connects on its own.",
+              steps: null,
+            }
         : connection === "reload"
           ? {
               icon: <RefreshCw className="size-5" />,
@@ -148,6 +155,10 @@ export function Connect({ ws }: { ws: BrowserWorkspace }) {
         {connection === "reload" ? (
           <Button size="sm" onClick={() => location.reload()}>
             Reload page
+          </Button>
+        ) : connection === "consent" ? (
+          <Button size="sm" onClick={() => void ws.browser.request("openPermissions", {}).catch(() => {})}>
+            Open Connect page
           </Button>
         ) : (
           connection !== "unsupported" && (

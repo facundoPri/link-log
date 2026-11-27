@@ -594,16 +594,21 @@ const handlers: { [K in keyof Commands]: Handler<K> } = {
     s.hub.schedule(0);
     return { items };
   },
-  async openPermissions(_args, { c, windowId }) {
-    const tab = await chrome.tabs.get(c.tabId).catch(() => null);
-    await chrome.tabs.create({
-      url: chrome.runtime.getURL("connect.html"),
-      windowId,
-      index: tab ? tab.index + 1 : undefined,
-    });
+  async openPermissions(_args, { c }) {
+    await openConnectPage(c.tabId);
     return {};
   },
 };
+
+/** Opens the Connect page next to the Linklog tab that asked; also allowed before consent. */
+export async function openConnectPage(linklogTabId: number) {
+  const tab = await chrome.tabs.get(linklogTabId).catch(() => null);
+  await chrome.tabs.create({
+    url: chrome.runtime.getURL("connect.html"),
+    windowId: tab?.windowId,
+    index: tab ? tab.index + 1 : undefined,
+  });
+}
 
 export async function handle(request: PageRequest, c: Connection, s: Services) {
   // Nothing but the handshake is accepted before a successful hello on this connection.

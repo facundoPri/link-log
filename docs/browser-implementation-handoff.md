@@ -9,7 +9,7 @@ qué límites conocidos quedan. Evidencia en [browser-validation.md](browser-val
 | --- | --- |
 | `package.json` | App + Worker anfitriones; `workspaces: ["apps/*", "packages/*"]`. `bunfig.toml` fija `linker = "hoisted"` para no cambiar el layout de `node_modules` que ya usaba el proyecto. |
 | `packages/browser-protocol` | Contrato puro (sin Chrome, Bun ni Cloudflare): tipos de lens (movidos desde `src/types.ts` y reexportados), mensajes versionados del bridge, validadores, claves de caché/target, fingerprint de lens, filtros AND/OR, diff/patch de snapshots, DTOs del API. |
-| `apps/extension` | Extensión MV3. `src/background` (registro de pestañas, caché, grupos, hub de snapshots, comandos), `src/bridge` (content script en `localhost`/`127.0.0.1` de cualquier puerto + orígenes configurados; sólo se activa si la página se identifica como Linklog), `src/extract` (extractor empaquetado, sin privilegios), `src/pages` (Connect y popup con la estética de Linklog), `scripts/build.ts` (bundles, manifiesto determinista, íconos, watch, zip). |
+| `apps/extension` | Extensión MV3. `src/background` (registro de pestañas, caché, grupos, hub de snapshots, comandos), `src/bridge` (content script en los orígenes configurados y, sólo en builds de desarrollo, `localhost`/`127.0.0.1` de cualquier puerto; sólo se activa si la página se identifica como Linklog), `src/extract` (extractor empaquetado, sin privilegios), `src/pages` (Connect y popup con la estética de Linklog), `scripts/build.ts` (bundles, manifiesto determinista, íconos, watch, zip). |
 | `worker/browser.ts` | Rutas `/api/browser/*`, identidad de biblioteca, idempotencia, grupos pineados, Save (URLs por el pipeline normal), retención. |
 | `worker/links.ts` | `addLink`: alta de un link compartida por All links (`POST /api/links`) y Save desde Browser. |
 | `worker/handlers/browser.ts` | Handler de evaluación de capturas (reusa `judge`, pool Jev, leases, workflow, consumo). |
@@ -30,7 +30,7 @@ qué límites conocidos quedan. Evidencia en [browser-validation.md](browser-val
 | `bun run build` | Build web existente. |
 | `bun run extension:build` | Extensión unpacked en `apps/extension/dist` con `manifest.json` generado. El bridge cubre `http://localhost` y `http://127.0.0.1` en **cualquier puerto**; `LINKLOG_ORIGINS` agrega otros orígenes (p. ej. uno desplegado). `LINKLOG_UI_PORT` sólo decide adónde va "Open Linklog". |
 | `bun run extension:dev` | Watch. Tras cada rebuild hay que tocar ↻ en `chrome://extensions`; eso reinicia la sesión de la extensión (se pierde la caché de lenses). Recargar la página de Linklog no pierde nada. |
-| `bun run extension:package` | `apps/extension/linklog-extension-<versión>.zip` sólo con `dist` (se niega a empaquetar builds de test). |
+| `bun run extension:package` | `apps/extension/linklog-extension-<versión>.zip` sólo con `dist` (se niega a empaquetar builds de test). Es el mismo ZIP para la Chrome Web Store y GitHub: el bridge cubre sólo `LINKLOG_ORIGINS`, sin `localhost` ni `127.0.0.1`, y falla si `LINKLOG_ORIGINS` está vacío o no es https. El ícono de 128 lleva 16 px de margen transparente (arte de 96×96). |
 | `bun run extension:chrome` | Abre Chromium de Playwright / Chrome for Testing (`CHROME_PATH` para otro) con perfil `.profiles/chrome-dev` y la extensión cargada; imprime binario, versión, extension ID, orígenes y URL. |
 | `bun run build:all` | App + extensión. |
 | `bun run typecheck` | `tsc` de la app, del protocolo y de la extensión (tres tsconfig separados). |
@@ -59,7 +59,8 @@ se abre la página **Connect**, donde se concede (o no) el acceso a contenido.
 - La ventana siempre se resuelve desde la pestaña emisora (`sender.tab`) en cada comando, y
   ningún comando salvo `hello` se acepta antes de un `hello` exitoso en esa conexión.
 - **Detección de Linklog (sin pairing ni token).** El content script del bridge se inyecta en
-  `http://localhost/*` y `http://127.0.0.1/*` (cualquier puerto) y en `LINKLOG_ORIGINS`, pero queda
+  `LINKLOG_ORIGINS` y, en builds de desarrollo (no en `--package`), en `http://localhost/*` y
+  `http://127.0.0.1/*` (cualquier puerto), pero queda
   inerte (sin listener, sin marcador, sin conexión) salvo que la página tenga
   `<meta name="linklog-app">`, que renderiza `src/index.html`. El background vuelve a validar
   emisor: esta extensión, frame principal, documento activo, origen permitido y URL de la pestaña
@@ -190,7 +191,19 @@ se abre la página **Connect**, donde se concede (o no) el acceso a contenido.
   van a todo el lote por `/import`), Browser abre pestañas con un grupo opcional y nunca guarda.
 
 ### Permisos
-- Obligatorios: `tabs`, `tabGroups`, `storage`, `scripting` y los orígenes de Linklog (bridge).
+- **Consentimiento antes de leer (FAC-305, ADR 0005).** Hasta que el usuario toca **Accept and
+  connect** en Connect, que guarda `consent: true` en `storage.local`, el background no corre
+  `init()` (ni `tabs.query`, ni registro, ni grupos, ni `installationId`), descarta los eventos de
+  pestañas y grupos, y el bridge contesta `CONSENT_REQUIRED` a todo salvo `openPermissions`, que abre
+  Connect junto a la pestaña de Linklog. El background escucha `storage.onChanged` y arranca al ver la
+  clave; el flag sobrevive reinicios del worker y del navegador. Browser view muestra el estado
+  `consent` ("Not connected yet", **Open Connect page**) y reintenta solo. Al actualizar desde 0.2.x
+  la extensión queda inactiva hasta Accept (Connect no se abre en `update`); su `storage.local`
+  viejo queda sin leer. Un feature nuevo que lea pestañas tiene que correr detrás de este gate.
+  `test:browser` siembra el flag salvo en un check que prueba el gate.
+- Obligatorios: `tabs`, `tabGroups`, `storage`, `scripting` y los orígenes de Linklog (bridge). En
+  el ZIP empaquetado el bridge cubre sólo `LINKLOG_ORIGINS` (https); `localhost`/`127.0.0.1` existen
+  sólo en builds de desarrollo.
 - Opcionales: `http://*/*`, `https://*/*`, pedidos desde Connect (gesto del usuario). El acceso se
   evalúa por origen, así que también respeta permisos por sitio que otorgue Chrome.
 - El bridge no necesita `host_permissions` (sólo el `matches` de su content script).
@@ -275,7 +288,8 @@ se abre la página **Connect**, donde se concede (o no) el acceso a contenido.
   las fallidas/expiradas que cuenta.
 
 ## Límites conocidos / siguientes pasos
-- **Riesgo aceptado del bridge sin pairing** (decisión explícita): el marcador
+- **Riesgo aceptado del bridge sin pairing, sólo en builds de desarrollo** (decisión explícita;
+  desde FAC-306 el ZIP empaquetado no incluye el bridge de `localhost`/`127.0.0.1`): el marcador
   `<meta name="linklog-app">` identifica, no autentica. Cualquier página servida en
   `localhost`/`127.0.0.1` que lo incluya obtiene el bridge y, tras `hello`, puede listar las
   pestañas de su ventana, leerlas (si se concedió acceso a contenido) y cerrarlas/agruparlas. Los

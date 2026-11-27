@@ -169,7 +169,8 @@ export async function buildAll() {
   });
 }
 
-export async function launch(name: string, extension = true): Promise<{ context: BrowserContext; sw: Worker | null; version: string }> {
+/** `consent: false` leaves the extension as a fresh install: nothing accepted on its Connect page. */
+export async function launch(name: string, extension = true, consent = true): Promise<{ context: BrowserContext; sw: Worker | null; version: string }> {
   const dir = resolve(OUT, `profile-${name}`);
   await rm(dir, { recursive: true, force: true });
   const context = await chromium.launchPersistentContext(dir, {
@@ -183,6 +184,8 @@ export async function launch(name: string, extension = true): Promise<{ context:
   let sw: Worker | null = null;
   if (extension) {
     sw = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker", { timeout: 15000 }));
+    // The user's accept on the Connect page (FAC-305); the background starts when it sees the key.
+    if (consent) await sw.evaluate(() => chrome.storage.local.set({ consent: true }));
   }
   const version = context.browser()?.version() ?? (await run([EXE, "--version"])).trim();
   return { context, sw, version };

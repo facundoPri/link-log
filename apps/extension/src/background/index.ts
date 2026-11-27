@@ -1,7 +1,7 @@
-import { BRIDGE_PORT, LOCAL_BRIDGE_MATCHES, parsePageRequest } from "@linklog/browser-protocol";
-import { CONTENT_ORIGINS, EXTENSION_VERSION, LINKLOG_ORIGINS } from "../config";
+import { BRIDGE_PORT, CONSENT_REQUIRED, LOCAL_BRIDGE_MATCHES, parsePageRequest } from "@linklog/browser-protocol";
+import { CONSENT_KEY, CONTENT_ORIGINS, EXTENSION_VERSION, LINKLOG_ORIGINS } from "../config";
 import { ResultCache } from "./cache";
-import { handle, type Services } from "./commands";
+import { handle, openConnectPage, type Services } from "./commands";
 import { GroupMetaStore } from "./groups";
 import { Hub, type Connection } from "./hub";
 import { chromeKV, Mutex } from "./kv";
@@ -78,11 +78,24 @@ async function init(): Promise<Services> {
   await loader.resume();
   return { registry, cache, groups, hub, opens, loader, ids: { installationId, browserSessionId } };
 }
-const ready = init().then((s) => (services = s));
+// Consent (FAC-305): until the user accepts on the Connect page, which stores CONSENT_KEY in
+// storage.local, init() doesn't run, tab events do nothing and the bridge answers every request
+// but openPermissions with CONSENT_REQUIRED. No tab is read, stored or sent before that.
+let consented = false;
+let accept!: () => void;
+const accepted = new Promise<void>((resolve) => (accept = resolve));
+const consentKnown = local.get<boolean>(CONSENT_KEY).then((value) => {
+  if (value === true) (consented = true), accept();
+});
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes[CONSENT_KEY]?.newValue === true) (consented = true), accept();
+});
+const ready = accepted.then(init).then((s) => (services = s));
 
+/** Runs a task once the extension is started; before consent it is dropped. */
 function run(task: () => Promise<unknown>) {
-  void ready
-    .then(task)
+  void consentKnown
+    .then(() => (consented ? ready.then(task) : undefined))
     .catch((error) => console.warn("Linklog:", error));
 }
 
@@ -145,7 +158,7 @@ for (const event of [
   event.addListener(() => run(async () => hub.schedule()));
 for (const event of [chrome.tabGroups.onCreated, chrome.tabGroups.onUpdated] as chrome.events.Event<() => void>[])
   event.addListener(() => {
-    hub.schedule();
+    run(async () => hub.schedule());
     syncGroups();
   });
 chrome.tabGroups.onRemoved.addListener((group) =>
@@ -172,14 +185,17 @@ chrome.runtime.onConnect.addListener((port) => {
     last: null,
   };
   hub.connections.set(c.id, c);
-  // This tab is Linklog: drop it from every list right away, and remember its origin.
-  run(async () => {
-    await hub.learnOrigin(port.sender?.tab?.url);
-    hub.schedule(0);
-  });
+  // This tab is Linklog: drop it from every list right away, and remember its origin
+  // (once consent is given, also for a page that connected before it).
+  void ready
+    .then(async () => {
+      await hub.learnOrigin(port.sender?.tab?.url);
+      hub.schedule(0);
+    })
+    .catch((error) => console.warn("Linklog:", error));
   port.onDisconnect.addListener(() => {
     hub.connections.delete(c.id);
-    hub.schedule();
+    run(async () => hub.schedule());
   });
   port.onMessage.addListener((raw) => {
     if (raw && typeof raw === "object" && (raw as { heartbeat?: unknown }).heartbeat === true) return;
@@ -189,6 +205,13 @@ chrome.runtime.onConnect.addListener((port) => {
       if (typeof id === "string") hub.send(c, { id, ok: false, error: "Invalid request." });
       return;
     }
+    void consentKnown.then(async () => {
+      if (consented) return;
+      // Before consent the page can only open the Connect page; it learns nothing about tabs.
+      if (request.command !== "openPermissions") return hub.send(c, { id: request.id, ok: false, error: CONSENT_REQUIRED });
+      await openConnectPage(c.tabId).catch(() => {});
+      hub.send(c, { id: request.id, ok: true, result: {} });
+    });
     run(async () => {
       try {
         const result = await handle(request, c, services!);
@@ -204,13 +227,15 @@ chrome.runtime.onConnect.addListener((port) => {
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
   if (!isExtensionPage(sender, chrome.runtime.id, chrome.runtime.getURL(""))) return false;
   if (message?.type !== "status") return false;
-  ready
-    .then(async (s) => {
+  consentKnown
+    .then(async () => {
+      const s = consented ? await ready : null;
       reply({
         version: EXTENSION_VERSION,
-        installationId: s.ids.installationId,
-        browserSessionId: s.ids.browserSessionId,
-        contentAccess: hub.granted,
+        consent: consented,
+        installationId: s?.ids.installationId,
+        browserSessionId: s?.ids.browserSessionId,
+        contentAccess: s ? hub.granted : await chrome.permissions.contains({ origins: CONTENT_ORIGINS }),
         connectedPages: hub.connections.size,
         linklogTabs: [...new Set([...hub.connections.values()].map((c) => c.tabId))],
         origins: LINKLOG_ORIGINS,

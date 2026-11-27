@@ -5,8 +5,11 @@ async function render() {
   if (!s) return;
   $("version").textContent = `v${s.version}`;
   const pages = $("pages");
-  pages.className = `badge ${s.connectedPages ? "ok" : ""}`;
-  pages.innerHTML = s.connectedPages ? `<span class="dot"></span>${s.connectedPages} connected` : "Not open";
+  pages.className = `badge ${s.connectedPages && s.consent ? "ok" : s.consent ? "" : "warn"}`;
+  pages.innerHTML = !s.consent
+    ? `<span class="dot"></span>Not connected`
+    : s.connectedPages ? `<span class="dot"></span>${s.connectedPages} connected` : "Not open";
+  $("permissions").textContent = s.consent ? "Permissions" : "Review and connect";
   const content = $("content");
   content.className = `badge ${s.contentAccess ? "ok" : "warn"}`;
   content.innerHTML = `<span class="dot"></span>${s.contentAccess ? "Allowed" : "Not allowed"}`;

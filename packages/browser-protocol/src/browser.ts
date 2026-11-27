@@ -9,6 +9,12 @@ export const BRIDGE_CHANNEL = "linklog-bridge";
 export const BRIDGE_PORT = "linklog-bridge";
 /** `<meta name="linklog-app">` marks a page as Linklog; the bridge stays inert elsewhere. */
 export const LINKLOG_APP_META = "linklog-app";
+/**
+ * The extension's answer to every page request (but openPermissions) until the user
+ * accepts on its Connect page: until then it reads no tab data (FAC-305).
+ * The web matches this exact string: change it only in a release that ships both sides.
+ */
+export const CONSENT_REQUIRED = "Accept on the Linklog extension's Connect page so it can read your tabs.";
 
 export type GroupColor =
   | "grey"
