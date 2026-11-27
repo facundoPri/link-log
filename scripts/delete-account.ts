@@ -22,8 +22,11 @@
 //      sessions, accounts, API keys and settings
 //   3. the app_rate_limits keys writes:<id> and links:<id> (email:to:<sha256> expires within 2 days on its own)
 //   4. every R2 object under users/<id>/
-// Running it again, or with an unknown email, finds no account, deletes nothing and exits 1. If step 3 or 4
-// fails after step 2, the account row is already gone: the error prints the user id and what is left.
+// Running it again, or with an unknown email, finds no account, deletes nothing and exits 1. If a run stops
+// after step 2 (an R2 error, a lost connection), the account row is gone and the email no longer matches:
+// rerun with the user id from the plan to do steps 3 and 4 for it:
+//   bun scripts/delete-account.ts --user-id <id> --production
+// That mode refuses while the user row still exists.
 //
 // Options: --dry-run (print the plan, delete nothing), --yes (skip the typed confirmation).
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -39,6 +42,8 @@ export type Plan = {
   rows: Record<string, number>;
   counters: string[];
   r2Objects: number;
+  /** Foreign-key violations in the whole database before anything is deleted; the check afterwards is database-wide too. */
+  foreignKeyViolations: number;
 };
 
 const SAFE_ID = /^[A-Za-z0-9_-]{16,}$/;
@@ -65,12 +70,18 @@ async function remainingCounters(db: D1Database, userId: string) {
   return results.map((r) => r.key);
 }
 
+const foreignKeyViolations = async (db: D1Database) => (await db.prepare("PRAGMA foreign_key_check").all()).results.length;
+
+const assertSafeId = (id: string) => {
+  if (!SAFE_ID.test(id)) throw new Error(`Refusing: user id "${id}" does not look like an id, so users/<id>/ could match other users' objects.`);
+};
+
 /** What deleting this email would remove. Null when no account has that email. Reads only. */
 export async function planDeletion(target: Target, email: string): Promise<Plan | null> {
   const wanted = email.trim().toLowerCase();
   const user = await target.db.prepare('SELECT id, email FROM "user" WHERE lower(email)=?').bind(wanted).first<{ id: string; email: string }>();
   if (!user) return null;
-  if (!SAFE_ID.test(user.id)) throw new Error(`Refusing: user id "${user.id}" does not look like an id, so users/<id>/ could match other users' objects.`);
+  assertSafeId(user.id);
   const id = user.id;
   const rows = await target.db
     .prepare(
@@ -96,25 +107,47 @@ export async function planDeletion(target: Target, email: string): Promise<Plan 
     rows: rows!,
     counters: await remainingCounters(target.db, id),
     r2Objects: (await listKeys(target.bucket, r2Prefix(id))).length,
+    foreignKeyViolations: await foreignKeyViolations(target.db),
   };
+}
+
+/** What a finish run for an already deleted account would remove (steps 3 and 4 only). Null when nothing is left. */
+export async function planFinish(target: Target, userId: string): Promise<Plan | null> {
+  assertSafeId(userId);
+  if (await target.db.prepare('SELECT 1 FROM "user" WHERE id=?').bind(userId).first()) throw new Error(`The account ${userId} still exists. Run the script with its email instead.`);
+  const counters = await remainingCounters(target.db, userId);
+  const r2Objects = (await listKeys(target.bucket, r2Prefix(userId))).length;
+  if (!counters.length && !r2Objects) return null;
+  return { userId, email: "(already deleted)", rows: {}, counters, r2Objects, foreignKeyViolations: await foreignKeyViolations(target.db) };
 }
 
 export type Leftovers = { userRow: boolean; counters: string[]; r2Keys: string[]; foreignKeyViolations: number };
 export const isClean = (l: Leftovers) => !l.userRow && !l.counters.length && !l.r2Keys.length && l.foreignKeyViolations === 0;
 
-/** Runs the four steps for a planned account, then reports whatever is still there. */
+/** Runs steps 1 and 2 for a planned account, then steps 3 and 4, and reports whatever is still there. */
 export async function deleteAccount(target: Target, plan: Plan): Promise<Leftovers> {
+  const { db } = target;
+  const id = plan.userId;
+  try {
+    await db.batch([
+      db.prepare("DELETE FROM browser_targets WHERE request_id IN (SELECT request_id FROM browser_requests WHERE user_id=?)").bind(id),
+      db.prepare('DELETE FROM "user" WHERE id=?').bind(id),
+    ]);
+  } catch (error) {
+    throw new Error(`Deleting the D1 rows of ${id} failed: ${error}. Run the same command again: if it finds no account, the rows are gone, so finish with --user-id ${id}.`);
+  }
+  return finishCleanup(target, plan);
+}
+
+/** Steps 3 and 4 for a user whose row is already gone. */
+export async function finishCleanup(target: Target, plan: Plan): Promise<Leftovers> {
   const { db, bucket } = target;
   const id = plan.userId;
-  await db.batch([
-    db.prepare("DELETE FROM browser_targets WHERE request_id IN (SELECT request_id FROM browser_requests WHERE user_id=?)").bind(id),
-    db.prepare('DELETE FROM "user" WHERE id=?').bind(id),
-  ]);
   const step = async (name: string, run: () => Promise<void>) => {
     try {
       await run();
     } catch (error) {
-      throw new Error(`The account row of ${id} is deleted, but ${name} failed: ${error}. Finish by hand for user id ${id}: counters ${counterKeys(id).join(", ")} in app_rate_limits and R2 prefix ${r2Prefix(id)}.`);
+      throw new Error(`The account row of ${id} is deleted, but ${name} failed: ${error}. Rerun with --user-id ${id} to finish.`);
     }
   };
   await step("deleting the rate-limit counters", async () => {
@@ -132,7 +165,7 @@ export async function deleteAccount(target: Target, plan: Plan): Promise<Leftove
     userRow: !!(await db.prepare('SELECT 1 FROM "user" WHERE id=?').bind(id).first()),
     counters: await remainingCounters(db, id),
     r2Keys: await listKeys(bucket, r2Prefix(id)),
-    foreignKeyViolations: (await db.prepare("PRAGMA foreign_key_check").all()).results.length,
+    foreignKeyViolations: await foreignKeyViolations(db),
   };
 }
 
@@ -140,10 +173,10 @@ export function formatPlan(plan: Plan) {
   const rows = Object.entries(plan.rows).map(([table, n]) => `    ${table.padEnd(18)} ${n}`);
   return [
     `  account       ${plan.email} (user id ${plan.userId})`,
-    "  D1 rows (the user row cascades to the rest; counts are the main tables):",
-    ...rows,
+    ...(rows.length ? ["  D1 rows (the user row cascades to the rest; counts are the main tables):", ...rows] : []),
     `  counters      ${plan.counters.length ? plan.counters.join(", ") : "none"}`,
     `  R2 objects    ${plan.r2Objects} under ${r2Prefix(plan.userId)}`,
+    ...(plan.foreignKeyViolations ? [`  WARNING       the database already has ${plan.foreignKeyViolations} foreign-key violation(s), unrelated to this run; the final check will report them`] : []),
   ].join("\n");
 }
 
@@ -158,20 +191,26 @@ async function connect(production: boolean, stateDir: string): Promise<Connectio
   const remote = production ? { remote: true } : {};
   const dir = mkdtempSync(join(tmpdir(), "linklog-delete-account-"));
   const configPath = join(dir, "wrangler.json");
-  writeFileSync(
-    configPath,
-    JSON.stringify({
-      name: "linklog-delete-account",
-      compatibility_date: "2026-09-21",
-      d1_databases: source.d1_databases.map((d) => ({ ...d, migrations_dir: undefined, ...remote })),
-      r2_buckets: source.r2_buckets.map((r) => ({ ...r, ...remote })),
-    }),
-  );
-  const proxy = await getPlatformProxy<{ DB: D1Database; CONTENT: R2Bucket }>({
-    configPath,
-    persist: production ? false : { path: join(stateDir, "v3") },
-    remoteBindings: production,
-  });
+  let proxy;
+  try {
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        name: "linklog-delete-account",
+        compatibility_date: "2026-09-21",
+        d1_databases: source.d1_databases.map((d) => ({ ...d, migrations_dir: undefined, ...remote })),
+        r2_buckets: source.r2_buckets.map((r) => ({ ...r, ...remote })),
+      }),
+    );
+    proxy = await getPlatformProxy<{ DB: D1Database; CONTENT: R2Bucket }>({
+      configPath,
+      persist: production ? false : { path: join(stateDir, "v3") },
+      remoteBindings: production,
+    });
+  } catch (error) {
+    rmSync(dir, { recursive: true, force: true });
+    throw error;
+  }
   const d1 = source.d1_databases[0]!, r2 = source.r2_buckets[0]!;
   return {
     db: proxy.env.DB,
@@ -186,17 +225,18 @@ async function connect(production: boolean, stateDir: string): Promise<Connectio
 type Binding = { database_name?: string; bucket_name?: string } & Record<string, unknown>;
 
 function parseArgs(argv: string[]) {
-  const options = { production: false, dryRun: false, yes: false, stateDir: devStateDir, email: "" };
+  const options = { production: false, dryRun: false, yes: false, stateDir: devStateDir, email: "", userId: "" };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
     if (arg === "--production") options.production = true;
     else if (arg === "--dry-run") options.dryRun = true;
     else if (arg === "--yes") options.yes = true;
     else if (arg === "--state-dir") options.stateDir = resolve(argv[++i] ?? "");
+    else if (arg === "--user-id") options.userId = argv[++i] ?? "";
     else if (arg.startsWith("--") || options.email) throw new Error(`Unexpected argument "${arg}".`);
     else options.email = arg;
   }
-  if (!options.email.includes("@")) throw new Error("Usage: bun scripts/delete-account.ts <email> [--production] [--state-dir <dir>] [--dry-run] [--yes]");
+  if (options.email.includes("@") === !!options.userId) throw new Error("Usage: bun scripts/delete-account.ts <email> | --user-id <id>  [--production] [--state-dir <dir>] [--dry-run] [--yes]");
   return options;
 }
 
@@ -206,12 +246,14 @@ async function main() {
   const conn = await connect(options.production, options.stateDir);
   try {
     console.log(`Target: ${conn.label}`);
-    const plan = await planDeletion(conn, options.email);
-    if (!plan) throw new Error(`No account with the email ${options.email} on this target. Nothing was deleted.`);
+    const finishing = !!options.userId;
+    const plan = finishing ? await planFinish(conn, options.userId) : await planDeletion(conn, options.email);
+    if (!plan) throw new Error(`${finishing ? `Nothing is left for the user id ${options.userId}` : `No account with the email ${options.email}`} on this target. Nothing was deleted.`);
     console.log(`Will delete:\n${formatPlan(plan)}`);
     if (options.dryRun) return console.log("Dry run: nothing was deleted.");
-    if (!options.yes && prompt(`Type the email to delete ${options.production ? "PRODUCTION " : ""}data for ${plan.email}:`)?.trim().toLowerCase() !== plan.email.toLowerCase()) throw new Error("Not confirmed. Nothing was deleted.");
-    const left = await deleteAccount(conn, plan);
+    const answer = finishing ? plan.userId : plan.email;
+    if (!options.yes && prompt(`Type ${finishing ? "the user id" : "the email"} to delete ${options.production ? "PRODUCTION " : ""}data for ${answer}:`)?.trim().toLowerCase() !== answer.toLowerCase()) throw new Error("Not confirmed. Nothing was deleted.");
+    const left = await (finishing ? finishCleanup(conn, plan) : deleteAccount(conn, plan));
     if (!isClean(left)) throw new Error(`Deleted, but this is still there: ${JSON.stringify(left)}`);
     console.log("Deleted: no user row, counters or R2 keys left, and PRAGMA foreign_key_check is empty.");
     console.log("Reply to the user within 5 business days of the request.");

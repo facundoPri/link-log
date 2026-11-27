@@ -3,7 +3,7 @@
 // routes don't write is inserted so that every table that can hold user data has a row before the deletion.
 import { beforeEach, describe, expect, test } from "bun:test";
 import { lensFingerprint } from "@linklog/browser-protocol";
-import { deleteAccount, isClean, planDeletion, type Target } from "../scripts/delete-account";
+import { deleteAccount, finishCleanup, formatPlan, isClean, planDeletion, planFinish, type Target } from "../scripts/delete-account";
 import { TestD1 } from "./support/d1";
 import { client, makeEnv, type FakeR2 } from "./support/env";
 import { createTestAuth, testApiKey, testSession } from "./support/auth.test-instance";
@@ -35,6 +35,8 @@ function ownedBy(table: string): string | null {
 const ownedTables = () => tables().filter((t) => ownedBy(t));
 
 const rowsOf = (table: string, userId: string) => db.sqlite.query(`SELECT * FROM "${table}" WHERE ${ownedBy(table)} ORDER BY rowid`).all(userId);
+const rowidsOf = (table: string, userId: string) => (db.sqlite.query(`SELECT rowid FROM "${table}" WHERE ${ownedBy(table)}`).all(userId) as { rowid: number }[]).map((r) => r.rowid);
+const survivors = (table: string, rowids: number[]) => rowids.filter((id) => db.sqlite.query(`SELECT 1 FROM "${table}" WHERE rowid=?`).get(id));
 const everythingOf = (userId: string) => Object.fromEntries(ownedTables().map((t) => [t, rowsOf(t, userId)]));
 const dumpAll = () => Object.fromEntries(tables().map((t) => [t, db.sqlite.query(`SELECT * FROM "${t}" ORDER BY rowid`).all()]));
 const keysUnder = (prefix: string) => [...r2.objects.keys()].filter((k) => k.startsWith(prefix));
@@ -125,6 +127,7 @@ describe("deleting an account", () => {
     for (const table of ownedTables()) expect({ table, rows: rowsOf(table, A.userId).length > 0 }).toEqual({ table, rows: true });
     expect(keysUnder(`users/${A.userId}/`).length).toBeGreaterThan(2);
     expect(db.sqlite.query("SELECT key FROM app_rate_limits WHERE key IN (?,?) ORDER BY key").all(`links:${A.userId}`, `writes:${A.userId}`)).toHaveLength(2);
+    const rowidsA = Object.fromEntries(ownedTables().map((t) => [t, rowidsOf(t, A.userId)]));
     const keptB = everythingOf(B.userId);
     const keptKeys = keysUnder(`users/${B.userId}/`);
     const keptCounters = db.sqlite.query("SELECT * FROM app_rate_limits WHERE key LIKE '%' || ? ORDER BY key").all(B.userId);
@@ -142,6 +145,7 @@ describe("deleting an account", () => {
     expect(isClean(left)).toBe(true);
 
     for (const table of ownedTables()) expect({ table, rows: rowsOf(table, A.userId) }).toEqual({ table, rows: [] });
+    for (const table of ownedTables()) expect({ table, survivors: survivors(table, rowidsA[table]!) }).toEqual({ table, survivors: [] });
     expect(db.sqlite.query("SELECT * FROM \"user\" WHERE email='a@example.test'").all()).toEqual([]);
     expect(db.sqlite.query("SELECT * FROM app_rate_limits WHERE key LIKE '%' || ?").all(A.userId)).toEqual([]);
     expect(keysUnder(`users/${A.userId}/`)).toEqual([]);
@@ -182,10 +186,37 @@ describe("deleting an account", () => {
     await seed(A, "alpha");
     const failing = { ...target, bucket: { list: r2.list.bind(r2), delete: async () => { throw new Error("R2 unavailable"); } } as unknown as R2Bucket };
     const plan = (await planDeletion(failing, "a@example.test"))!;
-    await expect(deleteAccount(failing, plan)).rejects.toThrow(new RegExp(`${A.userId}.*deleting the R2 objects failed.*R2 unavailable.*users/${A.userId}/`));
+    await expect(deleteAccount(failing, plan)).rejects.toThrow(new RegExp(`${A.userId}.*deleting the R2 objects failed.*R2 unavailable.*--user-id ${A.userId}`));
     expect(db.sqlite.query('SELECT 1 FROM "user" WHERE id=?').get(A.userId)).toBeNull();
     expect(keysUnder(`users/${A.userId}/`).length).toBeGreaterThan(0);
     expect(await planDeletion(target, "a@example.test")).toBeNull();
+  });
+
+  test("--user-id finishes steps 3 and 4 after a stopped run, touches only that id, and refuses a live account", async () => {
+    await seed(A, "alpha");
+    await seed(B, "beta");
+    await expect(planFinish(target, A.userId)).rejects.toThrow(/still exists/);
+    const failing = { ...target, bucket: { list: r2.list.bind(r2), delete: async () => { throw new Error("R2 unavailable"); } } as unknown as R2Bucket };
+    await deleteAccount(failing, (await planDeletion(failing, "a@example.test"))!).catch(() => {});
+    const keptB = { keys: keysUnder(`users/${B.userId}/`), counters: db.sqlite.query("SELECT * FROM app_rate_limits WHERE key LIKE '%' || ? ORDER BY key").all(B.userId) };
+
+    const plan = (await planFinish(target, A.userId))!;
+    expect(plan).toMatchObject({ userId: A.userId, rows: {}, counters: [] });
+    expect(plan.r2Objects).toBeGreaterThan(0);
+    expect(isClean(await finishCleanup(target, plan))).toBe(true);
+    expect(keysUnder(`users/${A.userId}/`)).toEqual([]);
+    expect({ keys: keysUnder(`users/${B.userId}/`), counters: db.sqlite.query("SELECT * FROM app_rate_limits WHERE key LIKE '%' || ? ORDER BY key").all(B.userId) }).toEqual(keptB);
+    expect(await planFinish(target, A.userId)).toBeNull();
+    await expect(planFinish(target, "short")).rejects.toThrow(/does not look like an id/);
+  });
+
+  test("a foreign-key violation that was there before is shown in the plan, not blamed on the deletion", async () => {
+    db.sqlite.exec("PRAGMA foreign_keys=OFF");
+    db.sqlite.query("INSERT INTO session(id,expiresAt,token,createdAt,updatedAt,userId) VALUES('orphan','t','tok','t','t','nobody')").run();
+    db.sqlite.exec("PRAGMA foreign_keys=ON");
+    const plan = (await planDeletion(target, "a@example.test"))!;
+    expect(plan.foreignKeyViolations).toBe(1);
+    expect(formatPlan(plan)).toMatch(/WARNING.*1 foreign-key violation/);
   });
 
   test("a user id that could widen the R2 prefix is refused before anything is deleted", async () => {
