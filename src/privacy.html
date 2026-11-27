@@ -42,14 +42,13 @@
 <p><strong>Your library.</strong> The links you save or send through the upload API, their titles, descriptions, preview images and favicons, the extracted content (page text, YouTube transcripts, text read from images in social media posts), your tags and lenses with their questions, and the AI answers about your links.</p>
 <p><strong>API keys.</strong> If you create one, we keep a hashed copy, its first nine characters (so you can recognise it), its name and when it was used.</p>
 <p><strong>Activity and usage records.</strong> For each job (fetching a link, extracting content, an AI evaluation) we keep its status, errors, the provider and model used, token counts and an estimated cost, to show you Activity and Usage and to run and fix the service.</p>
-<!-- TODO: owner to decide whether "in the Chrome window where Linklog is open" becomes "in every Chrome window" (FAC-305 Connect says every window). -->
-<p><strong>Data from the extension.</strong> The extension reads no tab data until you accept this in Connect. After you accept, the extension reads, in the Chrome window where Linklog is open:</p>
+<p><strong>Data from the extension.</strong> The extension reads no tab data until you accept this in Connect. After you accept, the extension reads, in every Chrome window:</p>
 <ul>
 <li>the URL, title, favicon and group of each tab, through Chrome's <code>tabs</code> and <code>tabGroups</code> permissions;</li>
 <li>if you allow page content (Chrome's optional access to all sites), a preview of each page (description, image, site name) and its text as already loaded in the tab.</li>
 </ul>
 <p>The extension never reads cookies, passwords, form fields or your browsing history, and never scrolls pages. When you ask it to load the content of tabs Chrome has put to sleep, it reloads those tabs and puts them back to sleep.</p>
-<p>The extension passes this data only to the Linklog page open in the same window; it sends nothing to any server itself. From that page, data reaches Linklog's servers in three cases only:</p>
+<p>The extension passes the tabs of the Chrome window where Linklog is open only to the Linklog page open in that window; it sends nothing to any server itself. From that page, data reaches Linklog's servers in three cases only:</p>
 <ol>
 <li><strong>Evaluating tabs with a lens</strong> (or auto-grouping tabs) sends, for each tab, its URL, title, page description, site name, short page facts and page text (up to 160,000 characters) to Linklog, which passes up to about 24,000 characters of it to the AI provider below. While a lens is on in Browser view, it evaluates every open tab of that window it can read, including pages you are signed in to, and new tabs as they open. Linklog has no list of sites it skips: turn the lens off, or don't allow page content, to stop it.</li>
 <li><strong>Saving a tab</strong> sends only its URL. Your library then fetches the page itself, like any link you add.</li>
