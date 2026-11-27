@@ -20,8 +20,8 @@ Sections: [Store listing tab](#store-listing-tab) · [Privacy practices tab](#pr
 | Homepage URL | `https://linklog.facundopri.com` |
 | Support URL | `https://github.com/facundoPri/link-log/issues` |
 | Visibility (Distribution tab) | Unlisted |
-| Distribution regions | All regions except the European Economic Area, the United Kingdom and Switzerland (the policy says the beta is not offered there; FAC-307 owner answer 3) |
-| Mature content | Off |
+| Distribution regions (not in the accepted table; source: FAC-307 owner answer 3) | All regions except the European Economic Area, the United Kingdom and Switzerland (the policy says the beta is not offered there; FAC-307 owner answer 3) |
+| Mature content (not in the accepted table; the dashboard default) | Off |
 | Store icon | 128×128, from the packaged build (`icons/128.png`, FAC-306) |
 | Promo tiles, video | None for the Unlisted submission |
 | Screenshots | 1 to 5 at 1280×800. Taken in Part 2, from the packaged 0.3.0 build. See [Screenshots](#screenshots) |
@@ -59,7 +59,7 @@ Requirements: a Linklog account and desktop Chrome.
 Privacy policy: https://linklog.facundopri.com/privacy
 ---
 
-Differences from the accepted draft, so the text says what the Connect disclosure says (acceptance criterion 3):
+Differences from the accepted draft, so the text says what the Connect disclosure says (acceptance criterion: "the long description and the Connect disclosure say the same things"):
 
 - "of every open tab, in every Chrome window" (the draft said "your open tabs"; the Connect text names every window).
 - "Its URL and text go to your Linklog library, whose server sends them to a remote AI provider for the answer" (the draft said the text "goes to your Linklog library, which uses a remote AI provider").
@@ -94,19 +94,19 @@ One entry per permission in the 0.3.0 manifest: the four `permissions`, the two 
 **`tabs`**
 
 ```
-Browser view lists the user's open tabs so they can review them. The extension needs "tabs" to read each tab's URL, title and icon, and to group, move, open, put to sleep and close the tabs the user selects. Nothing is read until the user accepts the disclosure on the extension's Connect page. Tab URLs and titles are shown to the user's Linklog page. They leave the browser only when the user turns on a lens or saves a tab: then the URL goes to the user's Linklog library, and for lenses so does the page text.
+Browser view lists the user's open tabs so they can review them. The extension needs "tabs" to read each tab's URL, title and icon, and to group, move, open, put to sleep and close the tabs the user selects. Nothing is read until the user accepts the disclosure on the extension's Connect page. Tab URLs and titles are shown to the user's Linklog page. They leave the browser only when the user turns on a lens, auto-groups tabs or saves a tab: then the URL goes to the user's Linklog library, and for lenses and auto-grouping so does the page text.
 ```
 
 **`tabGroups`**
 
 ```
-To show the user's tab groups in Browser view, and to create, rename, recolor, move and ungroup them when the user groups tabs from Linklog. The title, color and description of a group the user links to Linklog are kept in local storage, so the link survives a Chrome restart.
+To show the user's tab groups in Browser view, and to create, rename, recolor, move and ungroup them when the user groups tabs from Linklog. The title, color and description of a group the user links to Linklog are kept in local storage, so the link survives a Chrome restart. For a pinned group, Linklog's page also sends that group's name, description and color (never its tabs) to the user's Linklog library.
 ```
 
 **`scripting`**
 
 ```
-To run the extractor bundled in the package (extract.js, no remote code) in open tabs where the user granted page access, and read the title, description, preview image and page text for previews and lenses. It never runs on pages without a user-granted host permission.
+To run code bundled in the package (the extractor extract.js and a small function that reads a page's meta tags; no remote code) in open tabs where the user granted page access, and read the title, description, preview image and page text for previews and lenses. It never runs on pages without a user-granted host permission.
 ```
 
 **`storage`**
@@ -118,7 +118,7 @@ chrome.storage.session holds the open-tab registry, lens results per tab and the
 **Optional host permissions `http://*/*` and `https://*/*`**
 
 ```
-Browser view reviews whatever tabs the user has open, on any site, so the sites can't be listed in advance. Access is requested only when the user clicks "Allow page content" on the Connect page, after the disclosure, and can be removed there at any time. Chrome's Site access can also limit it to specific sites, and the extension honors that per tab. It is used only to run the bundled extractor in the tabs the user reviews: no cookies, no form fields, no history, no clicking, no scrolling, and the extractor changes nothing on the page. The one time the extension reloads a page is when the user asks to load a tab Chrome has put to sleep; it puts the tab back to sleep afterwards. Page text leaves the browser only when a lens the user turned on evaluates a tab.
+Browser view reviews whatever tabs the user has open, on any site, so the sites can't be listed in advance. Access is requested only when the user clicks "Allow page content" on the Connect page, after the disclosure, and can be removed there at any time. Chrome's Site access can also limit it to specific sites, and the extension honors that per tab. It is used only to run the bundled extractor and the bundled meta-tag reader in the tabs the user reviews: no cookies, no form fields, no history, no clicking, no scrolling, and they change nothing on the page. The one time the extension reloads a page is when the user asks to load a tab Chrome has put to sleep; it puts the tab back to sleep afterwards. Page text leaves the browser only when a lens the user turned on evaluates a tab, or the user auto-groups tabs.
 ```
 
 **Host access `https://linklog.facundopri.com/*` (bridge content script)**
@@ -172,7 +172,7 @@ The policy must be live at that URL before submitting. It names the providers th
 
 ### Every permission has a justification (and the reverse)
 
-Target manifest: [FAC-306](grills/FAC-306.md), built with `LINKLOG_ORIGINS=https://linklog.facundopri.com bun run extension:package`. The builder today (`apps/extension/scripts/build.ts`) already declares the same four permissions and the same optional hosts. The packaged build differs in the bridge matches and the description only.
+Target manifest: [FAC-306](grills/FAC-306.md), built with `LINKLOG_ORIGINS=https://linklog.facundopri.com bun run extension:package`. The builder today (`apps/extension/scripts/build.ts`) already declares the same four permissions and the same optional hosts. The packaged build differs in the bridge matches, the description and the version.
 
 | Manifest entry (0.3.0) | Justification above |
 | --- | --- |
@@ -229,7 +229,8 @@ Section names are those of the draft policy in [FAC-307, "Draft policy"](grills/
 2. **Part 2:** compare the justifications with the `manifest.json` of the real 0.3.0 ZIP, and add the screenshots.
 3. **Labels in the live form.** The data-usage categories and the certification sentences are written from the dashboard's documented behavior; the docs show them only in screenshots.
 4. **`/privacy` is not live yet.** On 2026-11-27 `https://linklog.facundopri.com/privacy` still returns the app's own page (FAC-307 ships the policy). Submit only after `curl -s https://linklog.facundopri.com/privacy | grep '<title>'` shows the policy title.
-5. **Wording gaps in the extension and the policy, outside this ticket's files:**
+5. **Wording gaps in the extension and the policy, outside this ticket's files** (ticket FAC-412):
    - The Connect page says pages are "never reloaded", but the loader reloads sleeping tabs on request, and the policy says so. This listing says what the code does.
-   - The policy says auto-grouping also sends page text to Linklog, as lenses do; the Connect disclosure and this long description mention lenses only.
+   - The policy says auto-grouping also sends page text to Linklog, as lenses do, and that pinned groups send a group's name, description and color. The Connect disclosure and this long description mention lenses only, so the "only when a lens evaluates a tab" sentence is incomplete. The justifications above already say it. Before submitting, Connect and the long description should name auto-grouping too, so the two stay equal.
+   - The policy says the extension reads tabs "in the Chrome window where Linklog is open", while the extension reads every window (Connect, the single purpose and this listing say so). The policy needs the same fix.
 6. **What the docs don't say.** [The listing page](https://developer.chrome.com/docs/webstore/cws-dashboard-listing?hl=en) doesn't state which fields come from the manifest, nor give a character limit for any field. [The privacy page](https://developer.chrome.com/docs/webstore/cws-dashboard-privacy?hl=en) doesn't give limits either, and lists no host-permission field. The 108-character short description and the FAC-306 statement that the store takes it from the manifest rest on the research doc, not on those pages.
