@@ -1,6 +1,7 @@
 // End-to-end auth + isolation check on the real local runtime (workerd, local D1/R2/Queue/Workflow),
 // through the Bun UI proxy, with a throwaway state dir and its own ports. Real logins only.
 //   bun run test:e2e      (LINKLOG_E2E_UI_PORT / LINKLOG_E2E_API_PORT to change ports 3197/8897)
+//   LINKLOG_E2E_KEEP_STATE=1 keeps the state dir for a manual run, e.g. scripts/delete-account.ts --state-dir <dir>.
 import { strict as assert } from "node:assert";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -355,5 +356,6 @@ try {
 } finally {
   ui?.kill();
   await stopWorker();
-  rmSync(stateDir, { recursive: true, force: true });
+  if (process.env.LINKLOG_E2E_KEEP_STATE === "1") console.log(`State kept in ${stateDir}`);
+  else rmSync(stateDir, { recursive: true, force: true });
 }
