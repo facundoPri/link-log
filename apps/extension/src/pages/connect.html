@@ -29,9 +29,9 @@
         <div class="disclosure">
           <p>If you accept, the extension:</p>
           <ul>
-            <li><b>Reads the address (URL) and title of every open tab, in every Chrome window, and your tab groups.</b> The tab list stays in Chrome's memory until Chrome closes. The name and color of groups you link to Linklog stay on this device, so they can be linked again after a restart.</li>
+            <li><b>Reads the address (URL) and title of every open tab, in every Chrome window, and your tab groups.</b> The tab list stays in Chrome's memory until Chrome closes. The name, color and description of groups you link to Linklog, and which Linklog library linked them, stay on this device, so they can be linked again after a restart.</li>
             <li><b>Sends the tabs of Linklog's window</b> (URLs, titles, icons, groups) to the Linklog page when you open Browser view.</li>
-            <li>Only if you also allow page content: <b>reads the text and preview of open pages</b>. When a lens you turned on evaluates a tab, its URL and text go to your Linklog library, whose server sends them to a remote AI provider for the answer.</li>
+            <li>Only if you also allow page content: <b>reads the text and preview of open pages</b>. When a lens you turned on evaluates a tab, or when you auto-group tabs, its URL, title and text go to your Linklog library, whose server sends them to a remote AI provider for the answer. Auto-grouping also sends the names and descriptions of the groups you chose.</li>
             <li>When you save a tab, sends only its URL. Linklog's server then fetches the page and extracts its content with a remote extraction service, like any link you add.</li>
           </ul>
           <p class="muted">Never cookies, passwords or form fields. Your data isn't sold or used for ads. The providers we use are named in the <a href="https://linklog.facundopri.com/privacy" target="_blank" rel="noreferrer">privacy policy</a>.</p>
@@ -61,7 +61,7 @@
           <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 13H8"/><path d="M16 17H8"/><path d="M16 13h-2"/></svg></span>
           <div class="grow">
             <p class="title">Page content</p>
-            <p class="muted">Show a preview and the content of your open pages in Linklog, and let lenses read them. Previews (description and image) are read for every tab Linklog may access; preview images load from each site's own servers, like the page itself. Everything is read locally from what the tab already loaded — never cookies, passwords, form fields or history, and pages are never reloaded or scrolled. Page text leaves the browser only when a lens evaluates a tab; saving a tab sends just its URL, which your library then fetches like any added link.</p>
+            <p class="muted">Show a preview and the content of your open pages in Linklog, and let lenses read them. Previews (description and image) are read for every tab Linklog may access; preview images load from each site's own servers, like the page itself. Everything is read locally from what the tab already loaded — never cookies, passwords, form fields or history. Linklog reloads a tab (Load content) or puts it to sleep (Sleep) only when you ask. Page text leaves the browser only when a lens evaluates a tab or you auto-group tabs; saving a tab sends just its URL, which your library then fetches like any added link.</p>
             <p class="muted small" id="content-hint" style="margin-top:6px">Chrome will describe this as “read and change all your data on all websites”. Linklog only reads.</p>
           </div>
           <span class="badge warn" id="content-badge"><span class="dot"></span>Not allowed</span>
