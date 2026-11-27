@@ -1,10 +1,10 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # The extension reads no tab before the user accepts, and packaged builds bridge only to configured https origins
 
-The Linklog extension reads no tab, URL, title or tab group until the user clicks **Accept and connect** on its Connect page. That click stores `consent: true` in `chrome.storage.local`. Until then the background runs nothing that touches tabs. The bridge answers every Linklog request with `CONSENT_REQUIRED`, except `openPermissions`, which opens the Connect page. Linklog's Browser view shows a `consent` connection state. The Chrome Web Store requires a prominent disclosure in the product UI and a specific agreeing action "before collecting or handling user data", including data stored only locally (User Data FAQ). The worker used to store every tab URL from install onward, before any UI. Decided in the FAC-305 arena (2026-11-26), pending the owner's review.
+The Linklog extension reads no tab, URL, title or tab group until the user clicks **Accept and connect** on its Connect page. That click stores `consent: true` in `chrome.storage.local`. Until then the background runs nothing that touches tabs. The bridge answers every Linklog request with `CONSENT_REQUIRED`, except `openPermissions`, which opens the Connect page. Linklog's Browser view shows a `consent` connection state. The Chrome Web Store requires a prominent disclosure in the product UI and a specific agreeing action "before collecting or handling user data", including data stored only locally (User Data FAQ). The worker used to store every tab URL from install onward, before any UI. Decided in the FAC-305 arena and accepted by the owner (2026-11-26).
 
 Packaged builds (`--package`, the same ZIP for the store and GitHub) bridge only to `LINKLOG_ORIGINS`, which must be non-empty and https. Only dev builds keep the localhost bridge. This removes a warning line and an http origin from what reviewers and users see. It also removes the localhost bridge without pairing, an accepted risk, from every shipped build (FAC-306).
 

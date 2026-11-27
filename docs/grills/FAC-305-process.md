@@ -87,7 +87,18 @@ It ran on the adopted prototype and on the **real released 0.2.1 ZIP**, updated 
 
 ## Owner questions (product, UX, legal-business)
 
-Listed in the PR body and in the report to the owner. The technical choices were decided in the arena:
+Seven went to the owner. The owner answered them on 2026-11-26 and with that approved the result (see [FAC-305.md](FAC-305.md#owner-answers-2026-11-26)). Every answer matched the recommendation:
+
+- the consent text as written;
+- 0.2.x users stay idle until they accept;
+- providers only in the privacy policy;
+- nobody reads lens page text, so all three certifications;
+- no withdraw button in the first submission (follow-up);
+- defaults: GitHub issues for support, screenshots from a demo account on production.
+
+**Cross-arena alignment at acceptance.** The FAC-307 arena (PR #56) decided six Privacy-tab boxes, because the form certifies the answers match the policy and the policy covers the account too. This arena had drafted two, counting only the extension. FAC-310 now follows PR #56, which owns the policy. Lesson: two arenas that write answers into the same dashboard form must cross-read each other before the owner sees either.
+
+The technical choices were decided in the arena:
 
 - all sites vs per site: no UX difference for the user, because per-site would only add prompts;
 - the bridge signal;
