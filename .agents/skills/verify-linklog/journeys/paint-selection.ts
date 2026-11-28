@@ -94,7 +94,7 @@ export default (async ({ page, api, fixture, step, check, shot }) => {
   await check("The new stroke runs from the anchor (rows 1 to 3) and row 8, cleared by Escape, stays clear", async () => (await checked()) === 3 && !(await boxes.nth(7).isChecked()));
   await shot("05-keyboard");
 
-  await step("A Shift+click held for a second still selects the range once");
+  await step("A Shift+click held for a second, with Shift auto-repeating, still selects the range once");
   await page.keyboard.press("Escape");
   await check("Escape clears before the slow range", async () => (await checked()) === 0);
   await boxes.nth(0).click();
@@ -102,7 +102,12 @@ export default (async ({ page, api, fixture, step, check, shot }) => {
   const slow = await center(3);
   await page.mouse.move(slow.x, slow.y);
   await page.mouse.down();
-  await page.waitForTimeout(1000);
+  const cdp = await page.context().newCDPSession(page);
+  for (let i = 0; i < 3; i++) {
+    // A held Shift auto-repeats keydown on Windows while the button is down.
+    await cdp.send("Input.dispatchKeyEvent", { type: "rawKeyDown", key: "Shift", code: "ShiftLeft", windowsVirtualKeyCode: 16, modifiers: 8, autoRepeat: true });
+    await page.waitForTimeout(300);
+  }
   await page.mouse.up();
   await page.keyboard.up("Shift");
   await check("Rows 1 to 4 are checked after a slow Shift+click", async () => (await checked()) === 4 && (await boxes.nth(3).isChecked()));
@@ -117,4 +122,7 @@ export default (async ({ page, api, fixture, step, check, shot }) => {
   await page.keyboard.press("ArrowDown");
   await check("Focus moved to row 3's checkbox", () => boxes.nth(2).evaluate((el) => el === document.activeElement));
   await check("The open row did not move", async () => (await page.locator("article.bg-accent p").first().textContent()) === openTitle);
+  await boxes.nth(0).focus();
+  await page.keyboard.press("ArrowUp");
+  await check("ArrowUp on the first checkbox leaves the open row too", async () => (await page.locator("article.bg-accent p").first().textContent()) === openTitle);
 }) satisfies Journey;

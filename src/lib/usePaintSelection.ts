@@ -44,7 +44,8 @@ export function usePaintSelection({ picked, setPicked, count, noun }: { picked: 
   // `written` is the selection the key stroke last produced; any other change to the selection starts a new stroke.
   const keyStroke = useRef<{ stroke: PaintStroke; written: string[] } | null>(null);
   // The press that started a stroke or a range already changed the selection. Its click (the next pointer click
-  // in the list) must not toggle the checkbox again or open the row. The next press or key clears it.
+  // in the list) must not toggle the checkbox again or open the row. Only the next press clears it: keys can't, since
+  // a held Shift repeats keydown on Windows during a slow Shift+click, and keyboard clicks (detail 0) pass anyway.
   const swallowClick = useRef(false);
   const focusId = useRef<string | null>(null);
   const [live, setLive] = useState("");
@@ -220,10 +221,10 @@ export function usePaintSelection({ picked, setPicked, count, noun }: { picked: 
       const rows = rowsOf(list);
       const i = rows.findIndex((r) => r.dataset.pickId === id);
       const next = rows[i + (e.key === "ArrowDown" ? 1 : -1)];
-      if (!next) return;
       // Arrows on a checkbox move the checkbox focus (and Shift extends); the views' row navigation stays on other targets.
       e.preventDefault();
       e.stopPropagation();
+      if (!next) return;
       const nextId = next.dataset.pickId!;
       if (e.shiftKey) {
         const picked = latest().picked;
@@ -280,7 +281,6 @@ export function usePaintSelection({ picked, setPicked, count, noun }: { picked: 
     window.addEventListener("keydown", onKeyEscape, true);
     window.addEventListener("click", onClick, true);
     window.addEventListener("pointerdown", resetSwallow, true);
-    window.addEventListener("keydown", resetSwallow, true);
     window.addEventListener("blur", onBlur);
     list.addEventListener("dragstart", onDragStart);
     return () => {
@@ -297,7 +297,6 @@ export function usePaintSelection({ picked, setPicked, count, noun }: { picked: 
       window.removeEventListener("keydown", onKeyEscape, true);
       window.removeEventListener("click", onClick, true);
       window.removeEventListener("pointerdown", resetSwallow, true);
-      window.removeEventListener("keydown", resetSwallow, true);
       window.removeEventListener("blur", onBlur);
       list.removeEventListener("dragstart", onDragStart);
     };
