@@ -6,7 +6,6 @@ const LONG_PRESS_SLOP = 8;
 const THUMB_DRAG = 4;
 const EDGE = 56;
 const MAX_SPEED = 18;
-const CLICK_GRACE_MS = 600;
 const INTERACTIVE = "button, a, input, textarea, select, [role=button], [role=checkbox], [role=menuitem]";
 
 type Gesture =
@@ -44,7 +43,9 @@ export function usePaintSelection({ picked, setPicked, count, noun }: { picked: 
   const anchor = useRef<{ id: string; mode: boolean } | null>(null);
   // `written` is the selection the key stroke last produced; any other change to the selection starts a new stroke.
   const keyStroke = useRef<{ stroke: PaintStroke; written: string[] } | null>(null);
-  const suppressClickUntil = useRef(0);
+  // The press that started a stroke or a range already changed the selection. Its click (the next pointer click
+  // in the list) must not toggle the checkbox again or open the row. The next press or key clears it.
+  const swallowClick = useRef(false);
   const focusId = useRef<string | null>(null);
   const [live, setLive] = useState("");
 
@@ -108,6 +109,7 @@ export function usePaintSelection({ picked, setPicked, count, noun }: { picked: 
       const base = new Set(latest().picked);
       const stroke = { anchor: id, mode: !base.has(id), base };
       gesture = { kind: "stroke", pointerId, stroke, y, raf: 0 };
+      swallowClick.current = true;
       try {
         list.setPointerCapture(pointerId);
       } catch {
@@ -135,7 +137,6 @@ export function usePaintSelection({ picked, setPicked, count, noun }: { picked: 
       if (gesture.kind !== "stroke") return;
       const { pointerId, raf } = gesture;
       gesture = { kind: "idle" };
-      suppressClickUntil.current = performance.now() + CLICK_GRACE_MS;
       cancelAnimationFrame(raf);
       list.style.userSelect = "";
       list.style.webkitUserSelect = "";
@@ -148,12 +149,11 @@ export function usePaintSelection({ picked, setPicked, count, noun }: { picked: 
       anchor.current = { id, mode: value };
       keyStroke.current = null;
       focusId.current = id;
-      suppressClickUntil.current = performance.now() + CLICK_GRACE_MS;
+      swallowClick.current = true;
     };
 
     const onDown = (e: PointerEvent) => {
       clearPending();
-      suppressClickUntil.current = 0;
       if (e.button > 0 || !e.isPrimary || gesture.kind !== "idle") return;
       const target = e.target as Element;
       const id = idOf(target);
@@ -213,7 +213,7 @@ export function usePaintSelection({ picked, setPicked, count, noun }: { picked: 
     };
 
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+      if ((e.key !== "ArrowDown" && e.key !== "ArrowUp") || e.metaKey || e.ctrlKey || e.altKey) return;
       const box = (e.target as Element).closest("[role=checkbox]");
       const id = idOf(box);
       if (!box || !id || !box.closest("[data-pick-handle]")) return;
@@ -221,7 +221,9 @@ export function usePaintSelection({ picked, setPicked, count, noun }: { picked: 
       const i = rows.findIndex((r) => r.dataset.pickId === id);
       const next = rows[i + (e.key === "ArrowDown" ? 1 : -1)];
       if (!next) return;
+      // Arrows on a checkbox move the checkbox focus (and Shift extends); the views' row navigation stays on other targets.
       e.preventDefault();
+      e.stopPropagation();
       const nextId = next.dataset.pickId!;
       if (e.shiftKey) {
         const picked = latest().picked;
@@ -231,7 +233,9 @@ export function usePaintSelection({ picked, setPicked, count, noun }: { picked: 
           anchor.current = from;
         }
         const ks = keyStroke.current;
-        set((cur) => (ks.written = paintSelection(cur, order(), ks.stroke, nextId)));
+        const next = paintSelection(latest().picked, order(), ks.stroke, nextId);
+        ks.written = next;
+        set(() => next);
       } else keyStroke.current = null;
       focusId.current = nextId;
       for (const r of rows) checkboxOf(r)?.setAttribute("tabindex", r === next ? "0" : "-1");
@@ -252,10 +256,13 @@ export function usePaintSelection({ picked, setPicked, count, noun }: { picked: 
     // The press that started a stroke or a range already changed the selection; its click must not toggle the
     // checkbox again or open the row (WebKit can target the row after a capture).
     const onClick = (e: MouseEvent) => {
-      if (performance.now() > suppressClickUntil.current || !list.contains(e.target as Node)) return;
-      suppressClickUntil.current = 0;
+      if (!swallowClick.current || e.detail === 0 || !list.contains(e.target as Node)) return;
+      swallowClick.current = false;
       e.preventDefault();
       e.stopPropagation();
+    };
+    const resetSwallow = () => {
+      swallowClick.current = false;
     };
     const onDragStart = (e: Event) => e.preventDefault();
     const onBlur = () => end();
@@ -272,6 +279,8 @@ export function usePaintSelection({ picked, setPicked, count, noun }: { picked: 
     window.addEventListener("pointercancel", onUp);
     window.addEventListener("keydown", onKeyEscape, true);
     window.addEventListener("click", onClick, true);
+    window.addEventListener("pointerdown", resetSwallow, true);
+    window.addEventListener("keydown", resetSwallow, true);
     window.addEventListener("blur", onBlur);
     list.addEventListener("dragstart", onDragStart);
     return () => {
@@ -287,6 +296,8 @@ export function usePaintSelection({ picked, setPicked, count, noun }: { picked: 
       window.removeEventListener("pointercancel", onUp);
       window.removeEventListener("keydown", onKeyEscape, true);
       window.removeEventListener("click", onClick, true);
+      window.removeEventListener("pointerdown", resetSwallow, true);
+      window.removeEventListener("keydown", resetSwallow, true);
       window.removeEventListener("blur", onBlur);
       list.removeEventListener("dragstart", onDragStart);
     };

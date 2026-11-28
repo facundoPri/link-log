@@ -93,4 +93,28 @@ export default (async ({ page, api, fixture, step, check, shot }) => {
   await page.keyboard.press("Shift+ArrowDown");
   await check("The new stroke runs from the anchor (rows 1 to 3) and row 8, cleared by Escape, stays clear", async () => (await checked()) === 3 && !(await boxes.nth(7).isChecked()));
   await shot("05-keyboard");
+
+  await step("A Shift+click held for a second still selects the range once");
+  await page.keyboard.press("Escape");
+  await check("Escape clears before the slow range", async () => (await checked()) === 0);
+  await boxes.nth(0).click();
+  await page.keyboard.down("Shift");
+  const slow = await center(3);
+  await page.mouse.move(slow.x, slow.y);
+  await page.mouse.down();
+  await page.waitForTimeout(1000);
+  await page.mouse.up();
+  await page.keyboard.up("Shift");
+  await check("Rows 1 to 4 are checked after a slow Shift+click", async () => (await checked()) === 4 && (await boxes.nth(3).isChecked()));
+
+  await step("Arrows on a checkbox move the checkbox focus, not the open row");
+  await page.keyboard.press("Escape");
+  const thumbs = page.locator("[data-pick-thumb]");
+  await thumbs.nth(5).click();
+  await check("Row 6 is open in the inspector", () => page.getByRole("button", { name: "Close inspector" }).isVisible());
+  const openTitle = await page.locator("article.bg-accent p").first().textContent();
+  await boxes.nth(1).focus();
+  await page.keyboard.press("ArrowDown");
+  await check("Focus moved to row 3's checkbox", () => boxes.nth(2).evaluate((el) => el === document.activeElement));
+  await check("The open row did not move", async () => (await page.locator("article.bg-accent p").first().textContent()) === openTitle);
 }) satisfies Journey;
