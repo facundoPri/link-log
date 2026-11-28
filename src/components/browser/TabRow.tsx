@@ -7,6 +7,7 @@ import { relativeTime } from "../../lib/time";
 import { youtubeId } from "../../lib/youtube";
 import { lensIcon } from "../Sidebar";
 import { TagChip } from "../TagChip";
+import { PickHandle } from "../PickHandle";
 import { GROUP_STYLE, groupTitle } from "./groups";
 import { BrowserLensStatus } from "./BrowserLensStatus";
 import { ContentBadge, PinnedMarker } from "./TabMarkers";
@@ -148,10 +149,12 @@ export function TabRow({
     <article
       className={cn("group flex cursor-default items-start gap-3 px-4 py-3 hover:bg-accent/60", active && "bg-accent", stale && "opacity-60")}
       data-tab-id={tab.tabId}
+      data-pick-id={tab.tabInstanceId}
       aria-current={active || undefined}
       onClick={onActivate}
       onDoubleClick={onFocus}
     >
+      <PickHandle>
       <Checkbox
         aria-label={`Select ${tab.title}`}
         checked={picked}
@@ -165,7 +168,8 @@ export function TabRow({
           !picked && "opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100",
         )}
       />
-      <div className="relative h-12 w-[72px] shrink-0 rounded-md bg-muted ring-1 ring-black/10">
+      </PickHandle>
+      <div data-pick-thumb className="relative h-12 w-[72px] shrink-0 rounded-md bg-muted ring-1 ring-black/10">
         <div className="h-full w-full overflow-hidden rounded-md">
           {image ? (
             <img src={image} alt="" loading="lazy" referrerPolicy="no-referrer" className="h-full w-full object-cover" onError={() => setImgFailed(true)} />

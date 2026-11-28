@@ -21,6 +21,7 @@ import { tabDomain, type BrowserWorkspace } from "../../browser/useBrowserWorksp
 import { useSavedLookup } from "../../browser/saved";
 import type { useBrowserActions } from "../../browser/useBrowserActions";
 import { cn } from "../../lib/utils";
+import { usePaintSelection } from "../../lib/usePaintSelection";
 import { GROUP_STYLE, groupTitle } from "./groups";
 import { Banner, Connect, UpdateBanner } from "./BrowserConnect";
 import { DomainChip, DomainFilter } from "../DomainFilter";
@@ -79,7 +80,6 @@ export function BrowserView({
   const [contentFilter, setContentFilter] = useState<ContentFilter | null>(null);
   const toggleContentFilter = (f: ContentFilter) => setContentFilter((v) => (v === f ? null : f));
   const search = useRef<HTMLInputElement>(null);
-  const lastIndex = useRef<number | null>(null);
 
   // Filters of lenses that were turned off disappear with them.
   useEffect(() => {
@@ -151,6 +151,7 @@ export function BrowserView({
   const pickMany = (ids: string[], checked: boolean) =>
     setPicked((cur) => (checked ? [...new Set([...cur, ...ids])] : cur.filter((id) => !ids.includes(id))));
   const selectAllVisible = () => pickMany(visible.map((t) => t.tabInstanceId), true);
+  const paint = usePaintSelection({ picked, setPicked, count: pickedTabs.length, noun: "tab" });
 
   // The same surfaces as Library, reading the tab registry.
   const tabStates = actionStates(TAB_ACTIONS, pickedTabs, {
@@ -472,8 +473,8 @@ export function BrowserView({
             </div>
           </div>
         ) : (
-          <div className="divide-y" role="list">
-            {visible.map((tab, index) => (
+          <div ref={paint.listRef} className="divide-y" role="list">
+            {visible.map((tab) => (
               <TabRow
                 key={tab.tabInstanceId}
                 tab={tab}
@@ -488,14 +489,7 @@ export function BrowserView({
                 records={runner.results[tab.tabInstanceId]}
                 picked={picked.includes(tab.tabInstanceId)}
                 stale={browser.connection !== "connected"}
-                onPicked={(checked, shift) => {
-                  if (shift && lastIndex.current !== null) {
-                    const a = Math.min(lastIndex.current, index);
-                    const b = Math.max(lastIndex.current, index);
-                    pickMany(visible.slice(a, b + 1).map((t) => t.tabInstanceId), checked);
-                  } else pickMany([tab.tabInstanceId], checked);
-                  lastIndex.current = index;
-                }}
+                onPicked={(checked, shift) => paint.toggle(tab.tabInstanceId, checked, shift)}
                 onFocus={() => actions.focus(tab)}
                 onToggleGroup={ws.toggleGroupFilter}
                 onRetry={(lens) => actions.reevaluate(lens, [tab])}
@@ -512,6 +506,7 @@ export function BrowserView({
             ))}
           </div>
         )}
+        <p role="status" className="sr-only">{paint.live}</p>
       </div>
       <SelectionSurface
         noun="tab"

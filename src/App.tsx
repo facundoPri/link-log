@@ -1036,8 +1036,7 @@ export function App({
                 setActiveId(id);
                 setFocusTags(false);
               }}
-              onPicked={(id, c) => pickMany([id], c)}
-              onPickedMany={pickMany}
+              setPicked={setPicked}
               onAdd={() => surface.current?.enterLinks()}
               onClearFilters={clearFilters}
               rowActions={{

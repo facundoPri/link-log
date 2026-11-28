@@ -1,9 +1,9 @@
-import { useEffect, useRef } from "react";
 import { Link2, Search } from "lucide-react";
 import type { Lens, Link } from "../types";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { LinkRow, type LinkJob } from "./LinkRow";
+import { usePaintSelection } from "../lib/usePaintSelection";
 
 export function LinkList({
   links,
@@ -14,8 +14,7 @@ export function LinkList({
   activeId,
   picked,
   onActivate,
-  onPicked,
-  onPickedMany,
+  setPicked,
   onAdd,
   onClearFilters,
   rowActions,
@@ -28,8 +27,7 @@ export function LinkList({
   activeId: string | null;
   picked: string[];
   onActivate: (id: string) => void;
-  onPicked: (id: string, checked: boolean) => void;
-  onPickedMany: (ids: string[], checked: boolean) => void;
+  setPicked: (fn: (ids: string[]) => string[]) => void;
   onAdd: () => void;
   onClearFilters: () => void;
   rowActions: {
@@ -44,11 +42,7 @@ export function LinkList({
     onCopyUrl: (link: Link) => void;
   };
 }) {
-  const lastIndex = useRef<number | null>(null);
-  const idsKey = links.map((l) => l.id).join(" ");
-  useEffect(() => {
-    lastIndex.current = null;
-  }, [idsKey]);
+  const paint = usePaintSelection({ picked, setPicked, count: picked.length, noun: "link" });
   if (!loaded) {
     return (
       <div className="divide-y">
@@ -101,8 +95,9 @@ export function LinkList({
     );
   }
   return (
-    <div className="divide-y" role="list">
-      {links.map((link, index) => (
+    <>
+    <div ref={paint.listRef} className="divide-y" role="list">
+      {links.map((link) => (
         <LinkRow
           key={link.id}
           link={link}
@@ -111,16 +106,7 @@ export function LinkList({
           active={activeId === link.id}
           picked={picked.includes(link.id)}
           onActivate={() => onActivate(link.id)}
-          onPicked={(c, shift) => {
-            if (shift && lastIndex.current !== null) {
-              const a = Math.min(lastIndex.current, index);
-              const b = Math.max(lastIndex.current, index);
-              onPickedMany(links.slice(a, b + 1).map((l) => l.id), c);
-            } else {
-              onPicked(link.id, c);
-            }
-            lastIndex.current = index;
-          }}
+          onPicked={(c, shift) => paint.toggle(link.id, c, shift)}
           onToggleTagFilter={rowActions.onToggleTagFilter}
           onDomainFilter={rowActions.onDomainFilter}
           onEditTags={() => rowActions.onEditTags(link)}
@@ -133,5 +119,7 @@ export function LinkList({
         />
       ))}
     </div>
+    <p role="status" className="sr-only">{paint.live}</p>
+    </>
   );
 }

@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/tooltip";
 import { TagChip } from "./TagChip";
 import { LensVerdict } from "./LensVerdict";
+import { PickHandle } from "./PickHandle";
 
 export type LinkJob = {
   kind: "extract" | "preview" | "autotag" | "lens" | "query";
@@ -87,6 +88,7 @@ export function LinkRow({
   return (
     <LinkRowFrame
       className={cn(active && "bg-accent")}
+      data-pick-id={link.id}
       onClick={onActivate}
       onDoubleClick={() => window.open(link.url, "_blank", "noopener")}
 
@@ -330,8 +332,8 @@ function LinkRowFrame({
         className,
       )}
     >
-      {selection}
-      <div className="h-12 w-[72px] shrink-0 overflow-hidden rounded-md bg-muted ring-1 ring-black/10">
+      <PickHandle>{selection}</PickHandle>
+      <div data-pick-thumb className="h-12 w-[72px] shrink-0 overflow-hidden rounded-md bg-muted ring-1 ring-black/10">
         {thumbnail}
       </div>
       <div className="min-w-0 flex-1">
